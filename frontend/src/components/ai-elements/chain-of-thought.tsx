@@ -87,13 +87,13 @@ export const ChainOfThoughtHeader = memo(
       <Collapsible onOpenChange={setIsOpen} open={isOpen}>
         <CollapsibleTrigger
           className={cn(
-            "flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+            "flex w-fit items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
             className
           )}
           {...props}
         >
           <BrainIcon className="size-4" />
-          <span className="flex-1 text-left">
+          <span className="flex-1 text-right">
             {children ?? "Chain of Thought"}
           </span>
           <ChevronDownIcon

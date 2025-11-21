@@ -1,0 +1,6 @@
+requests
+pinecone
+google-generativeai
+python-dotenv
+langchain-text-splitters
+tiktoken

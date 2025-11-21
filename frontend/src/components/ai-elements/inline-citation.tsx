@@ -19,7 +19,7 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useState,
 } from "react";
 
@@ -50,7 +50,7 @@ export const InlineCitationText = ({
 export type InlineCitationCardProps = ComponentProps<typeof HoverCard>;
 
 export const InlineCitationCard = (props: InlineCitationCardProps) => (
-  <HoverCard closeDelay={0} openDelay={0} {...props} />
+  <HoverCard closeDelay={50} openDelay={0} {...props} />
 );
 
 export type InlineCitationCardTriggerProps = ComponentProps<typeof Badge> & {
@@ -86,7 +86,7 @@ export const InlineCitationCardBody = ({
   className,
   ...props
 }: InlineCitationCardBodyProps) => (
-  <HoverCardContent className={cn("relative w-80 p-0", className)} {...props} />
+  <HoverCardContent dir="rtl" className={cn("relative w-80 p-0", className)} {...props} />
 );
 
 const CarouselApiContext = createContext<CarouselApi | undefined>(undefined);
@@ -158,17 +158,21 @@ export const InlineCitationCarouselIndex = ({
   const [current, setCurrent] = useState(0);
   const [count, setCount] = useState(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!api) {
       return;
     }
 
-    setCount(api.scrollSnapList().length);
-    setCurrent(api.selectedScrollSnap() + 1);
-
-    api.on("select", () => {
+    const updateState = () => {
+      setCount(api.scrollSnapList().length);
       setCurrent(api.selectedScrollSnap() + 1);
-    });
+    };
+
+    // Initialize state
+    updateState();
+
+    // Subscribe to changes
+    api.on("select", updateState);
   }, [api]);
 
   return (
@@ -242,31 +246,50 @@ export type InlineCitationSourceProps = ComponentProps<"div"> & {
   title?: string;
   url?: string;
   description?: string;
+  sourceRef?: string;
 };
 
 export const InlineCitationSource = ({
   title,
   url,
   description,
+  sourceRef,
   className,
   children,
   ...props
-}: InlineCitationSourceProps) => (
-  <div className={cn("space-y-1", className)} {...props}>
-    {title && (
-      <h4 className="truncate font-medium text-sm leading-tight">{title}</h4>
-    )}
-    {url && (
-      <p className="truncate break-all text-muted-foreground text-xs">{url}</p>
-    )}
-    {description && (
-      <p className="line-clamp-3 text-muted-foreground text-sm leading-relaxed">
-        {description}
-      </p>
-    )}
-    {children}
-  </div>
-);
+}: InlineCitationSourceProps) => {
+  const handleClick = async () => {
+    const targetSource = sourceRef || title;
+    if (targetSource) {
+      // Import the store dynamically to avoid circular dependencies
+      const { useLayoutStore } = await import('@/lib/store/useLayoutStore');
+      const { setActiveSource } = useLayoutStore.getState();
+      setActiveSource(targetSource);
+    }
+  };
+
+  return (
+    <div 
+      className={cn("space-y-1 cursor-pointer hover:bg-accent/50 p-2 rounded-md transition-colors", className)} 
+      onClick={handleClick}
+      {...props}
+    >
+      {title && (
+        <h4 className="truncate font-medium text-sm leading-tight">{title}</h4>
+      )}
+      {url && (
+        <p className="truncate break-all text-muted-foreground text-xs">{url}</p>
+      )}
+      {description && (
+        <p className="line-clamp-3 text-muted-foreground text-sm leading-relaxed">
+          {description}
+        </p>
+      )}
+      {children}
+    </div>
+  );
+};
+
 
 export type InlineCitationQuoteProps = ComponentProps<"blockquote">;
 

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../styles/themes.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -132,4 +133,26 @@
   *::-webkit-scrollbar {
     display: none; /* WebKit browsers (Chrome, Safari, Edge) */
   }
+
+  /* Hebrew font support */
+  .font-hebrew {
+    font-family: "SBL Hebrew", "Ezra SIL", "Taamey Frank CLM", "Keter YG", "Adobe Hebrew", "Noto Serif Hebrew", serif;
+    font-size: 1.1em;
+    line-height: 1.8;
+  }
+
+  /* Source viewer text enhancements */
+  .source-text-segment {
+    transition: background-color 0.2s ease;
+  }
+
+  .source-text-segment:hover {
+    background-color: hsl(var(--accent) / 0.3);
+  }
+
+  /* Hide ScrollArea scrollbars */
+  [data-slot="scroll-area-scrollbar"] {
+    display: none !important;
+  }
 }
+

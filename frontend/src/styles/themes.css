@@ -1,0 +1,76 @@
+@layer base {
+  /* Default Theme (Zinc-like) */
+  [data-theme="default"] {
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+  }
+
+  [data-theme="default"].dark {
+    --primary: oklch(0.985 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --sidebar-primary: oklch(0.985 0 0);
+    --sidebar-primary-foreground: oklch(0.205 0 0);
+  }
+
+  /* Blue Theme */
+  [data-theme="blue"] {
+    --primary: oklch(0.488 0.243 264.376);
+    --primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.488 0.243 264.376);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+  }
+
+  [data-theme="blue"].dark {
+    --primary: oklch(0.623 0.214 259.815);
+    --primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.623 0.214 259.815);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+  }
+
+  /* Rose Theme */
+  [data-theme="rose"] {
+    --primary: oklch(0.577 0.245 27.325);
+    --primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.577 0.245 27.325);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+  }
+
+  [data-theme="rose"].dark {
+    --primary: oklch(0.712 0.194 13.428);
+    --primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.712 0.194 13.428);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+  }
+  
+  /* Green Theme */
+  [data-theme="green"] {
+    --primary: oklch(0.511 0.162 143.311);
+    --primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.511 0.162 143.311);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+  }
+
+  [data-theme="green"].dark {
+    --primary: oklch(0.696 0.17 162.48);
+    --primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.696 0.17 162.48);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+  }
+  
+  /* Orange Theme */
+  [data-theme="orange"] {
+    --primary: oklch(0.646 0.222 41.116);
+    --primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.646 0.222 41.116);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+  }
+
+  [data-theme="orange"].dark {
+    --primary: oklch(0.769 0.188 70.08);
+    --primary-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.769 0.188 70.08);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+  }
+}
