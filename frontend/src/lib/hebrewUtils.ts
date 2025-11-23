@@ -105,19 +105,169 @@ const BOOK_MAPPINGS: Record<string, string> = {
   "Challah": "חלה",
   "Orlah": "ערלה",
   "Bikkurim": "ביכורים",
+  
+  // Shulchan Arukh
+  "Shulchan Arukh": "שולחן ערוך",
+  "Orach Chayim": "אורח חיים",
+  "Orach Chaim": "אורח חיים",
+  "Yoreh Deah": "יורה דעה",
+  "Yoreh De'ah": "יורה דעה",
+  "Even HaEzer": "אבן העזר",
+  "Even Ha'ezer": "אבן העזר",
+  "Choshen Mishpat": "חושן משפט",
 };
 
-// Helper to convert numbers to Hebrew numerals (Gematria)
-function toHebrewNumeral(num: number): string {
+const SORTED_BOOK_KEYS = Object.keys(BOOK_MAPPINGS).sort((a, b) => b.length - a.length);
+const SHULCHAN_ARUKH_BOOK_KEYS = [
+  "Orach Chayim",
+  "Orach Chaim",
+  "Yoreh Deah",
+  "Yoreh De'ah",
+  "Even HaEzer",
+  "Even Ha'ezer",
+  "Choshen Mishpat",
+];
+const RANGE_DELIMITER = /(\s*[–—־-]\s*)/;
+const RANGE_ONLY = /^\s*[–—־-]\s*$/;
+
+class HebrewReferenceConverter {
+  private readonly trimShulchanArukh: boolean;
+
+  constructor(private readonly rawText: string) {
+    const lowerText = rawText?.toLowerCase() ?? "";
+    const hasShulchanArukh = lowerText.includes("shulchan arukh");
+    const hasSpecificBook = SHULCHAN_ARUKH_BOOK_KEYS.some((book) => lowerText.includes(book.toLowerCase()));
+    this.trimShulchanArukh = hasShulchanArukh && hasSpecificBook;
+  }
+
+  convert(): string {
+    if (!this.rawText) return this.rawText;
+    const parts = this.rawText.split(RANGE_DELIMITER);
+    const convertedParts = parts.map((part) => (RANGE_ONLY.test(part) ? part : this.convertSegment(part)));
+    return this.mergeRangeSegments(convertedParts).join("");
+  }
+
+  private convertSegment(segment: string): string {
+    if (!segment) return segment;
+    let formatted = segment;
+    formatted = this.replaceBookNames(formatted);
+    formatted = this.replacePageMarkers(formatted);
+    formatted = this.replaceDafNotation(formatted);
+    formatted = this.replaceChapterVerseWords(formatted);
+    formatted = this.replaceColonReferences(formatted);
+    formatted = this.replaceStandaloneNumbers(formatted);
+    if (this.trimShulchanArukh) {
+      formatted = this.removeRedundantShulchanArukh(formatted);
+    }
+    return formatted;
+  }
+
+  private mergeRangeSegments(parts: string[]): string[] {
+    const merged: string[] = [];
+    let index = 0;
+    while (index < parts.length) {
+      const token = parts[index];
+      if (RANGE_ONLY.test(token) && merged.length > 0 && index + 1 < parts.length) {
+        const previousIndex = merged.length - 1;
+        const previous = merged[previousIndex];
+        const next = parts[index + 1];
+        const collapsed = this.collapseRangeSegment(previous, token, next);
+        if (collapsed) {
+          merged[previousIndex] = collapsed;
+          index += 2;
+          continue;
+        }
+      }
+      merged.push(token);
+      index += 1;
+    }
+    return merged;
+  }
+
+  private collapseRangeSegment(start: string, delimiter: string, end: string): string | null {
+    if (!start || !end) {
+      return null;
+    }
+    const sharedLength = this.sharedPrefixLength(start, end);
+    if (sharedLength === 0) {
+      return null;
+    }
+    const suffix = end.slice(sharedLength).trimStart();
+    if (!suffix) {
+      return null;
+    }
+    return `${start}${delimiter}${suffix}`;
+  }
+
+  private sharedPrefixLength(a: string, b: string): number {
+    const max = Math.min(a.length, b.length);
+    let index = 0;
+    while (index < max && a[index] === b[index]) {
+      index += 1;
+    }
+    return index;
+  }
+
+  private replaceBookNames(value: string): string {
+    let result = value;
+    for (const book of SORTED_BOOK_KEYS) {
+      if (result.includes(book)) {
+        result = result.split(book).join(BOOK_MAPPINGS[book]);
+      }
+    }
+    return result;
+  }
+
+  private replacePageMarkers(value: string): string {
+    return value.replace(/\bPage\b/g, "דף").replace(/\bDaf\b/g, "דף");
+  }
+
+  private replaceDafNotation(value: string): string {
+    return value.replace(/\b(\d+)([ab])\b/g, (match, numStr, side) => {
+      const num = parseInt(numStr, 10);
+      const hebrewNum = HebrewReferenceConverter.toHebrewNumeral(num);
+      const sideHebrew = side === "a" ? "ע״א" : "ע״ב";
+      return `${hebrewNum} ${sideHebrew}`;
+    });
+  }
+
+  private replaceChapterVerseWords(value: string): string {
+    return value
+      .replace(/\bChapter\s+(\d+)\b/g, (match, num) => {
+        return `פרק ${HebrewReferenceConverter.toHebrewNumeral(parseInt(num, 10))}`;
+      })
+      .replace(/\bVerse\s+(\d+)\b/g, (match, num) => {
+        return `פסוק ${HebrewReferenceConverter.toHebrewNumeral(parseInt(num, 10))}`;
+      });
+  }
+
+  private replaceColonReferences(value: string): string {
+    return value.replace(/\b(\d+):(\d+)\b/g, (match, num1, num2) => {
+      return `${HebrewReferenceConverter.toHebrewNumeral(parseInt(num1, 10))}:${HebrewReferenceConverter.toHebrewNumeral(parseInt(num2, 10))}`;
+    });
+  }
+
+  private replaceStandaloneNumbers(value: string): string {
+    return value.replace(/(^|[,\s])(\d+)(?=\s|$)/g, (match, prefix, numStr) => {
+      const num = parseInt(numStr, 10);
+      if (num < 1 || num > 999 || Number.isNaN(num)) {
+        return match;
+      }
+      const hebrewNum = HebrewReferenceConverter.toHebrewNumeral(num);
+      return `${prefix ?? ""}${hebrewNum}`;
+    });
+  }
+
+  private removeRedundantShulchanArukh(value: string): string {
+    return value.replace(/^\s*שולחן ערוך(?:[,]\s*|\s+)?/, "");
+  }
+
+  private static toHebrewNumeral(num: number): string {
   if (num <= 0) return String(num);
-  
-  const ones = ['', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'];
-  const tens = ['', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ'];
-  const hundreds = ['', 'ק', 'ר', 'ש', 'ת'];
-  
-  let result = '';
-  
-  // Handle hundreds
+    const ones = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"];
+    const tens = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"];
+    const hundreds = ["", "ק", "ר", "ש", "ת"];
+    let result = "";
   let h = Math.floor(num / 100);
   while (h > 0) {
     if (h >= 4) {
@@ -128,75 +278,24 @@ function toHebrewNumeral(num: number): string {
       h = 0;
     }
   }
-  
-  // Handle tens and ones
-  let t = Math.floor((num % 100) / 10);
-  let o = num % 10;
-  
-  // Special cases for 15 (טו) and 16 (טז)
+  const t = Math.floor((num % 100) / 10);
+  const o = num % 10;
   if (t === 1 && o === 5) {
-    result += 'טו';
+      result += "טו";
   } else if (t === 1 && o === 6) {
-    result += 'טז';
+      result += "טז";
   } else {
     result += tens[t] + ones[o];
   }
-  
-  // Add geresh or gershayim
   if (result.length === 1) {
     result += "'";
   } else if (result.length > 1) {
     result = result.slice(0, -1) + '"' + result.slice(-1);
   }
-  
   return result;
+  }
 }
 
 export function convertToHebrew(text: string): string {
-  if (!text) return text;
-
-  // 1. Try to match exact book names
-  let hebrewText = text;
-  
-  // Sort keys by length descending to match longest first
-  const sortedKeys = Object.keys(BOOK_MAPPINGS).sort((a, b) => b.length - a.length);
-  
-  for (const book of sortedKeys) {
-    if (hebrewText.includes(book)) {
-      hebrewText = hebrewText.replace(book, BOOK_MAPPINGS[book]);
-    }
-  }
-
-  // 2. Handle "Page Xa/b" or "Daf Xa/b" format (e.g., "Berakhot 2a")
-  // Regex for Book Name + Number + a/b
-  // This is tricky because we already replaced the book name.
-  // Let's look for patterns like "Book Hebrew Name" + " " + "2a"
-  
-  // Replace "Page" or "Daf"
-  hebrewText = hebrewText.replace(/\bPage\b/g, 'דף').replace(/\bDaf\b/g, 'דף');
-  
-  // Handle standard Talmud citation: "2a", "2b", "102a"
-  // We look for a number followed by 'a' or 'b' at the end of string or followed by space
-  hebrewText = hebrewText.replace(/\b(\d+)([ab])\b/g, (match, numStr, side) => {
-    const num = parseInt(numStr);
-    const hebrewNum = toHebrewNumeral(num);
-    const sideHebrew = side === 'a' ? 'ע״א' : 'ע״ב';
-    return `${hebrewNum} ${sideHebrew}`;
-  });
-
-  // Handle Chapter/Verse citations: "Chapter 1", "1:1"
-  // "Genesis 1:1" -> "בראשית א א" or similar
-  // This is complex to do perfectly without context, but let's do basic number conversion
-  
-  // Convert "Chapter X"
-  hebrewText = hebrewText.replace(/\bChapter\s+(\d+)\b/g, (match, num) => {
-    return `פרק ${toHebrewNumeral(parseInt(num))}`;
-  });
-
-  // Convert "Verse X"
-  hebrewText = hebrewText.replace(/\bVerse\s+(\d+)\b/g, (match, num) => {
-    return `פסוק ${toHebrewNumeral(parseInt(num))}`;
-  });
-
-  return hebrewText;
+  return new HebrewReferenceConverter(text).convert();
 }

@@ -8,14 +8,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import {
-  BrainIcon,
-  ChevronDownIcon,
-  DotIcon,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronDownIcon, DotIcon, type LucideIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { createContext, memo, useContext, useMemo } from "react";
+import { Shimmer } from "./shimmer";
 
 type ChainOfThoughtContextValue = {
   isOpen: boolean;
@@ -65,7 +61,7 @@ export const ChainOfThought = memo(
     return (
       <ChainOfThoughtContext.Provider value={chainOfThoughtContext}>
         <div
-          className={cn("not-prose max-w-prose space-y-4", className)}
+          className={cn("not-prose max-w-prose", className)}
           {...props}
         >
           {children}
@@ -77,11 +73,20 @@ export const ChainOfThought = memo(
 
 export type ChainOfThoughtHeaderProps = ComponentProps<
   typeof CollapsibleTrigger
->;
+> & {
+  renderLabel?: (state: { isOpen: boolean }) => ReactNode;
+};
 
 export const ChainOfThoughtHeader = memo(
-  ({ className, children, ...props }: ChainOfThoughtHeaderProps) => {
+  ({
+    className,
+    children,
+    renderLabel,
+    ...props
+  }: ChainOfThoughtHeaderProps) => {
     const { isOpen, setIsOpen } = useChainOfThought();
+    const labelContent =
+      renderLabel?.({ isOpen }) ?? children ?? "Chain of Thought";
 
     return (
       <Collapsible onOpenChange={setIsOpen} open={isOpen}>
@@ -92,9 +97,8 @@ export const ChainOfThoughtHeader = memo(
           )}
           {...props}
         >
-          <BrainIcon className="size-4" />
           <span className="flex-1 text-right">
-            {children ?? "Chain of Thought"}
+            {labelContent}
           </span>
           <ChevronDownIcon
             className={cn(
@@ -113,6 +117,9 @@ export type ChainOfThoughtStepProps = ComponentProps<"div"> & {
   label: ReactNode;
   description?: ReactNode;
   status?: "complete" | "active" | "pending";
+  isCollapsible?: boolean;
+  isExpanded?: boolean;
+  onToggle?: () => void;
 };
 
 export const ChainOfThoughtStep = memo(
@@ -123,6 +130,9 @@ export const ChainOfThoughtStep = memo(
     description,
     status = "complete",
     children,
+    isCollapsible = false,
+    isExpanded = false,
+    onToggle,
     ...props
   }: ChainOfThoughtStepProps) => {
     const statusStyles = {
@@ -130,6 +140,16 @@ export const ChainOfThoughtStep = memo(
       active: "text-foreground",
       pending: "text-muted-foreground/50",
     };
+
+    const shouldShimmer =
+      label === "חושב..." ||
+      (label === "Retrieval" && status === "active" && !description);
+    const showDetails = !isCollapsible || isExpanded;
+    const labelContent = shouldShimmer ? (
+      <Shimmer className="text-sm">{label as string}</Shimmer>
+    ) : (
+      label
+    );
 
     return (
       <div
@@ -142,15 +162,27 @@ export const ChainOfThoughtStep = memo(
         {...props}
       >
         <div className="relative mt-0.5">
-          <Icon className="size-4" />
+          <Icon className={Icon === DotIcon ? 'size-4 scale-175' : 'size-4'} />
           <div className="-mx-px absolute top-7 bottom-0 left-1/2 w-px bg-border" />
         </div>
-        <div className="flex-1 space-y-2">
-          <div>{label}</div>
-          {description && (
+        <div className="flex-1 space-y-2" dir="rtl">
+          {isCollapsible ? (
+            <button
+              type="button"
+              dir="rtl"
+              onClick={onToggle}
+              aria-expanded={isExpanded}
+              className="w-full cursor-pointer bg-transparent p-0 text-right text-current focus-visible:outline-none"
+            >
+              {labelContent}
+            </button>
+          ) : (
+            <div>{labelContent}</div>
+          )}
+          {showDetails && description && (
             <div className="text-muted-foreground text-xs">{description}</div>
           )}
-          {children}
+          {showDetails && children}
         </div>
       </div>
     );
@@ -211,7 +243,7 @@ export type ChainOfThoughtImageProps = ComponentProps<"div"> & {
 export const ChainOfThoughtImage = memo(
   ({ className, children, caption, ...props }: ChainOfThoughtImageProps) => (
     <div className={cn("mt-2 space-y-2", className)} {...props}>
-      <div className="relative flex max-h-[22rem] items-center justify-center overflow-hidden rounded-lg bg-muted p-3">
+      <div className="relative flex max-h-88 items-center justify-center overflow-hidden rounded-lg bg-muted p-3">
         {children}
       </div>
       {caption && <p className="text-muted-foreground text-xs">{caption}</p>}

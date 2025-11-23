@@ -47,7 +47,7 @@ export function NavMain({
           >
             <SidebarMenuItem dir="rtl">
               <CollapsibleTrigger asChild>
-                <SidebarMenuButton tooltip={item.title}>
+                <SidebarMenuButton tooltip={item.title} className="cursor-pointer">
                   {item.icon && <item.icon />}
                   <span>{item.title}</span>
                   <ChevronLeft className="mr-auto transition-transform duration-200 group-data-[state=open]/collapsible:-rotate-90" />
@@ -74,7 +74,7 @@ export function NavMain({
           onClick={handleNewChat}
           dir="rtl"
           key="new-chat"
-          className="text-right"
+          className="text-right cursor-pointer"
           tooltip="שיחה חדשה"
         >
           <EditIcon className=" h-4 w-4 " />

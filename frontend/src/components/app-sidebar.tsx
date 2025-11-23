@@ -172,7 +172,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     size="icon"
     aria-label="Toggle sidebar logo"
     onClick={handleSidebarToggle}
-    className="h-9 w-9 rounded-md bg-transparent hover:bg-sidebar-accent"
+    className="h-9 w-9 rounded-md bg-transparent hover:bg-sidebar-accent cursor-pointer"
   >
     <Image
       src="/kesher.png"
@@ -220,12 +220,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       <SidebarMenuButton
                         onClick={() => setActiveChatId(chat.id)}
                         isActive={activeChatId === chat.id}
-                        className="group justify-between gap-2 text-right"
+                        className="group justify-between gap-2 text-right cursor-pointer"
                       >
                         <span className="flex-1 truncate">{chat.title}</span>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <div role="button" className="opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground hover:text-foreground p-1">
+                            <div role="button" className="opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground hover:text-foreground p-1 cursor-pointer">
                               <MoreHorizontal className="h-4 w-4" />
                               <span className="sr-only">More</span>
                             </div>
@@ -240,6 +240,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                 e.stopPropagation();
                                 handleShareChat(chat.id);
                               }}
+                              className="cursor-pointer"
                             >
                               <Share2 className="mr-2 h-4 w-4" />
                               <span>Share</span>
@@ -249,6 +250,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                 e.stopPropagation();
                                 handleDeleteChat(chat.id);
                               }}
+                              className="cursor-pointer"
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
                               <span>Delete</span>

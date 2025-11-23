@@ -8,22 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BookOpen, X, Search, PanelLeftIcon } from "lucide-react";
 
-interface Source {
-  id: string;
-  score: number;
-  metadata: {
-    index_title: string;
-    ref: string;
-    text: string;
-    version_title?: string;
-    [key: string]: string | number | undefined;
-  };
-}
-
 export function SourceListPane() {
-  const { setActiveSource, toggleSourceList } = useLayoutStore();
+  const { setActiveSource, toggleSourceList, sourceList, setSourceList } = useLayoutStore();
   const [query, setQuery] = useState("");
-  const [sources, setSources] = useState<Source[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
@@ -35,7 +22,7 @@ export function SourceListPane() {
       const res = await fetch(`/api/py/search?q=${encodeURIComponent(query)}`);
       if (res.ok) {
         const data = await res.json();
-        setSources(data.results || []);
+        setSourceList(data.results || []);
       }
     } catch (error) {
       console.error("Search failed:", error);
@@ -89,20 +76,19 @@ export function SourceListPane() {
 
       <ScrollArea dir="rtl" className="flex-1 h-full">
         <div className="p-2 pb-80 space-y-2">
-          {sources.length === 0 && !isLoading && (
+          {sourceList.length === 0 && !isLoading && (
             <p className="text-xs text-muted-foreground text-center py-4">
               {query ? "No results found." : "Search for Talmudic texts..."}
             </p>
           )}
 
-          {sources.map((source) => (
+          {sourceList.map((source) => (
             <div
               key={source.id}
               className="p-2 rounded-lg border bg-card hover:bg-accent/50 cursor-pointer transition-colors"
               onClick={() => setActiveSource(source.metadata.ref)} // Using ref as ID for now
             >
               <div className="items-center gap-2 mb-1">
-                <BookOpen className="h-4 w-4 text-primary" />
                 <span className="font-medium text-sm truncate">
                   {convertToHebrew(source.metadata.ref)}
                 </span>

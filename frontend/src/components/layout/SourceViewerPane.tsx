@@ -69,10 +69,20 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   const bottomSentinelRef = React.useRef<HTMLDivElement>(null);
   const isScrollingProgrammatically = React.useRef(false);
   const hasScrolledToHighlight = React.useRef(false);
+  
+  // Helper function to get page reference without segment number
+  const getPageReference = (ref: string): string => {
+    // Remove the segment number (the part after the last colon)
+    // e.g., "Shulchan Arukh, Orach Chayim 14:6" -> "Shulchan Arukh, Orach Chayim 14"
+    const lastColonIndex = ref.lastIndexOf(':');
+    if (lastColonIndex === -1) return ref;
+    return ref.substring(0, lastColonIndex);
+  };
+  
   // Update currentRef when sourceId changes
   React.useEffect(() => {
     if (sourceId) {
-      setCurrentRef(sourceId);
+      setCurrentRef(getPageReference(sourceId));
     }
   }, [sourceId]);
 
@@ -368,8 +378,9 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
             // We consider a page "current" if its top is above the middle of the viewport
             // and its bottom is below the top of the viewport
             if (top < viewportRect.height / 2 && bottom > 0) {
-              if (currentRef !== textData.pages[i].ref) {
-                setCurrentRef(textData.pages[i].ref);
+              const pageRef = getPageReference(textData.pages[i].ref);
+              if (currentRef !== pageRef) {
+                setCurrentRef(pageRef);
               }
               foundVisible = true;
               break;
@@ -427,10 +438,10 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   }
 
   return (
-    <div className="flex flex-col flex-1 min-w-0 h-full bg-background">
+    <div className="flex flex-col flex-1 min-w-0 h-full bg-background relative">
       {/* Reader Controls Header */}
-      <header className="bg-transparent">
-        <div className="flex items-center justify-between border mt-2 mx-2 px-4 py-[6px] rounded-2xl">
+      <header className="sticky top-0 z-50 bg-transparent pt-2 pb-4">
+        <div className="flex items-center justify-between border border-white/30 dark:border-white/10 mx-2 px-4 py-[6px] rounded-2xl backdrop-blur-md bg-white/50 dark:bg-gray-900/70 shadow-2xl">
 
                     {/* Right: Display Settings */}
                     <div className="flex items-center gap-1" dir="rtl">
@@ -500,7 +511,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       </header>
 
       {/* Text Content */}
-      <ScrollArea ref={scrollAreaRef} className="h-full px-6">
+      <ScrollArea ref={scrollAreaRef} className="h-full px-6 -mt-[69px] bg-accent/20">
         <div className="max-w-4xl mx-auto px-6 py-8 pb-102">
           {isLoading ? (
             <div className="flex items-center justify-center py-20">

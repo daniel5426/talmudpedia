@@ -86,10 +86,14 @@ function LayoutShellContent() {
           <div
             ref={sourceViewerRef}
             className={cn(
-              "shrink-0 min-w-0 transition-all duration-300 ease-in-out overflow-hidden relative",
+              "shrink-0 min-w-0 overflow-hidden relative",
+              !isResizing && "transition-all duration-300 ease-in-out",
               activeSource ? "opacity-100" : "opacity-0"
             )}
-            style={{ width: activeSource ? sourceViewerWidth : 0 }}
+            style={{ 
+              width: activeSource ? sourceViewerWidth : 0,
+              willChange: isResizing ? 'width' : 'auto'
+            }}
           >
             <SourceViewerPane sourceId={activeSource || lastActiveSource} />
             

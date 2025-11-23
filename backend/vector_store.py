@@ -43,7 +43,6 @@ class VectorStore:
                 contents=[text],
                 config=types.EmbedContentConfig(task_type="QUESTION_ANSWERING")
                 )
-            print(result.embeddings[0].values)
             return result.embeddings[0].values
         except Exception as e:
             print(f"Error embedding text: {e}")
