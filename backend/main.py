@@ -3,12 +3,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
+# Load environment variables BEFORE importing any modules that might need them
+load_dotenv(Path(__file__).parent / ".env")
 
 from app.db.connection import MongoDatabase
 from app.endpoints import register_endpoints
 from vector_store import VectorStore
-
-load_dotenv(Path(__file__).parent / ".env")
 
 
 @asynccontextmanager
