@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { Settings2, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2 } from "lucide-react";
+import { Settings2, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
 import { NavUser } from "@/components/nav-user";
@@ -31,35 +31,43 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ThemeCustomizer } from "./theme-customizer";
+import { useDirection } from "@/components/direction-provider";
+import { DirectionToggle } from "./direction-toggle";
 
 // Static data for other sections
+import { useAuthStore } from "@/lib/store/useAuthStore";
+import { usePathname, useRouter } from "next/navigation";
+import { LayoutDashboard, Users, MessageSquare, LogIn } from "lucide-react";
+
 const data = {
-  user: {
-    name: "Daniel Benassaya",
-    email: "daniel@talmudpedia.com",
-    avatar: "/avatars/shadcn.jpg",
-  },
   navMain: [
     {
-      title: "Library",
-      url: "#",
-      icon: Library,
-      items: [
-        { title: "Talmud Bavli", url: "#" },
-        { title: "Mishneh Torah", url: "#" },
-        { title: "Shulchan Aruch", url: "#" },
-      ],
-    },
-    {
-      title: "Settings",
-      url: "#",
-      icon: Settings2,
-      items: [
-        { title: "General", url: "#" },
-        { title: "Appearance", url: "#" },
-      ],
+      title: "Document Search",
+      url: "/document-search",
+      icon: FileText,
+      items: [],
     },
   ],
+  adminNavMain: [
+    {
+      title: "Dashboard",
+      url: "/admin/dashboard",
+      icon: LayoutDashboard,
+      items: [],
+    },
+    {
+      title: "Users",
+      url: "/admin/users",
+      icon: Users,
+      items: [],
+    },
+    {
+      title: "Chats",
+      url: "/admin/chats",
+      icon: MessageSquare,
+      items: [],
+    },
+  ]
 };
 
 const CHAT_PAGE_SIZE = 20;
@@ -74,6 +82,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const paginationCursorRef = React.useRef<string | null>(null);
   const isFetchingRef = React.useRef(false);
   const previousChatIdRef = React.useRef<string | null | undefined>(undefined);
+  const { direction } = useDirection();
+  const isRTL = direction === "rtl";
+  
+  const user = useAuthStore((state) => state.user);
+  const router = useRouter();
+  const pathname = usePathname();
+  const isAdminPath = pathname?.startsWith("/admin");
+
+  const navItems = isAdminPath ? data.adminNavMain : data.navMain;
 
   const fetchChats = React.useCallback(async (mode: FetchMode = "reset") => {
     if (isFetchingRef.current) return;
@@ -120,6 +137,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }, []);
 
   React.useEffect(() => {
+    // Only fetch chats if user is logged in
+    if (!user) {
+      setChats([]);
+      return;
+    }
+
     const normalizedChatId = activeChatId ?? null;
     if (
       previousChatIdRef.current !== undefined &&
@@ -129,11 +152,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
     previousChatIdRef.current = normalizedChatId;
     fetchChats("reset");
-  }, [activeChatId, fetchChats]);
+  }, [activeChatId, fetchChats, user]);
 
   const handleNewChat = React.useCallback(() => {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+    if (isAdminPath || pathname === '/document-search') {
+      router.push("/");
+    }
     setActiveChatId(null);
-  }, [setActiveChatId]);
+  }, [setActiveChatId, user, router, isAdminPath, pathname]);
 
   const handleSidebarToggle = React.useCallback(() => {
     toggleSidebar();
@@ -154,6 +184,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     navigator.clipboard.writeText(url);
     alert("Link copied to clipboard!"); // Fallback since no toast
   }, []);
+  console.log(direction);
 
   const handleChatScroll = React.useCallback(() => {
     if (!chatListRef.current) return;
@@ -186,10 +217,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 );
 
   return (
-    <Sidebar collapsible="icon" side="right" className="z-50" {...props}>
+    <Sidebar collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50 shadow-none" {...props}>
       <SidebarHeader>
+        <div dir={direction} className="flex items-center justify-between gap-2">
 
-        <div dir="rtl" className="flex items-center justify-between gap-2">
           { logoButton}
           { isSidebarOpen && <SidebarTrigger
             aria-label="Toggle sidebar"
@@ -198,29 +229,35 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent className="flex h-full flex-col gap-4">
         <div className=" ">
-          <NavMain items={data.navMain} handleNewChat={handleNewChat} />
+          <NavMain items={navItems} handleNewChat={handleNewChat} direction={direction} />
         </div>
-        <div className="flex min-h-0 flex-1 flex-col">
+        { !isAdminPath && isSidebarOpen && <div className="flex min-h-0 flex-1 flex-col">
           <SidebarGroup className="flex h-full flex-col">
-            <SidebarGroupLabel dir="rtl" className=" font-semibold">
+            <SidebarGroupLabel dir={direction} className=" font-semibold">
               שיחות קודמות
             </SidebarGroupLabel>
             <div
               className="min-h-0 flex-1 overflow-hidden rounded-2xl p-2"
-              dir="rtl"
+              dir={direction}
             >
               <div
                 ref={chatListRef}
                 onScroll={handleChatScroll}
-                className="flex h-full flex-col gap-1 overflow-y-auto pr-2 text-right"
+                className={`flex h-full flex-col gap-1 overflow-y-auto ${isRTL ? "pr-2 text-right" : "pl-2 text-left"}`}
               >
-                <SidebarMenu className="space-y-1" dir="rtl">
+                <SidebarMenu className="space-y-1" dir={direction}>
                   {chats.map((chat) => (
                     <SidebarMenuItem key={`chat-${chat.id}`}>
                       <SidebarMenuButton
-                        onClick={() => setActiveChatId(chat.id)}
+                        dir={direction}
+                        onClick={() => {
+                          if (pathname === '/document-search') {
+                            router.push('/');
+                          }
+                          setActiveChatId(chat.id);
+                        }}
                         isActive={activeChatId === chat.id}
-                        className="group justify-between gap-2 text-right cursor-pointer"
+                        className={`group justify-between gap-2 cursor-pointer ${isRTL ? "text-right" : "text-left"}`}
                       >
                         <span className="flex-1 truncate">{chat.title}</span>
                         <DropdownMenu>
@@ -234,7 +271,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             className="w-48"
                             side="bottom"
                             align="end"
-                          >
+                            >
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -260,6 +297,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
+                  {!user && (
+                    <div className="py-4 text-center text-sm text-muted-foreground">
+                      Please login to view chats
+                    </div>
+                  )}
                 </SidebarMenu>
                 {isFetchingChats && (
                   <div className="py-2 text-center text-xs text-muted-foreground">
@@ -269,11 +311,37 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               </div>
             </div>
           </SidebarGroup>
-        </div>
+        </div> } 
       </SidebarContent>
-      <SidebarFooter dir="rtl">
-      <ThemeCustomizer />
-        <NavUser user={data.user} />
+      <SidebarFooter dir={direction}>
+        <div className={`flex items-center gap-2 ${isRTL ? "justify-start" : "justify-start"}`}>
+          {isSidebarOpen ? <DirectionToggle /> : null}
+          {<ThemeCustomizer />}
+        </div>
+        {user ? (
+          <NavUser user={{
+            name: user.full_name || user.email.split('@')[0],
+            email: user.email,
+            avatar: user.avatar || "/avatars/shadcn.jpg",
+            role: user.role
+          }} />
+        ) : (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild size="lg">
+                <a href="/login">
+                  <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                    <LogIn className="size-4" />
+                  </div>
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-semibold">Log in</span>
+                    <span className="truncate text-xs">Sign in to your account</span>
+                  </div>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        )}
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

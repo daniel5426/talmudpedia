@@ -8,6 +8,11 @@ class Citation(BaseModel):
     url: str
     description: str
 
+class Attachment(BaseModel):
+    name: str
+    type: str  # mime type
+    content: str  # base64 content or url
+
 class ReasoningStep(BaseModel):
     step: str
     status: str
@@ -18,6 +23,7 @@ class Message(BaseModel):
     role: str
     content: str
     citations: Optional[List[Citation]] = None
+    attachments: Optional[List[Attachment]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_items: Optional[List[Any]] = None  # Stores raw output items including encrypted reasoning
     thinking_duration_ms: Optional[int] = None
@@ -28,3 +34,4 @@ class Chat(MongoModel):
     messages: List[Message] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    user_id: Optional[str] = None

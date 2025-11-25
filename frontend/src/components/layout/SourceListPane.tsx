@@ -7,9 +7,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BookOpen, X, Search, PanelLeftIcon } from "lucide-react";
+import { GlassCard } from "../ui/glass-card";
 
 export function SourceListPane() {
-  const { setActiveSource, toggleSourceList, sourceList, setSourceList } = useLayoutStore();
+  // Use selectors to prevent unnecessary re-renders
+  const setActiveSource = useLayoutStore((state) => state.setActiveSource);
+  const toggleSourceList = useLayoutStore((state) => state.toggleSourceList);
+  const sourceList = useLayoutStore((state) => state.sourceList);
+  const setSourceList = useLayoutStore((state) => state.setSourceList);
+  
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -38,13 +44,13 @@ export function SourceListPane() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-muted/30">
-      <div className="flex items-center justify-between p-2 pt-[14px] mx-2">
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between p-2 pt-[12px]">
         {isSearchOpen ? (
           <Input
             placeholder="חפש מקורות..."
             dir="rtl"
-            className="flex-1 py-0 mr-2 border-none shadow-none bg-muted text-right"
+            className="flex-1 py-0 mr-2 rounded-sm border-none shadow-none bg-muted text-right"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -56,7 +62,7 @@ export function SourceListPane() {
             variant="ghost"
             size="icon"
             onClick={() => setIsSearchOpen(true)}
-            className="h-8 w-8"
+            className="h-9 w-9"
           >
             <Search className="h-4 w-4" />
           </Button>
@@ -83,10 +89,11 @@ export function SourceListPane() {
           )}
 
           {sourceList.map((source) => (
-            <div
+            <GlassCard
               key={source.id}
-              className="p-2 rounded-lg border bg-card hover:bg-accent/50 cursor-pointer transition-colors"
               onClick={() => setActiveSource(source.metadata.ref)} // Using ref as ID for now
+              variant="no_border"
+              className="p-2"
             >
               <div className="items-center gap-2 mb-1">
                 <span className="font-medium text-sm truncate">
@@ -96,7 +103,7 @@ export function SourceListPane() {
               <p className="text-xs text-muted-foreground pl-6 line-clamp-2">
                 {source.metadata.text}
               </p>
-            </div>
+            </GlassCard>
           ))}
         </div>
       </ScrollArea>

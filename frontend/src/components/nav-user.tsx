@@ -30,6 +30,11 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
+import { useRouter } from "next/navigation"
+import { useAuthStore } from "@/lib/store/useAuthStore"
+import { useDirection } from "@/components/direction-provider"
+import { cn } from "@/lib/utils"
+
 export function NavUser({
   user,
 }: {
@@ -37,16 +42,25 @@ export function NavUser({
     name: string
     email: string
     avatar: string
+    role?: string
   }
 }) {
   const { isMobile } = useSidebar()
+  const router = useRouter()
+  const logout = useAuthStore((state) => state.logout)
+  const { direction } = useDirection();
+  const handleLogout = () => {
+    logout()
+    router.push("/login")
+  }
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <DropdownMenu>
+        <DropdownMenu dir={direction}>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
+              dir={direction}
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground cursor-pointer"
             >
@@ -54,7 +68,7 @@ export function NavUser({
                 <AvatarImage src={user.avatar} alt={user.name} />
                 <AvatarFallback className="rounded-lg">CN</AvatarFallback>
               </Avatar>
-              <div className="grid flex-1 text-left text-sm leading-tight">
+              <div className={cn("grid flex-1 text-sm leading-tight", direction === "rtl" ? "text-right" : "text-left")}>
                 <span className="truncate font-medium">{user.name}</span>
                 <span className="truncate text-xs">{user.email}</span>
               </div>
@@ -68,12 +82,12 @@ export function NavUser({
             sideOffset={4}
           >
             <DropdownMenuLabel className="p-0 font-normal">
-              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+              <div className={cn("flex items-center gap-2 px-1 py-1.5 text-sm", direction === "rtl" ? "text-right" : "text-left")}>
                 <Avatar className="h-8 w-8 rounded-lg">
                   <AvatarImage src={user.avatar} alt={user.name} />
                   <AvatarFallback className="rounded-lg">CN</AvatarFallback>
                 </Avatar>
-                <div className="grid flex-1 text-left text-sm leading-tight">
+                <div className={cn("grid flex-1 text-sm leading-tight", direction === "rtl" ? "text-right" : "text-left")}>
                   <span className="truncate font-medium">{user.name}</span>
                   <span className="truncate text-xs">{user.email}</span>
                 </div>
@@ -87,6 +101,20 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            {user.role === "admin" && (
+              <>
+                <DropdownMenuGroup>
+                  <DropdownMenuItem 
+                    className="cursor-pointer" 
+                    onClick={() => router.push("/admin/dashboard")}
+                  >
+                    <Sparkles />
+                    Admin Space
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuGroup>
               <DropdownMenuItem className="cursor-pointer">
                 <BadgeCheck />
@@ -102,7 +130,7 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="cursor-pointer">
+            <DropdownMenuItem className="cursor-pointer" onClick={handleLogout}>
               <LogOut />
               Log out
             </DropdownMenuItem>

@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 from pathlib import Path
-from typing import TypedDict, Annotated, List, Dict, Any
+from typing import TypedDict, Annotated, List, Dict, Any, Optional
 
 from langchain_core.messages import BaseMessage, SystemMessage
 from langgraph.graph import StateGraph, END, add_messages
@@ -22,7 +22,9 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     context: str
     retrieved_docs: List[Dict[str, Any]]
+    retrieved_docs: List[Dict[str, Any]]
     reasoning_items: List[Dict[str, Any]] # Stores encrypted reasoning context
+    files: Optional[List[Dict[str, Any]]]
 
 def retrieve(state: AgentState):
     """
@@ -61,6 +63,7 @@ async def generate(state: AgentState, config):
     messages = state["messages"]
     context = state.get("context", "")
     previous_reasoning_items = state.get("reasoning_items", [])
+    files = state.get("files", [])
     
     system_prompt = (
         "You are a knowledgeable Rabbinic AI assistant. "
@@ -95,20 +98,52 @@ async def generate(state: AgentState, config):
     })
     
     # Add conversation history
-    for msg in messages:
+    for i, msg in enumerate(messages):
         role = "user" if msg.type == "human" else "assistant"
-        input_items.append({
-            "role": role,
-            "content": msg.content
-        })
+        content = msg.content
+        
+        # If this is the last message (current user message) and we have files
+        if i == len(messages) - 1 and files and role == "user":
+            content_parts = [{"type": "text", "text": content}]
+            for file in files:
+                if file.get("type", "").startswith("image/"):
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": file["content"]
+                        }
+                    })
+                else:
+                    # For non-image files, append as text context
+                    # Assuming content is base64, we might need to decode or just say "File attached"
+                    # But if the frontend sends data URL, it's base64.
+                    # For now, let's just append a note about the file if it's not an image, 
+                    # or try to extract text if possible. 
+                    # Given the modularity requirement, let's just mention the file.
+                    # Or if it's a text file, we could decode it.
+                    # Let's assume for now we just support images fully and mention others.
+                    content_parts.append({
+                        "type": "text", 
+                        "text": f"\n[Attached file: {file.get('name')}]"
+                    })
+            
+            input_items.append({
+                "role": role,
+                "content": content_parts
+            })
+        else:
+            input_items.append({
+                "role": role,
+                "content": content
+            })
         
     # Call Responses API with streaming
     # Issue #1 Fix: Add comprehensive error logging and event dispatch
     try:
         stream = await client.responses.create(
-            model="gpt-5-mini-2025-08-07",
+            model="gpt-5.1",
             reasoning={
-                "effort": "medium",
+                "effort": "low",
                 "summary": "auto"
             },
             input=input_items,

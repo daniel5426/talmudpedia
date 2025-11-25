@@ -3,7 +3,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-import agent as agent_module
+
 from app.db.connection import MongoDatabase
 from app.endpoints import register_endpoints
 from vector_store import VectorStore
@@ -16,7 +16,7 @@ async def lifespan(app: FastAPI):
     """Bootstraps shared services for the FastAPI lifecycle."""
     await MongoDatabase.connect()
     app.state.vector_store = VectorStore()
-    agent_module.vector_store = app.state.vector_store
+
     print("VectorStore initialized successfully.")
     yield
     await MongoDatabase.close()
@@ -24,6 +24,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 
+from app.endpoints.auth import router as auth_router
+from app.api.routers.admin import router as admin_router
+
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(admin_router, prefix="/admin", tags=["admin"])
 register_endpoints(app)
 
 

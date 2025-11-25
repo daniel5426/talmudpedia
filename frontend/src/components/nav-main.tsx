@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronLeft, EditIcon, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, EditIcon, type LucideIcon } from "lucide-react";
+import Link from "next/link";
 
 import {
   Collapsible,
@@ -17,10 +18,13 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
+import { DirectionMode } from "@/components/direction-provider";
+import { cn } from "@/lib/utils";
 
 export function NavMain({
   items,
   handleNewChat,
+  direction,
 }: {
   items: {
     title: string;
@@ -33,48 +37,67 @@ export function NavMain({
     }[];
   }[];
   handleNewChat: () => void;
+  direction: DirectionMode;
 }) {
+  const isRTL = direction !== "rtl";
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel dir="rtl">Platform</SidebarGroupLabel>
+    <SidebarGroup dir={direction}>
+      <SidebarGroupLabel dir={direction}>Platform</SidebarGroupLabel>
       <SidebarMenu>
-        {items.map((item) => (
-          <Collapsible
-            key={item.title}
-            asChild
-            defaultOpen={item.isActive}
-            className="group/collapsible"
-          >
-            <SidebarMenuItem dir="rtl">
-              <CollapsibleTrigger asChild>
-                <SidebarMenuButton tooltip={item.title} className="cursor-pointer">
-                  {item.icon && <item.icon />}
-                  <span>{item.title}</span>
-                  <ChevronLeft className="mr-auto transition-transform duration-200 group-data-[state=open]/collapsible:-rotate-90" />
+        {items.map((item) => {
+          const hasSubItems = item.items && item.items.length > 0;
+          
+          if (hasSubItems) {
+            return (
+              <Collapsible
+                key={item.title}
+                asChild
+                defaultOpen={item.isActive}
+                className="group/collapsible"
+              >
+                <SidebarMenuItem>
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuButton tooltip={item.title} className="cursor-pointer">
+                      {item.icon && <item.icon />}
+                      <span>{item.title}</span>
+                      {isRTL && <ChevronRight className="mr-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />}
+                      {!isRTL && <ChevronLeft className="mr-auto transition-transform duration-200 group-data-[state=open]/collapsible:-rotate-90" />}
+                    </SidebarMenuButton>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <SidebarMenuSub className={cn("border-l-0", isRTL ? "border-l" : "border-r")}>
+                      {item.items?.map((subItem) => (
+                        <SidebarMenuSubItem key={subItem.title} dir={direction}>
+                          <SidebarMenuSubButton asChild>
+                            <Link href={subItem.url}>
+                              <span>{subItem.title}</span>
+                            </Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      ))}
+                    </SidebarMenuSub>
+                  </CollapsibleContent>
+                </SidebarMenuItem>
+              </Collapsible>
+            )
+          } else {
+            return (
+              <SidebarMenuItem key={item.title}>
+                <SidebarMenuButton asChild tooltip={item.title} className="cursor-pointer">
+                  <Link href={item.url}>
+                    {item.icon && <item.icon />}
+                    <span>{item.title}</span>
+                  </Link>
                 </SidebarMenuButton>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <SidebarMenuSub className="border-l-0 border-r">
-                  {item.items?.map((subItem) => (
-                    <SidebarMenuSubItem key={subItem.title}>
-                      <SidebarMenuSubButton asChild>
-                        <a href={subItem.url}>
-                          <span>{subItem.title}</span>
-                        </a>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  ))}
-                </SidebarMenuSub>
-              </CollapsibleContent>
-            </SidebarMenuItem>
-          </Collapsible>
-        ))}
-        <SidebarMenuItem dir="rtl">
+              </SidebarMenuItem>
+            )
+          }
+        })}
+        <SidebarMenuItem>
         <SidebarMenuButton
           onClick={handleNewChat}
-          dir="rtl"
           key="new-chat"
-          className="text-right cursor-pointer"
+          className="cursor-pointer"
           tooltip="שיחה חדשה"
         >
           <EditIcon className=" h-4 w-4 " />

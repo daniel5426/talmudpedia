@@ -4,19 +4,25 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
 
-from agent import agent as chat_agent
+from app.agent import AgentConfig, AgentFactory
+
+chat_agent = AgentFactory.create_agent(AgentConfig())
 from app.db.connection import MongoDatabase
 from app.db.models.chat import Chat, Message
+from app.db.models.user import User
+from app.endpoints.auth import get_current_user
 
 
 class ChatRequest(BaseModel):
     message: str
+    message: str
     chatId: Optional[str] = None
+    files: Optional[List[Dict[str, Any]]] = None
 
 
 class ThinkingDurationFormatter:
@@ -50,16 +56,35 @@ class AgentEndpoints:
 
     @staticmethod
     @router.post("/chat")
-    async def chat_endpoint(request: ChatRequest):
+    async def chat_endpoint(
+        request: ChatRequest,
+        current_user: User = Depends(get_current_user)
+    ):
         """Streams chat completions along with reasoning artifacts."""
         chat_id = request.chatId
+
         user_message = request.message
+        files = request.files or []
         db = MongoDatabase.get_db()
-        if not chat_id:
-            chat = Chat(title=user_message[:30] + "...")
+        
+        if chat_id:
+            # Verify chat ownership
+            existing_chat = await db.chats.find_one({"_id": ObjectId(chat_id), "user_id": str(current_user.id)})
+            if not existing_chat:
+                raise HTTPException(status_code=404, detail="Chat not found or access denied")
+        else:
+            chat = Chat(
+                title=user_message[:30] + "...",
+                user_id=str(current_user.id)
+            )
             result = await db.chats.insert_one(chat.model_dump(by_alias=True, exclude={"id"}))
             chat_id = str(result.inserted_id)
-        message = Message(role="user", content=user_message)
+            
+        message = Message(
+            role="user", 
+            content=user_message,
+            attachments=[{"name": f["name"], "type": f["type"], "content": f["content"]} for f in files] if files else None
+        )
         await db.chats.update_one(
             {"_id": ObjectId(chat_id)},
             {
@@ -108,7 +133,8 @@ class AgentEndpoints:
                 yield json.dumps({"type": "reasoning", "data": init_reasoning}) + "\n"
                 inputs = {
                     "messages": history_messages,
-                    "reasoning_items": reasoning_items_accumulated
+                    "reasoning_items": reasoning_items_accumulated,
+                    "files": files
                 }
                 async for event in chat_agent.astream_events(inputs, version="v2"):
                     pending_update = consume_pending_retrieval_update()
@@ -150,7 +176,7 @@ class AgentEndpoints:
                         print(f"[CUSTOM EVENT] Warning: {warning_data.get('message')}")
                     elif kind == "on_chain_end" and event["name"] == "retrieve":
                         data = event["data"].get("output")
-                        if data and "retrieved_docs" in data:
+                        if data and "retrieved_docs" in data and len(data["retrieved_docs"]) > 0:
                             analysis_complete = {"step": "Analysis", "status": "complete", "message": ""}
                             collected_reasoning.append(analysis_complete)
                             yield json.dumps({"type": "reasoning", "data": analysis_complete}) + "\n"
@@ -174,6 +200,11 @@ class AgentEndpoints:
                                 "citations": collected_citations
                             }
                             retrieval_update_pending = True
+                        elif data and "retrieved_docs" in data and len(data["retrieved_docs"]) == 0:
+                            # No retrieval was performed - just mark analysis as complete
+                            analysis_complete = {"step": "Analysis", "status": "complete", "message": ""}
+                            collected_reasoning.append(analysis_complete)
+                            yield json.dumps({"type": "reasoning", "data": analysis_complete}) + "\n"
                     elif kind == "on_chain_end" and event["name"] == "generate":
                         data = event["data"].get("output")
                         if data:
@@ -209,6 +240,15 @@ class AgentEndpoints:
                             "$push": {"messages": asst_message.model_dump()},
                             "$set": {"updated_at": datetime.utcnow()}
                         }
+                    )
+                    
+                    # Update user token usage
+                    # Simple estimation: 1 token ~= 4 characters
+                    total_chars = len(user_message) + len(full_response)
+                    estimated_tokens = total_chars // 4
+                    await db.users.update_one(
+                        {"_id": current_user.id},
+                        {"$inc": {"token_usage": estimated_tokens}}
                     )
 
         return StreamingResponse(event_generator(), media_type="application/x-ndjson", headers={"X-Chat-ID": chat_id})

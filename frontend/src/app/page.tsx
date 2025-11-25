@@ -1,9 +1,5 @@
-import { LayoutShell } from "@/components/layout/LayoutShell";
-
 export default function Home() {
-  return (
-    <main className="h-screen bg-background">
-      <LayoutShell />
-    </main>
-  );
+  // LayoutShell is now rendered at the root layout level
+  // This page exists just for routing purposes
+  return null;
 }

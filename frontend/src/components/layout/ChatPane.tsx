@@ -11,12 +11,15 @@ import type { FileUIPart } from "ai";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { convertToHebrew } from "@/lib/hebrewUtils";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/lib/store/useAuthStore";
 import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
   ConversationScrollButton,
+  useStickToBottomContext,
 } from "@/components/ai-elements/conversation";
+import { cn } from "@/lib/utils";
 import {
   Message,
   MessageContent,
@@ -69,6 +72,9 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import Image from "next/image";
+import { DirectionMode, useDirection } from "@/components/direction-provider";
+import { BotImputArea } from "@/components/BotImputArea";
+import { KesherLoader } from "@/components/kesher-loader";
 
 interface ChatMessage {
   id: string;
@@ -87,7 +93,6 @@ interface ChatMessage {
   thinkingDurationMs?: number;
 }
 
-const RTL_TEXT_CLASS = "text-right";
 const normalizeReasoningStatus = (
   status?: string
 ): "active" | "complete" | "pending" => {
@@ -170,6 +175,7 @@ type ReasoningStepsListProps = {
   steps?: ChatMessage["reasoningSteps"];
   cacheKey: string;
   onSourceClick: (citations: ChatMessage["citations"]) => void;
+  direction: DirectionMode;
 };
 
 type ReasoningStep = NonNullable<ChatMessage["reasoningSteps"]>[number];
@@ -195,6 +201,7 @@ const ReasoningStepsList = ({
   steps = [],
   cacheKey,
   onSourceClick,
+  direction,
 }: ReasoningStepsListProps) => {
   const [overrides, setOverrides] = useState<Record<number, boolean>>({});
   const latestIndex = steps.length - 1;
@@ -240,6 +247,7 @@ const ReasoningStepsList = ({
             isCollapsible
             isExpanded={expanded}
             onToggle={() => toggleStep(idx)}
+            dir={direction}
           >
             {expanded && step.citations && step.citations.length > 0 && (
               <div className="mt-2">
@@ -273,22 +281,31 @@ const ReasoningStepsList = ({
   );
 };
 
-export function ChatPane() {
-  const { setSourceListOpen, activeChatId, setActiveChatId, setSourceList } = useLayoutStore();
+function ChatContent() {
+  // Use selectors to prevent unnecessary re-renders
+  const setSourceListOpen = useLayoutStore((state) => state.setSourceListOpen);
+  const activeChatId = useLayoutStore((state) => state.activeChatId);
+  const setActiveChatId = useLayoutStore((state) => state.setActiveChatId);
+  const setSourceList = useLayoutStore((state) => state.setSourceList);
+  
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [streamingContent, setStreamingContent] = useState("");
   const [currentReasoning, setCurrentReasoning] = useState<
     ChatMessage["reasoningSteps"]
   >([]);
-
+  const { direction } = useDirection();
   const [liked, setLiked] = useState<Record<string, boolean>>({});
   const [disliked, setDisliked] = useState<Record<string, boolean>>({});
   const [lastThinkingDurationMs, setLastThinkingDurationMs] = useState<
     number | null
   >(null);
+  const [containerWidth, setContainerWidth] = useState<number>(1000);
+  
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const citationsRef = useRef<ChatMessage["citations"]>([]);
   const reasoningRef = useRef<ChatMessage["reasoningSteps"]>([]);
@@ -297,24 +314,44 @@ export function ChatPane() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const isInitializingChatRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const scrollToBottom = () => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  };
+  const { scrollToBottom } = useStickToBottomContext();
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, streamingContent, currentReasoning, isLoading]);
+    if (messages.length > 0 || streamingContent || isLoading) {
+      const timeoutId = setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [messages, streamingContent, currentReasoning, isLoading, scrollToBottom]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, []);
 
   // Load chat history when activeChatId changes
   useEffect(() => {
+    let isCancelled = false;
+
     async function loadHistory() {
       // If we are initializing a new chat from a response, don't abort the current request
       if (isInitializingChatRef.current) {
         isInitializingChatRef.current = false;
         return;
+      }
+
+      if (!isCancelled) {
+        setIsInitialLoading(true);
       }
 
       // Abort any ongoing request when switching chats
@@ -324,12 +361,18 @@ export function ChatPane() {
       }
 
       if (!activeChatId) {
-        setMessages([]);
+        if (!isCancelled) {
+          setMessages([]);
+          setIsInitialLoading(false);
+        }
         return;
       }
 
       try {
         const history = await api.getChatHistory(activeChatId);
+        if (isCancelled) {
+          return;
+        }
         const formattedMessages: ChatMessage[] = history.messages.map((msg) => {
           const reasoningStepsRaw = msg.reasoning_steps
             ? msg.reasoning_steps.map((step: any) => {
@@ -367,10 +410,20 @@ export function ChatPane() {
         });
         setMessages(formattedMessages);
       } catch (error) {
-        console.error("Failed to load chat history", error);
+        if (!isCancelled) {
+          console.error("Failed to load chat history", error);
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsInitialLoading(false);
+        }
       }
     }
     loadHistory();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [activeChatId]);
 
   const handleSourceClick = (citations: ChatMessage["citations"]) => {
@@ -425,9 +478,14 @@ export function ChatPane() {
         abortControllerRef.current = abortController;
 
         console.log("sending fetch");
+        const token = useAuthStore.getState().token;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         const response = await fetch("/api/py/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             message: message.text,
             chatId: activeChatId,
@@ -557,38 +615,49 @@ export function ChatPane() {
   const handleRetry = () => {
     console.log("Retrying...");
   };
-
+  console.log("layoutSize", containerWidth);
   return (
+    <>
+    {isInitialLoading && (
+      <div className="flex flex-col pb-40 items-center justify-center h-full max-w-3xl mx-auto w-full bg-background p-6">
+        <KesherLoader size={78} />
+      </div>
+    )}
+    {messages.length === 0 && !isInitialLoading && (
+    <div className="flex flex-col pb-40 items-center justify-center h-full max-w-3xl mx-auto w-full bg-background p-6 ">
+      <div className="">
+        <ConversationEmptyState
+          className="pb-5"
+          icon={
+            <Image
+              src="/kesher.png"
+              alt="Kesher"
+              width={78}
+              height={78}
+              className="h-22 w-22 text-muted-foreground/50"
+            />
+          }
+          title="ברוך הבה לקשר"
+          description="המקום שבו אפשר לחפש ולעיין בכל התורה כולה במשפט אחד"
+        />
+      </div>
+      <BotImputArea textareaRef={textareaRef} handleSubmit={handleSubmit} />
+      </div>
+    )}
     <div
-      className={`flex flex-col h-full max-w-3xl ${RTL_TEXT_CLASS} mx-auto w-full bg-background p-6`}
+      ref={containerRef}
+      className={`flex flex-col h-full max-w-3xl mx-auto w-full bg-background p-6 pb-4`}
+      dir={direction}
     >
-      <Conversation>
-        <div className="h-fit">
-          <ConversationContent className="h-full" dir="rtl">
-            {messages.length === 0 ? (
-              <ConversationEmptyState
-                icon={
-                  <Image
-                    src="/kesher.png"
-                    alt="Kesher"
-                    width={48}
-                    height={48}
-                    className="h-12 w-12 text-muted-foreground/50"
-                  />
-                }
-                title="ברוך הבה לקשר"
-                description="המקום שבו אפשר לחפש ולעיין בכל התורה כולה במשפט אחד"
-              />
-            ) : (
-              messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex w-full ${
-                    msg.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  {msg.role === "assistant" && (
-                    <div className="shrink-0 ml-4">
+      <ConversationContent>
+        
+          {messages.length > 0 && messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex w-full`}
+            >
+                  {msg.role === "assistant" && containerWidth >= 550 && (
+                    <div className={cn("shrink-0", direction === "rtl" ? "ml-2" : "mr-4")}>
                       <Image
                         src="/kesher.png"
                         alt="Kesher"
@@ -601,9 +670,8 @@ export function ChatPane() {
                   )}
                   <Message
                     from={msg.role}
-                    className={`max-w-3xl ${
-                      msg.role === "user" ? "mr-auto" : "ml-0"
-                    }`}
+                    className="max-w-3xl"
+                    dir={direction}
                   >
                     {msg.role === "user" &&
                       msg.attachments &&
@@ -618,19 +686,19 @@ export function ChatPane() {
                         </MessageAttachments>
                       )}
 
-                    <MessageContent>
+                    <MessageContent dir={direction}>
                       {msg.role === "assistant" ? (
                         <>
                           {msg.reasoningSteps &&
                             msg.reasoningSteps.length > 0 && (
                               <div className="space-y-2">
                                 <ChainOfThought
-                                  className="text-right"
-                                  dir="rtl"
+                                  dir={direction}
+                                  className={direction === "rtl" ? "text-right" : "text-left"}
                                   defaultOpen={false}
                                 >
                                   <ChainOfThoughtHeader
-                                    dir="rtl"
+                                    dir={direction}
                                     renderLabel={() => {
                                       const thinkingLabel = buildThinkingLabel(
                                         msg.thinkingDurationMs
@@ -647,19 +715,20 @@ export function ChatPane() {
                                     return latestLabel ?? "חושב...";
                                     }}
                                   />
-                                  <ChainOfThoughtContent>
+                                  <ChainOfThoughtContent dir={direction}>
                                     <ReasoningStepsList
                                       key={`reasoning-${msg.id}`}
                                       steps={msg.reasoningSteps}
                                       cacheKey={msg.id}
                                       onSourceClick={handleSourceClick}
+                                      direction={direction}
                                     />
                                   </ChainOfThoughtContent>
                                 </ChainOfThought>
                               </div>
                             )}
 
-                          <div className="text-right" dir="rtl">
+                          <div className="" dir={direction}>
                             <MessageResponse>{msg.content}</MessageResponse>
                           </div>
 
@@ -690,7 +759,7 @@ export function ChatPane() {
                           )}
                         </>
                       ) : (
-                        <div className="text-right" dir="rtl">
+                        <div className="" dir={direction}>
                           {msg.content}
                         </div>
                       )}
@@ -745,125 +814,104 @@ export function ChatPane() {
                       </MessageActions>
                     )}
                   </Message>
-                </div>
-              ))
+            </div>
+          ))
+        }
+        {isLoading && (
+          <div className="flex w-full" dir={direction}>
+            {containerWidth >= 550 && (
+              <div className={cn("shrink-0", direction === "rtl" ? "ml-4" : "mr-4")}>
+                <Image
+                  src="/kesher.png"
+                  alt="Kesher"
+                  width={40}
+                  height={40}
+                  className="h-6 w-6 rounded-md object-cover hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                  priority
+                />
+              </div>
             )}
-            {isLoading && (
-              <div className="flex w-full justify-start">
-                <div className="shrink-0 ml-4">
-                  <Image
-                    src="/kesher.png"
-                    alt="Kesher"
-                    width={40}
-                    height={40}
-                    className="h-6 w-6 rounded-md object-cover hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
-                    priority
-                  />
-                </div>
-                <Message from="assistant" className="max-w-3xl ml-0">
-                  <MessageContent>
-                    {/* Streaming Reasoning */}
-                    {currentReasoning && currentReasoning.length > 0 && (
-                      <div className="mb-1 space-y-4">
-                        <ChainOfThought defaultOpen={false}>
-                          <ChainOfThoughtHeader
-                            renderLabel={({ isOpen }) => {
-                              if (isOpen) {
+            <Message from="assistant" className="max-w-3xl" dir={direction}>
+              <MessageContent>
+                {/* Streaming Reasoning */}
+                {currentReasoning && currentReasoning.length > 0 && (
+                  <div className="mb-1 space-y-4">
+                    <ChainOfThought defaultOpen={false} dir={direction}>
+                      <ChainOfThoughtHeader
+                        renderLabel={({ isOpen }) => {
+                          if (isOpen) {
+                            return (
+                              <Shimmer as="span" className="text-sm">
+                                חושב
+                              </Shimmer>
+                            );
+                          }
+                          const thinkingLabel = buildThinkingLabel(
+                            lastThinkingDurationMs
+                          );
+                          if (thinkingLabel) {
+                            return thinkingLabel;
+                          }
+                          if (currentReasoning.length > 0) {
+                            const latestStep =
+                              currentReasoning[
+                                currentReasoning.length - 1
+                              ];
+                            const formattedLabel =
+                              formatReasoningStepLabel(latestStep);
+                            if (formattedLabel) {
+                              if (typeof formattedLabel === "string") {
                                 return (
                                   <Shimmer as="span" className="text-sm">
-                                    חושב
+                                    {formattedLabel}
                                   </Shimmer>
                                 );
                               }
-                              const thinkingLabel = buildThinkingLabel(
-                                lastThinkingDurationMs
-                              );
-                              if (thinkingLabel) {
-                                return thinkingLabel;
-                              }
-                              if (currentReasoning.length > 0) {
-                                const latestStep =
-                                  currentReasoning[
-                                    currentReasoning.length - 1
-                                  ];
-                                const formattedLabel =
-                                  formatReasoningStepLabel(latestStep);
-                                if (formattedLabel) {
-                                  if (typeof formattedLabel === "string") {
-                                    return (
-                                      <Shimmer as="span" className="text-sm">
-                                        {formattedLabel}
-                                      </Shimmer>
-                                    );
-                                  }
-                                  return formattedLabel;
-                                }
-                              }
-                              return "חושב...";
-                            }}
-                          />
-                          <ChainOfThoughtContent>
-                            <ReasoningStepsList
-                              key={`streaming-${activeChatId || "new"}`}
-                              steps={currentReasoning}
-                              cacheKey={`streaming-${activeChatId || "new"}`}
-                              onSourceClick={handleSourceClick}
-                            />
-                          </ChainOfThoughtContent>
-                        </ChainOfThought>
-                      </div>
-                    )}
+                              return formattedLabel;
+                            }
+                          }
+                          return "חושב...";
+                        }}
+                      />
+                      <ChainOfThoughtContent>
+                        <ReasoningStepsList
+                          key={`streaming-${activeChatId || "new"}`}
+                          steps={currentReasoning}
+                          cacheKey={`streaming-${activeChatId || "new"}`}
+                          onSourceClick={handleSourceClick}
+                          direction={direction}
+                        />
+                      </ChainOfThoughtContent>
+                    </ChainOfThought>
+                  </div>
+                )}
 
-                    <div className="text-right" dir="rtl">
-                      <MessageResponse>{streamingContent}</MessageResponse>
-                    </div>
-                  </MessageContent>
-                </Message>
-              </div>
-            )}
-          </ConversationContent>
+                <div className="" dir={direction}>
+                  <MessageResponse>{streamingContent}</MessageResponse>
+                </div>
+              </MessageContent>
+            </Message>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
+      </ConversationContent>
 
-          <div ref={messagesEndRef} />
-          {/* Scroll to Bottom Button - uses Conversation's built-in context */}
-          <ConversationScrollButton />
-        </div>
-      </Conversation>
+      {/* Scroll to Bottom Button - uses Conversation's built-in context */}
+      <ConversationScrollButton />
 
       {/* Fixed Input Area */}
-      <div dir="rtl" className={`w-full max-w-3xl mx-auto ${RTL_TEXT_CLASS}`}>
-        <PromptInputProvider>
-          <PromptInput
-            onSubmit={handleSubmit}
-            className={`relative ${RTL_TEXT_CLASS}`}
-          >
-            <PromptInputAttachments>
-              {(attachment) => <NewPromptInputAttachment data={attachment} />}
-            </PromptInputAttachments>
-            <PromptInputBody>
-              <PromptInputTextarea
-                ref={textareaRef}
-                className={RTL_TEXT_CLASS}
-              />
-            </PromptInputBody>
-            <PromptInputFooter>
-              <PromptInputTools>
-                <PromptInputActionMenu>
-                  <PromptInputActionMenuTrigger />
-                  <PromptInputActionMenuContent>
-                    <PromptInputActionAddAttachments />
-                  </PromptInputActionMenuContent>
-                </PromptInputActionMenu>
-                <PromptInputSpeechButton textareaRef={textareaRef} />
-                <PromptInputButton>
-                  <GlobeIcon size={16} />
-                  <span>Search</span>
-                </PromptInputButton>
-              </PromptInputTools>
-              <PromptInputSubmit />
-            </PromptInputFooter>
-          </PromptInput>
-        </PromptInputProvider>
-      </div>
+        <BotImputArea className="w-full max-w-3xl px-4 mx-auto" textareaRef={textareaRef} handleSubmit={handleSubmit} />
+
     </div>
+    </>
+  );
+}
+
+export function ChatPane() {
+  return (
+    <Conversation>
+      <ChatContent />
+    </Conversation>
   );
 }

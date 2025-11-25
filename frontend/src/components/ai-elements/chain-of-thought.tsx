@@ -154,7 +154,7 @@ export const ChainOfThoughtStep = memo(
     return (
       <div
         className={cn(
-          "flex gap-2 text-sm",
+          "flex gap-2 text-sm ",
           statusStyles[status],
           "fade-in-0 slide-in-from-top-2 animate-in",
           className
@@ -165,14 +165,13 @@ export const ChainOfThoughtStep = memo(
           <Icon className={Icon === DotIcon ? 'size-4 scale-175' : 'size-4'} />
           <div className="-mx-px absolute top-7 bottom-0 left-1/2 w-px bg-border" />
         </div>
-        <div className="flex-1 space-y-2" dir="rtl">
+        <div className="flex-1 space-y-2" dir={props.dir}>
           {isCollapsible ? (
             <button
               type="button"
-              dir="rtl"
               onClick={onToggle}
               aria-expanded={isExpanded}
-              className="w-full cursor-pointer bg-transparent p-0 text-right text-current focus-visible:outline-none"
+              className={cn("w-full cursor-pointer bg-transparent p-0 text-current focus-visible:outline-none", props.dir === "rtl" ? "text-right" : "text-left")}
             >
               {labelContent}
             </button>

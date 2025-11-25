@@ -4,7 +4,6 @@ import * as React from "react"
 import { Check, Moon, Sun, Palette } from "lucide-react"
 import { useTheme } from "next-themes"
 
-import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -15,11 +14,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { themes } from "@/lib/themes"
+import { useDirection } from "@/components/direction-provider"
 
 export function ThemeCustomizer() {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = React.useState(false)
   const [activeColorTheme, setActiveColorTheme] = React.useState("default")
+  const { direction } = useDirection()
 
   React.useEffect(() => {
     setMounted(true)
@@ -43,7 +44,7 @@ export function ThemeCustomizer() {
   }
 
   return (
-    <DropdownMenu dir="rtl">
+    <DropdownMenu dir={direction}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="h-9 w-9">
           <Palette className="h-4 w-4" />

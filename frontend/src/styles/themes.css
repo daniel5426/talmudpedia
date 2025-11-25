@@ -1,6 +1,7 @@
 @layer base {
   /* Default Theme (Zinc-like) */
   [data-theme="default"] {
+    --background: oklch(1 0 0);
     --primary: oklch(0.205 0 0);
     --primary-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.205 0 0);
@@ -8,6 +9,7 @@
   }
 
   [data-theme="default"].dark {
+    --background: oklch(0.145 0 0);
     --primary: oklch(0.985 0 0);
     --primary-foreground: oklch(0.205 0 0);
     --sidebar-primary: oklch(0.985 0 0);
