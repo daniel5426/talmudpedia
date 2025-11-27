@@ -15,7 +15,7 @@ const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps>(
       matte: "border border-gray-300/40 dark:border-gray-700/40 backdrop-blur-sm bg-white/40 dark:bg-gray-900/50 ",
       matte_dark: "border text-white border-gray-700/40 backdrop-blur-sm bg-gray-900/50 ",
       no_glass: "border bg-background dark:border-white/10 rounded-sm",
-      no_border: " hover:bg-accent bg-primary-foreground dark:border-white/10 rounded-sm",
+      no_border: " hover:bg-accent bg-background  dark:border-white/10 rounded-sm",
     }
 
     return (

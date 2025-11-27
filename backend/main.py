@@ -24,6 +24,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 
+# Add CORS middleware
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 from app.endpoints.auth import router as auth_router
 from app.api.routers.admin import router as admin_router
 

@@ -76,3 +76,93 @@ class ChatEndpoints:
             raise HTTPException(status_code=404, detail="Chat not found")
         return {"status": "deleted"}
 
+    @staticmethod
+    @router.patch("/{chat_id}/messages/{message_index}")
+    async def update_message_feedback(
+        chat_id: str,
+        message_index: int,
+        liked: Optional[bool] = None,
+        disliked: Optional[bool] = None,
+        current_user: User = Depends(get_current_user)
+    ):
+        """Updates the feedback (like/dislike) for a specific message."""
+        db = MongoDatabase.get_db()
+        try:
+            query = {"_id": ObjectId(chat_id)}
+            if current_user.role != "admin":
+                query["user_id"] = str(current_user.id)
+            
+            # Build update fields
+            update_fields = {}
+            if liked is not None:
+                update_fields[f"messages.{message_index}.liked"] = liked
+            if disliked is not None:
+                update_fields[f"messages.{message_index}.disliked"] = disliked
+            
+            if not update_fields:
+                raise HTTPException(status_code=400, detail="No feedback provided")
+            
+            result = await db.chats.update_one(
+                query,
+                {"$set": update_fields}
+            )
+            
+            if result.matched_count == 0:
+                raise HTTPException(status_code=404, detail="Chat not found")
+            
+            return {"status": "updated"}
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @staticmethod
+    @router.delete("/{chat_id}/messages/last-assistant")
+    async def delete_last_assistant_message(
+        chat_id: str,
+        current_user: User = Depends(get_current_user)
+    ):
+        """Deletes the last assistant message from a chat (for retry functionality)."""
+        db = MongoDatabase.get_db()
+        try:
+            query = {"_id": ObjectId(chat_id)}
+            if current_user.role != "admin":
+                query["user_id"] = str(current_user.id)
+            
+            # Get the chat
+            chat_doc = await db.chats.find_one(query)
+            if not chat_doc:
+                raise HTTPException(status_code=404, detail="Chat not found")
+            
+            chat = Chat(**chat_doc)
+            
+            # Find the last assistant message
+            last_assistant_index = None
+            for i in range(len(chat.messages) - 1, -1, -1):
+                if chat.messages[i].role == "assistant":
+                    last_assistant_index = i
+                    break
+            
+            if last_assistant_index is None:
+                raise HTTPException(status_code=404, detail="No assistant message found")
+            
+            # Remove the message
+            chat.messages.pop(last_assistant_index)
+            
+            # Update the database
+            await db.chats.update_one(
+                query,
+                {
+                    "$set": {
+                        "messages": [msg.model_dump() for msg in chat.messages],
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+            
+            return {"status": "deleted", "message_index": last_assistant_index}
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(status_code=500, detail=str(e))
+

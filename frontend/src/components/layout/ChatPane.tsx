@@ -5,6 +5,7 @@ import React, {
   useRef,
   useEffect,
   useCallback,
+  useMemo,
   type ReactNode,
 } from "react";
 import type { FileUIPart } from "ai";
@@ -15,7 +16,6 @@ import { useAuthStore } from "@/lib/store/useAuthStore";
 import {
   Conversation,
   ConversationContent,
-  ConversationEmptyState,
   ConversationScrollButton,
   useStickToBottomContext,
 } from "@/components/ai-elements/conversation";
@@ -29,23 +29,6 @@ import {
   MessageAttachments,
   MessageAttachment,
 } from "@/components/ai-elements/message";
-import {
-  PromptInput,
-  PromptInputTextarea,
-  PromptInputBody,
-  PromptInputFooter,
-  PromptInputTools,
-  PromptInputActionMenu,
-  PromptInputActionMenuTrigger,
-  PromptInputActionMenuContent,
-  PromptInputActionAddAttachments,
-  PromptInputButton,
-  PromptInputProvider,
-  PromptInputAttachments,
-  PromptInputAttachment as NewPromptInputAttachment,
-  PromptInputSubmit,
-  PromptInputSpeechButton,
-} from "@/components/ai-elements/prompt-input";
 import {
   InlineCitation,
   InlineCitationCard,
@@ -65,7 +48,6 @@ import {
   RefreshCcwIcon,
   ThumbsUpIcon,
   ThumbsDownIcon,
-  GlobeIcon,
   SearchIcon,
   DotIcon,
 } from "lucide-react";
@@ -74,7 +56,8 @@ import { nanoid } from "nanoid";
 import Image from "next/image";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotImputArea } from "@/components/BotImputArea";
-import { KesherLoader } from "@/components/kesher-loader";
+import { ChatLandingEmptyState } from "@/components/layout/ChatLandingEmptyState";
+import { usePathname, useSearchParams } from "next/navigation";
 
 interface ChatMessage {
   id: string;
@@ -89,8 +72,13 @@ interface ChatMessage {
     icon: LucideIcon;
     description?: string;
     citations?: Array<{ title: string; url: string; description: string }>;
+    query?: string;
+    sources?: Array<Record<string, unknown>>;
   }>;
   thinkingDurationMs?: number;
+  liked?: boolean;
+  disliked?: boolean;
+  messageIndex?: number; // Index in the database messages array
 }
 
 const normalizeReasoningStatus = (
@@ -184,16 +172,30 @@ const formatReasoningStepLabel = (step?: ReasoningStep): ReactNode => {
   if (!step) {
     return null;
   }
-  if (typeof step.label === "string" && step.label === "Retrieval") {
+  
+  // Handle Retrieval steps with new data format
+  if (typeof step.label === "string" && step.label.toLowerCase().includes("retrieval")) {
+    // Check if we have the query field (new format)
+    const stepData = step as any;
+    if (stepData.query !== undefined) {
+      if (step.status === "pending") {
+        return `מחפש "${stepData.query}"`;
+      } else if (step.status === "complete" && stepData.sources) {
+        return `מצא ${stepData.sources.length} מקורות`;
+      }
+    }
+    // Fallback to old format
     if (step.status === "complete") {
       const citationCount = step.citations?.length ?? 0;
-      return `מצה ${citationCount} מקורות`;
+      return `מצא ${citationCount} מקורות`;
     }
     return "מחפש מקורות";
   }
+  
   if (typeof step.label === "string" && step.label === "Analysis") {
-    return "מפענך את השאלה";
+    return "מפענח את השאלה";
   }
+  
   return step.label;
 };
 
@@ -237,6 +239,9 @@ const ReasoningStepsList = ({
     <>
       {steps.map((step, idx) => {
         const expanded = overrides[idx] ?? idx === latestIndex;
+        const stepData = step as any;
+        const isRetrievalStep = typeof step.label === "string" && step.label.toLowerCase().includes("retrieval");
+        
         return (
           <ChainOfThoughtStep
             key={`${cacheKey}-${idx}`}
@@ -249,6 +254,11 @@ const ReasoningStepsList = ({
             onToggle={() => toggleStep(idx)}
             dir={direction}
           >
+            {expanded && isRetrievalStep && step.status === "complete" && stepData.query && (
+              <div className="mt-2 text-sm text-muted-foreground">
+                <span>שאילתה: {stepData.query}</span>
+              </div>
+            )}
             {expanded && step.citations && step.citations.length > 0 && (
               <div className="mt-2">
                 <InlineCitation className="cursor-pointer">
@@ -290,7 +300,6 @@ function ChatContent() {
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [streamingContent, setStreamingContent] = useState("");
   const [currentReasoning, setCurrentReasoning] = useState<
     ChatMessage["reasoningSteps"]
@@ -302,6 +311,19 @@ function ChatContent() {
     number | null
   >(null);
   const [containerWidth, setContainerWidth] = useState<number>(1000);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const chatIdFromQuery = searchParams.get("chatId");
+  const chatIdFromPath = useMemo(() => {
+    if (!pathname) return null;
+    const match = pathname.match(/\/chat[s]?\/([^/]+)/);
+    return match ? match[1] : null;
+  }, [pathname]);
+  const resolvedChatId = activeChatId || chatIdFromQuery || chatIdFromPath;
+  const shouldShowEmptyState = !resolvedChatId && messages.length === 0;
+  const isHomeRoute = pathname === "/" || pathname === "/home";
+  const showHomeEmptyState = shouldShowEmptyState && isHomeRoute;
   
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -328,7 +350,6 @@ function ChatContent() {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         setContainerWidth(entry.contentRect.width);
@@ -350,10 +371,6 @@ function ChatContent() {
         return;
       }
 
-      if (!isCancelled) {
-        setIsInitialLoading(true);
-      }
-
       // Abort any ongoing request when switching chats
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -363,7 +380,6 @@ function ChatContent() {
       if (!activeChatId) {
         if (!isCancelled) {
           setMessages([]);
-          setIsInitialLoading(false);
         }
         return;
       }
@@ -373,23 +389,25 @@ function ChatContent() {
         if (isCancelled) {
           return;
         }
-        const formattedMessages: ChatMessage[] = history.messages.map((msg) => {
+        const formattedMessages: ChatMessage[] = history.messages.map((msg, index) => {
           const reasoningStepsRaw = msg.reasoning_steps
             ? msg.reasoning_steps.map((step: any) => {
                 const baseCitations = Array.isArray(step.citations)
                   ? step.citations
                   : undefined;
                 const fallbackCitations =
-                  step.step === "Retrieval" &&
+                  step.step.toLowerCase().includes("retrieval") &&
                   (!baseCitations || baseCitations.length === 0)
                     ? msg.citations
                     : baseCitations;
                 return {
                   label: step.step,
                   status: normalizeReasoningStatus(step.status),
-                  icon: step.step === "Retrieval" ? SearchIcon : DotIcon,
+                  icon: step.step.toLowerCase().includes("retrieval") ? SearchIcon : DotIcon,
                   description: step.message,
                   citations: fallbackCitations,
+                  query: step.query,
+                  sources: step.sources,
                 };
               })
             : [];
@@ -397,25 +415,42 @@ function ChatContent() {
             reasoningStepsRaw.length > 0
               ? mergeReasoningSteps(reasoningStepsRaw, { finalize: true })
               : [];
-          return {
+            return {
             id: nanoid(),
             role: msg.role,
             content: msg.content,
             createdAt: new Date(), // In a real app, use msg.created_at
             citations: msg.citations,
+            attachments: msg.attachments
+              ? msg.attachments.map((att: any) => ({
+                  type: "file",
+                  mediaType: att.type,
+                  filename: att.name,
+                  url: `data:${att.type};base64,${att.content}`,
+                }))
+              : undefined,
             reasoningSteps:
               reasoningSteps.length > 0 ? reasoningSteps : undefined,
             thinkingDurationMs: (msg as any).thinking_duration_ms ?? undefined,
+            liked: (msg as any).liked,
+            disliked: (msg as any).disliked,
+            messageIndex: index,
           };
         });
         setMessages(formattedMessages);
+        
+        // Initialize liked/disliked state from loaded messages
+        const likedState: Record<string, boolean> = {};
+        const dislikedState: Record<string, boolean> = {};
+        formattedMessages.forEach((msg) => {
+          if (msg.liked) likedState[msg.id] = true;
+          if (msg.disliked) dislikedState[msg.id] = true;
+        });
+        setLiked(likedState);
+        setDisliked(dislikedState);
       } catch (error) {
         if (!isCancelled) {
           console.error("Failed to load chat history", error);
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsInitialLoading(false);
         }
       }
     }
@@ -440,6 +475,37 @@ function ChatContent() {
     }));
     setSourceList(sources);
     setSourceListOpen(true);
+  };
+
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // Save what we have so far if there is any content
+    if (streamingContent || (currentReasoning && currentReasoning.length > 0) || (citationsRef.current && citationsRef.current.length > 0)) {
+      const partialMessage: ChatMessage = {
+        id: nanoid(),
+        role: "assistant",
+        content: streamingContent,
+        createdAt: new Date(),
+        citations: citationsRef.current,
+        reasoningSteps: (() => {
+          const merged = mergeReasoningSteps(reasoningRef.current, {
+            finalize: true,
+          });
+          return merged.length > 0 ? merged : undefined;
+        })(),
+        thinkingDurationMs: thinkingDurationRef.current ?? undefined,
+      };
+      
+      setMessages((prev) => [...prev, partialMessage]);
+    }
+
+    setIsLoading(false);
+    setStreamingContent("");
+    setCurrentReasoning([]);
   };
 
   const handleSubmit = async (message: {
@@ -483,12 +549,37 @@ function ChatContent() {
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
         }
+        const processedFiles = await Promise.all(
+          message.files.map(async (file) => {
+            // Fetch the blob from the blob URL
+            const response = await fetch(file.url);
+            const blob = await response.blob();
+            
+            return new Promise<{ name: string; type: string; content: string }>(
+              (resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const base64 = (reader.result as string).split(",")[1];
+                  resolve({
+                    name: file.filename || "attachment",
+                    type: file.mediaType || "application/octet-stream",
+                    content: base64,
+                  });
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+              }
+            );
+          })
+        );
+
         const response = await fetch("/api/py/chat", {
           method: "POST",
           headers,
           body: JSON.stringify({
             message: message.text,
             chatId: activeChatId,
+            files: processedFiles,
           }),
           signal: abortController.signal,
         });
@@ -546,10 +637,12 @@ function ChatContent() {
                 const step = {
                   label: stepData.step,
                   status: stepData.status,
-                  icon: stepData.step === "Retrieval" ? SearchIcon : DotIcon,
+                  icon: stepData.step.toLowerCase().includes("retrieval") ? SearchIcon : DotIcon,
                   description: stepData.message,
                   citations: stepData.citations,
-                };
+                  query: stepData.query,
+                  sources: stepData.sources,
+                } as any;
 
                 setCurrentReasoning((prev) => {
                   const existing = prev || [];
@@ -608,48 +701,123 @@ function ChatContent() {
     })();
   };
 
-  const handleCopy = (content: string) => {
+  const handleCopy = (content: string, messageId: string) => {
     navigator.clipboard.writeText(content);
+    setCopiedMessageId(messageId);
+    setTimeout(() => setCopiedMessageId(null), 200);
   };
 
-  const handleRetry = () => {
-    console.log("Retrying...");
+  const handleLike = async (msg: ChatMessage) => {
+    if (!activeChatId || msg.messageIndex === undefined) return;
+    
+    const newLikedState = !liked[msg.id];
+    
+    // Optimistically update UI
+    setLiked((prev) => ({
+      ...prev,
+      [msg.id]: newLikedState,
+    }));
+    
+    // If liking, remove dislike
+    if (newLikedState) {
+      setDisliked((prev) => ({
+        ...prev,
+        [msg.id]: false,
+      }));
+    }
+    
+    try {
+      await api.updateMessageFeedback(activeChatId, msg.messageIndex, {
+        liked: newLikedState,
+        disliked: newLikedState ? false : undefined,
+      });
+    } catch (error) {
+      console.error("Failed to update like status", error);
+      // Revert on error
+      setLiked((prev) => ({
+        ...prev,
+        [msg.id]: !newLikedState,
+      }));
+    }
+  };
+
+  const handleDislike = async (msg: ChatMessage) => {
+    if (!activeChatId || msg.messageIndex === undefined) return;
+    
+    const newDislikedState = !disliked[msg.id];
+    
+    // Optimistically update UI
+    setDisliked((prev) => ({
+      ...prev,
+      [msg.id]: newDislikedState,
+    }));
+    
+    // If disliking, remove like
+    if (newDislikedState) {
+      setLiked((prev) => ({
+        ...prev,
+        [msg.id]: false,
+      }));
+    }
+    
+    try {
+      await api.updateMessageFeedback(activeChatId, msg.messageIndex, {
+        disliked: newDislikedState,
+        liked: newDislikedState ? false : undefined,
+      });
+    } catch (error) {
+      console.error("Failed to update dislike status", error);
+      // Revert on error
+      setDisliked((prev) => ({
+        ...prev,
+        [msg.id]: !newDislikedState,
+      }));
+    }
+  };
+
+  const handleRetry = async (msg: ChatMessage) => {
+    if (!activeChatId || !msg.content) return;
+    
+    // Find the user message that prompted this assistant response
+    const msgIndex = messages.findIndex(m => m.id === msg.id);
+    if (msgIndex <= 0) return; // Need a previous user message
+    
+    const userMessage = messages[msgIndex - 1];
+    if (userMessage.role !== "user") return;
+    
+    try {
+      // Delete the last assistant message from the database
+      await api.deleteLastAssistantMessage(activeChatId);
+      
+      // Remove the assistant message from UI (keep everything before it)
+      setMessages((prev) => prev.slice(0, msgIndex));
+      
+      // Resubmit the user message
+      await handleSubmit({
+        text: userMessage.content,
+        files: userMessage.attachments || [],
+      });
+    } catch (error) {
+      console.error("Failed to retry message", error);
+    }
   };
   console.log("layoutSize", containerWidth);
   return (
     <>
-    {isInitialLoading && (
-      <div className="flex flex-col pb-40 items-center justify-center h-full max-w-3xl mx-auto w-full bg-background p-6">
-        <KesherLoader size={78} />
-      </div>
-    )}
-    {messages.length === 0 && !isInitialLoading && (
-    <div className="flex flex-col pb-40 items-center justify-center h-full max-w-3xl mx-auto w-full bg-background p-6 ">
-      <div className="">
-        <ConversationEmptyState
-          className="pb-5"
-          icon={
-            <Image
-              src="/kesher.png"
-              alt="Kesher"
-              width={78}
-              height={78}
-              className="h-22 w-22 text-muted-foreground/50"
-            />
-          }
-          title="ברוך הבה לקשר"
-          description="המקום שבו אפשר לחפש ולעיין בכל התורה כולה במשפט אחד"
-        />
-      </div>
-      <BotImputArea textareaRef={textareaRef} handleSubmit={handleSubmit} />
-      </div>
+    {showHomeEmptyState && (
+      <ChatLandingEmptyState
+        textareaRef={textareaRef}
+        handleSubmit={handleSubmit}
+        isLoading={isLoading}
+        onStop={handleStop}
+      />
     )}
     <div
       ref={containerRef}
-      className={`flex flex-col h-full max-w-3xl mx-auto w-full bg-background p-6 pb-4`}
+      className={`flex flex-col h-full px-4 pt-4 max-w-3xl mx-auto w-full bg-background pb-4`}
       dir={direction}
     >
-      <ConversationContent>
+      <ConversationContent className="p-0">
         
           {messages.length > 0 && messages.map((msg) => (
             <div
@@ -657,7 +825,7 @@ function ChatContent() {
               className={`flex w-full`}
             >
                   {msg.role === "assistant" && containerWidth >= 550 && (
-                    <div className={cn("shrink-0", direction === "rtl" ? "ml-2" : "mr-4")}>
+                    <div className={cn("shrink-0", direction === "rtl" ? "ml-2" : "mr-2")}>
                       <Image
                         src="/kesher.png"
                         alt="Kesher"
@@ -676,7 +844,7 @@ function ChatContent() {
                     {msg.role === "user" &&
                       msg.attachments &&
                       msg.attachments.length > 0 && (
-                        <MessageAttachments className="mb-2">
+                        <MessageAttachments dir={direction} className="mb-2">
                           {msg.attachments.map((attachment) => (
                             <MessageAttachment
                               data={attachment}
@@ -729,7 +897,39 @@ function ChatContent() {
                             )}
 
                           <div className="" dir={direction}>
-                            <MessageResponse>{msg.content}</MessageResponse>
+                            <MessageResponse
+                              components={{
+                                a: ({ href, children, ...props }) => {
+                                  if (href?.startsWith("#citation-")) {
+                                    const title = href.replace("#citation-", "");
+                                    const citation = msg.citations?.find(
+                                      (c) => c.title === title
+                                    );
+                                    if (citation) {
+                                      return (
+                                        <a
+                                          {...props}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            handleSourceClick([citation]);
+                                          }}
+                                          className="cursor-pointer text-blue-500 hover:underline"
+                                        >
+                                          {children}
+                                        </a>
+                                      );
+                                    }
+                                  }
+                                  return (
+                                    <a {...props} href={href}>
+                                      {children}
+                                    </a>
+                                  );
+                                },
+                              }}
+                            >
+                              {msg.content.replace(/\(citation:/g, "(#citation-")}
+                            </MessageResponse>
                           </div>
 
                           {/* Citations */}
@@ -769,19 +969,14 @@ function ChatContent() {
                       <MessageActions>
                         <MessageAction
                           label="Retry"
-                          onClick={handleRetry}
+                          onClick={() => handleRetry(msg)}
                           tooltip="Regenerate response"
                         >
                           <RefreshCcwIcon className="size-4" />
                         </MessageAction>
                         <MessageAction
                           label="Like"
-                          onClick={() =>
-                            setLiked((prev) => ({
-                              ...prev,
-                              [msg.id]: !prev[msg.id],
-                            }))
-                          }
+                          onClick={() => handleLike(msg)}
                           tooltip="Like this response"
                         >
                           <ThumbsUpIcon
@@ -791,12 +986,7 @@ function ChatContent() {
                         </MessageAction>
                         <MessageAction
                           label="Dislike"
-                          onClick={() =>
-                            setDisliked((prev) => ({
-                              ...prev,
-                              [msg.id]: !prev[msg.id],
-                            }))
-                          }
+                          onClick={() => handleDislike(msg)}
                           tooltip="Dislike this response"
                         >
                           <ThumbsDownIcon
@@ -806,10 +996,13 @@ function ChatContent() {
                         </MessageAction>
                         <MessageAction
                           label="Copy"
-                          onClick={() => handleCopy(msg.content || "")}
-                          tooltip="Copy to clipboard"
+                          onClick={() => handleCopy(msg.content || "", msg.id)}
+                          tooltip={copiedMessageId === msg.id ? "Copied!" : "Copy to clipboard"}
                         >
-                          <CopyIcon className="size-4" />
+                          <CopyIcon className={cn(
+                            "size-4 transition-all",
+                            copiedMessageId === msg.id && "scale-125 text-green-500"
+                          )} />
                         </MessageAction>
                       </MessageActions>
                     )}
@@ -820,7 +1013,7 @@ function ChatContent() {
         {isLoading && (
           <div className="flex w-full" dir={direction}>
             {containerWidth >= 550 && (
-              <div className={cn("shrink-0", direction === "rtl" ? "ml-4" : "mr-4")}>
+              <div className={cn("shrink-0", direction === "rtl" ? "ml-2" : "mr-2")}>
                 <Image
                   src="/kesher.png"
                   alt="Kesher"
@@ -901,7 +1094,13 @@ function ChatContent() {
       <ConversationScrollButton />
 
       {/* Fixed Input Area */}
-        <BotImputArea className="w-full max-w-3xl px-4 mx-auto" textareaRef={textareaRef} handleSubmit={handleSubmit} />
+        <BotImputArea 
+          className="" 
+          textareaRef={textareaRef} 
+          handleSubmit={handleSubmit} 
+          isLoading={isLoading} 
+          onStop={handleStop} 
+        />
 
     </div>
     </>

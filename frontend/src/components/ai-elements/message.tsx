@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
-import { Streamdown } from "streamdown";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -305,6 +304,8 @@ export const MessageBranchPage = ({
   );
 };
 
+import { Streamdown } from "streamdown";
+
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 export const MessageResponse = memo(
@@ -317,7 +318,10 @@ export const MessageResponse = memo(
       {...props}
     />
   ),
-  (prevProps, nextProps) => prevProps.children === nextProps.children
+  (prevProps, nextProps) => 
+    prevProps.children === nextProps.children &&
+    // @ts-ignore - Streamdown might not have typed components prop perfectly or we want to be loose here
+    prevProps.components === nextProps.components
 );
 
 MessageResponse.displayName = "MessageResponse";
@@ -343,7 +347,8 @@ export function MessageAttachment({
   return (
     <div
       className={cn(
-        "group relative size-24 overflow-hidden rounded-lg",
+        "group relative overflow-hidden rounded-lg border bg-background",
+        isImage ? "size-24" : "flex h-16 w-48 items-center gap-2 p-2",
         className
       )}
       {...props}
@@ -353,14 +358,12 @@ export function MessageAttachment({
           <img
             alt={filename || "attachment"}
             className="size-full object-cover"
-            height={100}
             src={data.url}
-            width={100}
           />
           {onRemove && (
             <Button
               aria-label="Remove attachment"
-              className="absolute top-2 right-2 size-6 rounded-full bg-background/80 p-0 opacity-0 backdrop-blur-sm transition-opacity hover:bg-background group-hover:opacity-100 [&>svg]:size-3"
+              className="absolute top-1 right-1 size-6 rounded-full bg-background/80 p-0 opacity-0 backdrop-blur-sm transition-opacity hover:bg-background group-hover:opacity-100 [&>svg]:size-3"
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove();
@@ -375,16 +378,17 @@ export function MessageAttachment({
         </>
       ) : (
         <>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex size-full shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                <PaperclipIcon className="size-4" />
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{attachmentLabel}</p>
-            </TooltipContent>
-          </Tooltip>
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <PaperclipIcon className="size-5" />
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+            <span className="truncate text-sm font-medium leading-none">
+              {attachmentLabel}
+            </span>
+            <span className="truncate text-xs text-muted-foreground">
+              {data.mediaType}
+            </span>
+          </div>
           {onRemove && (
             <Button
               aria-label="Remove attachment"
@@ -416,11 +420,12 @@ export function MessageAttachments({
   if (!children) {
     return null;
   }
-
+  const isRTL = props.dir === "rtl";
   return (
     <div
       className={cn(
-        "ml-auto flex w-fit flex-wrap items-start gap-2",
+        isRTL ? "mr-auto" : "ml-auto",
+        "flex w-fit flex-wrap items-start gap-2",
         className
       )}
       {...props}

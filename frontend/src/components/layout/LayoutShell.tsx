@@ -1,7 +1,8 @@
 'use client';
 
 import React, { Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import Image from 'next/image';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useLayoutStore } from '@/lib/store/useLayoutStore';
 import { useAuthStore } from '@/lib/store/useAuthStore';
 import { api } from '@/lib/api';
@@ -20,6 +21,7 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   const activeSource = useLayoutStore((state) => state.activeSource);
   const sourceViewerWidth = useLayoutStore((state) => state.sourceViewerWidth);
   const setActiveChatId = useLayoutStore((state) => state.setActiveChatId);
+  const activeChatId = useLayoutStore((state) => state.activeChatId);
   const setSourceViewerWidth = useLayoutStore((state) => state.setSourceViewerWidth);
   
   const { token, setAuth } = useAuthStore();
@@ -29,6 +31,8 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   const pendingWidthRef = React.useRef<number | null>(null);
   const rafIdRef = React.useRef<number | null>(null);
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
 
   React.useEffect(() => {
     if (token) {
@@ -46,6 +50,31 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
       setActiveChatId(chatId);
     }
   }, [searchParams, setActiveChatId]);
+
+  const updateChatIdInUrl = React.useCallback(
+    (chatId: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (chatId) {
+        params.set('chatId', chatId);
+      } else {
+        params.delete('chatId');
+      }
+      const query = params.toString();
+      const nextPath = query ? `${pathname}?${query}` : pathname;
+      router.replace(nextPath, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
+
+  React.useEffect(() => {
+    const currentChatId = searchParams.get('chatId');
+    if (activeChatId && activeChatId !== currentChatId) {
+      updateChatIdInUrl(activeChatId);
+    }
+    if (!activeChatId && currentChatId) {
+      updateChatIdInUrl(null);
+    }
+  }, [activeChatId, searchParams, updateChatIdInUrl]);
 
   React.useEffect(() => {
     if (activeSource) {
@@ -114,10 +143,32 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   const { direction } = useDirection();
   const isRTL = direction !== "rtl";
 
+  const isHomeRoute = pathname === '/' || pathname === '/home';
+
   return (
     <SidebarProvider className="h-full" dir={isRTL ? "rtl" : "ltr"}>
-      <SidebarInset className="h-full" >
-        <div className="flex h-full w-full overflow-hidden bg-background">
+      <div
+        className={cn(
+          "relative flex h-full w-full overflow-hidden",
+          isHomeRoute
+            ? "bg-linear-to-br from-[#cce4e6] to-[#008E96]"
+            : "bg-background"
+        )}
+      >
+        {isHomeRoute && (
+          <div className="pointer-events-none absolute mr-17 inset-0 flex items-center justify-center">
+            <Image
+              src="/kesher.png"
+              alt="Kesher Logo"
+              width={1800}
+              height={1800}
+              className="w-[min(70vw,1700px)] opacity-20"
+              priority
+            />
+          </div>
+        )}
+        <SidebarInset className="relative z-10 h-full flex-1 bg-transparent">
+          <div className="flex h-full w-full overflow-hidden bg-transparent">
           {/* Left Pane: Source List (Collapsible) */}
           <div
             className={cn(
@@ -162,9 +213,12 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
           <div className="flex-1 min-w-0 flex flex-col min-h-0">
             {children || <ChatPane />}
           </div>
+          </div>
+        </SidebarInset>
+        <div className="relative z-10">
+          <AppSidebar />
         </div>
-      </SidebarInset>
-      <AppSidebar />
+      </div>
     </SidebarProvider>
   );
 }

@@ -13,6 +13,7 @@ export interface Message {
   content: string;
   citations?: Array<{ title: string; url: string; description: string }>;
   reasoning_steps?: Array<{ step: string; status: string; message: string }>;
+  attachments?: Array<{ name: string; type: string; content: string }>;
 }
 
 export interface ChatHistory {
@@ -228,5 +229,29 @@ export const api = {
       body: JSON.stringify(chatIds),
     });
     if (!res.ok) throw new Error('Failed to bulk delete chats');
+  },
+
+  updateMessageFeedback: async (
+    chatId: string,
+    messageIndex: number,
+    feedback: { liked?: boolean; disliked?: boolean }
+  ): Promise<void> => {
+    const params = new URLSearchParams();
+    if (feedback.liked !== undefined) params.set('liked', String(feedback.liked));
+    if (feedback.disliked !== undefined) params.set('disliked', String(feedback.disliked));
+    
+    const res = await fetch(`${API_BASE}/chats/${chatId}/messages/${messageIndex}?${params.toString()}`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to update message feedback');
+  },
+
+  deleteLastAssistantMessage: async (chatId: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/chats/${chatId}/messages/last-assistant`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to delete last assistant message');
   },
 };

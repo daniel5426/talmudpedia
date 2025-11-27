@@ -1,145 +1,183 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
-import { BotImputArea } from "@/components/BotImputArea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useState, useRef } from "react";
+import { DocumentSearchInputArea } from "@/components/DocumentSearchInputArea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { GlassCard } from "@/components/ui/glass-card";
-import { FileText, Search } from "lucide-react";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { nanoid } from "nanoid";
 import { KesherLoader } from "@/components/kesher-loader";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import DotGrid from "./DotGrid";
 
-// Mock data generator
-const generateMockDocs = (count: number, startIndex: number) => {
-  return Array.from({ length: count }).map((_, i) => ({
-    id: nanoid(),
-    title: `Shulchan Arukh, Orach Chayim ${startIndex + i + 1}:${(i % 10) + 1}`,
-    snippet: `This is a snippet for document ${
-      startIndex + i + 1
-    }. It contains some relevant text that was found during the search process. The content is just a placeholder for now.`,
-    source: `Shulchan Arukh, Orach Chayim ${startIndex + i + 1}`,
-    date: new Date().toLocaleDateString(),
-    ref: `Shulchan Arukh, Orach Chayim ${startIndex + i + 1}:${(i % 10) + 1}`,
-  }));
+const QUERY_BUBBLE_TITLE = "חפש בכל התורה כולה במשפט אחד";
+
+interface QueryBubbleProps {
+  text: string;
+  variant: "intro" | "results";
+}
+
+const QueryBubble = ({ text, variant }: QueryBubbleProps) => {
+  const variantClasses =
+    variant === "intro"
+      ? "relative z-30 mx-auto mb-6"
+      : "sticky top-2 z-40 mx-auto";
+
+  return (
+    <motion.div
+      layoutId="query-bubble"
+      layout
+      className={` shadow-md rounded-full px-4 bg-primary-soft w-fit text-center flex justify-center py-2 backdrop-blur-md ${variantClasses}`}
+      transition={{
+        layout: {
+          duration: 0.45,
+          ease: "easeInOut",
+        },
+      }}
+    >
+      <AnimatePresence mode="wait">
+        <motion.p
+          key={text}
+          initial={{
+            opacity: 0,
+            y: variant === "intro" ? 20 : -20,
+            scale: 0.95,
+          }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{
+            opacity: 0,
+            y: variant === "intro" ? -20 : 20,
+            scale: 0.95,
+          }}
+          transition={{ duration: 0.3, ease: "easeOut" }}
+          className="text-lg text-center font-medium"
+        >
+          {text}
+        </motion.p>
+      </AnimatePresence>
+    </motion.div>
+  );
 };
 
 export function DocumentSearchPane() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   
   // Use selectors to prevent unnecessary re-renders
   const setActiveSource = useLayoutStore((state) => state.setActiveSource);
-  const setSourceList = useLayoutStore((state) => state.setSourceList);
-  const setSourceListOpen = useLayoutStore((state) => state.setSourceListOpen);
 
   const handleSearch = async (message: { text: string; files: any[] }) => {
     if (!message.text.trim()) return;
 
+    const searchQuery = message.text.trim();
+    setQuery(searchQuery);
     setLoading(true);
     setHasSearched(true);
-    // Simulate API call
-    setTimeout(() => {
-      const newDocs = generateMockDocs(10, 0);
-      setResults(newDocs);
+
+    try {
+      const response = await fetch("http://localhost:8000/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: searchQuery,
+          limit: 20,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Search failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setResults(data.results || []);
+    } catch (error) {
+      console.error("Search error:", error);
+      setResults([]);
+    } finally {
       setLoading(false);
-    }, 1000);
-  };
-
-  const loadMore = () => {
-    if (loading) return;
-    setLoadingMore(true);
-    // Simulate fetching more
-    setTimeout(() => {
-      const newDocs = generateMockDocs(10, results.length);
-      setResults((prev) => [...prev, ...newDocs]);
-      setLoadingMore(false);
-    }, 1000);
-  };
-
-  // Infinite scroll handler
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
-    if (scrollHeight - scrollTop <= clientHeight + 100) {
-      loadMore();
     }
   };
 
   const handleCardClick = (doc: any) => {
     // Open the source viewer with this document
     setActiveSource(doc.ref);
-
   };
 
+
   return (
-    <div className="flex flex-col h-full ">
-      <div className="flex-1 overflow-hidden relative">
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center z-50">
-            <KesherLoader />
-          </div>
-        )}
-        {!hasSearched && !loading ? (
-          <div className="flex flex-col items-center justify-center h-full max-w-3xl mx-auto w-full bg-background p-6 pb-40">
-            <div className="flex flex-col pb-4 justify-center items-center text-muted-foreground">
-              <Search className="w-16 h-16 mb-4 opacity-20" />
-              <h2 className="text-2xl font-semibold">Document Search</h2>
-              <p>Enter a query to search through the document library.</p>
-            </div>
-            <BotImputArea
-              textareaRef={textareaRef}
-              handleSubmit={handleSearch}
-            />
-          </div>
-        ) : (
-          <ScrollArea className="h-full w-full" onScrollCapture={handleScroll}>
-            <div className="@container h-full p-3">
-              <div className="grid grid-cols-1 @md:grid-cols-2 @lg:grid-cols-3 gap-4 pb-32 max-w-7xl mx-auto">
-              {results.map((doc) => (
-                <GlassCard
-                  key={doc.id}
-                  variant="no_border"
-                  className=" p-4 "
-                  onClick={() => handleCardClick(doc)}
-                >
-                  <div className="pb-2">
-                    <div className="flex items-center gap-2 text-lg">
-                      {doc.title}
-                    </div>
+    <LayoutGroup>
+      <div className="relative flex flex-col h-full">
+        <div
+          className="absolute inset-0 z-0"
+        />
+        <div className="relative z-10 flex flex-col h-full">
+          <div className="flex-1 overflow-hidden relative">
+            
+            {!hasSearched && !loading ? (
+              <div className="flex flex-col items-center justify-center h-full max-w-3xl mx-auto w-full bg-transparent p-4 pb-24">
+                <QueryBubble text={QUERY_BUBBLE_TITLE} variant="intro" />
+                <DocumentSearchInputArea
+                  textareaRef={textareaRef}
+                  handleSubmit={handleSearch}
+                />
+              </div>
+            ) : (
+              <ScrollArea className="h-full w-full">
+                <div className="@container h-full">
+                  <QueryBubble
+                    text={query || QUERY_BUBBLE_TITLE}
+                    variant="results"
+                  />
+
+                  <div className="grid grid-cols-1 @md:grid-cols-2 @lg:grid-cols-3 gap-4 pb-32 p-3 max-w-7xl mx-auto">
+                    {results.map((doc) => (
+                      <GlassCard
+                        key={doc.id}
+                        variant="no_border"
+                        className="p-4 cursor-pointer hover:bg-accent transition-colors"
+                        onClick={() => handleCardClick(doc)}
+                      >
+                        <div className="pb-2">
+                          <div className="flex items-center gap-2 text-lg">
+                            {doc.title}
+                          </div>
+                        </div>
+                        <div className="pb-2">
+                          <p className="text-sm line-clamp-3 text-muted-foreground">
+                            {doc.snippet}
+                          </p>
+                        </div>
+                      </GlassCard>
+                    ))}
                   </div>
-                  <div className="pb-2">
-                    <p className="text-sm line-clamp-3 text-muted-foreground">{doc.snippet}</p>
+                </div>
+                {hasSearched && !loading && (
+                  <div className="pb-3 sticky z-90 bottom-0 left-0 right-0 w-full max-w-3xl px-4 mx-auto">
+                    <DocumentSearchInputArea
+                      className="sticky bottom-0 left-0 right-0 w-full max-w-3xl"
+                      textareaRef={textareaRef}
+                      handleSubmit={handleSearch}
+                    />
                   </div>
-                </GlassCard>
-              ))}
-            </div>
-            </div>
-            {hasSearched && !loading && (
-            <div className=" pb-3 sticky bottom-0 left-0 right-0 w-full max-w-3xl px-4 mx-auto bg-transparent">
-              <BotImputArea
-                className="sticky bottom-0 left-0 right-0 w-full  max-w-3xl  bg-background"
+                )}
+              </ScrollArea>
+            )}
+          </div>
+          {hasSearched && loading && (
+            <div className="pb-3 w-full max-w-3xl px-4 mx-auto">
+              <DocumentSearchInputArea
+                className="w-full max-w-3xl bg-background"
                 textareaRef={textareaRef}
                 handleSubmit={handleSearch}
               />
             </div>
-            )}
-          </ScrollArea>
-        )}
-      </div>
-      {hasSearched && (loading) && (
-        <div className="pb-3 w-full max-w-3xl px-4 mx-auto bg-transparent">
-          <BotImputArea
-            className="w-full max-w-3xl bg-background"
-            textareaRef={textareaRef}
-            handleSubmit={handleSearch}
-          />
+          )}
         </div>
-      )}
-    </div>
+      </div>
+    </LayoutGroup>
   );
 }

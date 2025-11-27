@@ -42,7 +42,7 @@ import { LayoutDashboard, Users, MessageSquare, LogIn } from "lucide-react";
 const data = {
   navMain: [
     {
-      title: "Document Search",
+      title: "חיפוש בתורה ",
       url: "/document-search",
       icon: FileText,
       items: [],
@@ -50,19 +50,19 @@ const data = {
   ],
   adminNavMain: [
     {
-      title: "Dashboard",
+      title: "לוח בקרה",
       url: "/admin/dashboard",
       icon: LayoutDashboard,
       items: [],
     },
     {
-      title: "Users",
+      title: "משתמשים",
       url: "/admin/users",
       icon: Users,
       items: [],
     },
     {
-      title: "Chats",
+      title: "שיחות",
       url: "/admin/chats",
       icon: MessageSquare,
       items: [],
@@ -217,7 +217,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 );
 
   return (
-    <Sidebar collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50 shadow-none" {...props}>
+    <Sidebar variant="floating" collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50 shadow-none" {...props}>
       <SidebarHeader>
         <div dir={direction} className="flex items-center justify-between gap-2">
 

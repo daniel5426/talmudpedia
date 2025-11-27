@@ -18,6 +18,8 @@ class ReasoningStep(BaseModel):
     status: str
     message: str
     citations: Optional[List[Citation]] = None
+    query: Optional[str] = None
+    sources: Optional[List[Any]] = None
 
 class Message(BaseModel):
     role: str
@@ -27,6 +29,8 @@ class Message(BaseModel):
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_items: Optional[List[Any]] = None  # Stores raw output items including encrypted reasoning
     thinking_duration_ms: Optional[int] = None
+    liked: Optional[bool] = None
+    disliked: Optional[bool] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Chat(MongoModel):

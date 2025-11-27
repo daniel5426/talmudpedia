@@ -99,7 +99,47 @@ class AgentEndpoints:
             chat_obj = Chat(**chat_data)
             for msg in chat_obj.messages:
                 if msg.role == "user":
-                    history_messages.append(HumanMessage(content=msg.content))
+                    content = msg.content
+                    if msg.attachments:
+                        # Check if we have images for multimodal
+                        has_images = any(att.type.startswith("image/") for att in msg.attachments)
+                        
+                        if has_images:
+                            # Multimodal format for GPT-4o
+                            content_parts = [{"type": "text", "text": content}]
+                            for att in msg.attachments:
+                                if att.type.startswith("image/"):
+                                    content_parts.append({
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:{att.type};base64,{att.content}"}
+                                    })
+                                else:
+                                    # For non-image files (text/pdf), we append to text content for now
+                                    # or add as text block if supported.
+                                    # Appending to text is safer for general compatibility
+                                    try:
+                                        import base64
+                                        decoded = base64.b64decode(att.content).decode('utf-8')
+                                        content_parts.append({
+                                            "type": "text", 
+                                            "text": f"\n\n[Attachment: {att.name}]\n{decoded}"
+                                        })
+                                    except Exception:
+                                        pass
+                            history_messages.append(HumanMessage(content=content_parts))
+                        else:
+                            # Text-only attachments
+                            full_content = content
+                            for att in msg.attachments:
+                                try:
+                                    import base64
+                                    decoded = base64.b64decode(att.content).decode('utf-8')
+                                    full_content += f"\n\n[Attachment: {att.name}]\n{decoded}"
+                                except Exception:
+                                    pass
+                            history_messages.append(HumanMessage(content=full_content))
+                    else:
+                        history_messages.append(HumanMessage(content=content))
                 elif msg.role == "assistant":
                     history_messages.append(AIMessage(content=msg.content))
                     if msg.reasoning_items:
@@ -110,108 +150,156 @@ class AgentEndpoints:
             collected_citations: List[Dict[str, Any]] = []
             collected_reasoning: List[Dict[str, Any]] = []
             final_reasoning_items: List[Dict[str, Any]] = []
-            pending_retrieval_update: Optional[Dict[str, Any]] = None
-            retrieval_update_pending = False
-            retrieval_update_sent = False
             thinking_timer_start = time.perf_counter()
             thinking_duration_ms: Optional[int] = None
-
-            def consume_pending_retrieval_update():
-                nonlocal pending_retrieval_update, retrieval_update_pending, retrieval_update_sent, collected_reasoning
-                if retrieval_update_pending and not retrieval_update_sent and pending_retrieval_update:
-                    retrieval_update_sent = True
-                    retrieval_update_pending = False
-                    collected_reasoning.append(pending_retrieval_update)
-                    update_data = pending_retrieval_update
-                    pending_retrieval_update = None
-                    return update_data
-                return None
+            
+            # Track if we are currently in a tool call to avoid streaming tool inputs as text
+            in_tool_call = False
 
             try:
-                init_reasoning = {"step": "Analysis", "status": "active", "message": ""}
+                # Initial "Analysis" step (kept for UI consistency, though agent is dynamic now)
+                init_reasoning = {"step": "Analysis", "status": "active", "message": "Processing request..."}
                 collected_reasoning.append(init_reasoning)
                 yield json.dumps({"type": "reasoning", "data": init_reasoning}) + "\n"
+                
                 inputs = {
                     "messages": history_messages,
                     "reasoning_items": reasoning_items_accumulated,
                     "files": files
                 }
+                
                 async for event in chat_agent.astream_events(inputs, version="v2"):
-                    pending_update = consume_pending_retrieval_update()
-                    if pending_update:
-                        yield json.dumps({"type": "reasoning", "data": pending_update}) + "\n"
                     kind = event["event"]
-                    if kind == "on_custom_event" and event.get("name") == "reasoning_step":
-                        step_data = event.get("data", {})
-                        step_label = step_data.get("step")
-                        existing_index = next(
-                            (i for i, s in enumerate(collected_reasoning) if s.get("step") == step_label),
-                            None
-                        )
-                        if existing_index is not None:
-                            collected_reasoning[existing_index] = {
-                                **collected_reasoning[existing_index],
-                                **step_data
-                            }
-                        else:
-                            collected_reasoning.append(step_data)
-                        yield json.dumps({"type": "reasoning", "data": step_data}) + "\n"
-                    elif kind == "on_custom_event" and event.get("name") == "output_delta":
-                        delta_data = event.get("data", {})
-                        delta_text = delta_data.get("delta", "")
-                        full_response += delta_text
-                        if thinking_duration_ms is None:
-                            thinking_duration_ms = int((time.perf_counter() - thinking_timer_start) * 1000)
-                            label = ThinkingDurationFormatter.build_label(thinking_duration_ms)
-                            if label:
-                                duration_step = {"step": label, "status": "complete", "message": ""}
-                                collected_reasoning.append(duration_step)
-                                yield json.dumps({"type": "reasoning", "data": duration_step}) + "\n"
-                        yield json.dumps({"type": "token", "content": delta_text}) + "\n"
-                    elif kind == "on_custom_event" and event.get("name") == "error":
-                        error_data = event.get("data", {})
-                        yield json.dumps({"type": "error", "data": error_data}) + "\n"
-                    elif kind == "on_custom_event" and event.get("name") == "warning":
-                        warning_data = event.get("data", {})
-                        print(f"[CUSTOM EVENT] Warning: {warning_data.get('message')}")
-                    elif kind == "on_chain_end" and event["name"] == "retrieve":
-                        data = event["data"].get("output")
-                        if data and "retrieved_docs" in data and len(data["retrieved_docs"]) > 0:
-                            analysis_complete = {"step": "Analysis", "status": "complete", "message": ""}
-                            collected_reasoning.append(analysis_complete)
-                            yield json.dumps({"type": "reasoning", "data": analysis_complete}) + "\n"
-                            retrieval_active = {"step": "Retrieval", "status": "active", "message": "Searching Rabbinic texts..."}
-                            collected_reasoning.append(retrieval_active)
-                            yield json.dumps({"type": "reasoning", "data": retrieval_active}) + "\n"
-                            docs = data["retrieved_docs"]
-                            for doc in docs:
-                                meta = doc.get("metadata", {})
-                                citation = {
-                                    "title": meta.get("ref", "Unknown Source"),
-                                    "url": f"https://talmudpedia.com/{meta.get('ref', '').replace(' ', '-')}",
-                                    "description": meta.get("text", "")[:100] + "..."
+                    name = event.get("name")
+                    data = event.get("data", {})
+                    
+                    # 1. Handle Custom Events (Reasoning & Retrieval)
+                    if kind == "on_custom_event":
+                        if name == "reasoning_step":
+                            step_data = data
+                            step_label = step_data.get("step")
+                            
+                            # Update or append reasoning step
+                            existing_index = next(
+                                (i for i, s in enumerate(collected_reasoning) if s.get("step") == step_label),
+                                None
+                            )
+                            if existing_index is not None:
+                                collected_reasoning[existing_index] = {
+                                    **collected_reasoning[existing_index],
+                                    **step_data
                                 }
-                                collected_citations.append(citation)
-                                yield json.dumps({"type": "citation", "data": citation}) + "\n"
-                            pending_retrieval_update = {
-                                "step": "Retrieval",
-                                "status": "complete",
+                            else:
+                                collected_reasoning.append(step_data)
+                            yield json.dumps({"type": "reasoning", "data": step_data}) + "\n"
+                        
+                        elif name == "retrieval_start":
+                            # Handle retrieval start - emit pending status
+                            query = data.get("query", "")
+                            
+                            # Mark Analysis as complete if it's still active
+                            for i, step in enumerate(collected_reasoning):
+                                if step["step"] == "Analysis" and step["status"] == "active":
+                                    step["status"] = "complete"
+                                    step["message"] = ""
+                                    collected_reasoning[i] = step
+                                    yield json.dumps({"type": "reasoning", "data": step}) + "\n"
+                            
+                            # Count how many retrieval steps we already have to create unique names
+                            retrieval_count = sum(1 for s in collected_reasoning if s.get("step", "").startswith("Retrieval"))
+                            step_name = f"Retrieval {retrieval_count + 1}" if retrieval_count > 0 else "Retrieval"
+                            
+                            # Emit pending retrieval step with raw data
+                            retrieval_pending = {
+                                "step": step_name,
+                                "status": "pending",
                                 "message": "",
-                                "citations": collected_citations
+                                "query": query
                             }
-                            retrieval_update_pending = True
-                        elif data and "retrieved_docs" in data and len(data["retrieved_docs"]) == 0:
-                            # No retrieval was performed - just mark analysis as complete
-                            analysis_complete = {"step": "Analysis", "status": "complete", "message": ""}
-                            collected_reasoning.append(analysis_complete)
-                            yield json.dumps({"type": "reasoning", "data": analysis_complete}) + "\n"
-                    elif kind == "on_chain_end" and event["name"] == "generate":
-                        data = event["data"].get("output")
-                        if data:
-                            final_reasoning_items = data.get("reasoning_items", [])
-                pending_update = consume_pending_retrieval_update()
-                if pending_update:
-                    yield json.dumps({"type": "reasoning", "data": pending_update}) + "\n"
+                            collected_reasoning.append(retrieval_pending)
+                            yield json.dumps({"type": "reasoning", "data": retrieval_pending}) + "\n"
+                            
+                        elif name == "retrieval_complete":
+                            # Handle citations from retrieval tool
+                            docs = data.get("docs", [])
+                            query = data.get("query", "")
+                            
+                            if docs:
+                                # Find the pending retrieval step and update it to complete
+                                for i, step in enumerate(collected_reasoning):
+                                    if step.get("status") == "pending" and step.get("step", "").startswith("Retrieval"):
+                                        step_name = step["step"]
+                                        
+                                        # Emit citations
+                                        step_citations = []
+                                        for doc in docs:
+                                            meta = doc.get("metadata", {})
+                                            citation = {
+                                                "title": meta.get("ref", "Unknown Source"),
+                                                "url": f"https://talmudpedia.com/{meta.get('ref', '').replace(' ', '-')}",
+                                                "description": meta.get("text", "")[:100] + "..."
+                                            }
+                                            step_citations.append(citation)
+                                            collected_citations.append(citation)
+                                            yield json.dumps({"type": "citation", "data": citation}) + "\n"
+                                        
+                                        # Update the step to complete with raw data
+                                        step["status"] = "complete"
+                                        step["message"] = ""
+                                        step["query"] = query
+                                        step["sources"] = docs
+                                        step["citations"] = step_citations
+                                        collected_reasoning[i] = step
+                                        yield json.dumps({"type": "reasoning", "data": step}) + "\n"
+                                        break
+
+                        elif name == "output_delta":
+                            # Legacy support if any component still emits this
+                            delta_text = data.get("delta", "")
+                            full_response += delta_text
+                            yield json.dumps({"type": "token", "content": delta_text}) + "\n"
+                            
+                        elif name == "error":
+                            yield json.dumps({"type": "error", "data": data}) + "\n"
+
+                    # 2. Handle Standard LangChain Streaming (Tokens)
+                    elif kind == "on_chat_model_stream":
+                        chunk = data.get("chunk")
+                        if chunk:
+                            # Check if this chunk is a tool call (don't stream tool call args as text)
+                            if hasattr(chunk, "tool_call_chunks") and chunk.tool_call_chunks:
+                                in_tool_call = True
+                                continue
+                            
+                            # If we are back to content and it's not empty
+                            if chunk.content:
+                                in_tool_call = False
+                                
+                                # Calculate thinking time on first token
+                                if thinking_duration_ms is None:
+                                    thinking_duration_ms = int((time.perf_counter() - thinking_timer_start) * 1000)
+                                    label = ThinkingDurationFormatter.build_label(thinking_duration_ms)
+                                    if label:
+                                        duration_step = {"step": label, "status": "complete", "message": ""}
+                                        collected_reasoning.append(duration_step)
+                                        yield json.dumps({"type": "reasoning", "data": duration_step}) + "\n"
+                                        
+                                    # Also mark Analysis complete if not already
+                                    for i, step in enumerate(collected_reasoning):
+                                        if step["step"] == "Analysis" and step["status"] == "active":
+                                            step["status"] = "complete"
+                                            step["message"] = ""
+                                            collected_reasoning[i] = step
+                                            yield json.dumps({"type": "reasoning", "data": step}) + "\n"
+
+                                full_response += chunk.content
+                                yield json.dumps({"type": "token", "content": chunk.content}) + "\n"
+
+                    # 3. Handle Tool Start (for UI feedback)
+                    elif kind == "on_tool_start":
+                        # We could emit a "Thinking..." or "Using tool..." event here
+                        pass
+
             except Exception as e:
                 error_msg = f"Agent streaming failed: {type(e).__name__}: {str(e)}"
                 print(f"[MAIN ERROR] {error_msg}")
@@ -221,9 +309,6 @@ class AgentEndpoints:
                     "type": "error",
                     "data": {"message": error_msg}
                 }) + "\n"
-                pending_update = consume_pending_retrieval_update()
-                if pending_update:
-                    yield json.dumps({"type": "reasoning", "data": pending_update}) + "\n"
             finally:
                 if full_response:
                     asst_message = Message(

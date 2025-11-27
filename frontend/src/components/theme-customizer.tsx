@@ -29,6 +29,21 @@ export function ThemeCustomizer() {
     setActiveColorTheme(currentTheme)
   }, [])
 
+  // Update active theme when data-theme attribute changes
+  React.useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const currentTheme = document.body.getAttribute("data-theme") || "default"
+      setActiveColorTheme(currentTheme)
+    })
+
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["data-theme"]
+    })
+
+    return () => observer.disconnect()
+  }, [])
+
   const handleThemeChange = (themeName: string) => {
     setActiveColorTheme(themeName)
     document.body.setAttribute("data-theme", themeName)

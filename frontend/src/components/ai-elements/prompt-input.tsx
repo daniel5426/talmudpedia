@@ -69,6 +69,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { AudioWaveform } from "@/components/ui/audio-waveform";
 
 // ============================================================================
 // Provider Context & Types
@@ -105,6 +106,18 @@ const PromptInputController = createContext<PromptInputControllerProps | null>(
 const ProviderAttachmentsContext = createContext<AttachmentsContext | null>(
   null
 );
+
+// Recording State Context
+type RecordingStateContext = {
+  isListening: boolean;
+  setIsListening: (value: boolean) => void;
+  analyser: AnalyserNode | null;
+  setAnalyser: (node: AnalyserNode | null) => void;
+};
+
+const RecordingContext = createContext<RecordingStateContext | null>(null);
+
+const useRecordingState = () => useContext(RecordingContext);
 
 export const usePromptInputController = () => {
   const ctx = useContext(PromptInputController);
@@ -377,7 +390,7 @@ export function PromptInputAttachments({
 
   return (
     <div
-      className={cn("flex flex-wrap items-center gap-2 p-3", className)}
+      className={cn("flex flex-wrap items-center gap-2 p-3 relative z-20", className)}
       {...props}
     >
       {attachments.files.map((file) => (
@@ -394,7 +407,7 @@ export type PromptInputActionAddAttachmentsProps = ComponentProps<
 };
 
 export const PromptInputActionAddAttachments = ({
-  label = "Add photos or files",
+  label = "הוסף תמונות או קבצים",
   ...props
 }: PromptInputActionAddAttachmentsProps) => {
   const attachments = usePromptInputAttachments();
@@ -736,6 +749,15 @@ export const PromptInput = ({
   };
 
   // Render with or without local provider
+  const [isListening, setIsListening] = useState(false);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const recordingState = useMemo(() => ({ 
+    isListening, 
+    setIsListening,
+    analyser,
+    setAnalyser
+  }), [isListening, analyser]);
+
   const inner = (
     <>
       <span aria-hidden="true" className="hidden" ref={anchorRef} />
@@ -754,16 +776,29 @@ export const PromptInput = ({
         onSubmit={handleSubmit}
         {...props}
       >
-        <InputGroup className="overflow-hidden">{children}</InputGroup>
+        <InputGroup className="overflow-hidden relative">
+          {children}
+          {isListening && (
+            <div className="absolute inset-0 flex items-center justify-center bg-primary-soft z-10 rounded-md">
+              <AudioWaveform barCount={60} analyser={recordingState.analyser} />
+            </div>
+          )}
+        </InputGroup>
       </form>
     </>
   );
 
+  const withRecordingContext = (
+    <RecordingContext.Provider value={recordingState}>
+      {inner}
+    </RecordingContext.Provider>
+  );
+
   return usingProvider ? (
-    inner
+    withRecordingContext
   ) : (
     <LocalAttachmentsContext.Provider value={ctx}>
-      {inner}
+      {withRecordingContext}
     </LocalAttachmentsContext.Provider>
   );
 };
@@ -905,7 +940,7 @@ export const PromptInputFooter = ({
 }: PromptInputFooterProps) => (
   <InputGroupAddon
     align="block-end"
-    className={cn("justify-between gap-1", className)}
+    className={cn("justify-between gap-1 relative z-20", className)}
     {...props}
   />
 );
@@ -1019,60 +1054,6 @@ export const PromptInputSubmit = ({
   );
 };
 
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  onstart: ((this: SpeechRecognition, ev: Event) => any) | null;
-  onend: ((this: SpeechRecognition, ev: Event) => any) | null;
-  onresult:
-    | ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any)
-    | null;
-  onerror:
-    | ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => any)
-    | null;
-}
-
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-  resultIndex: number;
-}
-
-type SpeechRecognitionResultList = {
-  readonly length: number;
-  item(index: number): SpeechRecognitionResult;
-  [index: number]: SpeechRecognitionResult;
-};
-
-type SpeechRecognitionResult = {
-  readonly length: number;
-  item(index: number): SpeechRecognitionAlternative;
-  [index: number]: SpeechRecognitionAlternative;
-  isFinal: boolean;
-};
-
-type SpeechRecognitionAlternative = {
-  transcript: string;
-  confidence: number;
-};
-
-interface SpeechRecognitionErrorEvent extends Event {
-  error: string;
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition: {
-      new (): SpeechRecognition;
-    };
-    webkitSpeechRecognition: {
-      new (): SpeechRecognition;
-    };
-  }
-}
-
 export type PromptInputSpeechButtonProps = ComponentProps<
   typeof PromptInputButton
 > & {
@@ -1086,82 +1067,113 @@ export const PromptInputSpeechButton = ({
   onTranscriptionChange,
   ...props
 }: PromptInputSpeechButtonProps) => {
+  const recordingState = useRecordingState();
   const [isListening, setIsListening] = useState(false);
-  const [recognition, setRecognition] = useState<SpeechRecognition | null>(
-    null
-  );
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
+  // Sync local state with context
   useEffect(() => {
-    if (
-      typeof window !== "undefined" &&
-      ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
-    ) {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-      const speechRecognition = new SpeechRecognition();
+    recordingState?.setIsListening(isListening);
+  }, [isListening, recordingState]);
 
-      speechRecognition.continuous = true;
-      speechRecognition.interimResults = true;
-      speechRecognition.lang = "en-US";
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      
+      // Set up Audio Context for visualization
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256; // Larger FFT size for better resolution
+      source.connect(analyser);
+      
+      recordingState?.setAnalyser(analyser);
 
-      speechRecognition.onstart = () => {
-        setIsListening(true);
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      chunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
       };
 
-      speechRecognition.onend = () => {
-        setIsListening(false);
-      };
+      mediaRecorder.onstop = async () => {
+        setIsProcessing(true);
+        const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const formData = new FormData();
+        formData.append("file", audioBlob, "recording.webm");
 
-      speechRecognition.onresult = (event) => {
-        let finalTranscript = "";
+        try {
+          const response = await fetch("/api/py/stt/transcribe", {
+            method: "POST",
+            body: formData,
+          });
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (result.isFinal) {
-            finalTranscript += result[0]?.transcript ?? "";
+          if (!response.ok) {
+            throw new Error("Transcription failed");
           }
-        }
 
-        if (finalTranscript && textareaRef?.current) {
-          const textarea = textareaRef.current;
-          const currentValue = textarea.value;
-          const newValue =
-            currentValue + (currentValue ? " " : "") + finalTranscript;
+          const data = await response.json();
+          const transcript = data.text;
 
-          textarea.value = newValue;
-          textarea.dispatchEvent(new Event("input", { bubbles: true }));
-          onTranscriptionChange?.(newValue);
+          if (transcript && textareaRef?.current) {
+            const textarea = textareaRef.current;
+            const currentValue = textarea.value;
+            const newValue =
+              currentValue + (currentValue ? " " : "") + transcript;
+
+            textarea.value = newValue;
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+            onTranscriptionChange?.(newValue);
+          }
+        } catch (error) {
+          console.error("Transcription error:", error);
+        } finally {
+          setIsProcessing(false);
+          setIsListening(false);
+          
+          // Cleanup audio context and stream
+          if (audioContextRef.current) {
+            audioContextRef.current.close();
+            audioContextRef.current = null;
+          }
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach((track) => track.stop());
+            streamRef.current = null;
+          }
+          recordingState?.setAnalyser(null);
         }
       };
 
-      speechRecognition.onerror = (event) => {
-        console.error("Speech recognition error:", event.error);
-        setIsListening(false);
-      };
-
-      recognitionRef.current = speechRecognition;
-      setRecognition(speechRecognition);
+      mediaRecorder.start();
+      setIsListening(true);
+    } catch (err) {
+      console.error("Error accessing microphone:", err);
+      setIsListening(false);
     }
+  };
 
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-    };
-  }, [textareaRef, onTranscriptionChange]);
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+  };
 
   const toggleListening = useCallback(() => {
-    if (!recognition) {
-      return;
-    }
-
     if (isListening) {
-      recognition.stop();
+      stopRecording();
     } else {
-      recognition.start();
+      startRecording();
     }
-  }, [recognition, isListening]);
+  }, [isListening]);
 
   return (
     <PromptInputButton
@@ -1170,11 +1182,15 @@ export const PromptInputSpeechButton = ({
         isListening && "animate-pulse bg-accent text-accent-foreground",
         className
       )}
-      disabled={!recognition}
+      disabled={isProcessing}
       onClick={toggleListening}
       {...props}
     >
-      <MicIcon className="size-4" />
+      {isProcessing ? (
+        <Loader2Icon className="size-4 animate-spin" />
+      ) : (
+        <MicIcon className="size-4" />
+      )}
     </PromptInputButton>
   );
 };
