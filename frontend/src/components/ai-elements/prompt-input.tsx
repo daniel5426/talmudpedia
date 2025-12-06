@@ -70,6 +70,7 @@ import {
   useState,
 } from "react";
 import { AudioWaveform } from "@/components/ui/audio-waveform";
+import { useDirection } from "../direction-provider";
 
 // ============================================================================
 // Provider Context & Types
@@ -299,7 +300,7 @@ export function PromptInputAttachment({
       <HoverCardTrigger asChild>
         <div
           className={cn(
-            "group relative flex h-8 cursor-default select-none items-center gap-1.5 rounded-md border border-border px-1.5 font-medium text-sm transition-all hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
+            "group relative bg-primary-soft flex h-8 cursor-default select-none items-center gap-1.5 rounded-md border border-border px-1.5 font-medium text-sm transition-all hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
             className
           )}
           key={data.id}
@@ -383,14 +384,14 @@ export function PromptInputAttachments({
   ...props
 }: PromptInputAttachmentsProps) {
   const attachments = usePromptInputAttachments();
-
+  const direction = useDirection();
   if (!attachments.files.length) {
     return null;
   }
 
   return (
     <div
-      className={cn("flex flex-wrap items-center gap-2 p-3 relative z-20", className)}
+      className={cn("flex flex-wrap items-center gap-2 p-3 relative z-20", direction.direction === "rtl" ? "ml-auto" : "mr-auto", className)}
       {...props}
     >
       {attachments.files.map((file) => (

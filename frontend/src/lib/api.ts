@@ -1,4 +1,5 @@
 import { useAuthStore } from './store/useAuthStore';
+import { Citation } from '@/components/layout/useChatController';
 
 const API_BASE = '/api/py';
 
@@ -11,7 +12,7 @@ export interface Chat {
 export interface Message {
   role: 'user' | 'assistant';
   content: string;
-  citations?: Array<{ title: string; url: string; description: string }>;
+  citations?: Citation[];
   reasoning_steps?: Array<{ step: string; status: string; message: string }>;
   attachments?: Array<{ name: string; type: string; content: string }>;
 }

@@ -234,9 +234,12 @@ class AgentEndpoints:
                                         step_citations = []
                                         for doc in docs:
                                             meta = doc.get("metadata", {})
+                                            shape_path = meta.get("shape_path", [])
                                             citation = {
                                                 "title": meta.get("ref", "Unknown Source"),
-                                                "url": f"https://talmudpedia.com/{meta.get('ref', '').replace(' ', '-')}",
+                                                "url": shape_path[0] if shape_path else None,
+                                                "sourceRef": shape_path[1] if shape_path else None,
+                                                "ref": meta.get("ref", ""),
                                                 "description": meta.get("text", "")[:100] + "..."
                                             }
                                             step_citations.append(citation)

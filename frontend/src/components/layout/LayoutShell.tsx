@@ -1,7 +1,6 @@
 'use client';
 
 import React, { Suspense } from 'react';
-import Image from 'next/image';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useLayoutStore } from '@/lib/store/useLayoutStore';
 import { useAuthStore } from '@/lib/store/useAuthStore';
@@ -14,6 +13,7 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { GripVertical } from 'lucide-react';
 import { useDirection } from '@/components/direction-provider';
+import { useChatController } from '@/components/layout/useChatController';
 
 function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   // Use selectors to prevent unnecessary re-renders
@@ -33,6 +33,10 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const chatController = useChatController();
+  const { direction } = useDirection();
+  const isRTL = direction !== "rtl";
+  const isChatRoute = pathname?.startsWith('/chat');
 
   React.useEffect(() => {
     if (token) {
@@ -44,37 +48,68 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
     }
   }, [token, setAuth]);
 
+  const isUpdatingFromUrlRef = React.useRef(false);
+  const lastUrlChatIdRef = React.useRef<string | null>(null);
+  const lastActiveChatIdRef = React.useRef<string | null>(null);
+
   React.useEffect(() => {
-    const chatId = searchParams.get('chatId');
-    if (chatId) {
-      setActiveChatId(chatId);
+    if (!isChatRoute) return;
+    const urlChatId = searchParams.get('chatId');
+    
+    if (urlChatId !== lastUrlChatIdRef.current) {
+      lastUrlChatIdRef.current = urlChatId;
+      isUpdatingFromUrlRef.current = true;
+      if (urlChatId) {
+        setActiveChatId(urlChatId);
+        lastActiveChatIdRef.current = urlChatId;
+      } else {
+        setActiveChatId(null);
+        lastActiveChatIdRef.current = null;
+      }
+      setTimeout(() => {
+        isUpdatingFromUrlRef.current = false;
+      }, 0);
     }
-  }, [searchParams, setActiveChatId]);
+  }, [isChatRoute, searchParams, setActiveChatId]);
 
   const updateChatIdInUrl = React.useCallback(
     (chatId: string | null) => {
+      if (isUpdatingFromUrlRef.current) return;
+      
       const params = new URLSearchParams(searchParams.toString());
+      const currentUrlChatId = params.get('chatId');
+      
+      if (chatId === currentUrlChatId) {
+        lastUrlChatIdRef.current = chatId;
+        return;
+      }
+      
       if (chatId) {
         params.set('chatId', chatId);
       } else {
         params.delete('chatId');
       }
       const query = params.toString();
-      const nextPath = query ? `${pathname}?${query}` : pathname;
+      const nextPath = query ? `/chat?${query}` : '/chat';
+      lastUrlChatIdRef.current = chatId;
       router.replace(nextPath, { scroll: false });
     },
-    [pathname, router, searchParams]
+    [router, searchParams]
   );
 
   React.useEffect(() => {
+    if (!isChatRoute || isUpdatingFromUrlRef.current) return;
+    if (activeChatId === lastActiveChatIdRef.current) return;
+    
     const currentChatId = searchParams.get('chatId');
     if (activeChatId && activeChatId !== currentChatId) {
+      lastActiveChatIdRef.current = activeChatId;
       updateChatIdInUrl(activeChatId);
-    }
-    if (!activeChatId && currentChatId) {
+    } else if (!activeChatId && currentChatId) {
+      lastActiveChatIdRef.current = null;
       updateChatIdInUrl(null);
     }
-  }, [activeChatId, searchParams, updateChatIdInUrl]);
+  }, [activeChatId, isChatRoute, searchParams, updateChatIdInUrl]);
 
   React.useEffect(() => {
     if (activeSource) {
@@ -140,86 +175,67 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
       document.body.style.userSelect = '';
     };
   }, [isResizing, setSourceViewerWidth, isSourceListOpen]);
-  const { direction } = useDirection();
-  const isRTL = direction !== "rtl";
-
-  const isHomeRoute = pathname === '/' || pathname === '/home';
 
   return (
-    <SidebarProvider className="h-full" dir={isRTL ? "rtl" : "ltr"}>
-      <div
-        className={cn(
-          "relative flex h-full w-full overflow-hidden",
-          isHomeRoute
-            ? "bg-linear-to-br from-[#cce4e6] to-[#008E96]"
-            : "bg-background"
-        )}
-      >
-        {isHomeRoute && (
-          <div className="pointer-events-none absolute mr-17 inset-0 flex items-center justify-center">
-            <Image
-              src="/kesher.png"
-              alt="Kesher Logo"
-              width={1800}
-              height={1800}
-              className="w-[min(70vw,1700px)] opacity-20"
-              priority
-            />
-          </div>
-        )}
-        <SidebarInset className="relative z-10 h-full flex-1 bg-transparent">
-          <div className="flex h-full w-full overflow-hidden bg-transparent">
-          {/* Left Pane: Source List (Collapsible) */}
-          <div
-            className={cn(
-              "border-r transition-all duration-300 ease-in-out h-full",
-              isSourceListOpen ? "w-64" : "w-0 opacity-0 overflow-hidden"
-            )}
-          >
-            <SourceListPane />
-          </div>
+      <SidebarProvider className="h-full" dir={isRTL ? "rtl" : "ltr"}>
+        <div
+          className={cn(
+            "relative flex h-full w-full overflow-hidden transition-colors duration-500",
+            "bg-background"
+          )}
+        >
+          <SidebarInset className="relative z-10 h-full flex-1 bg-transparent">
+            <div className="flex h-full w-full overflow-hidden bg-transparent">
+            {/* Left Pane: Source List (Collapsible) */}
+            <div
+              className={cn(
+                "border-r transition-all duration-300 ease-in-out h-full",
+                isSourceListOpen ? "w-64" : "w-0 opacity-0 overflow-hidden"
+              )}
+            >
+              <SourceListPane />
+            </div>
 
-          {/* Center Pane: Source Viewer (Collapsible) */}
-          <div
-            ref={sourceViewerRef}
-            className={cn(
-              "shrink-0 min-w-0 overflow-hidden relative",
-              !isResizing && "transition-all duration-300 ease-in-out",
-              activeSource ? "opacity-100" : "opacity-0"
-            )}
-            style={{ 
-              width: activeSource ? sourceViewerWidth : 0,
-              willChange: isResizing ? 'width' : 'auto'
-            }}
-          >
-            <SourceViewerPane 
-              key={activeSource || lastActiveSource || 'empty'} 
-              sourceId={activeSource || lastActiveSource} 
-            />
-            
-            {/* Resize Handle */}
-            {activeSource && (
-              <div
-                className="absolute right-0 top-0 bottom-0 w-[0.9px] bg-border cursor-ew-resize flex items-center justify-center group"
-                onMouseDown={() => setIsResizing(true)}
-              >
-                <div className="absolute inset-y-0 -left-1 -right-1" />
-                <GripVertical className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            )}
-          </div>
+            {/* Center Pane: Source Viewer (Collapsible) */}
+            <div
+              ref={sourceViewerRef}
+              className={cn(
+                "shrink-0 min-w-0 z-50 overflow-hidden relative",
+                !isResizing && "transition-all duration-300 ease-in-out",
+                activeSource ? "opacity-100" : "opacity-0"
+              )}
+              style={{ 
+                width: activeSource ? sourceViewerWidth : 0,
+                willChange: isResizing ? 'width' : 'auto'
+              }}
+            >
+              <SourceViewerPane 
+                sourceId={activeSource || lastActiveSource} 
+              />
+              
+              {/* Resize Handle */}
+              {activeSource && (
+                <div
+                  className="absolute z-52 right-0 top-0 bottom-0 w-[0.9px] bg-border cursor-ew-resize flex items-center justify-center group"
+                  onMouseDown={() => setIsResizing(true)}
+                >
+                  <div className="absolute inset-y-0 -left-1 -right-1" />
+                  <GripVertical className="h-4 z-52 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              )}
+            </div>
 
-          {/* Right/Main Pane: Chat */}
-          <div className="flex-1 min-w-0 flex flex-col min-h-0">
-            {children || <ChatPane />}
+            {/* Right/Main Pane: Chat */}
+            <div className="flex-1 min-w-0 flex flex-col min-h-0">
+              {children || <ChatPane controller={chatController} />}
+            </div>
+            </div>
+          </SidebarInset>
+          <div className="relative z-10">
+            <AppSidebar />
           </div>
-          </div>
-        </SidebarInset>
-        <div className="relative z-10">
-          <AppSidebar />
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
   );
 }
 

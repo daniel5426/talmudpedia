@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useState, useRef } from "react";
+import Image from "next/image";
 import { DocumentSearchInputArea } from "@/components/DocumentSearchInputArea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { KesherLoader } from "@/components/kesher-loader";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
-import DotGrid from "./DotGrid";
+import { convertToHebrew } from "@/lib/hebrewUtils";
 
 const QUERY_BUBBLE_TITLE = "חפש בכל התורה כולה במשפט אחד";
 
@@ -105,21 +105,49 @@ export function DocumentSearchPane() {
   const handleCardClick = (doc: any) => {
     // Open the source viewer with this document
     setActiveSource(doc.ref);
+    console.log("doc.ref", doc.ref);
   };
 
 
   return (
     <LayoutGroup>
-      <div className="relative flex flex-col h-full">
+      <div className="relative flex flex-col h-full bg-[linear-gradient(to_bottom_right,#cce4e6,#008E96)]">
         <div
-          className="absolute inset-0 z-0"
-        />
+          dir="ltr"
+          className="absolute inset-0 pointer-events-none overflow-visible z-0"
+        >
+          <Image
+            src="/kesher.png"
+            alt="Kesher Logo"
+            width={1800}
+            height={1800}
+            className="absolute w-[min(70vw,700px)] opacity-20 -translate-x-[40%] -translate-y-[20%] top-1/4"
+            priority
+          />
+          <Image
+            src="/kesher.png"
+            alt="Kesher Logo"
+            width={1800}
+            height={1800}
+            className="absolute w-[min(70vw,700px)] opacity-20 translate-x-[40%] translate-y-[50%] right-0"
+            priority
+          />
+          <Image
+            src="/kesher.png"
+            alt="Kesher Logo"
+            width={1800}
+            height={1800}
+            className="absolute w-[min(70vw,200px)] opacity-90 -translate-x-[10%] translate-y-[10%] right-0 filter brightness-0 invert"
+            priority
+          />
+        </div>
         <div className="relative z-10 flex flex-col h-full">
-          <div className="flex-1 overflow-hidden relative">
+          <div className="flex-1 overflow-hidden relative flex items-center">
             
             {!hasSearched && !loading ? (
-              <div className="flex flex-col items-center justify-center h-full max-w-3xl mx-auto w-full bg-transparent p-4 pb-24">
-                <QueryBubble text={QUERY_BUBBLE_TITLE} variant="intro" />
+              <div className="flex flex-col gap-6 items-center w-full max-w-3xl mx-auto bg-transparent p-4 pb-26">
+            <p className="text-3xl font-semibold">
+            {QUERY_BUBBLE_TITLE}</p>
                 <DocumentSearchInputArea
                   textareaRef={textareaRef}
                   handleSubmit={handleSearch}
@@ -136,6 +164,7 @@ export function DocumentSearchPane() {
                   <div className="grid grid-cols-1 @md:grid-cols-2 @lg:grid-cols-3 gap-4 pb-32 p-3 max-w-7xl mx-auto">
                     {results.map((doc) => (
                       <GlassCard
+                        dir="rtl"
                         key={doc.id}
                         variant="no_border"
                         className="p-4 cursor-pointer hover:bg-accent transition-colors"
@@ -143,7 +172,7 @@ export function DocumentSearchPane() {
                       >
                         <div className="pb-2">
                           <div className="flex items-center gap-2 text-lg">
-                            {doc.title}
+                            {convertToHebrew(doc.title)}
                           </div>
                         </div>
                         <div className="pb-2">

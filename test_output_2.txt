@@ -1,0 +1,7 @@
+Testing RerankingRetriever...
+Reranking 6 documents...
+Got 3 results.
+Content: Doc 5, Score: 0.9
+Content: Doc 4, Score: 0.8
+Content: Doc 3, Score: 0.7
+Test passed!

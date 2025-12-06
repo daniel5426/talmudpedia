@@ -9,3 +9,4 @@ langgraph
 langchain-openai
 motor
 google-cloud-speech
+elasticsearch

@@ -29,7 +29,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://10.0.0.10:3000",  # Network access
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,9 +41,11 @@ app.add_middleware(
 
 from app.endpoints.auth import router as auth_router
 from app.api.routers.admin import router as admin_router
+from app.api.routes.library import router as library_router
 
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(admin_router, prefix="/admin", tags=["admin"])
+app.include_router(library_router, prefix="/api", tags=["library"])
 register_endpoints(app)
 
 

@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import re
 import tiktoken
 
@@ -55,14 +55,21 @@ class Chunker:
         if not combined_text:
             return {}
         base_segment = segments[0]
-        segment_ref = self._combine_refs([segment.get("ref") for segment in segments])
+        segment_refs = [segment.get("ref") for segment in segments]
+        segment_ref = self._combine_refs(segment_refs)
+        segment_he_refs = [segment.get("he_ref") for segment in segments if segment.get("he_ref")]
+        segment_he_ref = self._combine_refs(segment_he_refs) if segment_he_refs else None
         return self.create_vector_chunk(
             segment_ref=segment_ref,
             text=combined_text,
             index_title=base_segment.get("index_title"),
+            he_title=base_segment.get("he_title"),
             version_title=base_segment.get("version_title"),
             links=self._merge_links(link_groups),
-            shape_path=base_segment.get("shape_path", [])
+            shape_path=base_segment.get("shape_path", []),
+            segment_refs=segment_refs,
+            parent_titles=base_segment.get("parent_titles", []),
+            he_ref=segment_he_ref
         )
 
     def create_vector_chunk(
@@ -72,25 +79,39 @@ class Chunker:
         index_title: str,
         version_title: str,
         links: List[Dict[str, Any]],
-        shape_path: List[str]
+        shape_path: List[str],
+        segment_refs: List[str] = None,
+        he_title: Optional[str] = None,
+        parent_titles: Optional[List[str]] = None,
+        he_ref: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create a single vector chunk payload."""
         clean_text = self.clean_text(text)
         link_ids = [link["_id"] for link in links if "_id" in link]
         chunk_id = f"{index_title}__{segment_ref}__{version_title}".replace(" ", "_").replace(":", "_")
+        metadata = {
+            "index_title": index_title,
+            "book_name": index_title,
+            "ref": segment_ref,
+            "text": clean_text,
+            "version_title": version_title,
+            "link_ids": link_ids,
+            "shape_path": shape_path,
+            "start_char": 0,
+            "end_char": len(clean_text)
+        }
+        if he_title:
+            metadata["he_title"] = he_title
+        if segment_refs:
+            metadata["segment_refs"] = segment_refs
+        if parent_titles:
+            metadata["parent_titles"] = parent_titles
+        if he_ref:
+            metadata["heRef"] = he_ref
         return {
             "id": chunk_id,
             "text": clean_text,
-            "metadata": {
-                "index_title": index_title,
-                "ref": segment_ref,
-                "text": clean_text,
-                "version_title": version_title,
-                "link_ids": link_ids,
-                "shape_path": shape_path,
-                "start_char": 0,
-                "end_char": len(clean_text)
-            }
+            "metadata": metadata
         }
 
     def chunk_segments(
@@ -115,8 +136,10 @@ class Chunker:
                 "ref": segment.get("ref"),
                 "text": clean_text,
                 "index_title": segment.get("index_title"),
+                "he_title": segment.get("he_title"),
                 "version_title": segment.get("version", {}).get("versionTitle", "unknown"),
                 "shape_path": segment.get("shape_path", []),
+                "parent_titles": segment.get("parent_titles", []),
                 "tokens": segment_tokens
             }
             link_group = links_batch[index] if index < len(links_batch) else []

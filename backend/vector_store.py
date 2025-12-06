@@ -1,5 +1,5 @@
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from google import genai
 from google.genai import types
 from pinecone import Pinecone, ServerlessSpec
@@ -107,20 +107,31 @@ class VectorStore:
             except Exception as e:
                 print(f"Error upserting to Pinecone: {e}")
 
-    def search(self, query_text: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search(self, query_text: str, limit: int = 10, filter_by_parent: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Search the vector store for similar chunks.
+        Optionally filter by parent title to retrieve only chunks from children of the specified node.
         """
         query_embedding = self.embed_text(query_text)
         if not query_embedding:
             return []
         
+        filter_dict = None
+        if filter_by_parent:
+            filter_dict = {
+                "parent_titles": {"$in": [filter_by_parent]}
+            }
+        
         try:
-            results = self.index.query(
-                vector=query_embedding,
-                top_k=limit,
-                include_metadata=True
-            )
+            query_params = {
+                "vector": query_embedding,
+                "top_k": limit,
+                "include_metadata": True
+            }
+            if filter_dict:
+                query_params["filter"] = filter_dict
+            
+            results = self.index.query(**query_params)
             
             matches = []
             for match in results['matches']:

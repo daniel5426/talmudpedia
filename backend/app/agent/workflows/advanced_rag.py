@@ -26,8 +26,24 @@ class AdvancedRAGWorkflow(BaseAgent):
         model_name = getattr(llm, "model", "gpt-4o")
         api_key = os.getenv("OPENAI_API_KEY")
         
-        self.retriever = retriever
-        self.retrieval_tool = RetrievalTool(retriever=retriever)
+        # Initialize Reranker and wrap the retriever
+        # Initialize Reranker and wrap the retriever
+        from app.agent.components.retrieval.reranker import PineconeReranker
+        from app.agent.components.retrieval.lexical import LexicalRetriever
+        from app.agent.components.retrieval.hybrid import HybridRetriever
+        
+        self.reranker = PineconeReranker()
+        self.lexical_retriever = LexicalRetriever()
+        
+        self.retriever = HybridRetriever(
+            lexical_retriever=self.lexical_retriever,
+            semantic_retriever=retriever,
+            reranker=self.reranker,
+            lexical_limit=5,
+            semantic_limit=20
+        )
+        
+        self.retrieval_tool = RetrievalTool(retriever=self.retriever)
         self.tools = [self.retrieval_tool]
         
         self.model = ChatOpenAI(
@@ -62,9 +78,7 @@ class AdvancedRAGWorkflow(BaseAgent):
             "ALWAYS use ONLY the retrieved context to answer the user's question. "
             "NEVER answer based on your general knowledge, ONLY based on the retrieved context. "
             "If the context doesn't contain the answer, rely on your general knowledge but mention that the specific text wasn't found. "
-            "Cite your sources clearly based on the context provided.\n"
-            "When citing a source, use the following format: [Source Title](citation:Source Title). "
-            "For example: [Shulchan Arukh, Orach Chayim 1:1](citation:Shulchan Arukh, Orach Chayim 1:1).\n\n"
+            "Cite your sources clearly based on the context provided.\n\n"
             "Use Markdown formatting for your response.\n\n"
             "If the user's question is not clear, ask for clarification.\n\n"
             "ALWAYS answer in Hebrew.\n\n"

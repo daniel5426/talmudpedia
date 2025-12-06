@@ -11,8 +11,10 @@ const BOOK_MAPPINGS: Record<string, string> = {
   "Genesis": "בראשית",
   "Exodus": "שמות",
   "Leviticus": "ויקרא",
-  "Numbers": "במדבר",
+  "Numbers": "במדבר",   
   "Deuteronomy": "דברים",
+  "Be'er HaGolah": "באר הגולה",
+  "on": "על",
   
   // Prophets
   "Joshua": "יהושע",
@@ -259,40 +261,40 @@ class HebrewReferenceConverter {
   }
 
   private removeRedundantShulchanArukh(value: string): string {
-    return value.replace(/^\s*שולחן ערוך(?:[,]\s*|\s+)?/, "");
+    return value.replace(/שולחן ערוך(?:[,]\s*)?/g, "");
   }
 
   private static toHebrewNumeral(num: number): string {
-  if (num <= 0) return String(num);
+    if (num <= 0) return String(num);
     const ones = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"];
     const tens = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"];
     const hundreds = ["", "ק", "ר", "ש", "ת"];
     let result = "";
-  let h = Math.floor(num / 100);
-  while (h > 0) {
-    if (h >= 4) {
-      result += hundreds[4];
-      h -= 4;
-    } else {
-      result += hundreds[h];
-      h = 0;
+    let h = Math.floor(num / 100);
+    while (h > 0) {
+      if (h >= 4) {
+        result += hundreds[4];
+        h -= 4;
+      } else {
+        result += hundreds[h];
+        h = 0;
+      }
     }
-  }
-  const t = Math.floor((num % 100) / 10);
-  const o = num % 10;
-  if (t === 1 && o === 5) {
+    const t = Math.floor((num % 100) / 10);
+    const o = num % 10;
+    if (t === 1 && o === 5) {
       result += "טו";
-  } else if (t === 1 && o === 6) {
+    } else if (t === 1 && o === 6) {
       result += "טז";
-  } else {
-    result += tens[t] + ones[o];
-  }
-  if (result.length === 1) {
-    result += "'";
-  } else if (result.length > 1) {
-    result = result.slice(0, -1) + '"' + result.slice(-1);
-  }
-  return result;
+    } else {
+      result += tens[t] + ones[o];
+    }
+    if (result.length === 1) {
+      result += '\u05F3'; // Geresh (׳)
+    } else if (result.length > 1) {
+      result = result.slice(0, -1) + '\u05F4' + result.slice(-1); // Gershayim (״) before last character
+    }
+    return result;
   }
 }
 

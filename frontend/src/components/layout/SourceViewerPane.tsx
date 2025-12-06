@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { X, Settings2, BookOpen, Type, Languages } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { GlassCard } from "@/components/ui/glass-card";
+import { TextSelectionPopup } from "@/components/ui/text-selection-popup";
+import { nanoid } from "nanoid";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +25,8 @@ interface SourceViewerPaneProps {
 
 interface PageData {
   ref: string;
+  he_ref?: string;
+  full_he_ref?: string; // Full Hebrew reference for header display
   segments: string[];
   highlight_index: number | null;
   highlight_indices?: number[];
@@ -32,6 +36,10 @@ interface MultiPageTextData {
   pages: PageData[];
   main_page_index: number;
   index_title: string;
+  full_he_ref?: string;
+  he_title?: string;
+  he_ref?: string;
+  heRef?: string; // Legacy support if needed? Or remove. Backend sends he_ref.
   version_title: string;
   language: string;
 }
@@ -39,6 +47,7 @@ interface MultiPageTextData {
 interface SinglePageTextData {
   ref: string;
   index_title: string;
+  he_title?: string;
   version_title: string;
   language: string;
   segments: string[];
@@ -52,6 +61,21 @@ type LayoutMode = "continuous" | "segmented";
 export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   // Use selector to prevent unnecessary re-renders
   const setActiveSource = useLayoutStore((state) => state.setActiveSource);
+  const activeSource = useLayoutStore((state) => state.activeSource);
+  const setSelectedText = useLayoutStore((state) => state.setSelectedText);
+  const refreshTrigger = useLayoutStore((state) => state.refreshTrigger);
+
+  const [selectionPopup, setSelectionPopup] = React.useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [selectedTextContent, setSelectedTextContent] = React.useState<string>("");
+  const [selectionRects, setSelectionRects] = React.useState<Array<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }>>([]);
 
   const [textData, setTextData] = React.useState<MultiPageTextData | null>(
     null
@@ -78,8 +102,11 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);
   const topSentinelRef = React.useRef<HTMLDivElement>(null);
   const bottomSentinelRef = React.useRef<HTMLDivElement>(null);
+  const containerRef = React.useRef<HTMLDivElement>(null);
   const isScrollingProgrammatically = React.useRef(false);
   const hasScrolledToHighlight = React.useRef(false);
+  const ignoreSourceUpdateRef = React.useRef(false);
+  const scrollTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup refs on unmount to prevent memory leaks
   React.useEffect(() => {
@@ -97,6 +124,16 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
     if (lastColonIndex === -1) return ref;
     return ref.substring(0, lastColonIndex);
   };
+
+  // Update currentRef when sourceId changes
+  // Clear scroll timeout when activeSource becomes null (pane closed)
+  React.useEffect(() => {
+    if (!activeSource && scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = null;
+      ignoreSourceUpdateRef.current = false;
+    }
+  }, [activeSource]);
 
   // Update currentRef when sourceId changes
   React.useEffect(() => {
@@ -148,7 +185,19 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   React.useEffect(() => {
     if (!sourceId) return;
 
-    // Reset the scroll flag when sourceId changes
+    // If this update was triggered by our own scroll handler, ignore it
+    if (ignoreSourceUpdateRef.current) {
+      ignoreSourceUpdateRef.current = false;
+      return;
+    }
+
+    // If this is a user navigation, cancel any pending scroll updates
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = null;
+    }
+
+    // Reset the scroll flag when sourceId changes (and it's a new fetch)
     hasScrolledToHighlight.current = false;
     setInitialScrollComplete(false);
     setCanLoadMore({ top: true, bottom: true });
@@ -161,13 +210,22 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
         const res = await fetch(
           `/api/py/api/source/${encodeURIComponent(
             sourceId!
-          )}?pages_before=2&pages_after=2`
+          )}?pages_before=0&pages_after=2`
         );
         if (!res.ok) {
           const errorData = await res.json();
           throw new Error(errorData.detail || "Failed to fetch text");
         }
         const data = await res.json();
+        console.log(data);
+
+        // Check if backend specifies pagination support
+        if (data.can_load_more) {
+          setCanLoadMore(data.can_load_more);
+        } else {
+          // Default: allow loading more
+          setCanLoadMore({ top: true, bottom: true });
+        }
 
         // Check if it's multi-page or single-page response
         if ("pages" in data) {
@@ -183,7 +241,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       }
     }
     fetchText();
-  }, [sourceId]);
+  }, [sourceId, refreshTrigger]);
 
   // Calculate global segment index and find highlighted segments
   const getGlobalSegmentData = () => {
@@ -228,37 +286,18 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       isScrollingProgrammatically.current = true;
       hasScrolledToHighlight.current = true; // Mark that we've scrolled
 
-      setTimeout(() => {
-        const targetElement = segmentRefs.current[highlightedGlobalIndices[0]];
-        const scrollViewport = scrollAreaRef.current?.querySelector(
-          "[data-radix-scroll-area-viewport]"
-        );
+      const targetElement = segmentRefs.current[highlightedGlobalIndices[0]];
+      const scrollViewport = scrollAreaRef.current?.querySelector(
+        "[data-radix-scroll-area-viewport]"
+      );
 
-        if (targetElement && scrollViewport) {
-          const targetRect = targetElement.getBoundingClientRect();
-          const viewportRect = scrollViewport.getBoundingClientRect();
-          const targetRelativeTop =
-            targetRect.top - viewportRect.top + scrollViewport.scrollTop;
-          const viewportHeight = scrollViewport.clientHeight;
-          const targetHeight = targetRect.height;
-          // Scroll to 60% of viewport height (slightly below center) to reduce scroll distance and time
-          const scrollPosition =
-            targetRelativeTop - viewportHeight * 0.6 + targetHeight / 2;
-
-          scrollViewport.scrollTo({
-            top: scrollPosition,
-            behavior: "smooth",
-          });
-
-          setTimeout(() => {
-            isScrollingProgrammatically.current = false;
-            setInitialScrollComplete(true);
-          }, 400);
-        } else {
-          // Fallback if element not found (shouldn't happen if index is valid)
-          setInitialScrollComplete(true);
-        }
-      }, 200); // Reduced delay for faster feel
+      if (targetElement && scrollViewport) {
+        targetElement.scrollIntoView({ block: "center", behavior: "auto" });
+        isScrollingProgrammatically.current = false;
+        setInitialScrollComplete(true);
+      } else {
+        setInitialScrollComplete(true);
+      }
     } else if (textData) {
       // If data loaded but no highlight (or element missing), mark as done
       setInitialScrollComplete(true);
@@ -499,9 +538,28 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
             // We consider a page "current" if its top is above the middle of the viewport
             // and its bottom is below the top of the viewport
             if (top < viewportRect.height / 2 && bottom > 0) {
-              const pageRef = getPageReference(textData.pages[i].ref);
+              // If the pane is closed (activeSource is null), don't update the store
+              // This prevents reopening the pane when it's animating out
+              if (!activeSource) return;
+
+              // Use the full page ref instead of normalized version to avoid false matches
+              // For example, "Sefer HaChinukh:1" and "Sefer HaChinukh:2" both normalize to "Sefer HaChinukh"
+              const pageRef = textData.pages[i].ref;
               if (currentRef !== pageRef) {
                 setCurrentRef(pageRef);
+                
+                // Update the store with the new active source so it persists
+                // We use a timeout to debounce this slightly and avoid rapid updates
+                // For the store, we use normalized ref (without segment numbers)
+                const normalizedRef = getPageReference(pageRef);
+                if (scrollTimeoutRef.current) {
+                  clearTimeout(scrollTimeoutRef.current);
+                }
+                
+                scrollTimeoutRef.current = setTimeout(() => {
+                  ignoreSourceUpdateRef.current = true;
+                  setActiveSource(normalizedRef);
+                }, 500);
               }
               foundVisible = true;
               break;
@@ -513,7 +571,137 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
 
     scrollViewport.addEventListener("scroll", handleScroll);
     return () => scrollViewport.removeEventListener("scroll", handleScroll);
-  }, [textData, canLoadMore, isLoadingTop, isLoadingBottom, currentRef]);
+  }, [textData, canLoadMore, isLoadingTop, isLoadingBottom, currentRef, activeSource]);
+
+  const handleSelection = React.useCallback(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      setSelectionPopup(null);
+      setSelectionRects([]);
+      return;
+    }
+
+    const text = selection.toString().trim();
+    if (!text) {
+      setSelectionPopup(null);
+      setSelectionRects([]);
+      return;
+    }
+
+    if (!containerRef.current) return;
+
+    setSelectedTextContent(text);
+
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    const containerRect = containerRef.current.getBoundingClientRect();
+
+    const allRects = Array.from(range.getClientRects());
+    
+    const textRects = allRects.filter((r) => {
+      return r.height < 40;
+    });
+    
+    const relativeRects = (textRects.length > 0 ? textRects : allRects).map((r) => ({
+      left: r.left - containerRect.left,
+      top: r.top - containerRect.top,
+      width: r.width,
+      height: r.height,
+    }));
+    
+    setSelectionRects(relativeRects);
+
+    setSelectionPopup({
+      x: rect.left + rect.width / 2,
+      y: rect.top,
+    });
+    
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+      }
+    }, 50);
+  }, []);
+
+  const handleCopy = React.useCallback(async () => {
+    if (selectedTextContent) {
+      try {
+        await navigator.clipboard.writeText(selectedTextContent);
+        setSelectionPopup(null);
+        setSelectedTextContent("");
+        setSelectionRects([]);
+        setTimeout(() => {
+          const selection = window.getSelection();
+          if (selection) {
+            selection.removeAllRanges();
+          }
+        }, 50);
+      } catch (err) {
+        console.error("Failed to copy text:", err);
+      }
+    }
+  }, [selectedTextContent]);
+
+  const handleAskChat = () => {
+    if (selectedTextContent) {
+      setSelectedText({
+        id: nanoid(),
+        text: selectedTextContent,
+        sourceRef: currentRef,
+      });
+      
+      setSelectionPopup(null);
+      setSelectedTextContent("");
+      setSelectionRects([]);
+      
+      setTimeout(() => {
+        const selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+        }
+      }, 50);
+    }
+  };
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!selectedTextContent || !selectionPopup) return;
+      
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const isCopyShortcut = isMac 
+        ? (e.metaKey && e.key === "c")
+        : (e.ctrlKey && e.key === "c");
+      
+      if (isCopyShortcut) {
+        e.preventDefault();
+        handleCopy();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedTextContent, selectionPopup, handleCopy]);
+
+  // Update selection overlay positions when scrolling
+  React.useEffect(() => {
+    const scrollViewport = scrollAreaRef.current?.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    );
+    if (!scrollViewport) return;
+
+    const handleScroll = () => {
+      // Clear selection overlay and popup when scrolling
+      if (selectionPopup || selectionRects.length > 0) {
+        setSelectionPopup(null);
+        setSelectionRects([]);
+        setSelectedTextContent("");
+      }
+    };
+
+    scrollViewport.addEventListener("scroll", handleScroll);
+    return () => scrollViewport.removeEventListener("scroll", handleScroll);
+  }, [selectionPopup, selectionRects]);
 
   const getFontSizeClass = () => {
     const sizes = {
@@ -530,6 +718,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   // Group segments by page for rendering with page headers
   const pageGroups: Array<{
     pageRef: string;
+    heRef?: string;
     segments: Array<{
       segment: string;
       globalIndex: number;
@@ -563,18 +752,19 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
 
       pageGroups.push({
         pageRef: page.ref,
+        heRef: page.he_ref,
         segments: pageSegments,
       });
     });
   }
 
   return (
-    <div className="flex flex-col flex-1 min-w-20 h-full bg-background relative">
+    <div ref={containerRef} className="flex flex-col flex-1 z-50 min-w-20 h-full bg-primary-soft relative">
       {/* Reader Controls Header */}
       <header className="sticky top-0 z-50 bg-transparent  pt-2 pb-4 p">
         <GlassCard
-          variant="no_glass"
-          className="flex items-center z-52 bg-background justify-between mx-2 px-4 py-[6px]"
+          variant="no_border"
+          className="flex items-center z-52 bg-white hover:bg-primary-soft/80 transition-all duration-300 shadow-md  justify-between mx-2 px-4 py-[6px]"
         >
           {/* Right: Display Settings */}
           <div className="flex items-center gap-1" dir="rtl">
@@ -586,7 +776,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel dir="rtl">
-                  Display Settings
+                  הגדרות תצוגה
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
 
@@ -595,7 +785,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                   className="text-xs font-normal text-muted-foreground flex items-center gap-2"
                 >
                   <Type className="h-3 w-3" />
-                  Font Size
+                  גודל גופן
                 </DropdownMenuLabel>
                 <DropdownMenuRadioGroup
                   dir="rtl"
@@ -651,7 +841,31 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                     className="font-semibold text-base"
                     dir={isHebrew ? "rtl" : "ltr"}
                   >
-                    {convertToHebrew(currentRef)}
+                    {(() => {
+                      // Find the current visible page based on currentRef (now using full refs)
+                      const currentPage = textData?.pages?.find((page) => page.ref === currentRef);
+                      
+                      // Use full Hebrew ref from current page if available
+                      if (currentPage?.full_he_ref) {
+                        return currentPage.full_he_ref;
+                      }
+                      
+                      // Fallback to main response full_he_ref
+                      if (textData?.full_he_ref) {
+                        return textData.full_he_ref;
+                      }
+                      
+                      // Fallback: Use Hebrew title from DB if available, otherwise convert
+                      const heTitle = textData?.he_title || textData?.heRef;
+                      if (heTitle) {
+                        // Extract just the section part from currentRef (e.g., "א'" from "Genesis 1")
+                        const refParts = currentRef.split(' ');
+                        const sectionPart = refParts.slice(1).join(' ');
+                        const convertedSection = convertToHebrew(sectionPart);
+                        return `${heTitle} ${convertedSection}`;
+                      }
+                      return convertToHebrew(currentRef);
+                    })()}
                   </h1>
                 </div>
               </div>
@@ -664,7 +878,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
               variant="ghost"
               size="icon"
               onClick={() => setActiveSource(null)}
-              className="h-8 w-8"
+              className="h-8 w-8 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </Button>
@@ -675,7 +889,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       {/* Text Content */}
       <ScrollArea
         ref={scrollAreaRef}
-        className="h-full px-6 -mt-[69px] bg-accent/20"
+        className="h-full px-6 -mt-[29px] "
       >
         <div className="max-w-4xl mx-auto px-6 py-8 pb-102">
           {isLoading ? (
@@ -694,7 +908,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
             </div>
           ) : textData ? (
             <>
-              <div ref={topSentinelRef} className="h-px w-full" />
+              <div ref={topSentinelRef} className="h-px w-full " />
               {/* Loading indicator for top */}
               {isLoadingTop && (
                 <div className="flex justify-center py-4">
@@ -702,7 +916,10 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                 </div>
               )}
 
-              <div dir={isHebrew ? "rtl" : "ltr"}>
+              <div
+                dir={isHebrew ? "rtl" : "ltr"}
+                onMouseUp={handleSelection}
+              >
                 {layoutMode === "segmented" ? (
                   // Segmented view with page headers
                   <div className="space-y-6">
@@ -716,12 +933,26 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                         data-page-ref={pageGroup.pageRef}
                       >
                         {/* Page Title Header */}
-                        <div className="mb-4 pb-2 border-b border-border/50">
+                        <div className="mb-4 pb-1 border-b-4 w-fit mx-auto justify-center">
                           <h2
                             className="text-lg font-semibold text-foreground/80"
                             dir={isHebrew ? "rtl" : "ltr"}
                           >
-                            {convertToHebrew(pageGroup.pageRef)}
+                            {(() => {
+                              // If available, use Hebrew Ref directly for Hebrew context
+                              if (pageGroup.heRef && isHebrew) {
+                                  // Strip index title (he_title) from it
+                                  const heIndexTitle = textData?.he_title || "";
+                                  let display = pageGroup.heRef.replace(heIndexTitle, "").trim();
+                                  // Remove leading comma/whitespace if any
+                                  display = display.replace(/^,\s*/, "");
+                                  return display;
+                              }
+                              // Strip index title from page ref to show only the section (e.g. "10b")
+                              const indexTitle = textData?.index_title || "";
+                              const displayRef = pageGroup.pageRef.replace(indexTitle, "").trim();
+                              return convertToHebrew(displayRef || pageGroup.pageRef);
+                            })()}
                           </h2>
                         </div>
 
@@ -736,15 +967,13 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                               className={`
                                 flex gap-3
                                 ${getFontSizeClass()}
-                                leading-relaxed 
+                                leading-relaxed
                                 py-2 px-3
                                 rounded-sm
-                                transition-all duration-200
-                                cursor-pointer
                                 ${
                                   item.isHighlighted
                                     ? "bg-yellow-100 dark:bg-yellow-900/20 shadow-sm"
-                                    : "hover:bg-accent/50"
+                                    : ""
                                 }
                               `}
                             >
@@ -781,12 +1010,26 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                         data-page-ref={pageGroup.pageRef}
                       >
                         {/* Page Title Header */}
-                        <div className="mb-4 pb-2 border-b border-border/50">
+                        <div className="mb-4 pb-1 border-b-4 w-fit mx-auto justify-center">
                           <h2
                             className="text-lg font-semibold text-foreground/80"
                             dir={isHebrew ? "rtl" : "ltr"}
                           >
-                            {convertToHebrew(pageGroup.pageRef)}
+                            {(() => {
+                              // If available, use Hebrew Ref directly for Hebrew context
+                              if (pageGroup.heRef && isHebrew) {
+                                  // Strip index title (he_title) from it
+                                  const heIndexTitle = textData?.he_title || "";
+                                  let display = pageGroup.heRef.replace(heIndexTitle, "").trim();
+                                  // Remove leading comma/whitespace if any
+                                  display = display.replace(/^,\s*/, "");
+                                  return display;
+                              }
+                              // Strip index title from page ref to show only the section (e.g. "10b")
+                              const indexTitle = textData?.index_title || "";
+                              const displayRef = pageGroup.pageRef.replace(indexTitle, "").trim();
+                              return convertToHebrew(displayRef || pageGroup.pageRef);
+                            })()}
                           </h2>
                         </div>
 
@@ -852,6 +1095,30 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
           )}
         </div>
       </ScrollArea>
+
+      {/* Custom selection overlay - shows exact selected text */}
+      {selectionRects.length > 0 && (
+        <div className="pointer-events-none absolute inset-0 z-[99]">
+          {selectionRects.map((rect, index) => (
+            <div
+              key={index}
+              className="absolute bg-primary/20 border border-primary/30"
+              style={{
+                left: `${rect.left}px`,
+                top: `${rect.top}px`,
+                width: `${rect.width}px`,
+                height: `${rect.height}px`,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      <TextSelectionPopup 
+        position={selectionPopup} 
+        onAskChat={handleAskChat}
+        onCopy={handleCopy}
+      />
     </div>
   );
 }

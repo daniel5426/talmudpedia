@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, EditIcon, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, EditIcon, Book, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 
 import {
@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 export function NavMain({
   items,
   handleNewChat,
+  handleLibraryToggle,
   direction,
 }: {
   items: {
@@ -37,6 +38,7 @@ export function NavMain({
     }[];
   }[];
   handleNewChat: () => void;
+  handleLibraryToggle?: () => void;
   direction: DirectionMode;
 }) {
   const isRTL = direction !== "rtl";
@@ -104,6 +106,19 @@ export function NavMain({
           <span className="">שיחה חדשה</span>
         </SidebarMenuButton>
         </SidebarMenuItem>
+        {handleLibraryToggle && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={handleLibraryToggle}
+              key="library"
+              className="cursor-pointer"
+              tooltip="ספרייה"
+            >
+              <Book className="h-4 w-4" />
+              <span>ספרייה</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
       </SidebarMenu>
     </SidebarGroup>
   )

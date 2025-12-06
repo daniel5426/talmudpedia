@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
+import { Streamdown } from "streamdown";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -304,8 +305,6 @@ export const MessageBranchPage = ({
   );
 };
 
-import { Streamdown } from "streamdown";
-
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 export const MessageResponse = memo(
@@ -318,10 +317,7 @@ export const MessageResponse = memo(
       {...props}
     />
   ),
-  (prevProps, nextProps) => 
-    prevProps.children === nextProps.children &&
-    // @ts-ignore - Streamdown might not have typed components prop perfectly or we want to be loose here
-    prevProps.components === nextProps.components
+  (prevProps, nextProps) => prevProps.children === nextProps.children
 );
 
 MessageResponse.displayName = "MessageResponse";

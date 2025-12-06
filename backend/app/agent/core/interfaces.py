@@ -45,6 +45,15 @@ class Retriever(ABC):
         pass
 
 
+class Reranker(ABC):
+    """Abstract base class for Rerankers."""
+
+    @abstractmethod
+    async def rerank(self, query: str, documents: List[Document], top_n: int = 5) -> List[Document]:
+        """Rerank a list of documents based on the query."""
+        pass
+
+
 class Tool(ABC):
     """Abstract base class for Tools."""
 

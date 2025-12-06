@@ -6,9 +6,9 @@ from langchain_core.callbacks.manager import (
     adispatch_custom_event,
 )
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from app.agent.components.retrieval.vector import VectorRetriever
+from app.agent.core.interfaces import Retriever
 
 
 class RetrievalInput(BaseModel):
@@ -28,7 +28,14 @@ class RetrievalTool(BaseTool):
         "You can call this multiple times with different queries if needed."
     )
     args_schema: Type[BaseModel] = RetrievalInput
-    retriever: VectorRetriever = Field(exclude=True)
+    retriever: Any = Field(exclude=True)
+
+    @field_validator('retriever')
+    @classmethod
+    def validate_retriever(cls, v: Any) -> Any:
+        if not isinstance(v, Retriever):
+            raise ValueError(f"retriever must be an instance of Retriever, got {type(v)}")
+        return v
 
     def _run(
         self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None

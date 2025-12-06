@@ -38,7 +38,7 @@ export function SignupForm({
       useAuthStore.getState().setAuth(null as any, access_token)
       const user = await api.getMe()
       useAuthStore.getState().setAuth(user, access_token)
-      router.push("/")
+      router.push("/chat")
     } catch (err: any) {
       setError(err.message || "Registration failed")
     } finally {

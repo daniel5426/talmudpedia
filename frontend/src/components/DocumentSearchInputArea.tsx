@@ -270,13 +270,13 @@ export function DocumentSearchInputArea({
       />
 
       {/* Top Block: Attachments + Textarea */}
-      <div className="flex flex-col rounded-md transition-all">
+      <div className="flex flex-col rounded-sm transition-all">
         {files.length > 0 && (
           <div className="flex flex-wrap gap-2 p-2">
             {files.map((file) => (
               <div
                 key={file.id}
-                className="group relative flex items-center gap-2 bg-background border rounded-md px-2 py-1 text-sm pr-8"
+                className="group relative flex items-center gap-2 bg-background border rounded-sm px-2 py-1 text-sm pr-8"
               >
                 {file.type === "image" ? (
                   <ImageIcon className="size-4 text-blue-500" />
@@ -322,7 +322,7 @@ export function DocumentSearchInputArea({
       </div>
 
       {/* Bottom Block: Tools + Submit */}
-      <div dir={direction} className="flex flex-wrap bg-primary-soft rounded-md shadow-sm text-black items-center justify-between gap-2">
+      <div dir={direction} className="flex flex-wrap bg-primary-soft rounded-sm shadow-sm text-black items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2 rounded-md  p-2">
           <DropdownMenu open={isSourceMenuOpen} onOpenChange={(open) => {
             setIsSourceMenuOpen(open);

@@ -7,6 +7,8 @@ class Citation(BaseModel):
     title: str
     url: str
     description: str
+    ref: Optional[str] = None
+    sourceRef: Optional[str] = None
 
 class Attachment(BaseModel):
     name: str

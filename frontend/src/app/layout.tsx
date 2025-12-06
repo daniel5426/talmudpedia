@@ -4,7 +4,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { DirectionProvider, type DirectionMode } from "@/components/direction-provider";
-import { PersistentLayoutShell } from "@/components/layout/PersistentLayoutShell";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -36,7 +35,7 @@ export default async function RootLayout({
         suppressHydrationWarning
         dir={initialDirection}
         data-direction={initialDirection}
-        className={`${geistSans.variable} ${geistMono.variable} antialiased h-screen overflow-hidden`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeProvider
           attribute="class"
@@ -45,9 +44,7 @@ export default async function RootLayout({
           disableTransitionOnChange
         >
           <DirectionProvider initialDirection={initialDirection}>
-            <PersistentLayoutShell>
-              {children}
-            </PersistentLayoutShell>
+            {children}
           </DirectionProvider>
         </ThemeProvider>
       </body>

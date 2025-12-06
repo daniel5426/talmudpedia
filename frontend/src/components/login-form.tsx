@@ -38,7 +38,7 @@ export function LoginForm({
       
       const user = await api.getMe()
       setAuth(user, access_token)
-      router.push("/")
+      router.push("/chat")
     } catch (err: any) {
       setError(err.message || "Login failed")
       // Clear token if login failed
@@ -55,20 +55,20 @@ export function LoginForm({
           <form className="p-6 md:p-8 pb-4" onSubmit={handleSubmit}>
             <FieldGroup>
               <div className="flex flex-col items-center gap-2 text-center">
-                <h1 className="text-2xl font-bold">Welcome back</h1>
+                <h1 className="text-2xl font-bold">ברוך הבה</h1>
                 <p className="text-muted-foreground text-balance">
-                  Login to your Talmudpedia account
+                  התחברות לחשבון רשת שלך
                 </p>
               </div>
               {error && (
                 <div className="text-red-500 text-sm text-center">{error}</div>
               )}
               <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
+                <FieldLabel htmlFor="email">אימייל</FieldLabel>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="m@example.com"
+                  placeholder="אימייל"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -76,12 +76,12 @@ export function LoginForm({
               </Field>
               <Field>
                 <div className="flex items-center">
-                  <FieldLabel htmlFor="password">Password</FieldLabel>
+                  <FieldLabel htmlFor="password">סיסמא</FieldLabel>
                   <a
                     href="#"
-                    className="ml-auto text-sm underline-offset-2 hover:underline"
+                    className="mr-auto text-sm underline-offset-2 hover:underline"
                   >
-                    Forgot your password?
+                    שכחת את הסיסמא?
                   </a>
                 </div>
                 <Input 
@@ -94,11 +94,11 @@ export function LoginForm({
               </Field>
               <Field>
                 <Button type="submit" disabled={loading}>
-                  {loading ? "Logging in..." : "Login"}
+                  {loading ? "מתחבר..." : "התחבר"}
                 </Button>
               </Field>
               <FieldSeparator className="*:data-[slot=field-separator-content]:bg-card">
-                Or continue with
+                או המשך עם
               </FieldSeparator>
               <Field className="grid grid-cols-3 gap-4">
                 <Button variant="outline" type="button">
@@ -108,7 +108,7 @@ export function LoginForm({
                       fill="currentColor"
                     />
                   </svg>
-                  <span className="sr-only">Login with Apple</span>
+                  <span className="sr-only">התחבר באופן Apple</span>
                 </Button>
                 <Button variant="outline" type="button">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -117,7 +117,7 @@ export function LoginForm({
                       fill="currentColor"
                     />
                   </svg>
-                  <span className="sr-only">Login with Google</span>
+                  <span className="sr-only">התחבר באופן Google</span>
                 </Button>
                 <Button variant="outline" type="button">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">

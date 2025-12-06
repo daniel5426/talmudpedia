@@ -3,10 +3,9 @@
 import React, { useState } from "react";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { cn, convertToHebrew } from "@/lib/hebrewUtils";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BookOpen, X, Search, PanelLeftIcon } from "lucide-react";
+import { Search, PanelLeftIcon } from "lucide-react";
 import { GlassCard } from "../ui/glass-card";
 
 export function SourceListPane() {
@@ -80,7 +79,7 @@ export function SourceListPane() {
         </Button>
       </div>
 
-      <ScrollArea dir="rtl" className="flex-1 h-full">
+      <div dir="rtl" className="flex-1 h-full overflow-y-auto">
         <div className="p-2 pb-80 space-y-2">
           {sourceList.length === 0 && !isLoading && (
             <p className="text-xs text-muted-foreground text-center py-4">
@@ -91,12 +90,12 @@ export function SourceListPane() {
           {sourceList.map((source) => (
             <GlassCard
               key={source.id}
-              onClick={() => setActiveSource(source.metadata.ref)} // Using ref as ID for now
+              onClick={() => setActiveSource(source.metadata.ref)}
               variant="no_border"
               className="p-2"
             >
               <div className="items-center gap-2 mb-1">
-                <span className="font-medium text-sm truncate">
+                <span className="font-medium text-sm break-words">
                   {convertToHebrew(source.metadata.ref)}
                 </span>
               </div>
@@ -106,7 +105,7 @@ export function SourceListPane() {
             </GlassCard>
           ))}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
