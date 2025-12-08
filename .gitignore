@@ -13,6 +13,8 @@
 .env
 backend/google-stt.json
 
+backend/sefaria_tree.json
+
 
 # testing
 */coverage
