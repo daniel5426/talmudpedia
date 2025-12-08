@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { api, AdminStats as AdminStatsType } from "@/lib/api"
+import { adminService, AdminStats as AdminStatsType } from "@/services"
 import { DashboardContent } from "@/components/admin/dashboard-content"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -16,7 +16,7 @@ export default function AdminDashboardPage() {
         const endDate = new Date()
         const startDate = new Date()
         startDate.setDate(startDate.getDate() - 30)
-        const data = await api.getAdminStats(
+        const data = await adminService.getStats(
           startDate.toISOString(),
           endDate.toISOString()
         )

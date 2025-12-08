@@ -12,7 +12,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { api } from "@/lib/api"
+import { authService } from "@/services"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 
 export function SignupForm({
@@ -32,11 +32,11 @@ export function SignupForm({
     setLoading(true)
 
     try {
-      await api.register(email, password, fullName)
+      await authService.register(email, password, fullName)
       // Auto login after registration
-      const { access_token } = await api.login(email, password)
+      const { access_token } = await authService.login(email, password)
       useAuthStore.getState().setAuth(null as any, access_token)
-      const user = await api.getMe()
+      const user = await authService.getProfile()
       useAuthStore.getState().setAuth(user, access_token)
       router.push("/chat")
     } catch (err: any) {

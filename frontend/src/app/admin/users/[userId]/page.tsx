@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { api, User, Chat } from "@/lib/api"
+import { adminService, User, Chat } from "@/services"
 import { ChatsTable } from "@/components/admin/chats-table"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
@@ -23,7 +23,7 @@ export default function AdminUserPage() {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const data = await api.getAdminUserDetails(userId)
+        const data = await adminService.getUserDetails(userId)
         setUser(data.user)
         setStats(data.stats)
       } catch (error) {
@@ -36,7 +36,7 @@ export default function AdminUserPage() {
   useEffect(() => {
     const fetchChats = async () => {
       try {
-        const data = await api.getAdminUserChats(
+        const data = await adminService.getUserChats(
           userId,
           pagination.pageIndex + 1,
           pagination.pageSize,

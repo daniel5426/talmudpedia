@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { api, User } from "@/lib/api"
+import { adminService, User } from "@/services"
 import { DataTable } from "@/components/ui/data-table"
 import { ColumnDef } from "@tanstack/react-table"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -63,7 +63,7 @@ export function UsersTable({
     }
     setLoading(true)
     try {
-      const data = await api.getAdminUsers(1, 1000)
+      const data = await adminService.getUsers(1, 1000)
       setInternalUsers(data.items)
     } catch (error) {
       console.error("Failed to fetch users", error)
@@ -78,7 +78,7 @@ export function UsersTable({
 
   const handleBulkDelete = async (ids: string[]) => {
     try {
-      await api.bulkDeleteUsers(ids)
+      await adminService.bulkDeleteUsers(ids)
       if (!externalData) {
           await fetchUsers()
       } else {
@@ -100,7 +100,7 @@ export function UsersTable({
   const handleSaveEdit = async () => {
     if (!editingUser) return
     try {
-      await api.updateUser(editingUser.id, { full_name: editName, role: editRole })
+      await adminService.updateUser(editingUser.id, { full_name: editName, role: editRole })
       setIsEditOpen(false)
       setEditingUser(null)
       if (!externalData) fetchUsers()
@@ -195,7 +195,7 @@ export function UsersTable({
                 className="text-red-600"
                 onClick={async () => {
                     if(confirm("Are you sure?")) {
-                        await api.bulkDeleteUsers([user.id])
+                        await adminService.bulkDeleteUsers([user.id])
                         if (!externalData) fetchUsers()
                         else window.location.reload()
                     }

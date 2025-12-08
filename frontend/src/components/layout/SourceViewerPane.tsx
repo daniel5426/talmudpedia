@@ -18,41 +18,14 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
+import {
+  sourceService,
+  MultiPageTextData,
+  SinglePageTextData,
+} from "@/services";
 
 interface SourceViewerPaneProps {
   sourceId: string | null;
-}
-
-interface PageData {
-  ref: string;
-  he_ref?: string;
-  full_he_ref?: string; // Full Hebrew reference for header display
-  segments: string[];
-  highlight_index: number | null;
-  highlight_indices?: number[];
-}
-
-interface MultiPageTextData {
-  pages: PageData[];
-  main_page_index: number;
-  index_title: string;
-  full_he_ref?: string;
-  he_title?: string;
-  he_ref?: string;
-  heRef?: string; // Legacy support if needed? Or remove. Backend sends he_ref.
-  version_title: string;
-  language: string;
-}
-
-interface SinglePageTextData {
-  ref: string;
-  index_title: string;
-  he_title?: string;
-  version_title: string;
-  language: string;
-  segments: string[];
-  highlight_index: number | null;
-  highlight_indices?: number[];
 }
 
 type FontSize = "small" | "medium" | "large" | "xlarge";
@@ -206,26 +179,14 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       setIsLoading(true);
       setError(null);
       try {
-        // Load 2 pages before + main page + 2 pages after
-        const res = await fetch(
-          `/api/py/api/source/${encodeURIComponent(
-            sourceId!
-          )}?pages_before=0&pages_after=2`
-        );
-        if (!res.ok) {
-          const errorData = await res.json();
-          throw new Error(errorData.detail || "Failed to fetch text");
-        }
-        const data = await res.json();
-        console.log(data);
+        const data = await sourceService.getInitial(sourceId!);
 
         // Check if backend specifies pagination support
-        if (data.can_load_more) {
-          setCanLoadMore(data.can_load_more);
-        } else {
-          // Default: allow loading more
-          setCanLoadMore({ top: true, bottom: true });
-        }
+        setCanLoadMore(
+          "can_load_more" in data && data.can_load_more
+            ? data.can_load_more
+            : { top: true, bottom: true }
+        );
 
         // Check if it's multi-page or single-page response
         if ("pages" in data) {
@@ -318,14 +279,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
     const firstPage = textData.pages[0];
 
     try {
-      const res = await fetch(
-        `/api/py/api/source/${encodeURIComponent(
-          firstPage.ref
-        )}?pages_before=2&pages_after=0`
-      );
-      if (!res.ok) throw new Error("Failed to fetch previous pages");
-
-      const data = await res.json();
+      const data = await sourceService.getBefore(firstPage.ref);
 
       if ("pages" in data && data.pages.length > 1) {
         // Get only the pages before the first page (exclude the first page itself which is the last in the response)
@@ -406,14 +360,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
     const lastPage = textData.pages[textData.pages.length - 1];
 
     try {
-      const res = await fetch(
-        `/api/py/api/source/${encodeURIComponent(
-          lastPage.ref
-        )}?pages_before=0&pages_after=2`
-      );
-      if (!res.ok) throw new Error("Failed to fetch next pages");
-
-      const data = await res.json();
+      const data = await sourceService.getAfter(lastPage.ref);
 
       if ("pages" in data && data.pages.length > 1) {
         // Get only the pages after the last page (exclude the last page itself which is the first in the response)

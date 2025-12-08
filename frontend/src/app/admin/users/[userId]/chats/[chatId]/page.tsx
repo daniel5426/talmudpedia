@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { api, User, ChatHistory } from "@/lib/api"
+import { adminService, chatService, User, ChatHistory } from "@/services"
 import { AdminChatView } from "@/components/admin/admin-chat-view"
 
 export default function AdminUserChatPage() {
@@ -16,8 +16,8 @@ export default function AdminUserChatPage() {
     const fetchData = async () => {
       try {
         const [userData, chatData] = await Promise.all([
-          api.getAdminUserDetails(userId),
-          api.getChatHistory(chatId)
+          adminService.getUserDetails(userId),
+          chatService.getHistory(chatId)
         ])
         setUser(userData.user)
         setChat(chatData)

@@ -39,13 +39,13 @@ import {
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Share2, Trash2, MoreHorizontal } from "lucide-react";
+import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Share2, Trash2, MoreHorizontal, Volume2, Square } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotImputArea } from "@/components/BotImputArea";
-import { useChatController, type ChatController, type ChatMessage } from "./useChatController";
+import { useChatController, type ChatController, type ChatMessage, type Citation } from "./useChatController";
 import { clearPendingChatMessage, consumePendingChatMessage } from "@/lib/chatPrefill";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { api } from "@/lib/api";
+import { chatService, livekitService, ttsService } from "@/services";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -55,6 +55,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useSearchParams } from "next/navigation";
 import { KesherLogo } from "@/components/ui/KesherLogo";
+import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
+import "@livekit/components-styles";
 
 const formatThinkingDuration = (durationMs?: number | null) => {
   if (!durationMs || durationMs <= 0) {
@@ -79,6 +81,71 @@ const formatThinkingDuration = (durationMs?: number | null) => {
 const buildThinkingLabel = (durationMs?: number | null) => {
   const formatted = formatThinkingDuration(durationMs);
   return formatted ? `חשב במשך ${formatted}` : null;
+};
+
+const CITATION_NUMERIC_PATTERN = /((\d+)(?::(\d+))?|(\d+)([ab])(?::(\d+))?)$/i;
+const CITATION_RANGE_PATTERN = /^(.*?)(?:[–—-]\s*\d.*)$/;
+
+const normalizeCitationRef = (value?: string | null) => {
+  if (!value) return "";
+  let next = value.trim();
+  try {
+    next = decodeURIComponent(next);
+  } catch {
+    next = value.trim();
+  }
+  next = next.replace(/^https?:\/\/[^/]+/i, "");
+  next = next.replace(/^\/+/, "");
+  next = next.replace(/_/g, " ");
+  return next.trim();
+};
+
+const extractCitationIndexTitle = (value: string) => {
+  let normalized = normalizeCitationRef(value);
+  const rangeMatch = normalized.match(CITATION_RANGE_PATTERN);
+  if (rangeMatch && rangeMatch[1]) {
+    normalized = rangeMatch[1].trim();
+  }
+  const numericMatch = normalized.match(CITATION_NUMERIC_PATTERN);
+  if (numericMatch && typeof numericMatch.index === "number") {
+    normalized = normalized.slice(0, numericMatch.index);
+  }
+  normalized = normalized.replace(/[,:]+$/, "").trim();
+  if (normalized) return normalized;
+  return normalizeCitationRef(value);
+};
+
+const extractBookLabel = (value: string) => {
+  let base = value.replace(/[_/]+/g, " ").replace(/-/g, " ").trim();
+  const commaParts = base.split(",").map((p) => p.trim()).filter(Boolean);
+  if (commaParts.length > 1) {
+    base = commaParts[commaParts.length - 1];
+  }
+  const tokens = base.split(" ").filter(Boolean);
+  if (tokens.length > 3) {
+    return tokens.slice(0, 3).join(" ");
+  }
+  return base;
+};
+
+const deriveCitationGroup = (citation: Citation) => {
+  const primary = citation.url || citation.title || citation.ref || citation.sourceRef || "";
+  const indexTitle = extractCitationIndexTitle(primary);
+  const labelSource = extractBookLabel(indexTitle || primary || "מקור");
+  const label = convertToHebrew(labelSource);
+  const key = labelSource.toLowerCase();
+  return { key, label };
+};
+
+const groupCitationsBySource = (citations?: Citation[]) => {
+  const groups: Record<string, { label: string; items: Citation[] }> = {};
+  (citations || []).forEach((citation) => {
+    const { key, label } = deriveCitationGroup(citation);
+    const bucket = groups[key] || { label, items: [] };
+    bucket.items.push(citation);
+    groups[key] = bucket;
+  });
+  return groups;
 };
 
 type ReasoningStepsListProps = {
@@ -185,27 +252,19 @@ const ReasoningStepsList = ({
                 </div>
               )}
             {expanded && step.citations && step.citations.length > 0 && (() => {
-              const citationsByUrl = step.citations.reduce((acc, citation) => {
-                const url = citation.url;
-                if (!acc[url]) {
-                  acc[url] = [];
-                }
-                acc[url].push(citation);
-                return acc;
-              }, {} as Record<string, typeof step.citations>);
-
+              const grouped = groupCitationsBySource(step.citations);
               return (
                 <div className="mt-2 space-y-2">
-                  {Object.entries(citationsByUrl).map(([url, citations]) => (
-                    <InlineCitation key={url} className="cursor-pointer">
+                  {Object.entries(grouped).map(([groupKey, group]) => (
+                    <InlineCitation key={groupKey} className="cursor-pointer">
                       <InlineCitationCard>
                         <InlineCitationCardTrigger
-                          sources={citations.map((citation) => convertToHebrew(citation.url))}
+                          sources={Array(group.items.length).fill(group.label)}
                           className="cursor-pointer"
-                          onClick={() => onSourceClick(citations)}
+                          onClick={() => onSourceClick(group.items)}
                         />
                         <InlineCitationCardBody className="cursor-pointer max-h-96 overflow-y-auto">
-                          {citations.map((citation, cIdx) => (
+                          {group.items.map((citation, cIdx) => (
                             <InlineCitationSource
                               key={cIdx}
                               sourceRef={citation.sourceRef}
@@ -233,7 +292,49 @@ type ChatPaneProps = {
   chatId?: string;
 };
 
-function ChatWorkspace({ controller, chatId }: { controller: ChatController; chatId?: string }) {
+type VoiceModeControlsProps = {
+  direction: DirectionMode;
+  onClose: () => void;
+};
+
+function VoiceModeControls({ direction, onClose }: VoiceModeControlsProps) {
+  const [pulse, setPulse] = useState(1);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPulse(1 + Math.random() * 0.4);
+    }, 220);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="w-full flex flex-col items-center gap-6 py-4" dir={direction}>
+      <div className="relative h-24 w-24 sm:h-32 sm:w-32">
+        <div className="absolute inset-0 rounded-full bg-teal-500/15 animate-ping" />
+        <div
+          className="absolute inset-0 rounded-full bg-cyan-400/25"
+          style={{
+            transform: `scale(${pulse + 0.2})`,
+            transition: "transform 0.25s ease",
+          }}
+        />
+        <div
+          className="relative h-full w-full rounded-full bg-linear-to-br from-cyan-400 via-emerald-400 to-teal-500 shadow-[0_10px_35px_rgba(16,185,129,0.35)]"
+          style={{
+            transform: `scale(${pulse})`,
+            transition: "transform 0.2s ease",
+          }}
+        />
+      </div>
+      <div className="text-sm text-muted-foreground">מצב קול פעיל</div>
+      <Button variant="secondary" onClick={onClose} className="px-5 z-10">
+        סיים שיחה קולית
+      </Button>
+    </div>
+  );
+}
+
+function ChatWorkspace({ controller, chatId, isVoiceModeActive, handleToggleVoiceMode }: { controller: ChatController; chatId?: string, isVoiceModeActive: boolean, handleToggleVoiceMode: () => void }) {
   // Auto (Agent Router) - Extract controller methods and state
   const {
     messages,
@@ -266,6 +367,81 @@ function ChatWorkspace({ controller, chatId }: { controller: ChatController; cha
   // Auto (Agent Router) - Determine if chat is in empty state
   const isEmptyState =
     messages.length === 0 && !isLoading && streamingContent === "" && !isLoadingHistory;
+
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [loadingSpeakId, setLoadingSpeakId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const stopPlayback = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      if (audioRef.current.src.startsWith("blob:")) {
+        URL.revokeObjectURL(audioRef.current.src);
+      }
+      audioRef.current = null;
+    }
+    if (cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+    setPlayingId(null);
+    setLoadingSpeakId(null);
+  }, []);
+
+  const handleSpeak = useCallback(
+    async (message: ChatMessage) => {
+      if (!message.content) return;
+
+      if (playingId === message.id) {
+        stopPlayback();
+        return;
+      }
+
+      stopPlayback();
+
+      setLoadingSpeakId(message.id);
+      try {
+        const controller = new AbortController();
+        abortRef.current = controller;
+        const { url, cleanup } = await ttsService.stream(message.content, controller.signal);
+        cleanupRef.current = cleanup;
+
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        setPlayingId(message.id);
+        audio.onended = () => {
+          stopPlayback();
+        };
+        audio.onerror = () => {
+          stopPlayback();
+        };
+        await audio.play();
+      } catch (error) {
+        console.error(error);
+        setPlayingId(null);
+      } finally {
+        setLoadingSpeakId(null);
+      }
+    },
+    [playingId, stopPlayback]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        if (audioRef.current.src.startsWith("blob:")) {
+          URL.revokeObjectURL(audioRef.current.src);
+        }
+      }
+    };
+  }, []);
 
   // Auto (Agent Router) - Refs for managing pending prefill and chat ID tracking
   const pendingPrefillHandledRef = useRef(false);
@@ -364,13 +540,22 @@ function ChatWorkspace({ controller, chatId }: { controller: ChatController; cha
           <div className="flex w-full flex-col items-center text-center pb-20">
             <p className="text-3xl font-semibold pb-6">
             גלה מה מחפש לבך בתורה.</p>
-            <BotImputArea
-              className="w-full max-w-3xl"
-              textareaRef={textareaRef}
-              handleSubmit={handleSubmit}
-              isLoading={isLoading}
-              onStop={handleStop}
-            />
+            {isVoiceModeActive ? (
+              <VoiceModeControls
+                direction={direction}
+                onClose={handleToggleVoiceMode}
+              />
+            ) : (
+              <BotImputArea
+                className="w-full max-w-3xl"
+                textareaRef={textareaRef}
+                handleSubmit={handleSubmit}
+                isLoading={isLoading}
+                onStop={handleStop}
+                isVoiceModeActive={isVoiceModeActive}
+                onToggleVoiceMode={handleToggleVoiceMode}
+              />
+            )}
           </div>
         ) : (
           <>
@@ -449,27 +634,18 @@ function ChatWorkspace({ controller, chatId }: { controller: ChatController; cha
                           </div>
 
                           {msg.citations && msg.citations.length > 0 && (() => {
-                            const citationsByUrl = msg.citations.reduce((acc, citation) => {
-                              const url = citation.url;
-                              if (!acc[url]) {
-                                acc[url] = [];
-                              }
-                              acc[url].push(citation);
-                              console.log("citation.ref", citation.ref);
-                              return acc;
-                            }, {} as Record<string, typeof msg.citations>);
-
+                            const grouped = groupCitationsBySource(msg.citations);
                             return (
                               <div className="mt-1 space-y-2">
-                                {Object.entries(citationsByUrl).map(([url, citations]) => (
-                                  <InlineCitation key={url}>
+                                {Object.entries(grouped).map(([groupKey, group]) => (
+                                  <InlineCitation key={groupKey}>
                                     <InlineCitationCard>
                                       <InlineCitationCardTrigger
-                                        sources={citations.map((c) => convertToHebrew(c.url))}
-                                        onClick={() => handleSourceClick(citations)}
+                                        sources={Array(group.items.length).fill(group.label)}
+                                        onClick={() => handleSourceClick(group.items)}
                                       />
                                       <InlineCitationCardBody className="max-h-96 overflow-y-auto">
-                                        {citations.map((citation, idx) => (
+                                        {group.items.map((citation, idx) => (
                                           <InlineCitationSource
                                             key={idx}
                                             sourceRef={citation.ref}
@@ -519,6 +695,24 @@ function ChatWorkspace({ controller, chatId }: { controller: ChatController; cha
                             className="size-4"
                             fill={disliked[msg.id] ? "currentColor" : "none"}
                           />
+                        </MessageAction>
+                        <MessageAction
+                          label={playingId === msg.id ? "Stop" : "Read"}
+                          onClick={() => handleSpeak(msg)}
+                          tooltip={
+                            playingId === msg.id
+                              ? "Stop playback"
+                              : loadingSpeakId === msg.id
+                              ? "Loading..."
+                              : "Read aloud"
+                          }
+                          disabled={loadingSpeakId === msg.id || !msg.content}
+                        >
+                          {playingId === msg.id ? (
+                            <Square className="size-4" />
+                          ) : (
+                            <Volume2 className="size-4" />
+                          )}
                         </MessageAction>
                         <MessageAction
                           label="Copy"
@@ -620,12 +814,21 @@ function ChatWorkspace({ controller, chatId }: { controller: ChatController; cha
       {!isEmptyState && (
         <>
           <ConversationScrollButton />
-          <BotImputArea
-            textareaRef={textareaRef}
-            handleSubmit={handleSubmit}
-            isLoading={isLoading}
-            onStop={handleStop}
-          />
+            {isVoiceModeActive ? (
+              <VoiceModeControls
+                direction={direction}
+                onClose={handleToggleVoiceMode}
+              />
+            ) : (
+              <BotImputArea
+                textareaRef={textareaRef}
+                handleSubmit={handleSubmit}
+                isLoading={isLoading}
+                onStop={handleStop}
+                isVoiceModeActive={isVoiceModeActive}
+                onToggleVoiceMode={handleToggleVoiceMode}
+              />
+            )}
         </>
       )}
     </div>
@@ -657,7 +860,7 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   const handleDeleteChat = React.useCallback(async () => {
     if (!effectiveChatId) return;
     if (!confirm("Are you sure you want to delete this chat?")) return;
-    await api.deleteChat(effectiveChatId);
+    await chatService.delete(effectiveChatId);
     setActiveChatId(null);
     window.location.href = "/chat";
   }, [effectiveChatId, setActiveChatId]);
@@ -666,9 +869,47 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   const chatController = controller ?? defaultController;
   const isEmptyState =
     chatController.messages.length === 0 && !chatController.isLoading && !chatController.streamingContent && !chatController.isLoadingHistory;
-  return (
-    <Conversation className="relative overflow-hidden bg-background">
-      {/* Auto (Agent Router) - Background gradient overlay */}
+
+  const [isVoiceModeActive, setIsVoiceModeActive] = useState(false);
+  const [token, setToken] = useState("");
+
+  const handleToggleVoiceMode = async () => {
+    if (isVoiceModeActive) {
+      setIsVoiceModeActive(false);
+      setToken("");
+      if (effectiveChatId) {
+        await chatController.refresh();
+      }
+    } else {
+      try {
+        const { token: roomToken } = await livekitService.getToken(
+          effectiveChatId || "default-room",
+          nanoid(),
+          effectiveChatId || undefined
+        );
+        setToken(roomToken);
+        setIsVoiceModeActive(true);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  const mainContent = isVoiceModeActive ? (
+    <div className="flex flex-1 min-h-screen items-center justify-center p-6">
+      <VoiceModeControls direction={direction} onClose={handleToggleVoiceMode} />
+    </div>
+  ) : (
+    <ChatWorkspace
+      controller={chatController}
+      chatId={chatId}
+      isVoiceModeActive={isVoiceModeActive}
+      handleToggleVoiceMode={handleToggleVoiceMode}
+    />
+  );
+
+  const roomContent = (
+    <Conversation className="relative flex min-h-screen flex-col overflow-hidden bg-background">
       <div
         aria-hidden="true"
         className={cn(
@@ -677,7 +918,6 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
         )}
         style={{ background: "linear-gradient(to bottom right,#cce4e6,#008E96)" }}
       />
-      {/* Auto (Agent Router) - Full-width button container positioned absolutely at top, outside scroll area */}
       {effectiveChatId && (
         <div
           className={cn(
@@ -686,7 +926,6 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
           )}
         >
           <div className="pointer-events-auto">
-            {/* Auto (Agent Router) - 3-dot dropdown menu with Share and Delete options */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -722,8 +961,26 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
           </div>
         </div>
       )}
-      <ChatWorkspace controller={chatController} chatId={chatId} />
+      {mainContent}
     </Conversation>
   );
+
+  if (isVoiceModeActive && token) {
+      return (
+        <LiveKitRoom
+          token={token}
+          serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
+          connect={true}
+          audio={true}
+          video={false}
+          data-lk-theme="default"
+        >
+            <RoomAudioRenderer />
+            {roomContent}
+        </LiveKitRoom>
+      );
+  }
+
+  return roomContent;
 }
 

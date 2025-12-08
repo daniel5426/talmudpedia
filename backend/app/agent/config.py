@@ -18,3 +18,5 @@ class AgentConfig(BaseModel):
     workflow: str = "advanced_rag"
     llm: LLMConfig = Field(default_factory=LLMConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+
+

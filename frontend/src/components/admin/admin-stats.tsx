@@ -1,7 +1,7 @@
 "use client"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { AdminStats as AdminStatsType } from "@/lib/api"
+import { AdminStats as AdminStatsType } from "@/services"
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip } from "recharts"
 
 interface AdminStatsProps {

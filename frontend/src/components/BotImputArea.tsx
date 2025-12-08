@@ -17,6 +17,7 @@ import {
     PromptInputSubmit,
     PromptInputSpeechButton,
   } from "@/components/ai-elements/prompt-input";
+import { Headphones } from "lucide-react";
 import { useDirection } from "./direction-provider";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { SelectedTextCard } from "@/components/ui/selected-text-card";
@@ -37,8 +38,13 @@ export function BotImputArea({
   textareaRef, 
   handleSubmit, 
   isLoading = false,
-  onStop 
-}: BotImputAreaProps) {
+  onStop,
+  isVoiceModeActive,
+  onToggleVoiceMode,
+}: BotImputAreaProps & {
+  isVoiceModeActive?: boolean;
+  onToggleVoiceMode?: () => void;
+}) {
   const { direction } = useDirection();
   const selectedText = useLayoutStore((state) => state.selectedText);
   const setSelectedText = useLayoutStore((state) => state.setSelectedText);
@@ -118,6 +124,13 @@ export function BotImputArea({
             <PromptInputSpeechButton textareaRef={textareaRef} />
             <PromptInputButton >
               <GlobeIcon size={16} />
+            </PromptInputButton>
+            <PromptInputButton
+              onClick={onToggleVoiceMode}
+              className={cn("transition-colors", isVoiceModeActive && "text-red-500 bg-red-100 dark:bg-red-900/30")}
+              type="button"
+            >
+              <Headphones size={16} />
             </PromptInputButton>
           </PromptInputTools>
           <PromptInputSubmit status={isLoading ? "streaming" : undefined} />

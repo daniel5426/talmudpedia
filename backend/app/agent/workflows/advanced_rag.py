@@ -4,7 +4,10 @@ from typing import Any, Dict, List, Literal, Optional
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph, START
-from langgraph.prebuilt import ToolNode, tools_condition
+try:
+    from langgraph.prebuilt import ToolNode, tools_condition
+except ImportError as e:
+    raise ImportError("langgraph.prebuilt is required; install langgraph>=0.2.0") from e
 
 from app.agent.components.llm.openai import OpenAILLM
 from app.agent.components.retrieval.vector import VectorRetriever
@@ -50,7 +53,7 @@ class AdvancedRAGWorkflow(BaseAgent):
             model=model_name,
             api_key=api_key,
             streaming=True,
-            temperature=0
+            temperature=1
         ).bind_tools(self.tools)
 
     def build_graph(self) -> StateGraph:

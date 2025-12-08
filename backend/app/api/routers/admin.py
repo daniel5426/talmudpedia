@@ -5,7 +5,7 @@ from bson import ObjectId
 from app.db.models.user import User
 from app.db.models.chat import Chat
 from app.db.connection import MongoDatabase
-from app.endpoints.auth import get_current_user
+from app.api.routers.auth import get_current_user
 from pydantic import BaseModel
 
 

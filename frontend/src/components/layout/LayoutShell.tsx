@@ -4,7 +4,7 @@ import React, { Suspense } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useLayoutStore } from '@/lib/store/useLayoutStore';
 import { useAuthStore } from '@/lib/store/useAuthStore';
-import { api } from '@/lib/api';
+import { authService } from '@/services';
 import { cn } from '@/lib/utils';
 import { ChatPane } from '@/components/layout/ChatPane';
 import { SourceListPane } from '@/components/layout/SourceListPane';
@@ -40,7 +40,7 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
 
   React.useEffect(() => {
     if (token) {
-      api.getMe().then((userData) => {
+      authService.getProfile().then((userData) => {
         setAuth(userData, token);
       }).catch((err) => {
         console.error("Failed to refresh user profile", err);

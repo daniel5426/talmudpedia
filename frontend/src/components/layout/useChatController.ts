@@ -7,7 +7,7 @@ import type { FileUIPart } from "ai";
 import type { LucideIcon } from "lucide-react";
 import { SearchIcon, DotIcon } from "lucide-react";
 import { nanoid } from "nanoid";
-import { api } from "@/lib/api";
+import { chatService } from "@/services";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { hasPendingChatMessage } from "@/lib/chatPrefill";
@@ -119,6 +119,7 @@ export interface ChatController {
   handleDislike: (msg: ChatMessage) => Promise<void>;
   handleRetry: (msg: ChatMessage) => Promise<void>;
   handleSourceClick: (citations: ChatMessage["citations"]) => void;
+  refresh: () => Promise<void>;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
 }
 
@@ -152,6 +153,7 @@ export function useChatController(): ChatController {
   const abortManager = useRef(new AbortControllerManager());
   const isInitializingChatRef = useRef(false);
   const isActivelyStreamingRef = useRef(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const clearStreamingState = useCallback(() => {
     setIsLoading(false);
@@ -222,7 +224,7 @@ export function useChatController(): ChatController {
       abortManager.current.abort();
 
       try {
-        const history = await api.getChatHistory(activeChatId);
+        const history = await chatService.getHistory(activeChatId);
         if (isCancelled) {
           return;
         }
@@ -301,7 +303,7 @@ export function useChatController(): ChatController {
     return () => {
       isCancelled = true;
     };
-  }, [activeChatId]);
+  }, [activeChatId, refreshTrigger]);
 
   const handleSourceClick = (citations: ChatMessage["citations"]) => {
     if (!citations) return;
@@ -310,7 +312,7 @@ export function useChatController(): ChatController {
       score: 1,
       metadata: {
         index_title: c.title,
-        ref: c.title,
+        ref: c.ref || c.title,
         text: c.description,
         version_title: "Sefaria",
       },
@@ -539,7 +541,7 @@ export function useChatController(): ChatController {
     }
 
     try {
-      await api.updateMessageFeedback(activeChatId, msg.messageIndex, {
+      await chatService.updateMessageFeedback(activeChatId, msg.messageIndex, {
         liked: newLikedState,
         disliked: newLikedState ? false : undefined,
       });
@@ -569,7 +571,7 @@ export function useChatController(): ChatController {
     }
 
     try {
-      await api.updateMessageFeedback(activeChatId, msg.messageIndex, {
+      await chatService.updateMessageFeedback(activeChatId, msg.messageIndex, {
         disliked: newDislikedState,
         liked: newDislikedState ? false : undefined,
       });
@@ -592,7 +594,7 @@ export function useChatController(): ChatController {
     if (userMessage.role !== "user") return;
 
     try {
-      await api.deleteLastAssistantMessage(activeChatId);
+      await chatService.deleteLastAssistantMessage(activeChatId);
 
       setMessages((prev) => prev.slice(0, msgIndex));
 
@@ -604,6 +606,10 @@ export function useChatController(): ChatController {
       console.error("Failed to retry message", error);
     }
   };
+
+  const refresh = useCallback(async () => {
+    setRefreshTrigger(prev => prev + 1);
+  }, []);
 
   return {
     messages,
@@ -622,6 +628,7 @@ export function useChatController(): ChatController {
     handleDislike,
     handleRetry,
     handleSourceClick,
+    refresh,
     textareaRef,
   };
 }

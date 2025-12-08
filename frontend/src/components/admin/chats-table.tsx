@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { api, Chat } from "@/lib/api"
+import { adminService, Chat } from "@/services"
 import { DataTable } from "@/components/ui/data-table"
 import { ColumnDef } from "@tanstack/react-table"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -43,7 +43,7 @@ export function ChatsTable({
     }
     setLoading(true)
     try {
-      const data = await api.getAdminChats(1, 1000)
+      const data = await adminService.getChats(1, 1000)
       setInternalChats(data.items)
     } catch (error) {
       console.error("Failed to fetch chats", error)
@@ -58,7 +58,7 @@ export function ChatsTable({
 
   const handleBulkDelete = async (ids: string[]) => {
     try {
-      await api.bulkDeleteChats(ids)
+      await adminService.bulkDeleteChats(ids)
       if (!externalData) {
           await fetchChats()
       } else {
@@ -142,7 +142,7 @@ export function ChatsTable({
                 className="text-red-600"
                 onClick={async () => {
                     if(confirm("Are you sure?")) {
-                        await api.bulkDeleteChats([chat.id])
+                        await adminService.bulkDeleteChats([chat.id])
                         if (!externalData) fetchChats()
                         else window.location.reload()
                     }

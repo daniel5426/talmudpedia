@@ -1,7 +1,7 @@
 "use client"
 
 import { format } from "date-fns"
-import { AdminStats as AdminStatsType } from "@/lib/api"
+import { AdminStats as AdminStatsType } from "@/services"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, MessageSquare, UserPlus, TrendingUp, Zap, Activity } from "lucide-react"

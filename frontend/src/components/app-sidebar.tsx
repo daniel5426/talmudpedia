@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { api, Chat } from "@/lib/api";
+import { chatService, Chat } from "@/services";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -112,7 +112,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         params.cursor = undefined;
       }
 
-      const response = await api.getChats(params);
+      const response = await chatService.list(params);
       setChats((prev) => {
         if (mode === "reset") return response.items;
         const existingIds = new Set(prev.map((chat) => chat.id));
@@ -175,7 +175,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const handleDeleteChat = React.useCallback(
     async (chatId: string) => {
       if (!confirm("Are you sure you want to delete this chat?")) return;
-      await api.deleteChat(chatId);
+      await chatService.delete(chatId);
       if (activeChatId === chatId) setActiveChatId(null);
       fetchChats("reset");
     },
