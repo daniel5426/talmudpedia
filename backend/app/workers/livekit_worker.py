@@ -242,6 +242,10 @@ async def entrypoint(ctx: JobContext):
         
         # Get STT prompt to filter it out from user messages
         stt_prompt_text = os.getenv("LIVEKIT_STT_PROMPT")
+        if stt_prompt_text:
+            print(f"[INIT] STT prompt configured for filtering: '{stt_prompt_text}'")
+        else:
+            print("[INIT] No STT prompt configured")
         
         # Buffer for user messages - concatenate until AI responds
         # This MUST be defined before PersistingStream so it can be captured in closure
@@ -405,11 +409,35 @@ async def entrypoint(ctx: JobContext):
                 if not text:
                     print("[PERSIST] Skipping empty user message")
                     return
+                
+                # Normalize text for comparison
+                normalized_text = text.strip().lower()
+                
+                # Filter out STT prompt with multiple checks
+                if stt_prompt_text:
+                    normalized_prompt = stt_prompt_text.strip().lower()
                     
-                # Filter out STT prompt if it matches
-                if stt_prompt_text and text.strip() == stt_prompt_text.strip():
-                    print(f"[PERSIST] Filtering out STT prompt: {text[:50]}...")
-                    return
+                    # Exact match
+                    if normalized_text == normalized_prompt:
+                        print(f"[PERSIST] Filtering out STT prompt (exact match): {text[:50]}...")
+                        return
+                    
+                    # Remove punctuation for comparison
+                    text_no_punct = normalized_text.replace(".", "").replace("!", "").replace("?", "").replace(",", "").strip()
+                    prompt_no_punct = normalized_prompt.replace(".", "").replace("!", "").replace("?", "").replace(",", "").strip()
+                    
+                    if text_no_punct == prompt_no_punct:
+                        print(f"[PERSIST] Filtering out STT prompt (punctuation variation): {text[:50]}...")
+                        return
+                    
+                    # Check if the text is just the prompt with extra whitespace or similar
+                    if len(text_no_punct) > 0 and len(prompt_no_punct) > 0:
+                        if text_no_punct in prompt_no_punct or prompt_no_punct in text_no_punct:
+                            # Only filter if very similar in length (within 20%)
+                            length_ratio = len(text_no_punct) / len(prompt_no_punct)
+                            if 0.8 <= length_ratio <= 1.2:
+                                print(f"[PERSIST] Filtering out STT prompt (similar text): {text[:50]}...")
+                                return
                     
                 # Just buffer the message, don't save yet
                 print(f"[PERSIST] Buffering user message (not saved yet): {text[:50]}...")
