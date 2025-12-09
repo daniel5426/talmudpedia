@@ -3,6 +3,7 @@ import sys
 import os
 import asyncio
 import aiohttp
+import re
 from typing import List, Dict, Any, Optional
 
 # Add backend to path
@@ -49,6 +50,12 @@ class APITreeBuilder:
         self.book_results = {}
         self.failed_books = []
         self.terms_cache = {}  # Cache for shared titles (Terms)
+        self.failed_store = "backend/library_chunks/failed_books.json"
+        self.first_available_map = {}
+
+    def slugify(self, value: str) -> str:
+        cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip()).strip("-").lower()
+        return cleaned or "root"
 
     async def __aenter__(self):
         # Configure connector with higher limits to support 200 concurrent connections
@@ -155,6 +162,53 @@ class APITreeBuilder:
         
         return None
 
+    def parse_first_available_ref(self, ref: str) -> Optional[tuple]:
+        match = re.search(r"([0-9]+)([ab])", ref)
+        if not match:
+            return None
+        return (int(match.group(1)), match.group(2))
+
+    def compute_talmud_start_index(self, start_ref: Optional[tuple]) -> int:
+        if not start_ref:
+            return 0
+        daf, amud = start_ref
+        if not daf:
+            return 0
+        index = (daf - 2) * 2
+        if amud == "b":
+            index += 1
+        return max(0, index)
+
+    async def fetch_first_available(self, title: str, max_retries: int = 2) -> Optional[tuple]:
+        url_title = title.replace(" ", "_").replace(",", "%2C")
+        url = f"{self.base_url}/texts/{url_title}"
+        for attempt in range(max_retries):
+            try:
+                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        ref = data.get("firstAvailableSectionRef")
+                        if ref:
+                            return self.parse_first_available_ref(ref)
+                        return None
+                    elif response.status == 429:
+                        wait_time = 2 ** attempt
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        return None
+            except asyncio.TimeoutError:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
+                    continue
+                return None
+            except Exception:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
+                    continue
+                return None
+        return None
+
     async def fetch_term(self, term_name: str) -> Optional[Dict[str, str]]:
         """Fetch a term (shared title) from Sefaria API and cache it."""
         # Check cache first
@@ -241,47 +295,47 @@ class APITreeBuilder:
         return False
 
 
-    def build_section_children(self, book_title: str, book_he_title: str, schema: Dict[str, Any], section_names: List[str], he_section_names: List[str], lengths: List[int], is_talmud: bool = False) -> List[Dict[str, Any]]:
+    def build_section_children(self, book_title: str, book_he_title: str, schema: Dict[str, Any], section_names: List[str], he_section_names: List[str], lengths: List[int], is_talmud: bool = False, start_amud_index: int = 0, total_amud_count: Optional[int] = None) -> List[Dict[str, Any]]:
         """Build children for a book based on its schema, filtering out empty sections."""
+        if isinstance(lengths, int):
+            lengths = [lengths]
+        elif not isinstance(lengths, list):
+            lengths = []
+        content_counts = schema.get("content_counts", [])
+        if not isinstance(content_counts, list):
+            content_counts = []
         children = []
-        
-        if not lengths or len(lengths) == 0:
+        if not lengths and not total_amud_count:
             return children
-        
-        # Get the number of first-level sections
-        num_sections = lengths[0]
+        num_sections = lengths[0] if lengths else 0
         
         # Get section name (Chapter, Siman, etc.)
         section_name_en = section_names[0] if section_names else "Section"
         section_name_he = he_section_names[0] if he_section_names else "חלק"
         
-        # Get content_counts if available (tells us which sections have content)
-        content_counts = schema.get("content_counts", [])
-        
         # Special handling for Talmud
         if is_talmud and "Daf" in section_name_en:
-            # Talmud uses daf numbering (2a, 2b, etc.)
-            for daf_num in range(2, num_sections + 2):  # Talmud typically starts at 2
-                for amud in ['a', 'b']:
-                    # Calculate the index in content_counts
-                    daf_index = (daf_num - 2) * 2 + (0 if amud == 'a' else 1)
-                    
-                    # Skip if we have content_counts and this section is empty
-                    if content_counts and daf_index < len(content_counts):
-                        if content_counts[daf_index] == 0 or content_counts[daf_index] is None:
-                            continue
-                    
-                    he_amud = "." if amud == 'a' else ":"
-                    he_daf = encode_hebrew_numeral(daf_num)
-                    
-                    children.append({
-                        "title": f"Daf {daf_num}{amud}",
-                        "heTitle": f"דף {he_daf}{he_amud}",
-                        "type": "text",
-                        "ref": f"{book_title} {daf_num}{amud}",
-                        "heRef": f"{book_he_title} {he_daf}{he_amud}",
-                        "children": []
-                    })
+            total_amud = total_amud_count if total_amud_count is not None else num_sections
+            if total_amud is None:
+                total_amud = 0
+            if total_amud == 0 and lengths:
+                total_amud = num_sections
+            if total_amud and start_amud_index >= total_amud:
+                return children
+            final_range = total_amud if total_amud else num_sections
+            for amud_index in range(start_amud_index, final_range):
+                daf_num = 2 + (amud_index // 2)
+                amud = 'a' if amud_index % 2 == 0 else 'b'
+                he_amud = "." if amud == 'a' else ":"
+                he_daf = encode_hebrew_numeral(daf_num)
+                children.append({
+                    "title": f"Daf {daf_num}{amud}",
+                    "heTitle": f"דף {he_daf}{he_amud}",
+                    "type": "text",
+                    "ref": f"{book_title} {daf_num}{amud}",
+                    "heRef": f"{book_he_title} {he_daf}{he_amud}",
+                    "children": []
+                })
         else:
             # Regular numbering for other books
             for i in range(1, num_sections + 1):
@@ -305,26 +359,29 @@ class APITreeBuilder:
         
         return children
 
-    def process_jagged_array_node(self, node: Dict[str, Any], parent_ref_en: str, parent_ref_he: str, is_talmud: bool = False) -> List[Dict[str, Any]]:
+    def process_jagged_array_node(self, node: Dict[str, Any], parent_ref_en: str, parent_ref_he: str, is_talmud: bool = False, start_amud_index: int = 0) -> List[Dict[str, Any]]:
         """Process a JaggedArrayNode and return its children (sections)."""
         section_names = node.get("sectionNames", [])
         he_section_names = node.get("heSectionNames", [])
         
         # Get lengths - prefer content_counts over lengths field
+        content_counts = node.get("content_counts", [])
         if "content_counts" in node:
             content_counts = node["content_counts"]
-            if isinstance(content_counts, list) and content_counts:
-                lengths = [len(content_counts)]
-            else:
-                lengths = node.get("lengths", [])
-        else:
-            lengths = node.get("lengths", [])
+        lengths = node.get("lengths", [])
+        if isinstance(lengths, int):
+            lengths = [lengths]
+        elif not isinstance(lengths, list):
+            lengths = []
+        if not lengths and isinstance(content_counts, list):
+            lengths = [len(content_counts)]
+        total_amud_count = len(content_counts) if isinstance(content_counts, list) else None
         
         return self.build_section_children(
-            parent_ref_en, parent_ref_he, node, section_names, he_section_names, lengths, is_talmud
+            parent_ref_en, parent_ref_he, node, section_names, he_section_names, lengths, is_talmud, start_amud_index, total_amud_count
         )
     
-    def process_complex_node(self, node: Dict[str, Any], parent_ref_en: str, parent_ref_he: str, is_talmud: bool = False) -> Dict[str, Any]:
+    def process_complex_node(self, node: Dict[str, Any], parent_ref_en: str, parent_ref_he: str, is_talmud: bool = False, start_amud_index: int = 0) -> Dict[str, Any]:
         """
         Recursively process a node in a complex schema tree.
         Returns a node dictionary with children.
@@ -383,7 +440,7 @@ class APITreeBuilder:
                 # Only subdivide if we're at the root book level
                 return {
                     "type": "default",
-                    "children": self.process_jagged_array_node(node, ref_en, ref_he, is_talmud)
+                    "children": self.process_jagged_array_node(node, ref_en, ref_he, is_talmud, start_amud_index)
                 }
             else:
                 # Named section (e.g., "Kabbalas Shabbos", "Borechu", etc.)
@@ -409,7 +466,7 @@ class APITreeBuilder:
                         "type": "section",
                         "ref": ref_en,
                         "heRef": ref_he,
-                        "children": self.process_jagged_array_node(node, ref_en, ref_he, is_talmud)
+                        "children": self.process_jagged_array_node(node, ref_en, ref_he, is_talmud, start_amud_index)
                     }
         
         elif node_type == "SchemaNode" or "nodes" in node:
@@ -419,7 +476,7 @@ class APITreeBuilder:
             
             # Process each child recursively
             for child_node in children_nodes:
-                processed_child = self.process_complex_node(child_node, ref_en, ref_he, is_talmud)
+                processed_child = self.process_complex_node(child_node, ref_en, ref_he, is_talmud, start_amud_index)
                 
                 # Handle default nodes specially
                 if processed_child.get("type") == "default":
@@ -455,7 +512,7 @@ class APITreeBuilder:
                 "children": []
             }
 
-    def process_schema_node(self, book_title: str, book_he_title: str, schema: Dict[str, Any], categories: List[str]) -> Dict[str, Any]:
+    def process_schema_node(self, book_title: str, book_he_title: str, schema: Dict[str, Any], categories: List[str], start_amud_index: int = 0) -> Dict[str, Any]:
         """Process a schema node and return a book node with children."""
         is_talmud = any(cat in categories for cat in ["Bavli", "Yerushalmi", "Talmud"])
         
@@ -483,7 +540,7 @@ class APITreeBuilder:
         # Case 1: Simple schema - single JaggedArrayNode
         if node_type == "JaggedArrayNode":
             book_node["children"] = self.process_jagged_array_node(
-                schema, book_title, he_title, is_talmud
+                schema, book_title, he_title, is_talmud, start_amud_index
             )
         
         # Case 2: Complex schema - SchemaNode with children
@@ -492,7 +549,7 @@ class APITreeBuilder:
             
             # Process all child nodes recursively
             for node in nodes:
-                processed = self.process_complex_node(node, book_title, he_title, is_talmud)
+                processed = self.process_complex_node(node, book_title, he_title, is_talmud, start_amud_index)
                 
                 # Handle default nodes
                 if processed.get("type") == "default":
@@ -507,7 +564,7 @@ class APITreeBuilder:
             
             # Process all child nodes recursively
             for node in nodes:
-                processed = self.process_complex_node(node, book_title, he_title, is_talmud)
+                processed = self.process_complex_node(node, book_title, he_title, is_talmud, start_amud_index)
                 
                 # Handle default nodes
                 if processed.get("type") == "default":
@@ -545,6 +602,7 @@ class APITreeBuilder:
         # Storage for fetched book details
         book_details_map = {}
         best_versions_map = {}
+        start_refs_map = {}
         
         async def fetch_book_data(item):
             async with semaphore:
@@ -557,24 +615,32 @@ class APITreeBuilder:
                     self.max_concurrent_tasks = current_active
                 
                 print(f"[{current_active} active] Fetching: {item['title']}")
+                is_talmud = any(cat in item.get("categories", []) for cat in ["Bavli", "Yerushalmi", "Talmud"])
                 
                 try:
-                    book_details, best_version = await asyncio.gather(
+                    tasks = [
                         self.fetch_book_details(item["title"]),
-                        self.fetch_best_version(item["title"]),
-                        return_exceptions=True
-                    )
+                        self.fetch_best_version(item["title"])
+                    ]
+                    if is_talmud:
+                        tasks.append(self.fetch_first_available(item["title"]))
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    book_details = results[0]
+                    best_version = results[1]
+                    start_ref = results[2] if is_talmud else None
                     
                     if isinstance(book_details, Exception):
                         book_details = None
                     if isinstance(best_version, Exception):
                         best_version = None
+                    if isinstance(start_ref, Exception):
+                        start_ref = None
                     
                     print(f"✓ Fetched: {item['title']}")
-                    return (item["title"], item, book_details, best_version)
+                    return (item["title"], item, book_details, best_version, start_ref)
                 except Exception as e:
                     print(f"✗ Error fetching {item['title']}: {e}")
-                    return (item["title"], item, None, None)
+                    return (item["title"], item, None, None, None)
                 finally:
                     # Decrement active tasks
                     self.active_tasks -= 1
@@ -583,10 +649,13 @@ class APITreeBuilder:
         results = await asyncio.gather(*[fetch_book_data(book) for book in self.all_books])
         
         # Store fetched data
-        for title, item, book_details, best_version in results:
+        for title, item, book_details, best_version, start_ref in results:
             book_details_map[title] = (item, book_details)
             if best_version:
                 best_versions_map[title] = best_version
+            if start_ref:
+                start_refs_map[title] = start_ref
+        self.first_available_map = start_refs_map
         
         print(f"\n{'='*60}")
         print(f"Batch fetch complete!")
@@ -609,11 +678,15 @@ class APITreeBuilder:
                     failure_reason = "Book details returned but no schema found"
                 
                 if book_details and "schema" in book_details:
+                    start_idx = 0
+                    if title in start_refs_map:
+                        start_idx = self.compute_talmud_start_index(start_refs_map.get(title))
                     book_node = self.process_schema_node(
                         item["title"],
                         item.get("heTitle", ""),
                         book_details["schema"],
-                        item.get("categories", [])
+                        item.get("categories", []),
+                        start_idx
                     )
                     
                     if title in best_versions_map:
@@ -672,6 +745,7 @@ class APITreeBuilder:
             print(f"\nFailed books ({len(self.failed_books)}):")
             for failed in self.failed_books:
                 print(f"  - {failed['title']}: {failed['reason']}")
+        self.save_failed_books()
         print(f"{'='*60}\n")
     
     def rebuild_tree_with_books(self, contents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -701,7 +775,7 @@ class APITreeBuilder:
         
         return result
 
-    async def build(self) -> List[Dict[str, Any]]:
+    async def build(self, retry_failed_only: bool = False, failed_titles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Build the complete tree from Sefaria API with optimized batch processing."""
         print("Fetching table of contents from Sefaria API...")
         toc = await self.fetch_table_of_contents()
@@ -713,6 +787,10 @@ class APITreeBuilder:
             if "contents" in category:
                 self.collect_all_books(category["contents"])
         print(f"Collected {len(self.all_books)} books total")
+        if retry_failed_only and failed_titles:
+            titles_set = set(failed_titles)
+            self.all_books = [b for b in self.all_books if b.get("title") in titles_set]
+            print(f"Retrying subset of failed books: {len(self.all_books)}")
         
         # Step 2: Fetch all books in one giant batch (TRUE 200-concurrent processing)
         await self.fetch_all_books_batch()
@@ -725,7 +803,8 @@ class APITreeBuilder:
                 "title": category.get("category"),
                 "heTitle": category.get("heCategory"),
                 "type": "category",
-                "children": []
+                "children": [],
+                "slug": self.slugify(category.get("category") or category.get("heCategory") or "")
             }
             
             if "contents" in category:
@@ -734,6 +813,7 @@ class APITreeBuilder:
             tree.append(category_node)
         
         self.tree = tree
+        self.save_chunks()
         print(f"\nTree building complete!")
         print(f"Final tree has {len(self.tree)} top-level categories")
         if self.failed_books:
@@ -749,13 +829,83 @@ class APITreeBuilder:
             json.dump(self.tree, f, indent=2, ensure_ascii=False)
         print(f"Tree saved to {filepath}")
 
+    def save_chunks(self, base_path: str = "backend/library_chunks"):
+        os.makedirs(base_path, exist_ok=True)
+        root_nodes = []
+        for category in self.tree:
+            slug = category.get("slug") or self.slugify(category.get("title") or category.get("heTitle") or "")
+            category["slug"] = slug
+            root_nodes.append({
+                "title": category.get("title"),
+                "heTitle": category.get("heTitle"),
+                "type": category.get("type"),
+                "slug": slug,
+                "hasChildren": bool(category.get("children"))
+            })
+            chunk_path = os.path.join(base_path, f"{slug}.json")
+            with open(chunk_path, "w", encoding="utf-8") as f:
+                json.dump(category.get("children", []), f, ensure_ascii=False)
+        root_path = os.path.join(base_path, "root.json")
+        with open(root_path, "w", encoding="utf-8") as f:
+            json.dump(root_nodes, f, ensure_ascii=False)
+        search_entries = []
+        def walk(nodes, path_titles):
+            for node in nodes:
+                node_title = node.get("title") or ""
+                current_path = path_titles + [node_title] if node_title else path_titles
+                node_type = node.get("type")
+                if node_type == "book":
+                    search_entries.append({
+                        "title": node.get("title"),
+                        "heTitle": node.get("heTitle"),
+                        "ref": node.get("ref"),
+                        "slug": self.slugify(node.get("title") or node.get("heTitle") or ""),
+                        "path": path_titles,
+                        "type": node_type
+                    })
+                children = node.get("children") or []
+                if children:
+                    walk(children, current_path)
+        walk(self.tree, [])
+        search_path = os.path.join(base_path, "search_index.json")
+        with open(search_path, "w", encoding="utf-8") as f:
+            json.dump(search_entries, f, ensure_ascii=False)
+
+    def load_failed_titles(self) -> List[str]:
+        if not os.path.exists(self.failed_store):
+            return []
+        try:
+            with open(self.failed_store, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return [d.get("title") for d in data if isinstance(d, dict) and d.get("title")]
+                return []
+        except Exception:
+            return []
+
+    def save_failed_books(self):
+        directory = os.path.dirname(self.failed_store)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+        with open(self.failed_store, "w", encoding="utf-8") as f:
+            json.dump(self.failed_books, f, ensure_ascii=False)
+
 # For testing
 async def main():
     from dotenv import load_dotenv
     load_dotenv("backend/.env")
     
     async with APITreeBuilder() as builder:
-        await builder.build()
+        retry_failed_only = os.getenv("RETRY_FAILED_ONLY") == "1"
+        if retry_failed_only:
+            failed_titles = builder.load_failed_titles()
+            if failed_titles:
+                print(f"Retrying only failed titles ({len(failed_titles)})")
+                await builder.build(retry_failed_only=True, failed_titles=failed_titles)
+            else:
+                await builder.build()
+        else:
+            await builder.build()
         builder.save_to_json()
 
 if __name__ == "__main__":
