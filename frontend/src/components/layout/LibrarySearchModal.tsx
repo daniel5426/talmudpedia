@@ -102,7 +102,7 @@ export function LibrarySearchModal({ open, onOpenChange }: LibrarySearchModalPro
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} commandProps={{ shouldFilter: false }}>
       <CommandInput placeholder="Search library..." value={searchQuery} onValueChange={setSearchQuery} />
-      <CommandList className="max-h-[420px] min-h-[280px]">
+      <CommandList className="max-h-[320px] min-h-[320px]">
         <CommandEmpty className="flex items-center text-sm justify-center min-h-28">
           {searchLoading ? <Shimmer className="text-sm">מחפש...</Shimmer> : searchError ? searchError : "לא נמצאו תוצאות"}
         </CommandEmpty>
