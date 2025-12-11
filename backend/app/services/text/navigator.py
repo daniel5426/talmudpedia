@@ -10,13 +10,8 @@ class RangeContext:
 
 
 class ReferenceNavigator:
-    # Regex to capture the numeric part at the end of a reference
-    # Group 1: Chapter number
-    # Group 2: Optional verse number
-    # Group 3: Daf number
-    # Group 4: Daf side (a/b)
-    # Group 5: Optional line number
-    NUMERIC_PART_PATTERN = re.compile(r"(?:(\d+)(?::(\d+))?)|(?:(\d+)([ab])(?::(\d+))?)$", re.IGNORECASE)
+    DAF_PATTERN = re.compile(r"(.*?)(\d+)([ab])(?:[: ](\d+))?$", re.IGNORECASE)
+    CHAPTER_PATTERN = re.compile(r"(.*?)(\d+)(?::(\d+))?$")
 
     @classmethod
     def parse_ref(cls, ref: str) -> Dict[str, Any]:
@@ -24,44 +19,31 @@ class ReferenceNavigator:
         original_ref = ref
         parsed_data: Dict[str, Any] = {"index": ref} # Default to full ref as index
 
-        # Try to match the numeric part at the end of the reference
-        match = cls.NUMERIC_PART_PATTERN.search(ref)
-
-        if match:
-            # Extract numeric components
-            chapter_num = match.group(1)
-            verse_num = match.group(2)
-            daf_num = match.group(3)
-            daf_side = match.group(4)
-            line_num = match.group(5)
-
-            # Determine the type of reference and extract components
-            if daf_num and daf_side: # Talmudic reference
-                parsed_data["daf_num"] = int(daf_num)
-                parsed_data["side"] = daf_side.lower()
-                parsed_data["daf"] = f"{parsed_data['daf_num']}{parsed_data['side']}"
-                if line_num:
-                    parsed_data["line"] = int(line_num)
-                
-                # The index title is everything before the daf part
-                index_title_end_pos = match.start(3) if match.start(3) != -1 else match.start(4)
-                index_title = ref[:index_title_end_pos].strip()
-                parsed_data["index"] = index_title if index_title else original_ref
-
-            elif chapter_num: # Chapter/Verse reference
+        ref_stripped = ref.strip()
+        daf_match = cls.DAF_PATTERN.match(ref_stripped)
+        if daf_match:
+            prefix, daf_num, daf_side, line_num = daf_match.groups()
+            parsed_data["daf_num"] = int(daf_num)
+            parsed_data["side"] = daf_side.lower()
+            parsed_data["daf"] = f"{parsed_data['daf_num']}{parsed_data['side']}"
+            if line_num:
+                parsed_data["line"] = int(line_num)
+            index_title = prefix.strip()
+            if index_title:
+                parsed_data["index"] = index_title
+        else:
+            chapter_match = cls.CHAPTER_PATTERN.match(ref_stripped)
+            if chapter_match:
+                prefix, chapter_num, verse_num = chapter_match.groups()
                 parsed_data["chapter"] = int(chapter_num)
                 if verse_num:
                     parsed_data["verse"] = int(verse_num)
-                
-                # The index title is everything before the chapter part
-                index_title_end_pos = match.start(1) if match.start(1) != -1 else match.start(2)
-                index_title = ref[:index_title_end_pos].strip()
-                parsed_data["index"] = index_title if index_title else original_ref
-            
-            
-            # Clean up the index title if it ends with a comma or colon
-            if parsed_data["index"].endswith(',') or parsed_data["index"].endswith(':'):
-                parsed_data["index"] = parsed_data["index"].rstrip(',:').strip()
+                index_title = prefix.strip()
+                if index_title:
+                    parsed_data["index"] = index_title
+
+        if parsed_data["index"].endswith(',') or parsed_data["index"].endswith(':'):
+            parsed_data["index"] = parsed_data["index"].rstrip(',:').strip()
 
         return parsed_data
 
@@ -147,15 +129,20 @@ class ReferenceNavigator:
     def get_ref_from_index(cls, index_title: str, index: int, is_talmud: bool) -> str:
         """Reconstructs a reference string from a linear index."""
         if is_talmud:
-            # For Talmud, index 0 corresponds to 2a, index 1 to 2b, etc.
-            # So, daf_num = (index // 2) + 2
-            # And side = 'a' if index % 2 == 0 else 'b'
-            daf_num = (index // 2) + 2
+            # For Talmud here we map array index directly: index 0 -> 1a, 1 -> 1b, 2 -> 2a, etc.
+            # So daf_num = (index // 2) + 1
+            daf_num = (index // 2) + 1
             side = 'a' if index % 2 == 0 else 'b'
             return f"{index_title} {daf_num}{side}"
         else:
             # For chapter-based texts, index 0 corresponds to chapter 1, etc.
             return f"{index_title} {index + 1}"
+
+    @classmethod
+    def get_ref_from_linear(cls, index_title: str, linear_index: int) -> str:
+        daf_num = (linear_index // 2) + 1
+        side = 'a' if linear_index % 2 == 0 else 'b'
+        return f"{index_title} {daf_num}{side}"
 
     @classmethod
     def tokenize_ref(cls, ref: str) -> List[str]:
@@ -859,71 +846,72 @@ class ComplexTextNavigator:
         Tokens represent indices (e.g. ["1", "5"]).
         """
         current_content = content
-        current_he_ref_parts = he_ref_parts[:]
         traversed_indices = []
+        is_talmud = False
+        addr_types = node.get("addressTypes") or []
+        for t in addr_types:
+            if isinstance(t, str) and t.lower() == "talmud":
+                is_talmud = True
+                break
         
-        # Iterate tokens and drill down
-        for token in tokens:
+        i = 0
+        while i < len(tokens):
             if not isinstance(current_content, list):
-                break # Cannot drill further
-            
-            # Parse token as integer
-            try:
-                # Handle "2a", "2b" for Talmud? 
-                # Or just int.
-                # Basic Integer
-                if token.isdigit():
-                    idx = int(token) - 1
-                else:
-                    # Attempt Talmud logic or ignore?
-                    # For now assume digit
-                    break 
-                    
+                break
+            token = tokens[i]
+            if is_talmud:
+                m = re.match(r"(?i)(\d+)([ab])$", token)
+                if m:
+                    daf_num = int(m.group(1))
+                    side = m.group(2).lower()
+                    idx = (daf_num - 1) * 2 + (0 if side == "a" else 1)
+                    if 0 <= idx < len(current_content):
+                        current_content = current_content[idx]
+                        traversed_indices.append(idx)
+                        i += 1
+                        if i < len(tokens) and tokens[i].isdigit() and isinstance(current_content, list):
+                            line_idx = int(tokens[i]) - 1
+                            if 0 <= line_idx < len(current_content):
+                                current_content = current_content[line_idx]
+                                traversed_indices.append(line_idx)
+                            i += 1
+                        continue
+                    break
+            if token.isdigit():
+                idx = int(token) - 1
                 if 0 <= idx < len(current_content):
                     current_content = current_content[idx]
                     traversed_indices.append(idx)
-                    
-                    # Append HeRef 
-                    he_num = ComplexTextNavigator.encode_hebrew_numeral(idx + 1)
-                    # Modify the LAST part of he_ref? 
-                    # Sefaria style: "Title, Section" -> "Title, Section HeNum"
-                    # But here we are Drilling DOWN.
-                    # Base HeRef is [Title, NodeTitle].
-                    # We append "HeNum".
-                    # If deeper: "Title, NodeTitle HeNum:HeNum"
-                    # Let's accumulate numbers.
-                    
-                    # Actually, we usually want to return the LAST he_ref logic.
-                    # Let's just append to parts.
-                    # But wait, we want "Siman Aleph" not "Siman, Aleph".
-                    # So we modify the last part? 
-                    # Or we just maintain a string?
-                    pass 
-                else:
-                     break
-            except ValueError:
+                    i += 1
+                    continue
                 break
+            break
         
-        # Reconstruct HeRef
-        # We need to know where to append numbers.
-        # If we traversed indices, append them to the last he_ref_part?
         base_ref = ", ".join([p for p in he_ref_parts if p])
         final_he_ref = base_ref
         
         if traversed_indices:
-             he_nums = [ComplexTextNavigator.encode_hebrew_numeral(i+1) for i in traversed_indices]
-             # Format: "BaseRef Num:Num"
-             final_he_ref += " " + ":".join(he_nums)
+            if is_talmud:
+                daf_idx = traversed_indices[0]
+                daf_num = (daf_idx // 2) + 1
+                side = "a" if daf_idx % 2 == 0 else "b"
+                he_daf = ComplexTextNavigator.encode_hebrew_numeral(daf_num)
+                suffix = "." if side == "a" else ":"
+                final_he_ref = f"{base_ref} {he_daf}{suffix}".strip()
+                if len(traversed_indices) > 1:
+                    line_num = traversed_indices[1] + 1
+                    final_he_ref = f"{final_he_ref} {ComplexTextNavigator.encode_hebrew_numeral(line_num)}"
+            else:
+                he_nums = [ComplexTextNavigator.encode_hebrew_numeral(i + 1) for i in traversed_indices]
+                final_he_ref = f"{base_ref} " + ":".join(he_nums) if base_ref else ":".join(he_nums)
 
         return {
-            "content": current_content, # Sliced content
+            "content": current_content,
             "heRef": final_he_ref,
             "node": node,
             "is_complex": True,
-            "full_content": content, # Return ROOT content of this node for pagination neighbors
-            "current_index": traversed_indices[0] if traversed_indices else 0, # Top level index
-             # Note: If we drilled deep (Depth 3), this index is for the top level of this node.
-             # Pagination logic usually works on top level of the leaf node.
+            "full_content": content,
+            "current_index": traversed_indices[0] if traversed_indices else 0,
             "base_he_ref": base_ref,
         }
 

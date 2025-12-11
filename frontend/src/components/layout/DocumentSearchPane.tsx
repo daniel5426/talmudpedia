@@ -141,7 +141,7 @@ export function DocumentSearchPane() {
             priority
           />
         </div>
-        <div className="relative z-10 flex flex-col h-full">
+        <div className="relative z-10 flex flex-col justify-center h-full">
           <div className="flex-1 overflow-hidden relative flex items-center">
             
             {!hasSearched && !loading ? (

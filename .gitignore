@@ -14,7 +14,8 @@
 backend/google-stt.json
 
 backend/sefaria_tree.json
-
+backend/library_chunks/
+backend/library_chunks/*.json
 
 # testing
 */coverage
@@ -29,6 +30,8 @@ backend/sefaria_tree.json
 # misc
 */.DS_Store
 *.pem
+*.pyc
+__pycache__/
 
 # debug
 npm-debug.log*

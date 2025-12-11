@@ -1,0 +1,8 @@
+---
+alwaysApply: true
+---
+
+you can write script to test, debug, try to understand stuff, inside the dir backend/scirpts
+or if there short enough just directly inside the cmd as a python run.
+
+whenever i show you an error from a get request, and you try to fix it, then always test it with a curl befaure finishing.

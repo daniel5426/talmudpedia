@@ -39,7 +39,7 @@ import {
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Share2, Trash2, MoreHorizontal, Volume2, Square } from "lucide-react";
+import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotImputArea } from "@/components/BotImputArea";
 import { useChatController, type ChatController, type ChatMessage, type Citation } from "./useChatController";
@@ -47,16 +47,12 @@ import { clearPendingChatMessage, consumePendingChatMessage } from "@/lib/chatPr
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { chatService, livekitService, ttsService } from "@/services";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useSearchParams } from "next/navigation";
 import { KesherLogo } from "@/components/ui/KesherLogo";
 import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
+import { LibrarySearchModal } from "./LibrarySearchModal";
+import { ChatPaneHeader } from "./ChatPaneHeader";
 
 const formatThinkingDuration = (durationMs?: number | null) => {
   if (!durationMs || durationMs <= 0) {
@@ -512,7 +508,7 @@ function ChatWorkspace({ controller, chatId, isVoiceModeActive, handleToggleVoic
       ref={containerRef}
       className={cn(
         "flex flex-col h-full max-w-3xl mx-auto w-full",
-        isEmptyState ? "px-4" : "px-4 pt-4 pb-4 bg-transparent"
+        isEmptyState ? "px-4" : "px-4 pb-4 bg-transparent"
       )}
       dir={direction}
     >
@@ -535,7 +531,7 @@ function ChatWorkspace({ controller, chatId, isVoiceModeActive, handleToggleVoic
           />
         </div>
       )}
-      <ConversationContent className={cn("flex-1 p-0", isEmptyState && "h-full justify-center relative z-10")}>
+      <ConversationContent className={cn("flex-1 p-0 pt-13", isEmptyState && "h-full justify-center relative z-10")}>
         {isEmptyState ? (
           <div className="flex w-full flex-col items-center text-center pb-20">
             <p className="text-3xl font-semibold pb-6">
@@ -840,12 +836,12 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   const searchParams = useSearchParams();
   const effectiveChatId = chatId || searchParams.get('chatId');
   
-  // Auto (Agent Router) - Get direction for button positioning
+  // Auto (Agent Router) - Get direction for VoiceModeControls
   const { direction } = useDirection();
-  const isRTL = direction === "rtl";
   
   // Auto (Agent Router) - Get layout store for active chat management
   const setActiveChatId = useLayoutStore((state) => state.setActiveChatId);
+  const [searchOpen, setSearchOpen] = React.useState(false);
   
   // Auto (Agent Router) - Share chat handler - copies chat URL to clipboard
   const handleShareChat = React.useCallback(() => {
@@ -865,6 +861,21 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
     window.location.href = "/chat";
   }, [effectiveChatId, setActiveChatId]);
 
+  React.useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || e.key === "/") {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) {
+          return;
+        }
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    document.addEventListener("keydown", down);
+    return () => document.removeEventListener("keydown", down);
+  }, []);
+
   const defaultController = useChatController();
   const chatController = controller ?? defaultController;
   const isEmptyState =
@@ -877,8 +888,28 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
     if (isVoiceModeActive) {
       setIsVoiceModeActive(false);
       setToken("");
+      
       if (effectiveChatId) {
+        // Had a chatId from the start, just refresh
         await chatController.refresh();
+      } else {
+        // Started without chatId - a new chat was created during voice session
+        // Wait a moment for the backend to finalize the chat, then fetch it
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        try {
+          // Fetch the most recent chat (the one just created)
+          const chatPagination = await chatService.list();
+          if (chatPagination?.items && chatPagination.items.length > 0) {
+            const mostRecentChat = chatPagination.items[0]; // Assuming chats are sorted by recency
+            // Navigate to the new chat
+            window.location.href = `/chat?chatId=${mostRecentChat.id}`;
+          }
+        } catch (error) {
+          console.error("Failed to fetch recent chat:", error);
+          // Fallback: just refresh the page to show the sidebar with new chat
+          window.location.reload();
+        }
       }
     } else {
       try {
@@ -909,60 +940,27 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   );
 
   const roomContent = (
-    <Conversation className="relative flex min-h-screen flex-col overflow-hidden bg-background">
-      <div
-        aria-hidden="true"
-        className={cn(
-          "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out",
-          isEmptyState ? "opacity-100" : "opacity-0"
-        )}
-        style={{ background: "linear-gradient(to bottom right,#cce4e6,#008E96)" }}
-      />
-      {effectiveChatId && (
+    <>
+      <LibrarySearchModal open={searchOpen} onOpenChange={setSearchOpen} />
+      <Conversation className="relative flex min-h-screen flex-col overflow-hidden bg-background">
         <div
+          aria-hidden="true"
           className={cn(
-            "absolute top-4 z-20 flex items-center gap-2 w-full px-4 pointer-events-none",
-            isRTL ? "justify-start" : "justify-end"
+            "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out",
+            isEmptyState ? "opacity-100" : "opacity-0"
           )}
-        >
-          <div className="pointer-events-auto">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex items-center gap-2 hover:bg-sidebar-accent"
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                  <span className="sr-only">More options</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                className="w-48"
-                side="bottom"
-                align="end"
-              >
-                <DropdownMenuItem
-                  onClick={handleShareChat}
-                  className="cursor-pointer"
-                >
-                  <Share2 className="mr-2 h-4 w-4" />
-                  <span>שתף</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={handleDeleteChat}
-                  className="cursor-pointer text-red-600 focus:text-red-600"
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  <span>מחק</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      )}
-      {mainContent}
-    </Conversation>
+          style={{ background: "linear-gradient(to bottom right,#cce4e6,#008E96)" }}
+        />
+        <ChatPaneHeader
+          chatId={effectiveChatId}
+          onSearchOpen={() => setSearchOpen(true)}
+          onShareChat={handleShareChat}
+          onDeleteChat={handleDeleteChat}
+          isEmptyState={isEmptyState}
+        />
+        {mainContent}
+      </Conversation>
+    </>
   );
 
   if (isVoiceModeActive && token) {

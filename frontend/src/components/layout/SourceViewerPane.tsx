@@ -789,29 +789,22 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                     dir={isHebrew ? "rtl" : "ltr"}
                   >
                     {(() => {
+                      const heTitle = textData?.he_title || textData?.heRef || textData?.he_ref;
                       // Find the current visible page based on currentRef (now using full refs)
                       const currentPage = textData?.pages?.find((page) => page.ref === currentRef);
                       
-                      // Use full Hebrew ref from current page if available
-                      if (currentPage?.full_he_ref) {
-                        return currentPage.full_he_ref;
+                      if (isHebrew) {
+                        if (currentPage?.full_he_ref) return currentPage.full_he_ref;
+                        if (currentPage?.he_ref) return currentPage.he_ref;
+                        if (textData?.full_he_ref) return textData.full_he_ref;
+                        if (textData?.he_ref) return textData.he_ref;
+                        if (heTitle) return heTitle;
+                        return convertToHebrew(currentRef);
                       }
-                      
-                      // Fallback to main response full_he_ref
-                      if (textData?.full_he_ref) {
-                        return textData.full_he_ref;
-                      }
-                      
-                      // Fallback: Use Hebrew title from DB if available, otherwise convert
-                      const heTitle = textData?.he_title || textData?.heRef;
-                      if (heTitle) {
-                        // Extract just the section part from currentRef (e.g., "א'" from "Genesis 1")
-                        const refParts = currentRef.split(' ');
-                        const sectionPart = refParts.slice(1).join(' ');
-                        const convertedSection = convertToHebrew(sectionPart);
-                        return `${heTitle} ${convertedSection}`;
-                      }
-                      return convertToHebrew(currentRef);
+
+                      // Non-Hebrew path
+                      if (currentPage?.ref) return currentPage.ref;
+                      return currentRef;
                     })()}
                   </h1>
                 </div>
@@ -872,7 +865,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                   <div className="space-y-6">
                     {pageGroups.map((pageGroup, pageGroupIndex) => (
                       <div
-                        key={pageGroup.pageRef}
+                        key={`${pageGroup.pageRef}-${pageGroupIndex}`}
                         className="page-group"
                         ref={(el) => {
                           pageContainerRefs.current[pageGroupIndex] = el;
@@ -888,11 +881,17 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                             {(() => {
                               // If available, use Hebrew Ref directly for Hebrew context
                               if (pageGroup.heRef && isHebrew) {
-                                  // Strip index title (he_title) from it
                                   const heIndexTitle = textData?.he_title || "";
                                   let display = pageGroup.heRef.replace(heIndexTitle, "").trim();
-                                  // Remove leading comma/whitespace if any
                                   display = display.replace(/^,\s*/, "");
+                                  // Prefer the most specific token (last segment after comma/space)
+                                  if (display.includes(",")) {
+                                    display = display.split(",").slice(-1)[0].trim();
+                                  }
+                                  const parts = display.split(/\s+/).filter(Boolean);
+                                  if (parts.length > 0) {
+                                    display = parts[parts.length - 1];
+                                  }
                                   return display;
                               }
                               // Strip index title from page ref to show only the section (e.g. "10b")
@@ -949,7 +948,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                   <div className="space-y-6">
                     {pageGroups.map((pageGroup, pageGroupIndex) => (
                       <div
-                        key={pageGroup.pageRef}
+                        key={`${pageGroup.pageRef}-${pageGroupIndex}`}
                         className="page-group"
                         ref={(el) => {
                           pageContainerRefs.current[pageGroupIndex] = el;
@@ -965,11 +964,16 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                             {(() => {
                               // If available, use Hebrew Ref directly for Hebrew context
                               if (pageGroup.heRef && isHebrew) {
-                                  // Strip index title (he_title) from it
                                   const heIndexTitle = textData?.he_title || "";
                                   let display = pageGroup.heRef.replace(heIndexTitle, "").trim();
-                                  // Remove leading comma/whitespace if any
                                   display = display.replace(/^,\s*/, "");
+                                  if (display.includes(",")) {
+                                    display = display.split(",").slice(-1)[0].trim();
+                                  }
+                                  const parts = display.split(/\s+/).filter(Boolean);
+                                  if (parts.length > 0) {
+                                    display = parts[parts.length - 1];
+                                  }
                                   return display;
                               }
                               // Strip index title from page ref to show only the section (e.g. "10b")

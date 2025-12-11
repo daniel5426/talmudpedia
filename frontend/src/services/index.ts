@@ -6,6 +6,7 @@ export { adminService } from "./admin";
 export { livekitService } from "./livekit";
 export { ttsService } from "./tts";
 export { sourceService } from "./source";
+export { libraryService, normalizeLibraryQuery } from "./library";
 export type {
   SourcePageData,
   MultiPageTextData,

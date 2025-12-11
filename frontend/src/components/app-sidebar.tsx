@@ -339,17 +339,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             role: user.role
           }} />
         ) : (
-          <SidebarMenu>
+          <SidebarMenu dir={direction}>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild size="lg">
-                <a href="/auth/login">
+              <SidebarMenuButton dir={direction} asChild size="lg" className={`${isRTL ? "rtl" : "ltr"}`}>
+                <a href="/auth/login" dir={direction} className={`${isRTL ? "rtl" : "ltr"}`}>
+                  <div dir={direction} className={`grid flex-1  text-sm leading-tight ${isRTL ? "text-right" : "text-left"}`}>
+                    <span className="truncate font-semibold" >התחברות</span>
+                    <span className="truncate text-xs">התחבר לחשבון שלך</span>
+                  </div>
                   <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                     <LogIn className="size-4" />
                   </div>
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">Log in</span>
-                    <span className="truncate text-xs">Sign in to your account</span>
-                  </div>
+
                 </a>
               </SidebarMenuButton>
             </SidebarMenuItem>

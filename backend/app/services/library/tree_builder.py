@@ -5,6 +5,7 @@ import asyncio
 import aiohttp
 import re
 from typing import List, Dict, Any, Optional
+from pathlib import Path
 
 # Add backend to path
 sys.path.append(os.getcwd())
@@ -50,7 +51,10 @@ class APITreeBuilder:
         self.book_results = {}
         self.failed_books = []
         self.terms_cache = {}  # Cache for shared titles (Terms)
-        self.failed_store = "backend/library_chunks/failed_books.json"
+        self.base_dir = Path(__file__).resolve().parents[3]
+        self.chunk_dir = self.base_dir / "library_chunks"
+        self.tree_file = self.base_dir / "sefaria_tree.json"
+        self.failed_store = self.chunk_dir / "failed_books.json"
         self.first_available_map = {}
 
     def slugify(self, value: str) -> str:
@@ -80,7 +84,7 @@ class APITreeBuilder:
             else:
                 raise Exception(f"Failed to fetch table of contents: {response.status}")
 
-    async def fetch_book_details(self, title: str, max_retries: int = 2) -> Dict[str, Any]:
+    async def fetch_book_details(self, title: str, max_retries: int = 3) -> Dict[str, Any]:
         """Fetch detailed information about a specific book with retry logic."""
         # Replace spaces with underscores for the API
         url_title = title.replace(" ", "_").replace(",", "%2C")  
@@ -115,7 +119,7 @@ class APITreeBuilder:
         
         return None
 
-    async def fetch_best_version(self, title: str, max_retries: int = 5) -> Optional[Dict[str, Any]]:
+    async def fetch_best_version(self, title: str, max_retries: int = 3) -> Optional[Dict[str, Any]]:
         """Fetch the best (highest priority) Hebrew version for a book."""
         # Replace spaces with underscores for the API
         url_title = title.replace(" ", "_").replace(",", "%2C")
@@ -179,7 +183,7 @@ class APITreeBuilder:
             index += 1
         return max(0, index)
 
-    async def fetch_first_available(self, title: str, max_retries: int = 2) -> Optional[tuple]:
+    async def fetch_first_available(self, title: str, max_retries: int = 3) -> Optional[tuple]:
         url_title = title.replace(" ", "_").replace(",", "%2C")
         url = f"{self.base_url}/texts/{url_title}"
         for attempt in range(max_retries):
@@ -324,7 +328,28 @@ class APITreeBuilder:
                 return children
             final_range = total_amud if total_amud else num_sections
             for amud_index in range(start_amud_index, final_range):
-                daf_num = 2 + (amud_index // 2)
+                # Skip empty amudim if content_counts indicate no content
+                if content_counts and amud_index < len(content_counts):
+                    count = content_counts[amud_index]
+                    if count == 0 or count is None or (isinstance(count, list) and len(count) == 0):
+                        continue
+                    # If count is a nested list, check if it has any nonzero entries
+                    if isinstance(count, list):
+                        flat_has = False
+                        stack = [count]
+                        while stack and not flat_has:
+                            cur = stack.pop()
+                            if isinstance(cur, list):
+                                stack.extend(cur)
+                            else:
+                                try:
+                                    if int(cur) != 0:
+                                        flat_has = True
+                                except Exception:
+                                    flat_has = True
+                        if not flat_has:
+                            continue
+                daf_num = 1 + (amud_index // 2)
                 amud = 'a' if amud_index % 2 == 0 else 'b'
                 he_amud = "." if amud == 'a' else ":"
                 he_daf = encode_hebrew_numeral(daf_num)
@@ -435,31 +460,29 @@ class APITreeBuilder:
         # Process based on node type
         if node_type == "JaggedArrayNode":
             # This is a content node
+            section_lengths = node.get("lengths", [])
+            if isinstance(section_lengths, int):
+                section_lengths = [section_lengths]
+            content_counts = node.get("content_counts", [])
+            if not section_lengths and isinstance(content_counts, list):
+                section_lengths = [len(content_counts)]
+            has_sections = bool(section_lengths and section_lengths[0] > 0)
+            if not has_sections:
+                # Fallback: if the node has depth/section names, still treat it as a section node
+                depth_hint = node.get("depth")
+                if depth_hint and isinstance(depth_hint, int) and depth_hint > 0:
+                    has_sections = True
+                elif node.get("sectionNames"):
+                    has_sections = True
+            
             if is_default:
-                # Default node: return children directly (no wrapper)
-                # Only subdivide if we're at the root book level
                 return {
                     "type": "default",
                     "children": self.process_jagged_array_node(node, ref_en, ref_he, is_talmud, start_amud_index)
                 }
             else:
-                # Named section (e.g., "Kabbalas Shabbos", "Borechu", etc.)
-                # For complex texts, make this a leaf node WITHOUT subdividing further
-                # Check if this is within a complex schema (parent_ref contains comma)
-                is_within_complex_schema = "," in ref_en
-                
-                if is_within_complex_schema:
-                    # This is a subsection within a complex text - make it a leaf node
-                    return {
-                        "title": title_en,
-                        "heTitle": title_he,
-                        "type": "text",  # Leaf node type
-                        "ref": ref_en,
-                        "heRef": ref_he,
-                        "children": []  # No further subdivision
-                    }
-                else:
-                    # This is a top-level section - subdivide into chapters/pages
+                # If the jagged node actually has sections, always subdivide (even within complex trees)
+                if has_sections:
                     return {
                         "title": title_en,
                         "heTitle": title_he,
@@ -468,6 +491,15 @@ class APITreeBuilder:
                         "heRef": ref_he,
                         "children": self.process_jagged_array_node(node, ref_en, ref_he, is_talmud, start_amud_index)
                     }
+                # Otherwise treat as a leaf
+                return {
+                    "title": title_en,
+                    "heTitle": title_he,
+                    "type": "text",  # Leaf node type
+                    "ref": ref_en,
+                    "heRef": ref_he,
+                    "children": []
+                }
         
         elif node_type == "SchemaNode" or "nodes" in node:
             # This is an intermediate node with children
@@ -821,16 +853,16 @@ class APITreeBuilder:
         
         return self.tree
 
-    def save_to_json(self, filepath: str = "backend/sefaria_tree.json"):
-        directory = os.path.dirname(filepath)
-        if directory and not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
-        with open(filepath, "w", encoding="utf-8") as f:
+    def save_to_json(self, filepath: Optional[str] = None):
+        target = Path(filepath) if filepath else self.tree_file
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
             json.dump(self.tree, f, indent=2, ensure_ascii=False)
-        print(f"Tree saved to {filepath}")
+        print(f"Tree saved to {target}")
 
-    def save_chunks(self, base_path: str = "backend/library_chunks"):
-        os.makedirs(base_path, exist_ok=True)
+    def save_chunks(self, base_path: Optional[str] = None):
+        base = Path(base_path) if base_path else self.chunk_dir
+        base.mkdir(parents=True, exist_ok=True)
         root_nodes = []
         for category in self.tree:
             slug = category.get("slug") or self.slugify(category.get("title") or category.get("heTitle") or "")
@@ -842,37 +874,42 @@ class APITreeBuilder:
                 "slug": slug,
                 "hasChildren": bool(category.get("children"))
             })
-            chunk_path = os.path.join(base_path, f"{slug}.json")
+            chunk_path = base / f"{slug}.json"
             with open(chunk_path, "w", encoding="utf-8") as f:
                 json.dump(category.get("children", []), f, ensure_ascii=False)
-        root_path = os.path.join(base_path, "root.json")
+        root_path = base / "root.json"
         with open(root_path, "w", encoding="utf-8") as f:
             json.dump(root_nodes, f, ensure_ascii=False)
         search_entries = []
-        def walk(nodes, path_titles):
+        def walk(nodes, path_titles, path_he_titles):
             for node in nodes:
                 node_title = node.get("title") or ""
+                node_he_title = node.get("heTitle") or ""
                 current_path = path_titles + [node_title] if node_title else path_titles
+                current_he_path = path_he_titles + [node_he_title] if node_he_title else path_he_titles
                 node_type = node.get("type")
-                if node_type == "book":
+                if node_type in ("book", "section", "text"):
+                    entry_ref = node.get("ref")
                     search_entries.append({
                         "title": node.get("title"),
                         "heTitle": node.get("heTitle"),
-                        "ref": node.get("ref"),
+                        "heRef": node.get("heRef"),
+                        "ref": entry_ref,
                         "slug": self.slugify(node.get("title") or node.get("heTitle") or ""),
-                        "path": path_titles,
+                        "path": current_path[:-1],
+                        "path_he": current_he_path[:-1],
                         "type": node_type
                     })
                 children = node.get("children") or []
                 if children:
-                    walk(children, current_path)
-        walk(self.tree, [])
-        search_path = os.path.join(base_path, "search_index.json")
+                    walk(children, current_path, current_he_path)
+        walk(self.tree, [], [])
+        search_path = base / "search_index.json"
         with open(search_path, "w", encoding="utf-8") as f:
             json.dump(search_entries, f, ensure_ascii=False)
 
     def load_failed_titles(self) -> List[str]:
-        if not os.path.exists(self.failed_store):
+        if not self.failed_store.exists():
             return []
         try:
             with open(self.failed_store, "r", encoding="utf-8") as f:
@@ -884,9 +921,7 @@ class APITreeBuilder:
             return []
 
     def save_failed_books(self):
-        directory = os.path.dirname(self.failed_store)
-        if directory and not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
+        self.failed_store.parent.mkdir(parents=True, exist_ok=True)
         with open(self.failed_store, "w", encoding="utf-8") as f:
             json.dump(self.failed_books, f, ensure_ascii=False)
 

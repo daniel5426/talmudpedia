@@ -5,17 +5,13 @@ import { ChevronLeft, ChevronRight, Book, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SidebarMenuButton, useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { libraryService } from "@/services";
+import type { LibraryNode } from "@/services/library";
 import { useDirection } from "./direction-provider";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 
-interface TreeNode {
-  title: string;
-  heTitle?: string;
-  type: "category" | "book" | "text";
-  children?: TreeNode[];
-  ref?: string;
-}
+type TreeNode = LibraryNode;
 
 interface LibraryMenuProps {
   onBack: () => void; // To exit library mode
@@ -27,60 +23,106 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
   const { libraryPathTitles, setLibraryPathTitles, setActiveSource } = useLayoutStore();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [loadingSlug, setLoadingSlug] = React.useState<string | null>(null);
+  const initialLibraryPathTitles = React.useRef(libraryPathTitles);
   const { direction } = useDirection();
   const isRTL = direction === "rtl";
   const { state } = useSidebar()
   const isCollapsed = state === "collapsed";
+  const updateChildren = React.useCallback((nodes: TreeNode[], slug: string, children: TreeNode[]): TreeNode[] => {
+    const apply = (list: TreeNode[]): TreeNode[] => {
+      return list.map((node) => {
+        if (node.slug === slug) {
+          return { ...node, children };
+        }
+        if (node.children) {
+          return { ...node, children: apply(node.children) };
+        }
+        return node;
+      });
+    };
+    return apply(nodes);
+  }, []);
+  const loadChildren = React.useCallback(async (node: TreeNode) => {
+    if (!node.hasChildren || node.children || !node.slug) {
+      return node;
+    }
+    setLoadingSlug(node.slug);
+    try {
+      const children = await libraryService.getChildren(node.slug);
+      setTree((prev) => updateChildren(prev, node.slug as string, children));
+      setLoadingSlug(null);
+      return { ...node, children };
+    } catch {
+      setError("Failed to load library menu");
+      setLoadingSlug(null);
+      return node;
+    }
+  }, [updateChildren]);
   React.useEffect(() => {
-    // In dev, we might need full URL. In prod, relative /api/library/menu
-    fetch("http://localhost:8000/api/library/menu")
-      .then(async (res) => {
-        if (!res.ok) throw new Error("Failed to load library");
-        return res.json();
-      })
-      .then((data) => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await libraryService.getRoot();
+        if (cancelled) {
+          return;
+        }
         setTree(data);
         setLoading(false);
-        
-        // Reconstruct path from persisted titles
-        if (libraryPathTitles.length > 0) {
-          const newPath: TreeNode[] = [];
-          let currentLevel = data;
-          
-          for (const title of libraryPathTitles) {
-            const node = currentLevel.find((n: TreeNode) => n.title === title);
-            if (node) {
-              newPath.push(node);
-              currentLevel = node.children || [];
-            } else {
-              break; // Path mismatch, stop reconstruction
-            }
-          }
-          setPath(newPath);
+        const savedTitles = initialLibraryPathTitles.current;
+        if (savedTitles.length === 0) {
+          return;
         }
-      })
-      .catch((err) => {
-        console.error(err);
-        setError("Failed to load library menu");
-        setLoading(false);
-      });
-  }, []);
+        const newPath: TreeNode[] = [];
+        let currentLevel = data;
+        for (const title of savedTitles) {
+          const node = currentLevel.find((n: TreeNode) => n.title === title);
+          if (!node) {
+            break;
+          }
+          let withChildren = node;
+          if (node.hasChildren && !node.children && node.slug) {
+            withChildren = await loadChildren(node);
+          }
+          newPath.push(withChildren);
+          currentLevel = withChildren.children || [];
+        }
+        if (!cancelled) {
+          setPath(newPath);
+          setLibraryPathTitles(newPath.map((n) => n.title));
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Failed to load library menu");
+          setLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadChildren, setLibraryPathTitles]);
 
   const currentLevel = path.length === 0 ? tree : path[path.length - 1].children || [];
   const currentTitle = path.length === 0 
     ? (isRTL ? "הספרייה" : "Library")
     : (isRTL && path[path.length - 1].heTitle ? path[path.length - 1].heTitle : path[path.length - 1].title);
 
-  const handleNavigate = (node: TreeNode) => {
-    if (node.children && node.children.length > 0) {
-      const newPath = [...path, node];
+  const handleNavigate = async (node: TreeNode) => {
+    const hasChildren = (node.children && node.children.length > 0) || node.hasChildren;
+    if (hasChildren) {
+      let withChildren = node;
+      if (node.hasChildren && !node.children && node.slug) {
+        withChildren = await loadChildren(node);
+      }
+      const newPath = [...path, withChildren];
       setPath(newPath);
       setLibraryPathTitles(newPath.map(n => n.title));
-    } else {
-      console.log("Open text:", node);
-      if (node.ref) {
-        setActiveSource(node.ref);
-      }
+      return;
+    }
+    if (node.ref) {
+      setActiveSource(node.ref);
     }
   };
 
@@ -131,13 +173,14 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
         <div className="p-0 space-y-0" dir={direction}>
           {currentLevel.map((node, idx) => (
             <SidebarMenuButton
-              key={idx}
+              key={node.slug ?? idx}
               className={cn(
                 "w-full font-normal min-w-0",
                 isRTL ? "justify-start text-right" : "justify-start text-left",
                 isCollapsed ? "m-2" : "m-0"
               )}
               onClick={() => handleNavigate(node)}
+              disabled={loadingSlug === node.slug}
               tooltip={(isRTL && node.heTitle) ? node.heTitle : node.title}
             >
               {node.type === "category" ? (
@@ -151,7 +194,7 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
               >
                 {(isRTL && node.heTitle) ? node.heTitle : node.title}
               </span>
-              {node.children && node.children.length > 0 && (
+              {(node.hasChildren || (node.children && node.children.length > 0)) && (
                 <ChevronRight className={cn(" h-4 w-4 opacity-50", isRTL ? "rotate-180 mr-auto" : "ml-auto")} />
               )}
             </SidebarMenuButton>
