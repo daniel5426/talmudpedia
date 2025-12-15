@@ -6,6 +6,7 @@ python-dotenv>=1.0.0
 passlib[bcrypt]
 PyJWT
 python-multipart
+rapidfuzz
 pinecone
 google-generativeai
 google-genai
