@@ -5,6 +5,7 @@ email-validator
 python-dotenv>=1.0.0
 passlib[bcrypt]
 PyJWT
+python-multipart
 pinecone
 google-generativeai
 google-genai
