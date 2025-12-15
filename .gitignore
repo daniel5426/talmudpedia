@@ -16,6 +16,7 @@ backend/google-stt.json
 backend/sefaria_tree.json
 backend/library_chunks/
 backend/library_chunks/*.json
+frontend/node_modules
 
 # testing
 */coverage
