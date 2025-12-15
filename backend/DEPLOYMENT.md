@@ -31,38 +31,6 @@ Or if you haven't specified an app name yet:
 python scripts/upload_env_to_heroku.py
 ```
 
-#### Option B: Manual upload (one-liner)
-
-If your `.env` file is in the backend directory, you can use this one-liner:
-
-```bash
-cd backend
-export $(cat .env | xargs) && heroku config:set $(cat .env | grep -v '^#' | xargs)
-```
-
-#### Option C: Set individually
-
-Set environment variables one by one:
-
-```bash
-heroku config:set MONGO_URI="your-mongodb-connection-string"
-heroku config:set GOOGLE_API_KEY="your-google-api-key"
-heroku config:set PINECONE_API_KEY="your-pinecone-api-key"
-heroku config:set OPENAI_API_KEY="your-openai-api-key"
-heroku config:set SECRET_KEY="your-secret-key-for-jwt-tokens"
-```
-
-Optional environment variables:
-
-```bash
-heroku config:set GEMINI_API_KEY="your-gemini-api-key"
-heroku config:set ELASTICSEARCH_URL="your-elasticsearch-url"
-heroku config:set ELASTICSEARCH_API_KEY="your-elasticsearch-api-key"
-heroku config:set CORS_ORIGINS="https://your-frontend-domain.com,https://another-domain.com"
-heroku config:set LIVEKIT_URL="your-livekit-url"
-heroku config:set LIVEKIT_API_KEY="your-livekit-api-key"
-heroku config:set LIVEKIT_API_SECRET="your-livekit-api-secret"
-```
 
 ### 3. Deploy to Heroku
 
@@ -87,29 +55,34 @@ heroku open
 
 Visit `https://your-app-name.herokuapp.com/health` to verify the app is running.
 
+## Frontend Configuration
+
+### Environment Variables
+
+Create a `.env.local` file in the `frontend/` directory:
+
+```bash
+# frontend/.env.local
+NEXT_PUBLIC_BACKEND_URL=https://your-app-name.herokuapp.com
+```
+
+This tells the frontend where to send API requests to your Heroku backend.
+
+### Running Locally
+
+To run the frontend locally while connecting to the Heroku backend:
+
+1. Make sure the `.env.local` file exists with your Heroku backend URL
+2. Start the frontend:
+   ```bash
+   cd frontend
+   npm run dev
+   ```
+
+The frontend will automatically use the `NEXT_PUBLIC_BACKEND_URL` environment variable for API calls.
+
 ## Required Environment Variables
 
-### Core (Required)
-- `MONGO_URI` - MongoDB connection string
-- `GOOGLE_API_KEY` - Google API key for embeddings
-- `PINECONE_API_KEY` - Pinecone API key for vector store
-- `OPENAI_API_KEY` - OpenAI API key for LLM
-- `SECRET_KEY` - Secret key for JWT token signing (generate a strong random string)
-
-### Optional
-- `GEMINI_API_KEY` - For Gemini Live features
-- `ELASTICSEARCH_URL` - For lexical search
-- `ELASTICSEARCH_API_KEY` - Elasticsearch API key
-- `CORS_ORIGINS` - Comma-separated list of allowed origins (defaults to localhost)
-- `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` - For voice features
-- `LIVEKIT_TTS_PROVIDER`, `CARTESIA_TTS_MODEL`, `CARTESIA_TTS_VOICE`, etc. - Voice configuration
-- `PORT` - Automatically set by Heroku (don't set manually)
-
-## Files Created for Heroku
-
-- `Procfile` - Tells Heroku how to run the app
-- `runtime.txt` - Specifies Python version
-- `requirements.txt` - Already exists, lists Python dependencies
 
 ## Elasticsearch Hosting Options
 

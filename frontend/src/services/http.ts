@@ -69,4 +69,4 @@ class HttpClient {
   }
 }
 
-export const httpClient = new HttpClient("/api/py");
+export const httpClient = new HttpClient(process.env.NEXT_PUBLIC_BACKEND_URL || "/api/py");
