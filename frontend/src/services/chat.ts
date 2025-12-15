@@ -1,6 +1,5 @@
 import { httpClient } from "./http";
 import type {
-  Chat,
   ChatFetchParams,
   ChatHistory,
   ChatPagination,
@@ -40,6 +39,28 @@ class ChatService {
 
   async deleteLastAssistantMessage(chatId: string): Promise<void> {
     return httpClient.delete<void>(`/chats/${chatId}/messages/last-assistant`);
+  }
+
+  async sendMessage(
+    message: string,
+    chatId?: string,
+    files?: any[],
+    signal?: AbortSignal
+  ): Promise<Response> {
+    const body: any = { message };
+    if (chatId) body.chatId = chatId;
+    if (files && files.length > 0) body.files = files;
+
+    return httpClient.requestRaw("/api/py/chat", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+
+  getShareUrl(chatId: string): string {
+    const params = new URLSearchParams({ chatId });
+    return `${window.location.origin}/chat?${params.toString()}`;
   }
 }
 

@@ -809,8 +809,7 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   // Auto (Agent Router) - Share chat handler - copies chat URL to clipboard
   const handleShareChat = React.useCallback(() => {
     if (!effectiveChatId) return;
-    const params = new URLSearchParams({ chatId: effectiveChatId });
-    const url = `${window.location.origin}/chat?${params.toString()}`;
+    const url = chatService.getShareUrl(effectiveChatId);
     navigator.clipboard.writeText(url);
     alert("Link copied to clipboard!");
   }, [effectiveChatId]);

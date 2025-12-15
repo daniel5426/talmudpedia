@@ -3,7 +3,7 @@ import { useAuthStore } from "@/lib/store/useAuthStore";
 class HttpClient {
   constructor(private baseUrl: string) {}
 
-  private buildHeaders(headers?: HeadersInit, body?: BodyInit | null): HeadersInit {
+  buildHeaders(headers?: HeadersInit, body?: BodyInit | null): HeadersInit {
     const token = useAuthStore.getState().token;
     const nextHeaders: Record<string, string> = {};
 
@@ -66,6 +66,12 @@ class HttpClient {
 
   delete<T>(path: string, init?: RequestInit) {
     return this.request<T>(path, { ...init, method: "DELETE" });
+  }
+
+  async requestRaw(path: string, init: RequestInit = {}): Promise<Response> {
+    const headers = this.buildHeaders(init.headers, init.body ?? null);
+    const url = `${this.baseUrl}${path}`;
+    return fetch(url, { ...init, headers });
   }
 }
 

@@ -8,7 +8,6 @@ import type { LucideIcon } from "lucide-react";
 import { SearchIcon, DotIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { chatService } from "@/services";
-import { useAuthStore } from "@/lib/store/useAuthStore";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { hasPendingChatMessage } from "@/lib/chatPrefill";
 import {
@@ -460,25 +459,14 @@ export function useChatController(): ChatController {
       try {
         const abortController = abortManager.current.create(ChatErrorTypes.NEW_REQUEST);
 
-        const token = useAuthStore.getState().token;
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
         const processedFiles = await processFilesForUpload(message.files);
 
-        const response = await fetch("/api/py/chat", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            message: message.text,
-            chatId: activeChatId,
-            files: processedFiles,
-          }),
-          signal: abortController.signal,
-        });
+        const response = await chatService.sendMessage(
+          message.text,
+          activeChatId || undefined,
+          processedFiles,
+          abortController.signal
+        );
 
         if (!response.ok) throw new Error("Chat request failed");
 
