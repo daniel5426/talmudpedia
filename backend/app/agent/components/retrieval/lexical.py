@@ -11,9 +11,17 @@ class LexicalRetriever(Retriever):
     """
 
     def __init__(self, index_name: str = "reshet"):
+        es_url = os.getenv("ELASTICSEARCH_URL")
+        es_api_key = os.getenv("ELASTICSEARCH_API_KEY")
+        
+        if not es_url:
+            self.client = None
+            self.index_name = index_name
+            return
+        
         self.client = AsyncElasticsearch(
-            os.getenv("ELASTICSEARCH_URL"),
-            api_key=os.getenv("ELASTICSEARCH_API_KEY")
+            es_url,
+            api_key=es_api_key
         )
         self.index_name = index_name
 
@@ -21,6 +29,9 @@ class LexicalRetriever(Retriever):
         """
         Retrieve documents using Elasticsearch.
         """
+        if not self.client:
+            return []
+        
         try:
             response = await self.client.search(
                 index=self.index_name,
@@ -58,4 +69,5 @@ class LexicalRetriever(Retriever):
             return []
 
     async def close(self):
-        await self.client.close()
+        if self.client:
+            await self.client.close()

@@ -60,13 +60,10 @@ app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 # Add CORS middleware
 from fastapi.middleware.cors import CORSMiddleware
 
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://10.0.0.10:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://10.0.0.10:3000",  # Network access
-    ],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,7 +81,6 @@ app.include_router(search.router, tags=["search"])
 app.include_router(stt.router, prefix="/stt", tags=["stt"])
 app.include_router(texts.router, tags=["texts"])
 app.include_router(tts.router, prefix="/tts", tags=["tts"])
-app.include_router(tts.router, prefix="/tts", tags=["tts"])
 
 from app.api.routers import voice_ws
 app.include_router(voice_ws.router, prefix="/api/voice", tags=["voice"])
@@ -96,9 +92,9 @@ def health_check():
 
 
 if __name__ == "__main__":
-    # Required for multiprocessing on Windows/macOS when frozen
     multiprocessing.freeze_support()
     
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)

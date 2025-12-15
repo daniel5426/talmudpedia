@@ -1,12 +1,12 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Union, Any
 import jwt
+import os
 from passlib.context import CryptContext
 
-# Configuration
-SECRET_KEY = "YOUR_SECRET_KEY_HERE_CHANGE_IN_PRODUCTION" # TODO: Move to env var
+SECRET_KEY = os.getenv("SECRET_KEY", "YOUR_SECRET_KEY_HERE_CHANGE_IN_PRODUCTION")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
