@@ -4,16 +4,11 @@ pydantic>=2.6.0
 python-dotenv>=1.0.0
 pinecone
 google-generativeai
+google-genai
 requests
 langgraph>=0.2.0
 langchain-openai
 motor
 google-cloud-speech
 elasticsearch
-livekit
-livekit-agents
-livekit-plugins-openai
-livekit-plugins-silero
-livekit-agents[cartesia]
-livekit-plugins-langchain
 websockets

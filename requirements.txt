@@ -4,6 +4,7 @@ pydantic>=2.6.0
 python-dotenv>=1.0.0
 pinecone
 google-generativeai
+google-genai
 requests
 langgraph>=0.2.0
 langchain-openai
