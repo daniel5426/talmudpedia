@@ -22,7 +22,7 @@ class HybridRetriever(Retriever):
         self.lexical_limit = lexical_limit
         self.semantic_limit = semantic_limit
 
-    async def retrieve(self, query: str, limit: int = 5, **kwargs: Any) -> List[Document]:
+    async def retrieve(self, query: str, limit: int = 20, **kwargs: Any) -> List[Document]:
         """
         Retrieve from both sources, merge, and rerank.
         """

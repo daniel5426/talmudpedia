@@ -28,7 +28,8 @@ class AgentFactory:
         # Create Retriever
         if config.retrieval.provider == "vector":
             retriever = VectorRetriever(
-                index_name=config.retrieval.index_name
+                index_name=config.retrieval.index_name,
+                limit=config.retrieval.limit
             )
         else:
             raise ValueError(f"Unsupported retrieval provider: {config.retrieval.provider}")

@@ -22,6 +22,7 @@ export interface SelectedText {
 interface LayoutState {
   isSourceListOpen: boolean;
   activeSource: string | null;
+  activePagesAfter: number | null;
   activeChatId: string | null;
   sourceViewerWidth: number;
   sourceList: Source[];
@@ -31,7 +32,7 @@ interface LayoutState {
   refreshTrigger: number;
   toggleSourceList: () => void;
   setSourceListOpen: (isOpen: boolean) => void;
-  setActiveSource: (sourceId: string | null) => void;
+  setActiveSource: (sourceId: string | null, options?: { pagesAfter?: number | null }) => void;
   setActiveChatId: (chatId: string | null) => void;
   setSourceViewerWidth: (width: number) => void;
   setSourceList: (sources: Source[]) => void;
@@ -40,11 +41,18 @@ interface LayoutState {
   setLibraryPathTitles: (titles: string[]) => void;
 }
 
+const normalizeRef = (ref: string | null) => {
+  if (!ref) return ref;
+  const trimmed = ref.replace(/\s*:\s*/g, ":").replace(/\s+/g, " ").trim();
+  return trimmed;
+};
+
 export const useLayoutStore = create<LayoutState>()(
   persist(
     (set) => ({
       isSourceListOpen: false, // Closed by default until sources are available
       activeSource: null,
+      activePagesAfter: null,
       activeChatId: null,
       sourceViewerWidth: 600, // Default width for source viewer pane
       sourceList: [],
@@ -54,7 +62,12 @@ export const useLayoutStore = create<LayoutState>()(
       refreshTrigger: 0,
       toggleSourceList: () => set((state) => ({ isSourceListOpen: !state.isSourceListOpen })),
       setSourceListOpen: (isOpen) => set({ isSourceListOpen: isOpen }),
-      setActiveSource: (sourceId) => set((state) => ({ activeSource: sourceId, refreshTrigger: state.refreshTrigger + 1 })),
+      setActiveSource: (sourceId, options) =>
+        set((state) => ({
+          activeSource: normalizeRef(sourceId),
+          activePagesAfter: options?.pagesAfter ?? null,
+          refreshTrigger: state.refreshTrigger + 1,
+        })),
       setActiveChatId: (chatId) => set({ activeChatId: chatId }),
       setSourceViewerWidth: (width) => set({ sourceViewerWidth: width }),
       setSourceList: (sources) => set({ sourceList: sources }),
@@ -66,6 +79,7 @@ export const useLayoutStore = create<LayoutState>()(
       name: 'layout-storage',
       partialize: (state) => ({
         activeSource: state.activeSource,
+        activePagesAfter: state.activePagesAfter,
         isSourceListOpen: state.isSourceListOpen,
         sourceViewerWidth: state.sourceViewerWidth,
         isLibraryMode: state.isLibraryMode,

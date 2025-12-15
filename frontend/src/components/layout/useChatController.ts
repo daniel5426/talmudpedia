@@ -119,6 +119,13 @@ export interface ChatController {
   handleDislike: (msg: ChatMessage) => Promise<void>;
   handleRetry: (msg: ChatMessage) => Promise<void>;
   handleSourceClick: (citations: ChatMessage["citations"]) => void;
+  upsertLiveVoiceMessage: (input: {
+    role: "user" | "assistant";
+    content: string;
+    isFinal?: boolean;
+    citations?: Citation[];
+    reasoningSteps?: ChatMessage["reasoningSteps"];
+  }) => void;
   refresh: () => Promise<void>;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
 }
@@ -154,6 +161,79 @@ export function useChatController(): ChatController {
   const isInitializingChatRef = useRef(false);
   const isActivelyStreamingRef = useRef(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const liveVoiceIdsRef = useRef<{ user?: string; assistant?: string }>({});
+
+  const upsertLiveVoiceMessage = useCallback(
+    (input: {
+      role: "user" | "assistant";
+      content: string;
+      isFinal?: boolean;
+      citations?: Citation[];
+      reasoningSteps?: ChatMessage["reasoningSteps"];
+    }) => {
+      const contentTrimmed = input.content?.trim() ?? "";
+      const role = input.role;
+      const isFinal = Boolean(input.isFinal);
+      const incomingCitations = input.citations;
+      const incomingReasoning = input.reasoningSteps;
+      if (!contentTrimmed && (!incomingCitations || incomingCitations.length === 0) && (!incomingReasoning || incomingReasoning.length === 0)) {
+        return;
+      }
+
+      setMessages((prev) => {
+        const currentId = liveVoiceIdsRef.current[role];
+        if (!currentId) {
+          const id = nanoid();
+          liveVoiceIdsRef.current[role] = isFinal ? undefined : id;
+          const nextMsg: ChatMessage = {
+            id,
+            role,
+            content: contentTrimmed,
+            createdAt: new Date(),
+            citations: incomingCitations,
+            reasoningSteps: incomingReasoning && incomingReasoning.length > 0 ? mergeReasoningSteps(incomingReasoning, { finalize: isFinal }) : undefined,
+          };
+          return [...prev, nextMsg];
+        }
+
+        const idx = prev.findIndex((m) => m.id === currentId);
+        if (idx === -1) {
+          const nextMsg: ChatMessage = {
+            id: currentId,
+            role,
+            content: contentTrimmed,
+            createdAt: new Date(),
+            citations: incomingCitations,
+            reasoningSteps: incomingReasoning && incomingReasoning.length > 0 ? mergeReasoningSteps(incomingReasoning, { finalize: isFinal }) : undefined,
+          };
+          liveVoiceIdsRef.current[role] = isFinal ? undefined : currentId;
+          return [...prev, nextMsg];
+        }
+
+        const next = [...prev];
+        const prevMsg = next[idx];
+        const nextContent = contentTrimmed ? contentTrimmed : prevMsg.content;
+        const mergedReasoning = incomingReasoning
+          ? mergeReasoningSteps([...(prevMsg.reasoningSteps || []), ...incomingReasoning], { finalize: isFinal })
+          : prevMsg.reasoningSteps;
+        const mergedCitations =
+          incomingCitations && incomingCitations.length > 0
+            ? incomingCitations
+            : prevMsg.citations;
+        next[idx] = {
+          ...prevMsg,
+          content: nextContent,
+          citations: mergedCitations,
+          reasoningSteps: mergedReasoning && mergedReasoning.length > 0 ? mergedReasoning : undefined,
+        };
+        if (isFinal) {
+          liveVoiceIdsRef.current[role] = undefined;
+        }
+        return next;
+      });
+    },
+    []
+  );
 
   const clearStreamingState = useCallback(() => {
     setIsLoading(false);
@@ -628,6 +708,7 @@ export function useChatController(): ChatController {
     handleDislike,
     handleRetry,
     handleSourceClick,
+    upsertLiveVoiceMessage,
     refresh,
     textareaRef,
   };

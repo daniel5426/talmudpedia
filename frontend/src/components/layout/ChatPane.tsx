@@ -39,18 +39,19 @@ import {
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square } from "lucide-react";
+import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotImputArea } from "@/components/BotImputArea";
 import { useChatController, type ChatController, type ChatMessage, type Citation } from "./useChatController";
 import { clearPendingChatMessage, consumePendingChatMessage } from "@/lib/chatPrefill";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { chatService, livekitService, ttsService } from "@/services";
-import { Button } from "@/components/ui/button";
-import { useSearchParams } from "next/navigation";
+import { chatService, ttsService } from "@/services";
+import { useRouter, useSearchParams } from "next/navigation";
 import { KesherLogo } from "@/components/ui/KesherLogo";
-import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
-import "@livekit/components-styles";
+import { useGeminiLive } from "@/hooks/useGeminiLive";
+import { useAuthStore } from "@/lib/store/useAuthStore";
+// import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
+// import "@livekit/components-styles";
 import { LibrarySearchModal } from "./LibrarySearchModal";
 import { ChatPaneHeader } from "./ChatPaneHeader";
 
@@ -288,49 +289,19 @@ type ChatPaneProps = {
   chatId?: string;
 };
 
-type VoiceModeControlsProps = {
-  direction: DirectionMode;
-  onClose: () => void;
-};
-
-function VoiceModeControls({ direction, onClose }: VoiceModeControlsProps) {
-  const [pulse, setPulse] = useState(1);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setPulse(1 + Math.random() * 0.4);
-    }, 220);
-    return () => clearInterval(id);
-  }, []);
-
-  return (
-    <div className="w-full flex flex-col items-center gap-6 py-4" dir={direction}>
-      <div className="relative h-24 w-24 sm:h-32 sm:w-32">
-        <div className="absolute inset-0 rounded-full bg-teal-500/15 animate-ping" />
-        <div
-          className="absolute inset-0 rounded-full bg-cyan-400/25"
-          style={{
-            transform: `scale(${pulse + 0.2})`,
-            transition: "transform 0.25s ease",
-          }}
-        />
-        <div
-          className="relative h-full w-full rounded-full bg-linear-to-br from-cyan-400 via-emerald-400 to-teal-500 shadow-[0_10px_35px_rgba(16,185,129,0.35)]"
-          style={{
-            transform: `scale(${pulse})`,
-            transition: "transform 0.2s ease",
-          }}
-        />
-      </div>
-      <div className="text-sm text-muted-foreground">מצב קול פעיל</div>
-      <Button variant="secondary" onClick={onClose} className="px-5 z-10">
-        סיים שיחה קולית
-      </Button>
-    </div>
-  );
-}
-
-function ChatWorkspace({ controller, chatId, isVoiceModeActive, handleToggleVoiceMode }: { controller: ChatController; chatId?: string, isVoiceModeActive: boolean, handleToggleVoiceMode: () => void }) {
+export function ChatWorkspace({
+  controller,
+  chatId,
+  isVoiceModeActive,
+  handleToggleVoiceMode,
+  analyser
+}: {
+  controller: ReturnType<typeof useChatController>;
+  chatId?: string;
+  isVoiceModeActive: boolean;
+  handleToggleVoiceMode: () => void;
+  analyser?: AnalyserNode | null;
+}) {
   // Auto (Agent Router) - Extract controller methods and state
   const {
     messages,
@@ -536,22 +507,15 @@ function ChatWorkspace({ controller, chatId, isVoiceModeActive, handleToggleVoic
           <div className="flex w-full flex-col items-center text-center pb-20">
             <p className="text-3xl font-semibold pb-6">
             גלה מה מחפש לבך בתורה.</p>
-            {isVoiceModeActive ? (
-              <VoiceModeControls
-                direction={direction}
-                onClose={handleToggleVoiceMode}
-              />
-            ) : (
-              <BotImputArea
-                className="w-full max-w-3xl"
-                textareaRef={textareaRef}
-                handleSubmit={handleSubmit}
-                isLoading={isLoading}
-                onStop={handleStop}
-                isVoiceModeActive={isVoiceModeActive}
-                onToggleVoiceMode={handleToggleVoiceMode}
-              />
-            )}
+            
+                <BotImputArea 
+                  textareaRef={controller.textareaRef}
+                  handleSubmit={controller.handleSubmit}
+                  isLoading={controller.isLoading}
+                  isVoiceModeActive={isVoiceModeActive}
+                  onToggleVoiceMode={handleToggleVoiceMode}
+                  analyser={analyser}
+                />
           </div>
         ) : (
           <>
@@ -810,12 +774,6 @@ function ChatWorkspace({ controller, chatId, isVoiceModeActive, handleToggleVoic
       {!isEmptyState && (
         <>
           <ConversationScrollButton />
-            {isVoiceModeActive ? (
-              <VoiceModeControls
-                direction={direction}
-                onClose={handleToggleVoiceMode}
-              />
-            ) : (
               <BotImputArea
                 textareaRef={textareaRef}
                 handleSubmit={handleSubmit}
@@ -823,8 +781,8 @@ function ChatWorkspace({ controller, chatId, isVoiceModeActive, handleToggleVoic
                 onStop={handleStop}
                 isVoiceModeActive={isVoiceModeActive}
                 onToggleVoiceMode={handleToggleVoiceMode}
+                analyser={analyser}
               />
-            )}
         </>
       )}
     </div>
@@ -836,13 +794,18 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   const searchParams = useSearchParams();
   const effectiveChatId = chatId || searchParams.get('chatId');
   
-  // Auto (Agent Router) - Get direction for VoiceModeControls
-  const { direction } = useDirection();
-  
   // Auto (Agent Router) - Get layout store for active chat management
   const setActiveChatId = useLayoutStore((state) => state.setActiveChatId);
   const [searchOpen, setSearchOpen] = React.useState(false);
   
+  const router = useRouter();
+
+  const onChatCreated = React.useCallback((newChatId: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("chatId", newChatId);
+      router.replace(`?${params.toString()}`);
+  }, [router, searchParams]);
+
   // Auto (Agent Router) - Share chat handler - copies chat URL to clipboard
   const handleShareChat = React.useCallback(() => {
     if (!effectiveChatId) return;
@@ -882,60 +845,103 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
     chatController.messages.length === 0 && !chatController.isLoading && !chatController.streamingContent && !chatController.isLoadingHistory;
 
   const [isVoiceModeActive, setIsVoiceModeActive] = useState(false);
-  const [token, setToken] = useState("");
+
+  // Construct WebSocket URL
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const wsBackendUrl = backendUrl.replace(/^http/, 'ws');
+  const token = useAuthStore((state) => state.token);
+  // API path in backend/main.py is mounted at /api/voice/session (via include_router prefix=/api/voice)
+  // Wait, in main.py: app.include_router(voice_ws.router, prefix="/api/voice", tags=["voice"])
+  // And in voice_ws.py: @router.websocket("/session")
+  // So the full path is /api/voice/session
+  const voiceUrl = `${wsBackendUrl}/api/voice/session?chat_id=${effectiveChatId || ''}${token ? `&token=${encodeURIComponent(token)}` : ""}`;
+  
+  const { upsertLiveVoiceMessage } = chatController;
+
+  const handleLiveText = React.useCallback(
+    (msg: { role: "user" | "assistant"; content: string; is_final?: boolean }) => {
+      upsertLiveVoiceMessage({
+        role: msg.role,
+        content: msg.content,
+        isFinal: Boolean(msg.is_final),
+      });
+    },
+    [upsertLiveVoiceMessage]
+  );
+
+  const handleLiveTool = React.useCallback(
+    (msg: { tool: string; status?: string; query?: string; citations?: Citation[] }) => {
+      if (msg.tool !== "retrieve_sources") {
+        return;
+      }
+      const reasoningStep = {
+        label: "Retrieval",
+        status: msg.status === "pending" ? "pending" : "complete",
+        icon: SearchIcon,
+        query: msg.query,
+        citations: msg.citations,
+        sources: msg.citations,
+      } as any;
+
+      upsertLiveVoiceMessage({
+        role: "assistant",
+        content: "",
+        citations: msg.citations,
+        reasoningSteps: [reasoningStep],
+      });
+    },
+    [upsertLiveVoiceMessage]
+  );
+
+  const { connect, disconnect, startRecording, isConnected, analyser } = useGeminiLive(
+    voiceUrl,
+    onChatCreated,
+    handleLiveText,
+    handleLiveTool
+  );
+
+  useEffect(() => {
+      if (isVoiceModeActive) {
+          connect();
+      } else {
+          disconnect();
+      }
+  }, [isVoiceModeActive, connect, disconnect]);
+
+  useEffect(() => {
+      if (isConnected && isVoiceModeActive) {
+          startRecording();
+      }
+  }, [isConnected, isVoiceModeActive, startRecording]);
+
+
 
   const handleToggleVoiceMode = async () => {
     if (isVoiceModeActive) {
       setIsVoiceModeActive(false);
-      setToken("");
       
       if (effectiveChatId) {
-        // Had a chatId from the start, just refresh
         await chatController.refresh();
       } else {
-        // Started without chatId - a new chat was created during voice session
-        // Wait a moment for the backend to finalize the chat, then fetch it
         await new Promise(resolve => setTimeout(resolve, 500));
-        
         try {
-          // Fetch the most recent chat (the one just created)
-          const chatPagination = await chatService.list();
-          if (chatPagination?.items && chatPagination.items.length > 0) {
-            const mostRecentChat = chatPagination.items[0]; // Assuming chats are sorted by recency
-            // Navigate to the new chat
-            window.location.href = `/chat?chatId=${mostRecentChat.id}`;
-          }
+            window.location.reload();
         } catch (error) {
-          console.error("Failed to fetch recent chat:", error);
-          // Fallback: just refresh the page to show the sidebar with new chat
-          window.location.reload();
+          console.error("Failed to refresh:", error);
         }
       }
     } else {
-      try {
-        const { token: roomToken } = await livekitService.getToken(
-          effectiveChatId || "default-room",
-          nanoid(),
-          effectiveChatId || undefined
-        );
-        setToken(roomToken);
         setIsVoiceModeActive(true);
-      } catch (e) {
-        console.error(e);
-      }
     }
   };
 
-  const mainContent = isVoiceModeActive ? (
-    <div className="flex flex-1 min-h-screen items-center justify-center p-6">
-      <VoiceModeControls direction={direction} onClose={handleToggleVoiceMode} />
-    </div>
-  ) : (
+  const mainContent = (
     <ChatWorkspace
       controller={chatController}
       chatId={chatId}
       isVoiceModeActive={isVoiceModeActive}
       handleToggleVoiceMode={handleToggleVoiceMode}
+      analyser={analyser}
     />
   );
 
@@ -962,22 +968,6 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
       </Conversation>
     </>
   );
-
-  if (isVoiceModeActive && token) {
-      return (
-        <LiveKitRoom
-          token={token}
-          serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
-          connect={true}
-          audio={true}
-          video={false}
-          data-lk-theme="default"
-        >
-            <RoomAudioRenderer />
-            {roomContent}
-        </LiveKitRoom>
-      );
-  }
 
   return roomContent;
 }

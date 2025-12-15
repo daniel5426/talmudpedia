@@ -20,6 +20,16 @@ export interface LibrarySearchResult {
   score?: number;
 }
 
+export interface LibrarySiblingsResponse {
+  current_ref: string;
+  path: string[];
+  path_he: string[];
+  parent_path: string[];
+  parent_path_he: string[];
+  parent?: Partial<LibraryNode> | null;
+  siblings: Array<Partial<LibraryNode>>;
+}
+
 export const normalizeLibraryQuery = (query: string) => {
   if (!query) return "";
   const cleaned = query
@@ -60,6 +70,11 @@ class LibraryService {
       this.searchPromises[key] = httpClient.get<LibrarySearchResult[]>(`/api/library/search?${params.toString()}`);
     }
     return this.searchPromises[key];
+  }
+
+  getSiblings(ref: string): Promise<LibrarySiblingsResponse> {
+    const encoded = encodeURIComponent(ref);
+    return httpClient.get<LibrarySiblingsResponse>(`/api/library/siblings/${encoded}`);
   }
 }
 

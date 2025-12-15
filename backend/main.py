@@ -32,24 +32,25 @@ async def lifespan(app: FastAPI):
     print("VectorStore initialized successfully.")
     
     # Start LiveKit worker in separate process if credentials are configured
-    worker_process = None
-    if all([
-        os.getenv("LIVEKIT_URL"),
-        os.getenv("LIVEKIT_API_KEY"),
-        os.getenv("LIVEKIT_API_SECRET")
-    ]):
-        worker_process = multiprocessing.Process(target=start_livekit_worker, daemon=False)
-        worker_process.start()
-        print("LiveKit worker started in background process")
-    else:
-        print("LiveKit credentials not found - voice mode disabled")
+    # worker_process = None
+    # if all([
+    #     os.getenv("LIVEKIT_URL"),
+    #     os.getenv("LIVEKIT_API_KEY"),
+    #     os.getenv("LIVEKIT_API_SECRET")
+    # ]):
+    #     worker_process = multiprocessing.Process(target=start_livekit_worker, daemon=False)
+    #     worker_process.start()
+    #     print("LiveKit worker started in background process")
+    # else:
+    #     print("LiveKit credentials not found - voice mode disabled")
     
     yield
     
     # Cleanup
-    if worker_process and worker_process.is_alive():
-        worker_process.terminate()
-        worker_process.join(timeout=5)
+    # Cleanup
+    # if worker_process and worker_process.is_alive():
+    #     worker_process.terminate()
+    #     worker_process.join(timeout=5)
     
     await MongoDatabase.close()
 
@@ -83,7 +84,10 @@ app.include_router(search.router, tags=["search"])
 app.include_router(stt.router, prefix="/stt", tags=["stt"])
 app.include_router(texts.router, tags=["texts"])
 app.include_router(tts.router, prefix="/tts", tags=["tts"])
+app.include_router(tts.router, prefix="/tts", tags=["tts"])
 
+from app.api.routers import voice_ws
+app.include_router(voice_ws.router, prefix="/api/voice", tags=["voice"])
 
 @app.get("/health")
 def health_check():

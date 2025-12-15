@@ -34,29 +34,36 @@ export interface SinglePageTextData {
 }
 
 class SourceService {
+  normalizeRef(ref: string) {
+    return ref.replace(/\s*:\s*/g, ":").replace(/\s+/g, " ").trim();
+  }
+
   async getInitial(
     sourceId: string,
     pagesBefore = 0,
     pagesAfter = 2
   ): Promise<MultiPageTextData | SinglePageTextData> {
+    const normalized = this.normalizeRef(sourceId);
     const query = `?pages_before=${pagesBefore}&pages_after=${pagesAfter}`;
-    return httpClient.get(`/source/${encodeURIComponent(sourceId)}${query}`);
+    return httpClient.get(`/source/${encodeURIComponent(normalized)}${query}`);
   }
 
   async getBefore(
     ref: string,
     pagesBefore = 2
   ): Promise<MultiPageTextData | SinglePageTextData> {
+    const normalized = this.normalizeRef(ref);
     const query = `?pages_before=${pagesBefore}&pages_after=0`;
-    return httpClient.get(`/source/${encodeURIComponent(ref)}${query}`);
+    return httpClient.get(`/source/${encodeURIComponent(normalized)}${query}`);
   }
 
   async getAfter(
     ref: string,
     pagesAfter = 2
   ): Promise<MultiPageTextData | SinglePageTextData> {
+    const normalized = this.normalizeRef(ref);
     const query = `?pages_before=0&pages_after=${pagesAfter}`;
-    return httpClient.get(`/source/${encodeURIComponent(ref)}${query}`);
+    return httpClient.get(`/source/${encodeURIComponent(normalized)}${query}`);
   }
 }
 

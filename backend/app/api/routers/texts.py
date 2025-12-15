@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, HTTPException, Query, Path
 from typing import Optional, Dict, Any
 from app.db.connection import MongoDatabase
@@ -284,6 +285,10 @@ async def get_source_text(
         raise HTTPException(status_code=404, detail=f"Reference '{ref}' not found")
 
     nav_result = ComplexTextNavigator.navigate_to_section(doc, schema, primary_ref, index_doc)
+    
+    # For range references, fall back to simple pagination across chapters/pages
+    if range_info:
+        nav_result["is_complex"] = False
     content = nav_result.get("content")
     he_ref = nav_result.get("heRef") or doc.get("heRef") or doc.get("heTitle")
 
@@ -300,10 +305,13 @@ async def get_source_text(
         if full_content and current_idx is not None and isinstance(full_content, list):
             
             base_ref = primary_ref
-            import re
+            separator = " "
             match = re.search(r"(\d+)$", primary_ref)
             if match:
-                base_ref = primary_ref[:match.start()].strip().rstrip(',')
+                start_idx = match.start()
+                if start_idx > 0 and primary_ref[start_idx-1] == ":":
+                    separator = ":"
+                base_ref = primary_ref[:match.start()].strip().rstrip(',:')
             
             total_len = len(full_content)
             indices_to_fetch = []
@@ -499,7 +507,7 @@ async def get_source_text(
                         if idx == current_idx:
                             full_main_heref = full_page_he_ref
                     else:
-                        page_ref = f"{base_ref} {idx + 1}".strip()
+                        page_ref = f"{base_ref}{separator}{idx + 1}".strip()
                         
                         if base_he_ref:
                             he_num = ComplexTextNavigator.encode_hebrew_numeral(idx + 1)
@@ -716,7 +724,14 @@ async def get_source_text(
             return len(segs) > 0
         return False
     
+    range_ctx = RangeContext(
+        raw=range_info,
+        start=ReferenceNavigator.parse_ref(range_info["start"]) if range_info else None,
+        end=ReferenceNavigator.parse_ref(range_info["end"]) if range_info else None
+    )
+    
     indices_to_fetch = []
+    main_page_index = 0
     
     scan = current_index - 1
     count = 0
@@ -744,19 +759,16 @@ async def get_source_text(
     can_load_bottom = (scan < len(chapter_data))
     
     pages = []
-    main_page_index = 0
-    
-    range_ctx = RangeContext(
-        raw=range_info,
-        start=ReferenceNavigator.parse_ref(range_info["start"]) if range_info else None,
-        end=ReferenceNavigator.parse_ref(range_info["end"]) if range_info else None
-    )
     
     for i, idx in enumerate(indices_to_fetch):
         if idx == current_index:
             main_page_index = i
         
         page_ref = ReferenceNavigator.get_ref_from_index(index_title, idx, is_talmud)
+        # Collapse only duplicated suffix like "Book 13: 13" -> "Book 13"
+        m_dup = re.match(r"^(.*?)(\d+):\s*(\d+)$", page_ref)
+        if m_dup and m_dup.group(2) == m_dup.group(3):
+            page_ref = f"{m_dup.group(1)}{m_dup.group(2)}".strip()
         page_parsed = ReferenceNavigator.parse_ref(page_ref)
         
         he_ref_value = TextService._build_he_ref(doc, page_parsed, index_title)
@@ -770,7 +782,7 @@ async def get_source_text(
         
         processed = None
         is_main = (idx == current_index)
-        ctx = range_ctx if is_main else RangeContext(None, None, None)
+        ctx = range_ctx if range_info else (range_ctx if is_main else RangeContext(None, None, None))
         
         if is_talmud:
             processed = TextService._handle_daf(page_parsed, chapter_data, page_result, ctx, is_main)

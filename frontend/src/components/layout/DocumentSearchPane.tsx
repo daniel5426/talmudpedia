@@ -103,9 +103,24 @@ export function DocumentSearchPane() {
   };
 
   const handleCardClick = (doc: any) => {
-    // Open the source viewer with this document
-    setActiveSource(doc.ref);
-    console.log("doc.ref", doc.ref);
+    const meta = doc.metadata || {};
+    const firstRef =
+      meta.first_ref ||
+      meta.firstRef ||
+      doc.first_ref ||
+      doc.firstRef ||
+      doc.ref;
+    const totalSegments =
+      meta.total_segments ??
+      meta.totalSegments ??
+      doc.total_segments ??
+      doc.totalSegments;
+    const pagesAfter =
+      typeof totalSegments === "number"
+        ? 2 + Math.max(totalSegments, 0) - 1
+        : undefined;
+
+    setActiveSource(firstRef, { pagesAfter });
   };
 
 

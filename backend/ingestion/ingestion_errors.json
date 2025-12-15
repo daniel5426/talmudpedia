@@ -1,3 +1,20 @@
 {
-  
+  "Shulchan Arukh, Even HaEzer": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-11 22:20:41"
+    }
+  ],
+  "Shulchan Arukh, Orach Chayim": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-11 21:41:30"
+    }
+  ]
 }

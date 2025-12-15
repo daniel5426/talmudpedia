@@ -67,7 +67,7 @@ export function LibrarySearchModal({ open, onOpenChange }: LibrarySearchModalPro
             setSearchLoading(false);
           }
         });
-    }, 100);
+    }, 700);
     return () => {
       cancelled = true;
       setSearchLoading(false);

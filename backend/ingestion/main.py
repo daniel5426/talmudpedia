@@ -20,6 +20,7 @@ class TreeNavigator:
     def __init__(self, tree_file: Optional[Path] = None):
         self.tree_file = tree_file or Path(__file__).parent.parent / "sefaria_tree.json"
         self._tree = None
+        self._ref_map: Optional[Dict[str, str]] = None
     
     def _load_tree(self) -> List[Dict]:
         if self._tree is not None:
@@ -57,6 +58,28 @@ class TreeNavigator:
         if not node:
             return []
         return self._extract_books(node)
+
+    def _build_ref_map(self) -> Dict[str, str]:
+        if self._ref_map is not None:
+            return self._ref_map
+        tree = self._load_tree()
+        ref_map: Dict[str, str] = {}
+        stack = list(tree)
+        while stack:
+            node = stack.pop()
+            ref_val = node.get("ref")
+            he_ref_val = node.get("heRef")
+            if ref_val and he_ref_val and ref_val not in ref_map:
+                ref_map[ref_val] = he_ref_val
+            children = node.get("children", [])
+            if children:
+                stack.extend(children)
+        self._ref_map = ref_map
+        return self._ref_map
+
+    def get_he_ref(self, ref: str) -> Optional[str]:
+        ref_map = self._build_ref_map()
+        return ref_map.get(ref)
     
     def _find_path_to_node(self, tree: List[Dict], target_title: str, current_path: List[str] = None) -> Optional[List[str]]:
         if current_path is None:
@@ -304,7 +327,7 @@ class TextIngester:
                 texts = [texts]
             
             section_ref = text_data.get("ref")
-            section_he_ref = text_data.get("heRef") or text_data.get("he_ref")
+            section_he_ref = text_data.get("heRef") or text_data.get("he_ref") or self.tree_navigator.get_he_ref(section_ref)
             
             is_debug_ref = False
             if is_debug_ref:
@@ -316,8 +339,15 @@ class TextIngester:
             for i, segment_text in enumerate(texts):
                 if count >= limit:
                     break
-                segment_ref = f"{section_ref}:{i+1}"
-                segment_he_ref = f"{section_he_ref}:{i+1}" if section_he_ref else None
+                # Avoid manufacturing refs deeper than the book supports.
+                # If section_ref already has a subref (e.g., "Shulchan Arukh, Even HaEzer 1:1"),
+                # treat each returned line as part of that same ref instead of appending another index.
+                if ":" in section_ref:
+                    segment_ref = section_ref
+                    segment_he_ref = section_he_ref
+                else:
+                    segment_ref = f"{section_ref}:{i+1}"
+                    segment_he_ref = f"{section_he_ref}:{i+1}" if section_he_ref else None
                 
                 if is_debug_ref:
                     print(f"[DEBUG] Processing segment {i+1}: {segment_ref}")

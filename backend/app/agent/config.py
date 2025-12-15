@@ -12,6 +12,7 @@ class LLMConfig(BaseModel):
 class RetrievalConfig(BaseModel):
     provider: str = "vector"
     index_name: str = "talmudpedia"
+    limit: int = 10
 
 
 class AgentConfig(BaseModel):

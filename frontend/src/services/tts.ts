@@ -67,7 +67,7 @@ class TTSService {
         if (!queue.length || sourceBuffer.updating) return;
         const chunk = queue.shift();
         if (chunk) {
-          sourceBuffer.appendBuffer(chunk);
+          sourceBuffer.appendBuffer(chunk as any);
         }
       };
 

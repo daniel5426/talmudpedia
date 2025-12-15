@@ -69,7 +69,9 @@ class Chunker:
             shape_path=base_segment.get("shape_path", []),
             segment_refs=segment_refs,
             parent_titles=base_segment.get("parent_titles", []),
-            he_ref=segment_he_ref
+            he_ref=segment_he_ref,
+            first_ref=segment_refs[0] if segment_refs else None,
+            total_segments=len(segment_refs)
         )
 
     def create_vector_chunk(
@@ -83,7 +85,9 @@ class Chunker:
         segment_refs: List[str] = None,
         he_title: Optional[str] = None,
         parent_titles: Optional[List[str]] = None,
-        he_ref: Optional[str] = None
+        he_ref: Optional[str] = None,
+        first_ref: Optional[str] = None,
+        total_segments: Optional[int] = None
     ) -> Dict[str, Any]:
         """Create a single vector chunk payload."""
         clean_text = self.clean_text(text)
@@ -108,6 +112,10 @@ class Chunker:
             metadata["parent_titles"] = parent_titles
         if he_ref:
             metadata["heRef"] = he_ref
+        if first_ref:
+            metadata["first_ref"] = first_ref
+        if total_segments is not None:
+            metadata["total_segments"] = total_segments
         return {
             "id": chunk_id,
             "text": clean_text,

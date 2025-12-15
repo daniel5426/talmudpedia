@@ -23,6 +23,7 @@ import {
   MultiPageTextData,
   SinglePageTextData,
 } from "@/services";
+import { SourceSiblingsModal } from "./SourceSiblingsModal";
 
 interface SourceViewerPaneProps {
   sourceId: string | null;
@@ -35,6 +36,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   // Use selector to prevent unnecessary re-renders
   const setActiveSource = useLayoutStore((state) => state.setActiveSource);
   const activeSource = useLayoutStore((state) => state.activeSource);
+  const activePagesAfter = useLayoutStore((state) => state.activePagesAfter);
   const setSelectedText = useLayoutStore((state) => state.setSelectedText);
   const refreshTrigger = useLayoutStore((state) => state.refreshTrigger);
 
@@ -68,6 +70,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   const [isBottomVisible, setIsBottomVisible] = React.useState(false);
   const [initialScrollComplete, setInitialScrollComplete] =
     React.useState(false);
+  const [siblingsModalOpen, setSiblingsModalOpen] = React.useState(false);
   const segmentRefs = React.useRef<(HTMLDivElement | HTMLSpanElement | null)[]>(
     []
   );
@@ -89,15 +92,6 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
     };
   }, []);
 
-  // Helper function to get page reference without segment number
-  const getPageReference = (ref: string): string => {
-    // Remove the segment number (the part after the last colon)
-    // e.g., "Shulchan Arukh, Orach Chayim 14:6" -> "Shulchan Arukh, Orach Chayim 14"
-    const lastColonIndex = ref.lastIndexOf(":");
-    if (lastColonIndex === -1) return ref;
-    return ref.substring(0, lastColonIndex);
-  };
-
   // Update currentRef when sourceId changes
   // Clear scroll timeout when activeSource becomes null (pane closed)
   React.useEffect(() => {
@@ -111,7 +105,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   // Update currentRef when sourceId changes
   React.useEffect(() => {
     if (sourceId) {
-      setCurrentRef(getPageReference(sourceId));
+      setCurrentRef(sourceId.trim());
     }
   }, [sourceId]);
 
@@ -179,7 +173,11 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       setIsLoading(true);
       setError(null);
       try {
-        const data = await sourceService.getInitial(sourceId!);
+        const data = await sourceService.getInitial(
+          sourceId!,
+          0,
+          activePagesAfter ?? 2
+        );
 
         // Check if backend specifies pagination support
         setCanLoadMore(
@@ -202,10 +200,10 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       }
     }
     fetchText();
-  }, [sourceId, refreshTrigger]);
+  }, [sourceId, refreshTrigger, activePagesAfter]);
 
   // Calculate global segment index and find highlighted segments
-  const getGlobalSegmentData = () => {
+  const getGlobalSegmentData = React.useCallback(() => {
     if (!textData)
       return { totalSegments: 0, highlightedGlobalIndices: [] as number[] };
 
@@ -230,7 +228,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
     });
 
     return { totalSegments: globalIndex, highlightedGlobalIndices };
-  };
+  }, [textData]);
 
   // Scroll to highlighted segment when data loads (only on initial load)
   React.useEffect(() => {
@@ -263,10 +261,10 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       // If data loaded but no highlight (or element missing), mark as done
       setInitialScrollComplete(true);
     }
-  }, [textData]);
+  }, [textData, getGlobalSegmentData]);
 
   // Load previous pages
-  const loadPreviousPages = React.useCallback(async () => {
+    const loadPreviousPages = React.useCallback(async () => {
     if (
       isLoadingTop ||
       !canLoadMore.top ||
@@ -471,8 +469,6 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       // Update current visible page reference
       if (textData && textData.pages.length > 0) {
         const viewportRect = scrollViewport.getBoundingClientRect();
-        let foundVisible = false;
-
         for (let i = 0; i < textData.pages.length; i++) {
           const pageEl = pageContainerRefs.current[i];
           if (pageEl) {
@@ -489,26 +485,19 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
               // This prevents reopening the pane when it's animating out
               if (!activeSource) return;
 
-              // Use the full page ref instead of normalized version to avoid false matches
-              // For example, "Sefer HaChinukh:1" and "Sefer HaChinukh:2" both normalize to "Sefer HaChinukh"
-              const pageRef = textData.pages[i].ref;
+              const pageRef = textData.pages[i].ref.trim();
               if (currentRef !== pageRef) {
                 setCurrentRef(pageRef);
                 
-                // Update the store with the new active source so it persists
-                // We use a timeout to debounce this slightly and avoid rapid updates
-                // For the store, we use normalized ref (without segment numbers)
-                const normalizedRef = getPageReference(pageRef);
                 if (scrollTimeoutRef.current) {
                   clearTimeout(scrollTimeoutRef.current);
                 }
                 
                 scrollTimeoutRef.current = setTimeout(() => {
                   ignoreSourceUpdateRef.current = true;
-                  setActiveSource(normalizedRef);
+                  setActiveSource(pageRef);
                 }, 500);
               }
-              foundVisible = true;
               break;
             }
           }
@@ -518,7 +507,12 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
 
     scrollViewport.addEventListener("scroll", handleScroll);
     return () => scrollViewport.removeEventListener("scroll", handleScroll);
-  }, [textData, canLoadMore, isLoadingTop, isLoadingBottom, currentRef, activeSource]);
+  }, [textData, canLoadMore, isLoadingTop, isLoadingBottom, currentRef, activeSource, setActiveSource]);
+
+  const openSiblings = React.useCallback(() => {
+    if (!currentRef) return;
+    setSiblingsModalOpen(true);
+  }, [currentRef]);
 
   const handleSelection = React.useCallback(() => {
     const selection = window.getSelection();
@@ -785,8 +779,17 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                 <div className="flex items-center justify-center gap-2">
                   <BookOpen className="h-4 w-4 text-muted-foreground" />
                   <h1
-                    className="font-semibold text-base"
+                    className="font-semibold text-base cursor-pointer hover:text-primary transition-colors"
                     dir={isHebrew ? "rtl" : "ltr"}
+                    onClick={openSiblings}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openSiblings();
+                      }
+                    }}
                   >
                     {(() => {
                       const heTitle = textData?.he_title || textData?.heRef || textData?.he_ref;
@@ -1049,7 +1052,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
 
       {/* Custom selection overlay - shows exact selected text */}
       {selectionRects.length > 0 && (
-        <div className="pointer-events-none absolute inset-0 z-[99]">
+        <div className="pointer-events-none absolute inset-0 z-99">
           {selectionRects.map((rect, index) => (
             <div
               key={index}
@@ -1069,6 +1072,11 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
         position={selectionPopup} 
         onAskChat={handleAskChat}
         onCopy={handleCopy}
+      />
+      <SourceSiblingsModal
+        open={siblingsModalOpen}
+        onOpenChange={setSiblingsModalOpen}
+        currentRef={currentRef || sourceId}
       />
     </div>
   );

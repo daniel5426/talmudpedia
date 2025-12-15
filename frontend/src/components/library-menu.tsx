@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronLeft, ChevronRight, Book, Folder } from "lucide-react";
+import { ChevronLeft, ChevronRight, Book, Folder, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SidebarMenuButton, useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -167,6 +167,15 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
         <h2 className={cn("font-semibold text-sm truncate flex-1", isRTL ? "text-right" : "text-left")}>
           {currentTitle}
         </h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onBack}
+          className={cn("h-8 w-8", isRTL ? "mr-auto" : "ml-auto")}
+          aria-label="Home"
+        >
+          <Home className="h-4 w-4" />
+        </Button>
       </div>
       
       <div className="flex-1 overflow-y-auto">

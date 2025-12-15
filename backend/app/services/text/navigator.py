@@ -11,7 +11,7 @@ class RangeContext:
 
 class ReferenceNavigator:
     DAF_PATTERN = re.compile(r"(.*?)(\d+)([ab])(?:[: ](\d+))?$", re.IGNORECASE)
-    CHAPTER_PATTERN = re.compile(r"(.*?)(\d+)(?::(\d+))?$")
+    CHAPTER_PATTERN = re.compile(r"(.*?)(\d+)(?:[: ](\d+))?$")
 
     @classmethod
     def parse_ref(cls, ref: str) -> Dict[str, Any]:
@@ -318,42 +318,43 @@ class ComplexTextNavigator:
         if n <= 0:
             return str(n)
         
-        # Mapping for hundreds, tens, ones
         ones = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"]
         tens = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"]
         hundreds = ["", "ק", "ר", "ש", "ת"]
-        
-        result = ""
-        
-        # Hundreds
-        h = (n // 100) % 10
-        if 1 <= h <= 4:
-            result += hundreds[h]
-        elif h >= 5:
-            # Simplified fallback for >400
-            for _ in range(h):
-                result += "ק" 
-            
-        # Tens
-        t = (n // 10) % 10
-        # Ones
-        o = n % 10
-        
-        # Special cases 15 (Tet-Vav) and 16 (Tet-Zayin)
-        if t == 1 and o == 5:
-            result += "טו"
-        elif t == 1 and o == 6:
-            result += "טז"
+
+        parts: List[str] = []
+        value = n
+
+        # Handle 400+ by peeling off tavs greedily (e.g., 500 => ת + ק, 900 => תת"ק)
+        while value >= 400:
+            parts.append("ת")
+            value -= 400
+
+        # Remaining hundreds (0-300)
+        h = value // 100
+        if h:
+            parts.append(hundreds[h])
+            value -= h * 100
+
+        # Tens / ones with special cases for 15,16
+        t = value // 10
+        o = value % 10
+        if t == 1 and o in (5, 6):
+            parts.append("טו" if o == 5 else "טז")
         else:
-            result += tens[t]
-            result += ones[o]
-            
-        # Add Geresh or Gershayim
+            if t:
+                parts.append(tens[t])
+            if o:
+                parts.append(ones[o])
+
+        result = "".join(parts)
+
+        # Add Geresh/Gershayim
         if len(result) == 1:
             result += "'"
         elif len(result) > 1:
             result = result[:-1] + '"' + result[-1]
-            
+
         return result
 
     @staticmethod
