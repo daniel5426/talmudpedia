@@ -3,6 +3,8 @@ uvicorn>=0.27.0
 pydantic>=2.6.0
 email-validator
 python-dotenv>=1.0.0
+passlib[bcrypt]
+PyJWT
 pinecone
 google-generativeai
 google-genai
