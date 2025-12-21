@@ -9,11 +9,13 @@ import { cn } from '@/lib/utils';
 import { ChatPane } from '@/components/layout/ChatPane';
 import { SourceListPane } from '@/components/layout/SourceListPane';
 import { SourceViewerPane } from '@/components/layout/SourceViewerPane';
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
+import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { GripVertical } from 'lucide-react';
 import { useDirection } from '@/components/direction-provider';
 import { useChatController } from '@/components/layout/useChatController';
+import Image from 'next/image';
+import { Button } from '@/components/ui/button';
 
 function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   // Use selectors to prevent unnecessary re-renders
@@ -177,7 +179,8 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   }, [isResizing, setSourceViewerWidth, isSourceListOpen]);
 
   return (
-      <SidebarProvider className="h-full" dir={isRTL ? "rtl" : "ltr"}>
+      <SidebarProvider className="h-full bg-transparent" dir={isRTL ? "rtl" : "ltr"}>
+        <MobileSidebarTrigger />
         <div
           className={cn(
             "relative flex h-full w-full overflow-hidden transition-colors duration-500",
@@ -189,8 +192,8 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
             {/* Left Pane: Source List (Collapsible) */}
             <div
               className={cn(
-                "border-r transition-all duration-300 ease-in-out h-full",
-                isSourceListOpen ? "w-64" : "w-0 opacity-0 overflow-hidden"
+                " transition-all duration-300 ease-in-out h-full",
+                isSourceListOpen ? "w-64 border-r" : "w-0 opacity-0 overflow-hidden"
               )}
             >
               <SourceListPane />
@@ -236,6 +239,30 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
           </div>
         </div>
       </SidebarProvider>
+  );
+}
+
+function MobileSidebarTrigger() {
+  const { toggleSidebar, openMobile } = useSidebar();
+  
+  if (openMobile) return null;
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => toggleSidebar()}
+      className="md:hidden fixed top-2 right-3 z-50 h-9 w-9 shadow-lg rounded-full bg-background hover:bg-accent"
+    >
+      <Image
+        src="/kesher.png"
+        alt="TalmudPedia Logo"
+        width={28}
+        height={28}
+        className="rounded-md object-cover"
+        priority
+      />
+    </Button>
   );
 }
 

@@ -75,7 +75,7 @@ const CHAT_PAGE_SIZE = 20;
 type FetchMode = "reset" | "append";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { toggleSidebar, open: isSidebarOpen } = useSidebar();
+  const { toggleSidebar, open: isSidebarOpen, openMobile, isMobile } = useSidebar();
   const { activeChatId, setActiveChatId } = useLayoutStore();
   const [chats, setChats] = React.useState<Chat[]>([]);
   const [isFetchingChats, setIsFetchingChats] = React.useState(false);
@@ -226,7 +226,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <div dir={direction} className="flex items-center justify-between gap-2">
 
           { logoButton}
-          { isSidebarOpen && <SidebarTrigger
+          { (isSidebarOpen || openMobile) && <SidebarTrigger
             aria-label="Toggle sidebar"
             className="size-8"/> }
         </div>

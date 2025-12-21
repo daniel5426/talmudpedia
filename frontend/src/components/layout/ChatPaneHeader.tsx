@@ -26,7 +26,7 @@ export function ChatPaneHeader({
   const backgroundStyles = isEmptyState
     ? { backgroundColor: "transparent" }
     : {
-        background: "linear-gradient(to top, rgba(255,255,255,0) 0%, rgba(255,255,255,0.8) 60%, #ffffff 100%)",
+        background: "linear-gradient(to top, rgba(255,255,255,0) 0%, rgba(255,255,255,0.8) 60%, #ffffffff 100%)",
       };
 
   return (
@@ -39,11 +39,11 @@ export function ChatPaneHeader({
         <div className="flex items-center gap-2">
           {chatId && (
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+              <DropdownMenuTrigger asChild className="shadow-md border-none">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="flex items-center border text-muted-foreground shadow-none gap-2"
+                  className="flex items-center text-muted-foreground gap-2"
                 >
                   <MoreHorizontal className="h-4 w-4" />
                   <span className="sr-only">More options</span>
@@ -70,7 +70,7 @@ export function ChatPaneHeader({
             variant="outline"
             dir="rtl"
             size="sm"
-            className="search-button relative flex items-center gap-2 border text-muted-foreground h-8 rounded-[0.5rem] text-sm font-normal shadow-none"
+            className="search-button relative flex items-center gap-2 shadow-md border-none text-muted-foreground h-8 rounded-[0.5rem] text-sm font-normal"
             onClick={onSearchOpen}
           >
             <Search className="h-4 w-8 shrink-0" />

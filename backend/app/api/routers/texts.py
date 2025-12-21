@@ -285,19 +285,22 @@ async def get_source_text(
         raise HTTPException(status_code=404, detail=f"Reference '{ref}' not found")
 
     nav_result = ComplexTextNavigator.navigate_to_section(doc, schema, primary_ref, index_doc)
-    
-    # For range references, fall back to simple pagination across chapters/pages
-    if range_info:
-        nav_result["is_complex"] = False
     content = nav_result.get("content")
     he_ref = nav_result.get("heRef") or doc.get("heRef") or doc.get("heTitle")
 
     if content is None or ComplexTextNavigator.is_content_empty(content):
-        raise HTTPException(status_code=404, detail=f"Content not found for reference '{ref}'")
+        # Allow falling through to simple text path if complex navigation fails but chapters exist
+        if not doc.get("chapter"):
+            raise HTTPException(status_code=404, detail=f"Content not found for reference '{ref}'")
     
     is_talmud = "daf" in parsed
+    range_ctx = RangeContext(
+        raw=range_info,
+        start=ReferenceNavigator.parse_ref(range_info["start"]) if range_info else None,
+        end=ReferenceNavigator.parse_ref(range_info["end"]) if range_info else None
+    )
     
-    if nav_result.get("is_complex") and not nav_result.get("force_single_page"):
+    if nav_result.get("is_complex") and not nav_result.get("force_single_page") and content is not None:
          
         full_content = nav_result.get("full_content")
         current_idx = nav_result.get("current_index")
@@ -399,9 +402,21 @@ async def get_source_text(
                     "he_ref": ComplexTextNavigator.strip_book_title_from_heref(base_he_ref), 
                     "full_he_ref": base_he_ref,
                     "segments": full_content,
-                    "highlight_index": current_idx if current_idx != 0 else None,
+                    "highlight_index": current_idx if current_idx is not None else None,
                     "highlight_indices": []
                 }
+                
+                # Apply range highlighting if available
+                if range_info:
+                    page_parsed = ReferenceNavigator.parse_ref(page_ref)
+                    for seg_i in range(len(full_content)):
+                        if ReferenceNavigator.is_in_range(seg_i, page_parsed, range_ctx):
+                            page_res["highlight_indices"].append(seg_i)
+                    if page_res["highlight_indices"] and page_res["highlight_index"] is None:
+                        page_res["highlight_index"] = page_res["highlight_indices"][0]
+                elif current_idx is not None:
+                     page_res["highlight_indices"] = [current_idx]
+
                 pages.append(page_res)
                 can_load_bottom = False 
                 count = 0
@@ -443,14 +458,24 @@ async def get_source_text(
                                         full_seg_he_ref += f" {ComplexTextNavigator.encode_hebrew_numeral(k+1)}"
                                     seg_he_ref = ComplexTextNavigator.strip_book_title_from_heref(full_seg_he_ref)
 
-                                    pages.append({
+                                    page_res = {
                                         "ref": seg_ref,
                                         "he_ref": seg_he_ref,
                                         "full_he_ref": full_seg_he_ref,
                                         "segments": [seg_content] if isinstance(seg_content, str) else seg_content,
                                         "highlight_index": None,
                                         "highlight_indices": []
-                                    })
+                                    }
+                                    
+                                    if range_info:
+                                        page_parsed = ReferenceNavigator.parse_ref(seg_ref)
+                                        for seg_i in range(len(page_res["segments"])):
+                                            if ReferenceNavigator.is_in_range(seg_i, page_parsed, range_ctx):
+                                                page_res["highlight_indices"].append(seg_i)
+                                        if page_res["highlight_indices"]:
+                                            page_res["highlight_index"] = page_res["highlight_indices"][0]
+
+                                    pages.append(page_res)
                                 
                                 can_load_bottom = len(next_full) > slice_end
                                 if not can_load_bottom:
@@ -531,7 +556,16 @@ async def get_source_text(
                         "highlight_indices": []
                     }
                     
-                    if idx == current_idx:
+                    if range_info:
+                        page_parsed = ReferenceNavigator.parse_ref(page_ref)
+                        for seg_i in range(len(segments)):
+                            if ReferenceNavigator.is_in_range(seg_i, page_parsed, range_ctx):
+                                page_res["highlight_indices"].append(seg_i)
+                        
+                        if page_res["highlight_indices"]:
+                            page_res["highlight_index"] = page_res["highlight_indices"][0]
+                    
+                    if idx == current_idx and not page_res["highlight_indices"]:
                         if is_talmud_node and "line" in parsed and parsed["line"]:
                             line_idx = parsed["line"] - 1
                             if 0 <= line_idx < len(segments):
@@ -584,14 +618,24 @@ async def get_source_text(
                                             full_seg_he_ref += f" {ComplexTextNavigator.encode_hebrew_numeral(k+1)}"
                                         seg_he_ref = ComplexTextNavigator.strip_book_title_from_heref(full_seg_he_ref)
 
-                                        pages.append({
-                                            "ref": seg_ref,
-                                            "he_ref": seg_he_ref,
-                                            "full_he_ref": full_seg_he_ref,
-                                            "segments": [seg_content] if isinstance(seg_content, str) else seg_content,
-                                            "highlight_index": None,
-                                            "highlight_indices": []
-                                        })
+                                    page_res = {
+                                        "ref": seg_ref,
+                                        "he_ref": seg_he_ref,
+                                        "full_he_ref": full_seg_he_ref,
+                                        "segments": [seg_content] if isinstance(seg_content, str) else seg_content,
+                                        "highlight_index": None,
+                                        "highlight_indices": []
+                                    }
+                                    
+                                    if range_info:
+                                        page_parsed = ReferenceNavigator.parse_ref(seg_ref)
+                                        for seg_i in range(len(page_res["segments"])):
+                                            if ReferenceNavigator.is_in_range(seg_i, page_parsed, range_ctx):
+                                                page_res["highlight_indices"].append(seg_i)
+                                        if page_res["highlight_indices"]:
+                                            page_res["highlight_index"] = page_res["highlight_indices"][0]
+
+                                    pages.append(page_res)
                                     
                                     can_load_bottom = len(next_full) > slice_end
                                     if not can_load_bottom:
@@ -724,11 +768,7 @@ async def get_source_text(
             return len(segs) > 0
         return False
     
-    range_ctx = RangeContext(
-        raw=range_info,
-        start=ReferenceNavigator.parse_ref(range_info["start"]) if range_info else None,
-        end=ReferenceNavigator.parse_ref(range_info["end"]) if range_info else None
-    )
+    pass # Moved RangeContext initialization up
     
     indices_to_fetch = []
     main_page_index = 0

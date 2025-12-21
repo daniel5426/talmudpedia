@@ -91,10 +91,8 @@ export function DocumentSearchPane() {
   };
 
   const handleCardClick = (doc: any) => {
-    // Basic fields from doc (as processed by search.py)
-    let targetRef = doc.first_ref || doc.ref;
-    const totalSegments = doc.total_segments ?? 1;
-
+    // Priority: range_ref > first_ref > ref
+    let targetRef = doc.range_ref || doc.first_ref || doc.ref;
 
     // Set active source with a buffer of 2 pages after
     setActiveSource(targetRef, { pagesAfter: 2 });
@@ -163,8 +161,8 @@ export function DocumentSearchPane() {
                         onClick={() => handleCardClick(doc)}
                       >
                         <div className="pb-2">
-                          <div className="flex items-center gap-2 text-lg">
-                            {convertToHebrew(doc.he_title)}
+                          <div className="flex items-center gap-2 text-lg font-bold">
+                            {doc.he_ref}
                           </div>
                         </div>
                         <div className="pb-2">

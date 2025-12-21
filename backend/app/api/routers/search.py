@@ -42,14 +42,33 @@ async def search_documents(request_body: SearchRequest, request: Request):
             metadata = result.get("metadata", {})
             ref = metadata.get("ref") or metadata.get("title") or "Unknown Source"
             first_ref = metadata.get("first_ref") or ref
-            print(metadata.get("he_title"))
-            print(result.get("id"))
+            he_ref = metadata.get("heRef") or metadata.get("he_ref") or metadata.get("he_title", "Unknown Source")
+            
+            # Construct range ref if possible using segment_refs
+            segment_refs = metadata.get("segment_refs", [])
+            total_segments = metadata.get("total_segments", 1)
+            range_ref = first_ref
+            
+            if segment_refs and len(segment_refs) > 1:
+                range_ref = f"{segment_refs[0]}-{segment_refs[-1]}"
+            elif total_segments > 1:
+                import re
+                # Fallback: try to match the last number in first_ref
+                match = re.search(r'^(.*?)(\d+)$', first_ref)
+                if match:
+                    prefix = match.group(1)
+                    start_val = int(match.group(2))
+                    end_val = start_val + total_segments - 1
+                    range_ref = f"{first_ref}-{prefix}{end_val}"
+
             documents.append({
                 "id": result.get("id"),
                 "he_title": metadata.get("he_title", "Unknown Source"),
+                "he_ref": he_ref,
                 "title": ref,
                 "first_ref": first_ref,
-                "total_segments": metadata.get("total_segments", 1),
+                "range_ref": range_ref,
+                "total_segments": total_segments,
                 "snippet": metadata.get("text", "")[:200] + "..." if len(metadata.get("text", "")) > 200 else metadata.get("text", ""),
                 "ref": ref,
                 "score": result.get("score", 0),
