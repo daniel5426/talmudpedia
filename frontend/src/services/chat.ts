@@ -51,7 +51,7 @@ class ChatService {
     if (chatId) body.chatId = chatId;
     if (files && files.length > 0) body.files = files;
 
-    return httpClient.requestRaw("/api/py/chat", {
+    return httpClient.requestRaw("/chat", {
       method: "POST",
       body: JSON.stringify(body),
       signal,

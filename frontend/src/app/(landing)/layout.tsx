@@ -1,9 +1,11 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useEffect } from "react";
 import Image from "next/image";
 import { KesherHeader } from "@/components/layout/KesherHeader";
 import { useDirection } from "@/components/direction-provider";
+import { useTheme } from "next-themes";
 
 export default function LandingLayout({
   children,
@@ -11,6 +13,13 @@ export default function LandingLayout({
   children: ReactNode;
 }) {
   const direction = useDirection();
+  const { setTheme } = useTheme();
+
+  // Force light theme for landing pages
+  useEffect(() => {
+    setTheme("light");
+  }, [setTheme]);
+
   return (
     <div dir={direction.direction} className="relative min-h-screen overflow-x-hidden">
       {/* Fixed Background */}

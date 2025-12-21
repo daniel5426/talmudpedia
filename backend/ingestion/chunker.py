@@ -22,17 +22,6 @@ class Chunker:
         """Count tokens for the configured encoder."""
         return len(self.encoding.encode(text or ""))
 
-    def _combine_refs(self, refs: List[str]) -> str:
-        """Build a range label from the buffered refs."""
-        refs = [ref for ref in refs if ref]
-        if not refs:
-            return "segment"
-        first = refs[0]
-        last = refs[-1]
-        if first == last or not last:
-            return first
-        return f"{first}-{last}"
-
     def _merge_links(self, link_groups: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         """Deduplicate link metadata within a chunk."""
         merged = []
@@ -56,9 +45,9 @@ class Chunker:
             return {}
         base_segment = segments[0]
         segment_refs = [segment.get("ref") for segment in segments]
-        segment_ref = self._combine_refs(segment_refs)
+        segment_ref = segment_refs[0] if segment_refs else "segment"
         segment_he_refs = [segment.get("he_ref") for segment in segments if segment.get("he_ref")]
-        segment_he_ref = self._combine_refs(segment_he_refs) if segment_he_refs else None
+        segment_he_ref = segment_he_refs[0] if segment_he_refs else None
         return self.create_vector_chunk(
             segment_ref=segment_ref,
             text=combined_text,
@@ -112,6 +101,7 @@ class Chunker:
             metadata["parent_titles"] = parent_titles
         if he_ref:
             metadata["heRef"] = he_ref
+            metadata["he_ref"] = he_ref
         if first_ref:
             metadata["first_ref"] = first_ref
         if total_segments is not None:
@@ -148,6 +138,7 @@ class Chunker:
                 "version_title": segment.get("version", {}).get("versionTitle", "unknown"),
                 "shape_path": segment.get("shape_path", []),
                 "parent_titles": segment.get("parent_titles", []),
+                "he_ref": segment.get("he_ref"),
                 "tokens": segment_tokens
             }
             link_group = links_batch[index] if index < len(links_batch) else []

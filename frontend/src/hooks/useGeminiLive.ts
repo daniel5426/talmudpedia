@@ -137,9 +137,8 @@ export const useGeminiLive = (
                     const role = message.role === 'assistant' ? 'assistant' : 'user';
                     const content = typeof message.content === 'string' ? message.content : '';
                     const isFinal = Boolean(message.is_final);
-                    if (content) {
-                        onLiveText?.({ role, content, is_final: isFinal });
-                    }
+                    // Allow empty content to support "User Speaking" shimmer placeholder
+                    onLiveText?.({ role, content, is_final: isFinal });
                 } else if (message.type === 'live_tool') {
                     onLiveTool?.({
                         tool: typeof message.tool === 'string' ? message.tool : 'unknown',
@@ -166,7 +165,12 @@ export const useGeminiLive = (
         ws.current?.close();
         ws.current = null;
         stopRecording();
-    }, [stopRecording]);
+        stopOutputAudio();
+        if (outputAudioContext.current) {
+            outputAudioContext.current.close();
+            outputAudioContext.current = null;
+        }
+    }, [stopRecording, stopOutputAudio]);
 
     const startRecording = useCallback(async () => {
         if (!isConnected || !ws.current) return;
@@ -259,6 +263,17 @@ export const useGeminiLive = (
         }
     }, [isConnected, stopOutputAudio]);
 
+    const ensureAudioContext = useCallback(() => {
+        if (!outputAudioContext.current) {
+            outputAudioContext.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+                sampleRate: 24000,
+            });
+        }
+        if (outputAudioContext.current.state === 'suspended') {
+            outputAudioContext.current.resume();
+        }
+    }, []);
+
     useEffect(() => {
         return () => {
             disconnect();
@@ -276,6 +291,7 @@ export const useGeminiLive = (
         disconnect,
         startRecording,
         stopRecording,
-        analyser: analyserNode
+        analyser: analyserNode,
+        ensureAudioContext
     };
 };

@@ -40,12 +40,18 @@ async def search_documents(request_body: SearchRequest, request: Request):
         documents = []
         for result in results:
             metadata = result.get("metadata", {})
+            ref = metadata.get("ref") or metadata.get("title") or "Unknown Source"
+            first_ref = metadata.get("first_ref") or ref
+            print(metadata.get("he_title"))
+            print(result.get("id"))
             documents.append({
                 "id": result.get("id"),
-                "title": metadata.get("ref", "Unknown Source"),
+                "he_title": metadata.get("he_title", "Unknown Source"),
+                "title": ref,
+                "first_ref": first_ref,
+                "total_segments": metadata.get("total_segments", 1),
                 "snippet": metadata.get("text", "")[:200] + "..." if len(metadata.get("text", "")) > 200 else metadata.get("text", ""),
-                "source": metadata.get("ref", "Unknown Source"),
-                "ref": metadata.get("ref", "Unknown Source"),
+                "ref": ref,
                 "score": result.get("score", 0),
             })
         

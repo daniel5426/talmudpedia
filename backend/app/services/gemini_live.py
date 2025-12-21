@@ -158,6 +158,19 @@ class GeminiLiveSession:
         self._pending_citations: List[Dict[str, Any]] = []
         self._pending_reasoning_steps: List[Dict[str, Any]] = []
 
+    async def _flush_user_message(self):
+        if self.current_user_text and self.current_user_text != self._last_saved_user_text:
+            await self._save_message("user", self.current_user_text, is_voice=True)
+            self._last_saved_user_text = self.current_user_text
+            if self.frontend_ws:
+                await self.frontend_ws.send_json({
+                    "type": "live_text",
+                    "role": "user",
+                    "content": self.current_user_text,
+                    "is_final": True
+                })
+            self.current_user_text = ""
+
     def _format_history_for_system_instruction(self, turns: List[Dict[str, Any]]) -> str:
         out: List[str] = []
         total = 0
@@ -230,8 +243,11 @@ class GeminiLiveSession:
             return inc
         return f"{cur} {inc}"
 
-    async def connect(self):
+    async def connect(self, frontend_ws=None):
         """Establishes connection to Gemini Bidi endpoint."""
+        if frontend_ws:
+            self.frontend_ws = frontend_ws
+
         try:
             self.ws = await websockets.connect(URI)
             self.is_connected = True
@@ -290,6 +306,9 @@ class GeminiLiveSession:
             if "error" in initial_resp:
                 logger.error(f"Gemini Setup Error: {initial_resp}")
                 raise Exception(f"Gemini Setup Failed: {initial_resp['error']}")
+            
+            # Process the initial response as it might contain content (like initial audio)
+            await self._handle_gemini_message(initial_resp)
             
         except Exception as e:
             logger.error(f"Failed to connect to Gemini: {e}")
@@ -371,6 +390,7 @@ class GeminiLiveSession:
         content: str,
         citations: Optional[List[Dict[str, Any]]] = None,
         reasoning_steps: Optional[List[Dict[str, Any]]] = None,
+        is_voice: bool = False,
     ):
         if not self.chat_id or not content:
             return
@@ -381,6 +401,8 @@ class GeminiLiveSession:
                 "content": content,
                 "created_at": datetime.utcnow()
             }
+            if is_voice:
+                msg["is_voice"] = True
             if citations:
                 msg["citations"] = citations
             if reasoning_steps:
@@ -394,6 +416,164 @@ class GeminiLiveSession:
         except Exception as e:
             logger.error(f"Failed to save message: {e}")
 
+    async def _handle_gemini_message(self, msg: Dict[str, Any]):
+        # logger.info(f"RX: {msg.keys()}") 
+        _agent_log("B", "gemini_live.py:receive_loop", "ws_rx", {"topKeys": list(msg.keys())})
+        if "error" in msg:
+            logger.error(f"Gemini Error: {msg}")
+            _agent_log("B", "gemini_live.py:receive_loop", "ws_error", {"error": msg.get("error")})
+        
+        tool_call_top = msg.get("tool_call") or msg.get("toolCall")
+        if tool_call_top:
+            _agent_log("B", "gemini_live.py:receive_loop", "tool_call_detected_top", {"toolCallKeys": list(tool_call_top.keys()), "toolsEnabled": bool(ENABLE_GEMINI_TOOLS)})
+            if ENABLE_GEMINI_TOOLS:
+                await self._handle_tool_call(tool_call_top)
+
+        tool_cancel = msg.get("toolCallCancellation") or msg.get("tool_call_cancellation")
+        if tool_cancel:
+            _agent_log("B", "gemini_live.py:receive_loop", "tool_call_cancel", {"topKeys": list(tool_cancel.keys()) if isinstance(tool_cancel, dict) else type(tool_cancel).__name__, "tasks": len(self._tool_tasks)})
+            for t in list(self._tool_tasks):
+                try:
+                    t.cancel()
+                except Exception:
+                    pass
+
+        audio_data = msg.get("data")
+        if audio_data and isinstance(audio_data, str):
+            if self.frontend_ws:
+                await self.frontend_ws.send_json({
+                    "type": "audio",
+                    "data": audio_data
+                })
+
+        # Check for serverContent
+        server_content = msg.get("serverContent")
+        if server_content:
+            input_transcription = server_content.get("input_transcription") or server_content.get("inputTranscription")
+            if input_transcription and isinstance(input_transcription, dict):
+                t = input_transcription.get("text") or ""
+                # MODIFICATION: Do NOT send partial text updates to frontend.
+                # Only track it internally.
+                if t and t != self._last_input_transcription:
+                    # If this is the FIRST time we have user text for this turn, send a placeholder
+                    # so frontend shows "User speaking..." shimmer.
+                    if not self.current_user_text:
+                        pass
+                        # await frontend_ws.send_json({
+                        #     "type": "live_text",
+                        #     "role": "user",
+                        #     "content": "", # Empty content triggers shimmer in frontend if is_final=False
+                        #     "is_final": False
+                        # })
+                    
+                    self._last_input_transcription = t
+                    self.current_user_text = self._merge_partial_text(self.current_user_text, t)
+                    # Do NOT send the partial text
+                    # await frontend_ws.send_json({...})
+
+            input_transcriptions = server_content.get("input_transcriptions") or server_content.get("inputTranscriptions")
+            if input_transcriptions and isinstance(input_transcriptions, list):
+                joined = " ".join([(x or {}).get("text", "") for x in input_transcriptions]).strip()
+                if joined and joined != self._last_input_transcription:
+                    # Same logic: send placeholder if new turn, otherwise silence
+                    if not self.current_user_text:
+                        pass
+                        # await frontend_ws.send_json({
+                        #     "type": "live_text",
+                        #     "role": "user",
+                        #     "content": "",
+                        #     "is_final": False
+                        # })
+
+                    self._last_input_transcription = joined
+                    self.current_user_text = self._merge_partial_text(self.current_user_text, joined)
+
+
+            output_transcription = server_content.get("output_transcription") or server_content.get("outputTranscription")
+            if output_transcription and isinstance(output_transcription, dict):
+                await self._flush_user_message()
+                t = output_transcription.get("text") or ""
+                if t and t != self._last_output_transcription:
+                    self._last_output_transcription = t
+                    if self.current_ai_text and t.startswith(self.current_ai_text):
+                        self.current_ai_text = t
+                    else:
+                        self.current_ai_text += t
+                    
+                    if self.frontend_ws:
+                        await self.frontend_ws.send_json({
+                            "type": "live_text",
+                            "role": "assistant",
+                            "content": self.current_ai_text,
+                            "is_final": False
+                        })
+
+            # 1. Model Audio & Text
+            model_turn = server_content.get("modelTurn")
+            if model_turn:
+                await self._flush_user_message()
+                parts = model_turn.get("parts", [])
+                for part in parts:
+                    # Audio
+                    inline_data = part.get("inlineData")
+                    if inline_data:
+                        audio_data = inline_data.get("data")
+                        if audio_data:
+                            if self.frontend_ws:
+                                await self.frontend_ws.send_json({
+                                    "type": "audio",
+                                    "data": audio_data
+                                })
+                    text_data = part.get("text")
+                    if text_data and not self._last_output_transcription:
+                        self.current_ai_text += text_data
+
+            # 2. Turn Complete (Save accumulated text)
+            if server_content.get("turn_complete") or server_content.get("turnComplete"):
+                if self.current_ai_text:
+                    await self._save_message(
+                        "assistant",
+                        self.current_ai_text,
+                        citations=self._pending_citations or None,
+                        reasoning_steps=self._pending_reasoning_steps or None,
+                    )
+                    if self.frontend_ws:
+                        await self.frontend_ws.send_json({
+                            "type": "live_text",
+                            "role": "assistant",
+                            "content": self.current_ai_text,
+                            "is_final": True
+                        })
+                    # Notify frontend text (optional, for UI sync)
+                    # await frontend_ws.send_json({"type": "text", "content": self.current_ai_text, "role": "assistant"})
+                    self.current_ai_text = ""
+                    self._last_output_transcription = ""
+                    self._pending_citations = []
+                    self._pending_reasoning_steps = []
+            
+            # 3. Tool Call
+            tool_call = msg.get("tool_call") or msg.get("toolCall")
+            if not tool_call:
+                tool_call = server_content.get("tool_call") or server_content.get("toolCall")
+            
+            if tool_call:
+                logger.info(f"Tool call found keys={list(tool_call.keys())}")
+                _agent_log("B", "gemini_live.py:receive_loop", "tool_call_detected", {"toolCallKeys": list(tool_call.keys()), "toolsEnabled": bool(ENABLE_GEMINI_TOOLS)})
+                if ENABLE_GEMINI_TOOLS:
+                    await self._handle_tool_call(tool_call)
+
+            # 4. Unknown/User Transcript?
+            # We look for keys like 'recognitionResult' or 'speechRecognitionResults'
+            # which indicate user speech transcription
+            # Since we don't know the exact key yet, we'll log keys to discover it.
+            # Commonly for Gemini Live: 'speechRecognitionResult' -> 'transcript'
+            # Or 'currentUserInput' -> 'content'
+            # If found, save as 'user' message.
+            if "modelTurn" not in server_content and "turnComplete" not in server_content and "toolCall" not in server_content:
+                    logger.info(f"Potential User Transcript? Keys: {server_content.keys()}")
+                    # Try to extract text validation
+                    # e.g. if server_content.get('speechRecognitionResults'): ...
+
     async def receive_loop(self, frontend_ws):
         """
         Loops to receive messages from Gemini and forward audio to frontend.
@@ -403,155 +583,7 @@ class GeminiLiveSession:
             self.frontend_ws = frontend_ws
             async for raw_msg in self.ws:
                 msg = json.loads(raw_msg)
-                # logger.info(f"RX: {msg.keys()}") 
-                _agent_log("B", "gemini_live.py:receive_loop", "ws_rx", {"topKeys": list(msg.keys())})
-                if "error" in msg:
-                    logger.error(f"Gemini Error: {msg}")
-                    _agent_log("B", "gemini_live.py:receive_loop", "ws_error", {"error": msg.get("error")})
-                
-                tool_call_top = msg.get("tool_call") or msg.get("toolCall")
-                if tool_call_top:
-                    _agent_log("B", "gemini_live.py:receive_loop", "tool_call_detected_top", {"toolCallKeys": list(tool_call_top.keys()), "toolsEnabled": bool(ENABLE_GEMINI_TOOLS)})
-                    if ENABLE_GEMINI_TOOLS:
-                        await self._handle_tool_call(tool_call_top)
-
-                tool_cancel = msg.get("toolCallCancellation") or msg.get("tool_call_cancellation")
-                if tool_cancel:
-                    _agent_log("B", "gemini_live.py:receive_loop", "tool_call_cancel", {"topKeys": list(tool_cancel.keys()) if isinstance(tool_cancel, dict) else type(tool_cancel).__name__, "tasks": len(self._tool_tasks)})
-                    for t in list(self._tool_tasks):
-                        try:
-                            t.cancel()
-                        except Exception:
-                            pass
-
-                audio_data = msg.get("data")
-                if audio_data and isinstance(audio_data, str):
-                    await frontend_ws.send_json({
-                        "type": "audio",
-                        "data": audio_data
-                    })
-
-                # Check for serverContent
-                server_content = msg.get("serverContent")
-                if server_content:
-                    input_transcription = server_content.get("input_transcription") or server_content.get("inputTranscription")
-                    if input_transcription and isinstance(input_transcription, dict):
-                        t = input_transcription.get("text") or ""
-                        if t and t != self._last_input_transcription:
-                            self._last_input_transcription = t
-                            self.current_user_text = self._merge_partial_text(self.current_user_text, t)
-                            await frontend_ws.send_json({
-                                "type": "live_text",
-                                "role": "user",
-                                "content": self.current_user_text,
-                                "is_final": False
-                            })
-
-                    input_transcriptions = server_content.get("input_transcriptions") or server_content.get("inputTranscriptions")
-                    if input_transcriptions and isinstance(input_transcriptions, list):
-                        joined = " ".join([(x or {}).get("text", "") for x in input_transcriptions]).strip()
-                        if joined and joined != self._last_input_transcription:
-                            self._last_input_transcription = joined
-                            self.current_user_text = self._merge_partial_text(self.current_user_text, joined)
-                            await frontend_ws.send_json({
-                                "type": "live_text",
-                                "role": "user",
-                                "content": self.current_user_text,
-                                "is_final": False
-                            })
-
-                    output_transcription = server_content.get("output_transcription") or server_content.get("outputTranscription")
-                    if output_transcription and isinstance(output_transcription, dict):
-                        if self.current_user_text and self.current_user_text != self._last_saved_user_text:
-                            await self._save_message("user", self.current_user_text)
-                            self._last_saved_user_text = self.current_user_text
-                            await frontend_ws.send_json({
-                                "type": "live_text",
-                                "role": "user",
-                                "content": self.current_user_text,
-                                "is_final": True
-                            })
-                            self.current_user_text = ""
-                        t = output_transcription.get("text") or ""
-                        if t and t != self._last_output_transcription:
-                            self._last_output_transcription = t
-                            if self.current_ai_text and t.startswith(self.current_ai_text):
-                                self.current_ai_text = t
-                            else:
-                                self.current_ai_text += t
-                            await frontend_ws.send_json({
-                                "type": "live_text",
-                                "role": "assistant",
-                                "content": self.current_ai_text,
-                                "is_final": False
-                            })
-
-                    # 1. Model Audio & Text
-                    model_turn = server_content.get("modelTurn")
-                    if model_turn:
-                        if self.current_user_text and self.current_user_text != self._last_saved_user_text:
-                            await self._save_message("user", self.current_user_text)
-                            self._last_saved_user_text = self.current_user_text
-                            self.current_user_text = ""
-                        parts = model_turn.get("parts", [])
-                        for part in parts:
-                            # Audio
-                            inline_data = part.get("inlineData")
-                            if inline_data:
-                                audio_data = inline_data.get("data")
-                                if audio_data:
-                                    await frontend_ws.send_json({
-                                        "type": "audio",
-                                        "data": audio_data
-                                    })
-                            text_data = part.get("text")
-                            if text_data and not self._last_output_transcription:
-                                self.current_ai_text += text_data
-
-                    # 2. Turn Complete (Save accumulated text)
-                    if server_content.get("turn_complete") or server_content.get("turnComplete"):
-                        if self.current_ai_text:
-                            await self._save_message(
-                                "assistant",
-                                self.current_ai_text,
-                                citations=self._pending_citations or None,
-                                reasoning_steps=self._pending_reasoning_steps or None,
-                            )
-                            await frontend_ws.send_json({
-                                "type": "live_text",
-                                "role": "assistant",
-                                "content": self.current_ai_text,
-                                "is_final": True
-                            })
-                            # Notify frontend text (optional, for UI sync)
-                            # await frontend_ws.send_json({"type": "text", "content": self.current_ai_text, "role": "assistant"})
-                            self.current_ai_text = ""
-                            self._last_output_transcription = ""
-                            self._pending_citations = []
-                            self._pending_reasoning_steps = []
-                    
-                    # 3. Tool Call
-                    tool_call = msg.get("tool_call") or msg.get("toolCall")
-                    if not tool_call:
-                        tool_call = server_content.get("tool_call") or server_content.get("toolCall")
-                    
-                    if tool_call:
-                        logger.info(f"Tool call found keys={list(tool_call.keys())}")
-                        _agent_log("B", "gemini_live.py:receive_loop", "tool_call_detected", {"toolCallKeys": list(tool_call.keys()), "toolsEnabled": bool(ENABLE_GEMINI_TOOLS)})
-                        if ENABLE_GEMINI_TOOLS:
-                            await self._handle_tool_call(tool_call)
-
-                    # 4. Unknown/User Transcript?
-                    # We look for keys like 'recognitionResult' or 'speechRecognitionResults'
-                    # which indicate user speech transcription
-                    # Since we don't know the exact key yet, we'll log keys to discover it.
-                    # Commonly for Gemini Live: 'speechRecognitionResult' -> 'transcript'
-                    # Or 'currentUserInput' -> 'content'
-                    # If found, save as 'user' message.
-                    if "modelTurn" not in server_content and "turnComplete" not in server_content and "toolCall" not in server_content:
-                         logger.info(f"Potential User Transcript? Keys: {server_content.keys()}")
-                         # Try to extract text validation
-                         # e.g. if server_content.get('speechRecognitionResults'): ...
+                await self._handle_gemini_message(msg)
 
         except Exception as e:
             logger.error(f"Error in receive loop: {e}")
@@ -572,6 +604,21 @@ class GeminiLiveSession:
         call_id = call.get("id")
         logger.info(f"Tool call received name={name} id={call_id} args_keys={list(args.keys())}")
         _agent_log("B", "gemini_live.py:_run_tool_call", "start", {"name": name, "hasId": bool(call_id), "argsKeys": list(args.keys()), "useCamel": bool(use_camel)})
+        
+        # Flush user message if pending (e.g. user asked a question, model decided to call tool)
+        if self.current_user_text and self.current_user_text != self._last_saved_user_text:
+            await self._save_message("user", self.current_user_text, is_voice=True)
+            self._last_saved_user_text = self.current_user_text
+            # Also notify frontend that user turn is done (so it shows icon)
+        # Also notify frontend that user turn is done (so it shows icon)
+        if self.frontend_ws:
+            await self.frontend_ws.send_json({
+                "type": "live_text",
+                "role": "user",
+                "content": self.current_user_text,
+                "is_final": True
+            })
+            self.current_user_text = ""
 
         if name != "retrieve_sources":
             return

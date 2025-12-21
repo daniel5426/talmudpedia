@@ -14,7 +14,2008 @@
       "error_type": "lexical_ingestion_error",
       "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
       "endpoint": null,
-      "timestamp": "2025-12-11 21:41:30"
+      "timestamp": "2025-12-18 21:53:04"
+    },
+    {
+      "segment_ref": "Shulchan Arukh, Orach Chayim 329:3",
+      "error_type": "links_fetch_failed",
+      "error_message": "Failed to fetch links for segment: Shulchan Arukh, Orach Chayim 329:3",
+      "endpoint": "/related/Shulchan Arukh, Orach Chayim 329:3",
+      "timestamp": "2025-12-18 21:27:54"
+    }
+  ],
+  "Sifrei Devarim": [
+    {
+      "segment_ref": "Sifrei Devarim 301:8",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:8",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:9",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:9",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:10",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:11",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:11",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:12",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:12",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:13",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:13",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:14",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:14",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:15",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:15",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:16",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:16",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:17",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:17",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:18",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:18",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:19",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:19",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:20",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:20",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:21",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:21",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:22",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:22",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:23",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:23",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "Sifrei Devarim 301:24",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sifrei Devarim 301:24",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:24:53"
+    },
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:28:37"
+    }
+  ],
+  "Midrash Tannaim on Deuteronomy": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 20:38:53"
+    }
+  ],
+  "Ra'avad on Sifra": [
+    {
+      "segment_ref": "Ra'avad on Sifra 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Ra'avad on Sifra 1:1",
+      "endpoint": "/v3/texts/Ra'avad on Sifra 1:1",
+      "timestamp": "2025-12-16 20:39:35"
+    }
+  ],
+  "Sifra": [
+    {
+      "segment_ref": "Sifra 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Sifra 1:1",
+      "endpoint": "/v3/texts/Sifra 1:1",
+      "timestamp": "2025-12-16 20:39:43"
+    }
+  ],
+  "Shorshei HaYam on Mishneh Torah, Vows": [
+    {
+      "segment_ref": "Shorshei HaYam on Mishneh Torah, Vows 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Shorshei HaYam on Mishneh Torah, Vows 1:1",
+      "endpoint": "/v3/texts/Shorshei HaYam on Mishneh Torah, Vows 1:1",
+      "timestamp": "2025-12-16 23:16:00"
+    }
+  ],
+  "Kessef Mishneh on Mishneh Torah, Marriage": [
+    {
+      "segment_ref": "Kessef Mishneh on Mishneh Torah, Marriage 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Kessef Mishneh on Mishneh Torah, Marriage 1:1",
+      "endpoint": "/v3/texts/Kessef Mishneh on Mishneh Torah, Marriage 1:1",
+      "timestamp": "2025-12-16 23:16:14"
+    }
+  ],
+  "Annotations of Minchat Chinukh on Mishneh Torah, Fasts": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:17:15"
+    }
+  ],
+  "Ben Aryeh on Mishneh Torah, Paschal Offering": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:18:02"
+    }
+  ],
+  "Yad Eitan on Mishneh Torah, Sacrificial Procedure": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:20:01"
+    }
+  ],
+  "Torat HaAdam": [
+    {
+      "segment_ref": "Torat HaAdam 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Torat HaAdam 1:1",
+      "endpoint": "/v3/texts/Torat HaAdam 1:1",
+      "timestamp": "2025-12-16 23:20:03"
+    }
+  ],
+  "Maggid Mishneh on Mishneh Torah, Scroll of Esther and Hanukkah": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:21:44"
+    }
+  ],
+  "Chidushim of Machaneh Ephraim on Mishneh Torah, Plaintiff and Defendant": [
+    {
+      "segment_ref": "Chidushim of Machaneh Ephraim on Mishneh Torah, Plaintiff and Defendant 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Chidushim of Machaneh Ephraim on Mishneh Torah, Plaintiff and Defendant 1:1",
+      "endpoint": "/v3/texts/Chidushim of Machaneh Ephraim on Mishneh Torah, Plaintiff and Defendant 1:1",
+      "timestamp": "2025-12-16 23:21:45"
+    }
+  ],
+  "Birkat Avraham on Mishneh Torah, Immersion Pools": [
+    {
+      "segment_ref": "Birkat Avraham on Mishneh Torah, Immersion Pools 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Birkat Avraham on Mishneh Torah, Immersion Pools 1:1",
+      "endpoint": "/v3/texts/Birkat Avraham on Mishneh Torah, Immersion Pools 1:1",
+      "timestamp": "2025-12-16 23:21:47"
+    }
+  ],
+  "Hasagot HaRa'avad on Mishneh Torah, Repentance": [
+    {
+      "segment_ref": "Hasagot HaRa'avad on Mishneh Torah, Repentance 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Hasagot HaRa'avad on Mishneh Torah, Repentance 1:1",
+      "endpoint": "/v3/texts/Hasagot HaRa'avad on Mishneh Torah, Repentance 1:1",
+      "timestamp": "2025-12-16 23:21:49"
+    }
+  ],
+  "Melekhet Shelomoh on Mishneh Torah, Paschal Offering": [
+    {
+      "segment_ref": "Melekhet Shelomoh on Mishneh Torah, Paschal Offering 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Melekhet Shelomoh on Mishneh Torah, Paschal Offering 1:1",
+      "endpoint": "/v3/texts/Melekhet Shelomoh on Mishneh Torah, Paschal Offering 1:1",
+      "timestamp": "2025-12-16 23:21:52"
+    }
+  ],
+  "Tziunei Maharan on Mishneh Torah, Transmission of the Oral Law": [
+    {
+      "segment_ref": "Tziunei Maharan on Mishneh Torah, Transmission of the Oral Law 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Tziunei Maharan on Mishneh Torah, Transmission of the Oral Law 1:1",
+      "endpoint": "/v3/texts/Tziunei Maharan on Mishneh Torah, Transmission of the Oral Law 1:1",
+      "timestamp": "2025-12-16 23:21:55"
+    }
+  ],
+  "Migdal Oz on Mishneh Torah, Ritual Slaughter": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:26:03"
+    }
+  ],
+  "Even Ha'azel on Mishneh Torah, Offerings for Those with Incomplete Atonement": [
+    {
+      "segment_ref": "Even Ha'azel on Mishneh Torah, Offerings for Those with Incomplete Atonement 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Even Ha'azel on Mishneh Torah, Offerings for Those with Incomplete Atonement 1:1",
+      "endpoint": "/v3/texts/Even Ha'azel on Mishneh Torah, Offerings for Those with Incomplete Atonement 1:1",
+      "timestamp": "2025-12-16 23:26:04"
+    }
+  ],
+  "Shorshei HaYam on Mishneh Torah, Repentance": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:26:35"
+    }
+  ],
+  "Ohr Sameach on Mishneh Torah, Things Forbidden on the Altar": [
+    {
+      "segment_ref": "Ohr Sameach on Mishneh Torah, Things Forbidden on the Altar 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Ohr Sameach on Mishneh Torah, Things Forbidden on the Altar 1:1",
+      "endpoint": "/v3/texts/Ohr Sameach on Mishneh Torah, Things Forbidden on the Altar 1:1",
+      "timestamp": "2025-12-16 23:26:36"
+    }
+  ],
+  "Annotations of Minchat Chinukh on Mishneh Torah, Kings and Wars": [
+    {
+      "segment_ref": "Annotations of Minchat Chinukh on Mishneh Torah, Kings and Wars 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Annotations of Minchat Chinukh on Mishneh Torah, Kings and Wars 1:1",
+      "endpoint": "/v3/texts/Annotations of Minchat Chinukh on Mishneh Torah, Kings and Wars 1:1",
+      "timestamp": "2025-12-16 23:26:37"
+    }
+  ],
+  "Maaseh Rokeach on Fasts": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:29:13"
+    }
+  ],
+  "Lechem Mishneh on Mishneh Torah, Forbidden Intercourse": [
+    {
+      "segment_ref": "Lechem Mishneh on Mishneh Torah, Forbidden Intercourse 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Lechem Mishneh on Mishneh Torah, Forbidden Intercourse 1:1",
+      "endpoint": "/v3/texts/Lechem Mishneh on Mishneh Torah, Forbidden Intercourse 1:1",
+      "timestamp": "2025-12-16 23:29:16"
+    }
+  ],
+  "Shorshei HaYam on Mishneh Torah, Blessings": [
+    {
+      "segment_ref": "Shorshei HaYam on Mishneh Torah, Blessings 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Shorshei HaYam on Mishneh Torah, Blessings 1:1",
+      "endpoint": "/v3/texts/Shorshei HaYam on Mishneh Torah, Blessings 1:1",
+      "timestamp": "2025-12-16 23:29:17"
+    }
+  ],
+  "Maharam of Padua on Mishneh Torah, Vows": [
+    {
+      "segment_ref": "Maharam of Padua on Mishneh Torah, Vows 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Maharam of Padua on Mishneh Torah, Vows 1:1",
+      "endpoint": "/v3/texts/Maharam of Padua on Mishneh Torah, Vows 1:1",
+      "timestamp": "2025-12-16 23:29:19"
+    }
+  ],
+  "Mishneh LaMelech on Mishneh Torah, Slaves": [
+    {
+      "segment_ref": "Mishneh LaMelech on Mishneh Torah, Slaves 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Mishneh LaMelech on Mishneh Torah, Slaves 1:1",
+      "endpoint": "/v3/texts/Mishneh LaMelech on Mishneh Torah, Slaves 1:1",
+      "timestamp": "2025-12-16 23:29:20"
+    }
+  ],
+  "Darkhei Moshe": [
+    {
+      "segment_ref": "Darkhei Moshe 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Darkhei Moshe 1:1",
+      "endpoint": "/v3/texts/Darkhei Moshe 1:1",
+      "timestamp": "2025-12-16 23:29:22"
+    }
+  ],
+  "Steinsaltz on Mishneh Torah, Virgin Maiden": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:32:27"
+    }
+  ],
+  "Lechem Mishneh on Mishneh Torah, Scroll of Esther and Hanukkah": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:33:40"
+    }
+  ],
+  "Yad Eitan on Mishneh Torah, Rest on a Holiday": [
+    {
+      "segment_ref": "Yad Eitan on Mishneh Torah, Rest on a Holiday 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Yad Eitan on Mishneh Torah, Rest on a Holiday 1:1",
+      "endpoint": "/v3/texts/Yad Eitan on Mishneh Torah, Rest on a Holiday 1:1",
+      "timestamp": "2025-12-16 23:33:42"
+    }
+  ],
+  "Even Ha'azel on Mishneh Torah, Prayer and the Priestly Blessing": [
+    {
+      "segment_ref": "Even Ha'azel on Mishneh Torah, Prayer and the Priestly Blessing 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Even Ha'azel on Mishneh Torah, Prayer and the Priestly Blessing 1:1",
+      "endpoint": "/v3/texts/Even Ha'azel on Mishneh Torah, Prayer and the Priestly Blessing 1:1",
+      "timestamp": "2025-12-16 23:33:43"
+    }
+  ],
+  "Yad Eitan on Mishneh Torah, Creditor and Debtor": [
+    {
+      "segment_ref": "Yad Eitan on Mishneh Torah, Creditor and Debtor 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Yad Eitan on Mishneh Torah, Creditor and Debtor 1:1",
+      "endpoint": "/v3/texts/Yad Eitan on Mishneh Torah, Creditor and Debtor 1:1",
+      "timestamp": "2025-12-16 23:33:44"
+    }
+  ],
+  "Kovetz Al Yad HaChazakah on Mishneh Torah, Levirate Marriage and Release": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:36:28"
+    }
+  ],
+  "Mishneh LaMelech on Mishneh Torah, Offerings for Those with Incomplete Atonement": [
+    {
+      "segment_ref": "Mishneh LaMelech on Mishneh Torah, Offerings for Those with Incomplete Atonement 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Mishneh LaMelech on Mishneh Torah, Offerings for Those with Incomplete Atonement 1:1",
+      "endpoint": "/v3/texts/Mishneh LaMelech on Mishneh Torah, Offerings for Those with Incomplete Atonement 1:1",
+      "timestamp": "2025-12-17 01:38:17"
+    }
+  ],
+  "Ben Aryeh on Mishneh Torah, Foundations of the Torah": [
+    {
+      "segment_ref": "Ben Aryeh on Mishneh Torah, Foundations of the Torah 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Ben Aryeh on Mishneh Torah, Foundations of the Torah 1:1",
+      "endpoint": "/v3/texts/Ben Aryeh on Mishneh Torah, Foundations of the Torah 1:1",
+      "timestamp": "2025-12-16 23:36:59"
+    }
+  ],
+  "Yad Eitan on Mishneh Torah, Damages to Property": [
+    {
+      "segment_ref": "Yad Eitan on Mishneh Torah, Damages to Property 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Yad Eitan on Mishneh Torah, Damages to Property 1:1",
+      "endpoint": "/v3/texts/Yad Eitan on Mishneh Torah, Damages to Property 1:1",
+      "timestamp": "2025-12-16 23:37:01"
+    }
+  ],
+  "Melekhet Shelomoh on Mishneh Torah, Sheqel Dues": [
+    {
+      "segment_ref": "Melekhet Shelomoh on Mishneh Torah, Sheqel Dues 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Melekhet Shelomoh on Mishneh Torah, Sheqel Dues 1:1",
+      "endpoint": "/v3/texts/Melekhet Shelomoh on Mishneh Torah, Sheqel Dues 1:1",
+      "timestamp": "2025-12-16 23:37:03"
+    }
+  ],
+  "Benei Binyamin on Mishneh Torah, Prayer and the Priestly Blessing": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:38:19"
+    }
+  ],
+  "Yad Ephraim on Shulchan Arukh, Yoreh De'ah": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-16 23:49:54"
+    }
+  ],
+  "Haggahot Chadashot on Sefer Mitzvot Katan": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:37:34"
+    }
+  ],
+  "Ohr Sameach on Mishneh Torah, Kings and Wars": [
+    {
+      "segment_ref": "Ohr Sameach on Mishneh Torah, Kings and Wars 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Ohr Sameach on Mishneh Torah, Kings and Wars 1:1",
+      "endpoint": "/v3/texts/Ohr Sameach on Mishneh Torah, Kings and Wars 1:1",
+      "timestamp": "2025-12-17 00:11:47"
+    }
+  ],
+  "Kovetz Al Yad HaChazakah on Mishneh Torah, Reading the Shema": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:12:22"
+    }
+  ],
+  "Mishneh LaMelech on Mishneh Torah, Sheqel Dues": [
+    {
+      "segment_ref": "Mishneh LaMelech on Mishneh Torah, Sheqel Dues 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Mishneh LaMelech on Mishneh Torah, Sheqel Dues 1:1",
+      "endpoint": "/v3/texts/Mishneh LaMelech on Mishneh Torah, Sheqel Dues 1:1",
+      "timestamp": "2025-12-17 00:12:24"
+    }
+  ],
+  "Ohr Sameach on Mishneh Torah, Rest on the Tenth of Tishrei": [
+    {
+      "segment_ref": "Ohr Sameach on Mishneh Torah, Rest on the Tenth of Tishrei 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Ohr Sameach on Mishneh Torah, Rest on the Tenth of Tishrei 1:1",
+      "endpoint": "/v3/texts/Ohr Sameach on Mishneh Torah, Rest on the Tenth of Tishrei 1:1",
+      "timestamp": "2025-12-17 00:12:26"
+    }
+  ],
+  "Peninei Halakhah, Sukkot": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:19:19"
+    }
+  ],
+  "Yitzchak Yeranen on Mishneh Torah, Nazariteship": [
+    {
+      "segment_ref": "Yitzchak Yeranen on Mishneh Torah, Nazariteship 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Yitzchak Yeranen on Mishneh Torah, Nazariteship 1:1",
+      "endpoint": "/v3/texts/Yitzchak Yeranen on Mishneh Torah, Nazariteship 1:1",
+      "timestamp": "2025-12-17 00:19:21"
+    }
+  ],
+  "Steinsaltz on Mishneh Torah, Things Forbidden on the Altar": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:26:00"
+    }
+  ],
+  "Ohr Sameach on Mishneh Torah, One Who Injures a Person or Property": [
+    {
+      "segment_ref": "Ohr Sameach on Mishneh Torah, One Who Injures a Person or Property 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Ohr Sameach on Mishneh Torah, One Who Injures a Person or Property 1:1",
+      "endpoint": "/v3/texts/Ohr Sameach on Mishneh Torah, One Who Injures a Person or Property 1:1",
+      "timestamp": "2025-12-17 00:26:02"
+    }
+  ],
+  "Benei Binyamin on Mishneh Torah, Sanctification of the New Month": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:26:32"
+    }
+  ],
+  "Ohr Sameach on Mishneh Torah, Sabbath": [
+    {
+      "segment_ref": "Ohr Sameach on Mishneh Torah, Sabbath 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Ohr Sameach on Mishneh Torah, Sabbath 1:1",
+      "endpoint": "/v3/texts/Ohr Sameach on Mishneh Torah, Sabbath 1:1",
+      "timestamp": "2025-12-17 00:26:57"
+    }
+  ],
+  "Lechem Mishneh on Mishneh Torah, Torah Study": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:29:10"
+    }
+  ],
+  "Annotations of Minchat Chinukh on Mishneh Torah, Foreign Worship and Customs of the Nations": [
+    {
+      "segment_ref": "Annotations of Minchat Chinukh on Mishneh Torah, Foreign Worship and Customs of the Nations 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Annotations of Minchat Chinukh on Mishneh Torah, Foreign Worship and Customs of the Nations 1:1",
+      "endpoint": "/v3/texts/Annotations of Minchat Chinukh on Mishneh Torah, Foreign Worship and Customs of the Nations 1:1",
+      "timestamp": "2025-12-17 00:29:11"
+    }
+  ],
+  "Mekorei HaRambam LeRashash on Mishneh Torah, Damages to Property": [
+    {
+      "segment_ref": "Mekorei HaRambam LeRashash on Mishneh Torah, Damages to Property 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Mekorei HaRambam LeRashash on Mishneh Torah, Damages to Property 1:1",
+      "endpoint": "/v3/texts/Mekorei HaRambam LeRashash on Mishneh Torah, Damages to Property 1:1",
+      "timestamp": "2025-12-17 00:29:18"
+    }
+  ],
+  "Kessef Mishneh on Mishneh Torah, Blessings": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:35:41"
+    }
+  ],
+  "Mishneh Torah, Foreign Worship and Customs of the Nations": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:37:31"
+    }
+  ],
+  "Hasagot HaRa'avad on Mishneh Torah, Mourning": [
+    {
+      "segment_ref": "Hasagot HaRa'avad on Mishneh Torah, Mourning 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Hasagot HaRa'avad on Mishneh Torah, Mourning 1:1",
+      "endpoint": "/v3/texts/Hasagot HaRa'avad on Mishneh Torah, Mourning 1:1",
+      "timestamp": "2025-12-17 00:37:33"
+    }
+  ],
+  "Maaseh Rokeach on Circumcision": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:38:16"
+    }
+  ],
+  "Yitzchak Yeranen on Mishneh Torah, Offerings for Unintentional Transgressions": [
+    {
+      "segment_ref": "Yitzchak Yeranen on Mishneh Torah, Offerings for Unintentional Transgressions 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Yitzchak Yeranen on Mishneh Torah, Offerings for Unintentional Transgressions 1:1",
+      "endpoint": "/v3/texts/Yitzchak Yeranen on Mishneh Torah, Offerings for Unintentional Transgressions 1:1",
+      "timestamp": "2025-12-17 00:38:20"
+    }
+  ],
+  "Har HaMoriyah on Mishneh Torah, Sacrificial Procedure": [
+    {
+      "segment_ref": "Har HaMoriyah on Mishneh Torah, Sacrificial Procedure 12:17",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Har HaMoriyah on Mishneh Torah, Sacrificial Procedure 12:17",
+      "endpoint": "/v3/texts/Har HaMoriyah on Mishneh Torah, Sacrificial Procedure 12:17",
+      "timestamp": "2025-12-17 00:52:10"
+    },
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:54:47"
+    }
+  ],
+  "Hasagot HaRa'avad on Mishneh Torah, First Fruits and other Gifts to Priests Outside the Sanctuary": [
+    {
+      "segment_ref": "Hasagot HaRa'avad on Mishneh Torah, First Fruits and other Gifts to Priests Outside the Sanctuary 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Hasagot HaRa'avad on Mishneh Torah, First Fruits and other Gifts to Priests Outside the Sanctuary 1:1",
+      "endpoint": "/v3/texts/Hasagot HaRa'avad on Mishneh Torah, First Fruits and other Gifts to Priests Outside the Sanctuary 1:1",
+      "timestamp": "2025-12-17 00:54:48"
+    }
+  ],
+  "Maaseh Rokeach on Shofar, Sukkah and Lulav": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:59:05"
+    }
+  ],
+  "Divrei Yirmiyahu on Mishneh Torah, Sanctification of the New Month": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:59:16"
+    }
+  ],
+  "Kovetz Al Yad HaChazakah on Mishneh Torah, Eruvin": [
+    {
+      "segment_ref": "Kovetz Al Yad HaChazakah on Mishneh Torah, Eruvin 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Kovetz Al Yad HaChazakah on Mishneh Torah, Eruvin 1:1",
+      "endpoint": "/v3/texts/Kovetz Al Yad HaChazakah on Mishneh Torah, Eruvin 1:1",
+      "timestamp": "2025-12-17 00:59:18"
+    }
+  ],
+  "Yad Eitan on Mishneh Torah, Prayer and the Priestly Blessing": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 00:59:58"
+    }
+  ],
+  "Mekorei HaRambam LeRashash on Mishneh Torah, Sheqel Dues": [
+    {
+      "segment_ref": "Mekorei HaRambam LeRashash on Mishneh Torah, Sheqel Dues 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Mekorei HaRambam LeRashash on Mishneh Torah, Sheqel Dues 1:1",
+      "endpoint": "/v3/texts/Mekorei HaRambam LeRashash on Mishneh Torah, Sheqel Dues 1:1",
+      "timestamp": "2025-12-17 01:00:01"
+    }
+  ],
+  "Mishneh LaMelech on Mishneh Torah, Murderer and the Preservation of Life": [
+    {
+      "segment_ref": "Mishneh LaMelech on Mishneh Torah, Murderer and the Preservation of Life 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Mishneh LaMelech on Mishneh Torah, Murderer and the Preservation of Life 1:1",
+      "endpoint": "/v3/texts/Mishneh LaMelech on Mishneh Torah, Murderer and the Preservation of Life 1:1",
+      "timestamp": "2025-12-17 01:00:04"
+    }
+  ],
+  "Summary of Taz on Shulchan Arukh, Yoreh Deah": [
+    {
+      "segment_ref": "Summary of Taz on Shulchan Arukh, Yoreh Deah 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Summary of Taz on Shulchan Arukh, Yoreh Deah 1:1",
+      "endpoint": "/v3/texts/Summary of Taz on Shulchan Arukh, Yoreh Deah 1:1",
+      "timestamp": "2025-12-17 01:00:08"
+    }
+  ],
+  "Ben Aryeh on Mishneh Torah, Neighbors": [
+    {
+      "segment_ref": "Ben Aryeh on Mishneh Torah, Neighbors 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Ben Aryeh on Mishneh Torah, Neighbors 1:1",
+      "endpoint": "/v3/texts/Ben Aryeh on Mishneh Torah, Neighbors 1:1",
+      "timestamp": "2025-12-17 01:00:12"
+    }
+  ],
+  "HaHalakhah; Kochah VeTafkidah": [
+    {
+      "segment_ref": "HaHalakhah; Kochah VeTafkidah 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: HaHalakhah; Kochah VeTafkidah 1:1",
+      "endpoint": "/v3/texts/HaHalakhah; Kochah VeTafkidah 1:1",
+      "timestamp": "2025-12-17 01:00:16"
+    }
+  ],
+  "Lechem Mishneh on Mishneh Torah, Firstlings": [
+    {
+      "segment_ref": "Lechem Mishneh on Mishneh Torah, Firstlings 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Lechem Mishneh on Mishneh Torah, Firstlings 1:1",
+      "endpoint": "/v3/texts/Lechem Mishneh on Mishneh Torah, Firstlings 1:1",
+      "timestamp": "2025-12-17 01:00:21"
+    }
+  ],
+  "Kessef Mishneh on Mishneh Torah, Immersion Pools": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:05:45"
+    }
+  ],
+  "Yad Eitan on Mishneh Torah, Defilement by a Corpse": [
+    {
+      "segment_ref": "Yad Eitan on Mishneh Torah, Defilement by a Corpse 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Yad Eitan on Mishneh Torah, Defilement by a Corpse 1:1",
+      "endpoint": "/v3/texts/Yad Eitan on Mishneh Torah, Defilement by a Corpse 1:1",
+      "timestamp": "2025-12-17 01:27:55"
+    }
+  ],
+  "Chidushim of Machaneh Ephraim on Mishneh Torah, Levirate Marriage and Release": [
+    {
+      "segment_ref": "Chidushim of Machaneh Ephraim on Mishneh Torah, Levirate Marriage and Release 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Chidushim of Machaneh Ephraim on Mishneh Torah, Levirate Marriage and Release 1:1",
+      "endpoint": "/v3/texts/Chidushim of Machaneh Ephraim on Mishneh Torah, Levirate Marriage and Release 1:1",
+      "timestamp": "2025-12-17 01:28:35"
+    }
+  ],
+  "Yad David on Mishneh Torah, Defilement of Foods": [
+    {
+      "segment_ref": "Yad David on Mishneh Torah, Defilement of Foods 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Yad David on Mishneh Torah, Defilement of Foods 1:1",
+      "endpoint": "/v3/texts/Yad David on Mishneh Torah, Defilement of Foods 1:1",
+      "timestamp": "2025-12-17 01:29:04"
+    }
+  ],
+  "Annotations of Maharatz Chajes on Mishneh Torah, Tefillin, Mezuzah and the Torah Scroll": [
+    {
+      "segment_ref": "Annotations of Maharatz Chajes on Mishneh Torah, Tefillin, Mezuzah and the Torah Scroll 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Annotations of Maharatz Chajes on Mishneh Torah, Tefillin, Mezuzah and the Torah Scroll 1:1",
+      "endpoint": "/v3/texts/Annotations of Maharatz Chajes on Mishneh Torah, Tefillin, Mezuzah and the Torah Scroll 1:1",
+      "timestamp": "2025-12-17 01:30:11"
+    }
+  ],
+  "Migdal Oz on Mishneh Torah, Theft": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:36:41"
+    }
+  ],
+  "Even Ha'azel on Mishneh Torah, Sheqel Dues": [
+    {
+      "segment_ref": "Even Ha'azel on Mishneh Torah, Sheqel Dues 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Even Ha'azel on Mishneh Torah, Sheqel Dues 1:1",
+      "endpoint": "/v3/texts/Even Ha'azel on Mishneh Torah, Sheqel Dues 1:1",
+      "timestamp": "2025-12-17 01:36:47"
+    }
+  ],
+  "Annotations of R' Zalman of Vilna on Mishneh Torah, Foreign Worship and Customs of the Nations": [
+    {
+      "segment_ref": "Annotations of R' Zalman of Vilna on Mishneh Torah, Foreign Worship and Customs of the Nations 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Annotations of R' Zalman of Vilna on Mishneh Torah, Foreign Worship and Customs of the Nations 1:1",
+      "endpoint": "/v3/texts/Annotations of R' Zalman of Vilna on Mishneh Torah, Foreign Worship and Customs of the Nations 1:1",
+      "timestamp": "2025-12-17 01:38:28"
+    }
+  ],
+  "Chokhmat Shlomo on Shulchan Arukh, Orach Chayim": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:39:18"
+    }
+  ],
+  "Even Ha'azel on Mishneh Torah, Inheritances": [
+    {
+      "segment_ref": "Even Ha'azel on Mishneh Torah, Inheritances 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Even Ha'azel on Mishneh Torah, Inheritances 1:1",
+      "endpoint": "/v3/texts/Even Ha'azel on Mishneh Torah, Inheritances 1:1",
+      "timestamp": "2025-12-17 01:39:47"
+    }
+  ],
+  "Sha'ar HaMelekh on Mishneh Torah, Testimony": [
+    {
+      "segment_ref": "Sha'ar HaMelekh on Mishneh Torah, Testimony 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Sha'ar HaMelekh on Mishneh Torah, Testimony 1:1",
+      "endpoint": "/v3/texts/Sha'ar HaMelekh on Mishneh Torah, Testimony 1:1",
+      "timestamp": "2025-12-17 01:40:23"
+    }
+  ],
+  "Mishneh LaMelech on Mishneh Torah, Prayer and the Priestly Blessing": [
+    {
+      "segment_ref": "Mishneh LaMelech on Mishneh Torah, Prayer and the Priestly Blessing 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Mishneh LaMelech on Mishneh Torah, Prayer and the Priestly Blessing 1:1",
+      "endpoint": "/v3/texts/Mishneh LaMelech on Mishneh Torah, Prayer and the Priestly Blessing 1:1",
+      "timestamp": "2025-12-17 01:40:38"
+    }
+  ],
+  "Even Ha'azel on Mishneh Torah, Murderer and the Preservation of Life": [
+    {
+      "segment_ref": "Even Ha'azel on Mishneh Torah, Murderer and the Preservation of Life 1:1",
+      "error_type": "text_fetch_failed",
+      "error_message": "Failed to fetch text for reference: Even Ha'azel on Mishneh Torah, Murderer and the Preservation of Life 1:1",
+      "endpoint": "/v3/texts/Even Ha'azel on Mishneh Torah, Murderer and the Preservation of Life 1:1",
+      "timestamp": "2025-12-17 01:40:46"
+    }
+  ],
+  "Divrei Shaul Edut BeYosef on Mishneh Torah, Testimony": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:50:11"
+    }
+  ],
+  "Benei Binyamin on Mishneh Torah, Fasts": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:04"
+    }
+  ],
+  "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim": [
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 2:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 2:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:10"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 2:4",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 2:4",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:11"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 2:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 2:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:12"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:15"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:4",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:4",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:15"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:6",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:6",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:15"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:7",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:7",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:15"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:11",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:11",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:19"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:12",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:12",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:19"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:13",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:13",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:44"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:14",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:14",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:15",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 3:15",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:9",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:9",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:56"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:10",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:57"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:11",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:11",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:58"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:12",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:12",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:58"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:14",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:14",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:58"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:15",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:15",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:58"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:16",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:16",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:58"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:18",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:18",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:51:59"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:21",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:21",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:52:01"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:22",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:22",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:52:01"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:23",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:23",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:52:02"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:24",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:24",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:52:02"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:25",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:25",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:52:02"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:26",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:26",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:52:02"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:27",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 4:27",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:52:02"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 6:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 6:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:52:34"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 8:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 8:10",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:20"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 8:14",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 8:14",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:21"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 8:17",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 8:17",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:22"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 9:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 9:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:26"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 9:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 9:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:26"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 9:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 9:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:27"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:30"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:30"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:4",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:4",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:30"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:30"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:6",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:6",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:30"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:8",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:8",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:31"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:9",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:9",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:31"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:10",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:31"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:11",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:11",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:31"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:12",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 10:12",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:53:31"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:00"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:00"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:6",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:6",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:01"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:9",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:9",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:01"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:10",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:01"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:15",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:15",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:05"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:16",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:16",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:17",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:17",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:18",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:18",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:19",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:19",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:20",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:20",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:21",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:21",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:22",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:22",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:23",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:23",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:25",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 11:25",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:07"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 12:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 12:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:10"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 12:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 12:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:10"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 12:4",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 12:4",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:11"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:4",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:4",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:6",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:6",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:7",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 13:7",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 14:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 14:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 14:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 14:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:46"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 15:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 15:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:51"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 15:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 15:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:51"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 15:6",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 15:6",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:51"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 15:7",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 15:7",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:53"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 17:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 17:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:57"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 17:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 17:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:54:58"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 18:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 18:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:00"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 18:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 18:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:00"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 21:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 21:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:28"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 22:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 22:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:32"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 24:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 24:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:36"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 24:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 24:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:36"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:8",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:8",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:43"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:9",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:9",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:43"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:10",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:43"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:18",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:18",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:49"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:20",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:20",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:50"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:21",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 25:21",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:55:50"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:7",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:7",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:20"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:9",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:9",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:20"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:10",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:20"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:12",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:12",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:21"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:13",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:13",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:23"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:14",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 27:14",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:24"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 28:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 28:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:28"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 30:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 30:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:56:32"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:4",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:4",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:03"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:6",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:6",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:04"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:8",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:8",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:05"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:9",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:9",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:10",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:06"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:13",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:13",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:08"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:14",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:14",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:08"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:15",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:15",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:08"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:19",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:19",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:11"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:23",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:23",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:14"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:24",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:24",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:15"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:25",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:25",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:26",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:26",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:27",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:27",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:28",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:28",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:29",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:29",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:16"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:32",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:32",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:18"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:33",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:33",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:18"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:37",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:37",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:46"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:39",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:39",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:49"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:40",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:40",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:49"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:41",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:41",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:49"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:43",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:43",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:50"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:45",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:45",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:52"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:46",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:46",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:52"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:47",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:47",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:52"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:48",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:48",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:53"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:49",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:49",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:53"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:50",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:50",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:53"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:51",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:51",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:53"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:54",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:54",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:54"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:55",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:55",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:57"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:60",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:60",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:57:59"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:61",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:61",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:01"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:62",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:62",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:03"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:63",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:63",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:03"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:64",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:64",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:03"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:65",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:65",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:03"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:66",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:66",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:03"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:68",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 32:68",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:03"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 33:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 33:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:07"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 33:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 33:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:07"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 33:4",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 33:4",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:07"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 34:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 34:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:08"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 34:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 34:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:08"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 34:4",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 34:4",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:08"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 34:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 34:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:08"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 37:1",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 37:1",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:43"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 37:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 37:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:44"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:3",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:3",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:5",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:5",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:6",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:6",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:7",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:7",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:8",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:8",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:9",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:9",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:10",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:10",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:11",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:11",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:45"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:13",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 38:13",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:46"
+    },
+    {
+      "segment_ref": "Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 39:2",
+      "error_type": "empty_text",
+      "error_message": "Segment has empty text after cleaning: Sha'arei Teshuvah on Shulchan Arukh, Orach Chayim 39:2",
+      "endpoint": null,
+      "timestamp": "2025-12-17 01:58:51"
+    }
+  ],
+  "Siftei Kohen on Shulchan Arukh, Choshen Mishpat": [
+    {
+      "segment_ref": "lexical_bulk",
+      "error_type": "lexical_ingestion_error",
+      "error_message": "Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(HTTPConnection(host='localhost', port=9200): Failed to establish a new connection: [Errno 61] Connection refused))",
+      "endpoint": null,
+      "timestamp": "2025-12-17 03:50:57"
     }
   ]
 }

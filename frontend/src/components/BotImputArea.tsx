@@ -110,62 +110,30 @@ export function BotImputArea({
         className={`relative ${className} bg-primary-soft shadow-sm border-none rounded-md`}
       >
         <PromptInputBody>
-          {isVoiceModeActive ? (
-              <div className="flex flex-col gap-2 w-full px-4 py-3">
-                <div
-                  className={cn(
-                    "inline-flex items-center gap-2 text-xs font-medium",
-                    direction === "rtl" ? "self-end" : "self-start"
-                  )}
-                  role="status"
-                  aria-live="polite"
-                >
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500/40 animate-ping" />
-                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                  </span>
-                  <span className="text-muted-foreground">Voice mode active</span>
-                  <span className="text-muted-foreground/60">•</span>
-                  <span className="text-muted-foreground/80">
-                    Click <span className="font-semibold text-muted-foreground">headphones</span> to stop
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-center">
-                  <AudioWaveform
-                    barCount={44}
-                    className="text-primary w-full max-w-md h-9"
-                    analyser={analyser}
-                  />
-                </div>
-              </div>
-          ) : (
-              <PromptInputTextarea
-                  ref={textareaRef}
-                  className=""
-              />
-          )}
+          <PromptInputTextarea
+            ref={textareaRef}
+            className={cn(isVoiceModeActive && "hidden")}
+          />
         </PromptInputBody>
-        <PromptInputFooter>
+        <PromptInputFooter className="pb-2">
           <PromptInputTools className="text-foreground">
-            {!isVoiceModeActive && (
-                <>
-                    <PromptInputActionMenu>
-                      <PromptInputActionMenuTrigger />
-                      <PromptInputActionMenuContent>
-                        <PromptInputActionAddAttachments />
-                      </PromptInputActionMenuContent>
-                    </PromptInputActionMenu>
-                    <PromptInputSpeechButton textareaRef={textareaRef} />
-                    <PromptInputButton >
-                      <GlobeIcon size={16} />
-                    </PromptInputButton>
-                </>
-            )}
+            <PromptInputActionMenu>
+              <PromptInputActionMenuTrigger 
+                className={cn(isVoiceModeActive && "opacity-50 pointer-events-none")} 
+              />
+              <PromptInputActionMenuContent>
+                <PromptInputActionAddAttachments />
+              </PromptInputActionMenuContent>
+            </PromptInputActionMenu>
+            
+            <div className={cn(isVoiceModeActive && "opacity-50 pointer-events-none")}>
+               <PromptInputSpeechButton textareaRef={textareaRef} />
+            </div>
+
             <PromptInputButton
               onClick={onToggleVoiceMode}
               className={cn(
-                "relative transition-colors",
+                "transition-colors",
                 isVoiceModeActive
                   ? "text-red-600 bg-red-500/10 hover:bg-red-500/15 dark:text-red-400 dark:bg-red-500/15 dark:hover:bg-red-500/20"
                   : "text-muted-foreground hover:text-foreground"
@@ -177,7 +145,18 @@ export function BotImputArea({
               <Headphones size={16} />
             </PromptInputButton>
           </PromptInputTools>
-          {!isVoiceModeActive && <PromptInputSubmit status={isLoading ? "streaming" : undefined} />}
+          
+          {isVoiceModeActive ? (
+            <div className="flex items-center justify-center flex-1 px-4 min-w-0">
+               <AudioWaveform
+                  barCount={30}
+                  className="text-primary w-full h-8 opacity-80"
+                  analyser={analyser}
+               />
+            </div>
+          ) : (
+             <PromptInputSubmit status={isLoading ? "streaming" : undefined} />
+          )}
         </PromptInputFooter>
       </PromptInput>
     </PromptInputProvider>

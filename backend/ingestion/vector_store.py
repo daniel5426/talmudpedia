@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from google import genai
 from google.genai import types
 from pinecone import Pinecone, ServerlessSpec
+import threading
 import time
 from pathlib import Path
 from dotenv import load_dotenv
@@ -10,29 +11,44 @@ import random
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 class VectorStore:
+    _pc_instance = None
+    _pc_lock = threading.Lock()
+    _indices = {}
+    _indices_lock = threading.Lock()
+
     def __init__(self, index_name: str = "talmudpedia"):
         # Initialize Google GenAI
         self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
         self.embedding_model = "gemini-embedding-001"
 
         # Initialize Pinecone
-        self.pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+        if VectorStore._pc_instance is None:
+            with VectorStore._pc_lock:
+                if VectorStore._pc_instance is None:
+                    VectorStore._pc_instance = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+        
+        self.pc = VectorStore._pc_instance
         self.index_name = index_name
         
-        # Create index if not exists (simplified for serverless)
-        if index_name not in self.pc.list_indexes().names():
-            print(f"Creating index {index_name}...")
-            self.pc.create_index(
-                name=index_name,
-                dimension=768, # Google embedding-001 dimension
-                metric="cosine",
-                spec=ServerlessSpec(
-                    cloud="aws",
-                    region="us-east-1"
-                )
-            )
+        # Initialize Index (Singleton/Cache)
+        if index_name not in VectorStore._indices:
+            with VectorStore._indices_lock:
+                if index_name not in VectorStore._indices:
+                    # Create index if not exists (only check once)
+                    if index_name not in self.pc.list_indexes().names():
+                        print(f"Creating index {index_name}...")
+                        self.pc.create_index(
+                            name=index_name,
+                            dimension=768, # Google embedding-001 dimension
+                            metric="cosine",
+                            spec=ServerlessSpec(
+                                cloud="aws",
+                                region="us-east-1"
+                            )
+                        )
+                    VectorStore._indices[index_name] = self.pc.Index(index_name)
         
-        self.index = self.pc.Index(index_name)
+        self.index = VectorStore._indices[index_name]
 
     def embed_text(self, text: str) -> List[float]:
         """

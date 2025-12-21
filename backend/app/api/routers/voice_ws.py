@@ -67,7 +67,7 @@ async def websocket_voice_session(websocket: WebSocket):
         })
 
         # Connect to Gemini
-        await gemini_session.connect()
+        await gemini_session.connect(frontend_ws=websocket)
         logger.info("Connected to Gemini Bidi Service")
         
         # Start background task to receive from Gemini and send to Frontend

@@ -69,6 +69,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { sttService } from "@/services/stt";
 import { AudioWaveform } from "@/components/ui/audio-waveform";
 import { useDirection } from "../direction-provider";
 
@@ -820,7 +821,7 @@ export type PromptInputTextareaProps = ComponentProps<
 export const PromptInputTextarea = ({
   onChange,
   className,
-  placeholder = "What would you like to know?",
+  placeholder = "מה תרצה לדעת?",
   ...props
 }: PromptInputTextareaProps) => {
   const controller = useOptionalPromptInputController();
@@ -1113,17 +1114,7 @@ export const PromptInputSpeechButton = ({
         formData.append("file", audioBlob, "recording.webm");
 
         try {
-          const response = await fetch("/api/py/stt/transcribe", {
-            method: "POST",
-            body: formData,
-          });
-
-          if (!response.ok) {
-            throw new Error("Transcription failed");
-          }
-
-          const data = await response.json();
-          const transcript = data.text;
+          const { text: transcript } = await sttService.transcribe(formData);
 
           if (transcript && textareaRef?.current) {
             const textarea = textareaRef.current;

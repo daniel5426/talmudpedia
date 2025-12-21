@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, PanelLeftIcon } from "lucide-react";
 import { GlassCard } from "../ui/glass-card";
+import { searchService } from "@/services/search";
 
 export function SourceListPane() {
   // Use selectors to prevent unnecessary re-renders
@@ -24,11 +25,8 @@ export function SourceListPane() {
 
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/py/search?q=${encodeURIComponent(query)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setSourceList(data.results || []);
-      }
+      const data = await searchService.searchSource(query);
+      setSourceList(data.results || []);
     } catch (error) {
       console.error("Search failed:", error);
     } finally {

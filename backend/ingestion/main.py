@@ -52,12 +52,27 @@ class TreeNavigator:
                 books.extend(self._extract_books(child))
         return books
     
+    
+    def _find_all_nodes(self, tree: List[Dict], title: str) -> List[Dict]:
+        nodes = []
+        for node in tree:
+            if node.get("title") == title:
+                nodes.append(node)
+            if "children" in node:
+                nodes.extend(self._find_all_nodes(node.get("children", []), title))
+        return nodes
+
     def get_books_under_title(self, title: str) -> List[str]:
         tree = self._load_tree()
-        node = self._find_node(tree, title)
-        if not node:
+        nodes = self._find_all_nodes(tree, title)
+        if not nodes:
             return []
-        return self._extract_books(node)
+        
+        all_books = []
+        for node in nodes:
+            all_books.extend(self._extract_books(node))
+            
+        return list(dict.fromkeys(all_books))  # Remove duplicates preserving order
 
     def _build_ref_map(self) -> Dict[str, str]:
         if self._ref_map is not None:
@@ -261,13 +276,26 @@ class TextIngester:
         else:
             return f"{index_title} 1:1"
     
-    def ingest_index(self, index_title: str, limit: int = 999999, resume: bool = True):
+    def ingest_index(self, index_title: str, limit: int = 999999, resume: bool = True, overwrite: bool = False):
         print(f"Starting ingestion for index: {index_title}")
         
-        ingested_segments = self._get_ingested_segments(index_title)
+        if overwrite:
+            print(f"Overwrite flag is set. Resetting ingestion log for {index_title}.")
+            # Reset the log for this book
+            if index_title not in self.ingestion_log:
+                self.ingestion_log[index_title] = {"ingested_segments": []}
+            self.ingestion_log[index_title]["ingested_segments"] = []
+            self.ingestion_log[index_title]["last_reference"] = None
+            self._save_log()
+            ingested_segments = set()
+        else:
+            ingested_segments = self._get_ingested_segments(index_title)
+
         already_ingested_count = len(ingested_segments)
         if already_ingested_count > 0:
             print(f"Found {already_ingested_count} already ingested segments. Resuming...")
+        elif overwrite:
+            print(f"Ready to overwrite all segments for {index_title}.")
         
         index_meta = self.sefaria.get_index(index_title)
         if not index_meta:
@@ -342,12 +370,12 @@ class TextIngester:
                 # Avoid manufacturing refs deeper than the book supports.
                 # If section_ref already has a subref (e.g., "Shulchan Arukh, Even HaEzer 1:1"),
                 # treat each returned line as part of that same ref instead of appending another index.
-                if ":" in section_ref:
-                    segment_ref = section_ref
-                    segment_he_ref = section_he_ref
-                else:
+                if len(texts) > 1:
                     segment_ref = f"{section_ref}:{i+1}"
                     segment_he_ref = f"{section_he_ref}:{i+1}" if section_he_ref else None
+                else:
+                    segment_ref = section_ref
+                    segment_he_ref = section_he_ref
                 
                 if is_debug_ref:
                     print(f"[DEBUG] Processing segment {i+1}: {segment_ref}")
@@ -506,7 +534,7 @@ class TextIngester:
         print(f"Total segments in log: {len(self._get_ingested_segments(index_title))}")
 
 
-def process_book(book: str, log_file: Optional[Path], error_log_file: Optional[Path], tree_file: Optional[Path], limit: int, resume: bool) -> Dict[str, Any]:
+def process_book(book: str, log_file: Optional[Path], error_log_file: Optional[Path], tree_file: Optional[Path], limit: int, resume: bool, overwrite: bool = False) -> Dict[str, Any]:
     """
     Process a single book in a thread.
     Returns a result dictionary with book name and status.
@@ -514,7 +542,7 @@ def process_book(book: str, log_file: Optional[Path], error_log_file: Optional[P
     ingester = TextIngester(log_file=log_file, error_log_file=error_log_file, tree_file=tree_file)
     try:
         print(f"[{threading.current_thread().name}] Starting ingestion for: {book}")
-        ingester.ingest_index(book, limit, resume=resume)
+        ingester.ingest_index(book, limit, resume=resume, overwrite=overwrite)
         print(f"[{threading.current_thread().name}] Completed ingestion for: {book}")
         return {"book": book, "status": "success"}
     except Exception as e:
@@ -525,13 +553,14 @@ def process_book(book: str, log_file: Optional[Path], error_log_file: Optional[P
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest Sefaria texts into vector database.")
-    parser.add_argument("--titles", nargs='+', default=["Shulchan Arukh, Choshen Mishpat", "Shulchan Arukh, Even HaEzer", "Shulchan Arukh, Orach Chayim", "Shulchan Arukh, Yoreh De'ah"], help="Category or book titles from tree to ingest (space-separated). All books under these titles will be ingested.")
+    parser.add_argument("--titles", nargs='+', default=["Shulchan Arukh, Orach Chayim"], help="Category or book titles from tree to ingest (space-separated). All books under these titles will be ingested.")
     parser.add_argument("--limit", type=int, default=999999, help="Limit number of segments to process per index")
     parser.add_argument("--no-resume", action="store_true", help="Don't resume from previous ingestion, start from beginning")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite already ingested segments in the log and vector store")
     parser.add_argument("--log-file", type=str, default=None, help="Path to ingestion log file (default: ingestion_log.json)")
     parser.add_argument("--error-log-file", type=str, default=None, help="Path to error log file (default: ingestion_errors.json)")
     parser.add_argument("--tree-file", type=str, default=None, help="Path to sefaria_tree.json file (default: backend/sefaria_tree.json)")
-    parser.add_argument("--max-workers", type=int, default=5, help="Maximum number of parallel threads (default: 5)")
+    parser.add_argument("--max-workers", type=int, default=50, help="Maximum number of parallel threads (default: 20)")
     args = parser.parse_args()
 
     log_file = Path(args.log_file) if args.log_file else None
@@ -559,7 +588,7 @@ def main():
     results = []
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         future_to_book = {
-            executor.submit(process_book, book, log_file, error_log_file, tree_file, args.limit, not args.no_resume): book 
+            executor.submit(process_book, book, log_file, error_log_file, tree_file, args.limit, not args.no_resume, args.overwrite): book 
             for book in all_books
         }
         

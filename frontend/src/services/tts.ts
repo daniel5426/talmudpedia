@@ -1,16 +1,10 @@
 import { useAuthStore } from "@/lib/store/useAuthStore";
+import { httpClient } from "./http";
 
 class TTSService {
   async speak(text: string): Promise<Blob> {
-    const token = useAuthStore.getState().token;
-    const headers: HeadersInit = { "Content-Type": "application/json" };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const response = await fetch("/api/py/tts/speak", {
+    const response = await httpClient.requestRaw("/tts/speak", {
       method: "POST",
-      headers,
       body: JSON.stringify({ text }),
     });
 
@@ -23,15 +17,8 @@ class TTSService {
   }
 
   async stream(text: string, signal?: AbortSignal): Promise<{ url: string; cleanup: () => void }> {
-    const token = useAuthStore.getState().token;
-    const headers: HeadersInit = { "Content-Type": "application/json" };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const response = await fetch("/api/py/tts/speak", {
+    const response = await httpClient.requestRaw("/tts/speak", {
       method: "POST",
-      headers,
       body: JSON.stringify({ text }),
       signal,
     });

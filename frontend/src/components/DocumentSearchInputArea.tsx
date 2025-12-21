@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { sttService } from "@/services/stt";
 import { AudioWaveform } from "@/components/ui/audio-waveform";
 
 const SOURCE_OPTIONS = ["גמרא", "שולחן ערוך", "תנך", "אחרונים", "ראשונים", "משנה"];
@@ -139,17 +140,7 @@ export function DocumentSearchInputArea({
         formData.append("file", audioBlob, "recording.webm");
 
         try {
-          const response = await fetch("/api/py/stt/transcribe", {
-            method: "POST",
-            body: formData,
-          });
-
-          if (!response.ok) {
-            throw new Error("Transcription failed");
-          }
-
-          const data = await response.json();
-          const transcript = data.text;
+          const { text: transcript } = await sttService.transcribe(formData);
 
           if (transcript) {
             setText((prev) => prev + (prev ? " " : "") + transcript);

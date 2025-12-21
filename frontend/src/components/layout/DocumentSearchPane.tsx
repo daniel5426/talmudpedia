@@ -8,6 +8,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { convertToHebrew } from "@/lib/hebrewUtils";
+import { searchService } from "@/services/search";
 
 const QUERY_BUBBLE_TITLE = "חפש בכל התורה כולה במשפט אחד";
 
@@ -76,23 +77,10 @@ export function DocumentSearchPane() {
     setLoading(true);
     setHasSearched(true);
 
+    setHasSearched(true);
+
     try {
-      const response = await fetch("http://localhost:8000/search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: searchQuery,
-          limit: 20,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Search failed: ${response.statusText}`);
-      }
-
-      const data = await response.json();
+      const data = await searchService.search({ query: searchQuery, limit: 20 });
       setResults(data.results || []);
     } catch (error) {
       console.error("Search error:", error);
@@ -103,24 +91,13 @@ export function DocumentSearchPane() {
   };
 
   const handleCardClick = (doc: any) => {
-    const meta = doc.metadata || {};
-    const firstRef =
-      meta.first_ref ||
-      meta.firstRef ||
-      doc.first_ref ||
-      doc.firstRef ||
-      doc.ref;
-    const totalSegments =
-      meta.total_segments ??
-      meta.totalSegments ??
-      doc.total_segments ??
-      doc.totalSegments;
-    const pagesAfter =
-      typeof totalSegments === "number"
-        ? 2 + Math.max(totalSegments, 0) - 1
-        : undefined;
+    // Basic fields from doc (as processed by search.py)
+    let targetRef = doc.first_ref || doc.ref;
+    const totalSegments = doc.total_segments ?? 1;
 
-    setActiveSource(firstRef, { pagesAfter });
+
+    // Set active source with a buffer of 2 pages after
+    setActiveSource(targetRef, { pagesAfter: 2 });
   };
 
 
@@ -187,7 +164,7 @@ export function DocumentSearchPane() {
                       >
                         <div className="pb-2">
                           <div className="flex items-center gap-2 text-lg">
-                            {convertToHebrew(doc.title)}
+                            {convertToHebrew(doc.he_title)}
                           </div>
                         </div>
                         <div className="pb-2">

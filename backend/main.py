@@ -67,6 +67,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Chat-ID"],
 )
 
 from app.api.routers import agent, auth, chat, general, search, stt, texts, library, admin, tts

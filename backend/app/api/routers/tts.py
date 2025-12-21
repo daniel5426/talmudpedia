@@ -26,13 +26,16 @@ async def synthesize_speech(payload: TTSRequest):
 
     async def audio_stream():
         try:
-            async with client.audio.speech.with_streaming_response.create(
-                model=model,
-                voice=voice,
-                input=text,
-                response_format="mp3",
-                instructions=instructions,
-            ) as resp:
+            kwargs = {
+                "model": model,
+                "voice": voice,
+                "input": text,
+                "response_format": "mp3",
+            }
+            if instructions:
+                kwargs["instructions"] = instructions
+
+            async with client.audio.speech.with_streaming_response.create(**kwargs) as resp:
                 async for chunk in resp.iter_bytes():
                     yield chunk
         except Exception as e:

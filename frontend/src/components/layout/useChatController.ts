@@ -29,6 +29,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: Date;
+  isFinal?: boolean;
   attachments?: FileUIPart[];
   citations?: Citation[];
   reasoningSteps?: Array<{
@@ -44,6 +45,7 @@ export interface ChatMessage {
   liked?: boolean;
   disliked?: boolean;
   messageIndex?: number;
+  isVoice?: boolean;
 }
 
 const normalizeReasoningStatus = (
@@ -157,7 +159,7 @@ export function useChatController(): ChatController {
   const thinkingStartRef = useRef<number | null>(null);
   const thinkingDurationRef = useRef<number | null>(null);
   const abortManager = useRef(new AbortControllerManager());
-  const isInitializingChatRef = useRef(false);
+  const initializingChatIdRef = useRef<string | null>(null);
   const isActivelyStreamingRef = useRef(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const liveVoiceIdsRef = useRef<{ user?: string; assistant?: string }>({});
@@ -175,7 +177,11 @@ export function useChatController(): ChatController {
       const isFinal = Boolean(input.isFinal);
       const incomingCitations = input.citations;
       const incomingReasoning = input.reasoningSteps;
-      if (!contentTrimmed && (!incomingCitations || incomingCitations.length === 0) && (!incomingReasoning || incomingReasoning.length === 0)) {
+
+      // CRITICAL CHANGE: Allow empty content if it's a non-final user message (shimmer placeholder)
+      // Otherwise, require content or citations/reasoning
+      const isUserPlaceholder = role === "user" && !isFinal;
+      if (!contentTrimmed && (!incomingCitations || incomingCitations.length === 0) && (!incomingReasoning || incomingReasoning.length === 0) && !isUserPlaceholder) {
         return;
       }
 
@@ -189,6 +195,8 @@ export function useChatController(): ChatController {
             role,
             content: contentTrimmed,
             createdAt: new Date(),
+            isFinal,
+            isVoice: isFinal && role === "user" ? true : undefined,
             citations: incomingCitations,
             reasoningSteps: incomingReasoning && incomingReasoning.length > 0 ? mergeReasoningSteps(incomingReasoning, { finalize: isFinal }) : undefined,
           };
@@ -202,6 +210,8 @@ export function useChatController(): ChatController {
             role,
             content: contentTrimmed,
             createdAt: new Date(),
+            isFinal,
+            isVoice: isFinal && role === "user" ? true : undefined,
             citations: incomingCitations,
             reasoningSteps: incomingReasoning && incomingReasoning.length > 0 ? mergeReasoningSteps(incomingReasoning, { finalize: isFinal }) : undefined,
           };
@@ -222,6 +232,8 @@ export function useChatController(): ChatController {
         next[idx] = {
           ...prevMsg,
           content: nextContent,
+          isFinal,
+          isVoice: isFinal && role === "user" ? true : prevMsg.isVoice,
           citations: mergedCitations,
           reasoningSteps: mergedReasoning && mergedReasoning.length > 0 ? mergedReasoning : undefined,
         };
@@ -269,12 +281,12 @@ export function useChatController(): ChatController {
       return;
     }
 
-    if (isInitializingChatRef.current) {
+    // Don't abort if we're transitioning from null to a new chat ID (initialization)
+    if (prevActiveChatId === null && activeChatId) {
       return;
     }
 
-    // Don't abort if we're transitioning from null to a new chat ID (initialization)
-    if (prevActiveChatId === null && activeChatId) {
+    if (activeChatId && initializingChatIdRef.current === activeChatId) {
       return;
     }
 
@@ -286,10 +298,10 @@ export function useChatController(): ChatController {
     let isCancelled = false;
 
     async function loadHistory() {
-      if (isInitializingChatRef.current) {
-        isInitializingChatRef.current = false;
+      if (activeChatId && initializingChatIdRef.current === activeChatId) {
         return;
       }
+      initializingChatIdRef.current = null;
 
       if (!activeChatId) {
         if (!isCancelled && !hasPendingChatMessage()) {
@@ -356,6 +368,7 @@ export function useChatController(): ChatController {
               liked: (msg as any).liked,
               disliked: (msg as any).disliked,
               messageIndex: index,
+              isVoice: (msg as any).is_voice === true,
             };
           }
         );
@@ -472,7 +485,7 @@ export function useChatController(): ChatController {
 
         const newChatId = response.headers.get("X-Chat-ID");
         if (newChatId && newChatId !== activeChatId) {
-          isInitializingChatRef.current = true;
+          initializingChatIdRef.current = newChatId;
           setActiveChatId(newChatId);
           router.push(`/chat?chatId=${newChatId}`);
         }

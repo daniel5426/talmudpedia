@@ -38,8 +38,8 @@ import {
   ChainOfThoughtContent,
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
-import { Shimmer } from "@/components/ai-elements/shimmer";
-import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon } from "lucide-react";
+
+import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotImputArea } from "@/components/BotImputArea";
 import { useChatController, type ChatController, type ChatMessage, type Citation } from "./useChatController";
@@ -333,7 +333,7 @@ export function ChatWorkspace({
   const { scrollToBottom } = useStickToBottomContext();
   // Auto (Agent Router) - Determine if chat is in empty state
   const isEmptyState =
-    messages.length === 0 && !isLoading && streamingContent === "" && !isLoadingHistory;
+    messages.length === 0 && !isLoading && streamingContent === "" && !isLoadingHistory && !isVoiceModeActive;
 
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [loadingSpeakId, setLoadingSpeakId] = useState<string | null>(null);
@@ -504,7 +504,7 @@ export function ChatWorkspace({
       )}
       <ConversationContent className={cn("flex-1 p-0 pt-13", isEmptyState && "h-full justify-center relative z-10")}>
         {isEmptyState ? (
-          <div className="flex w-full flex-col items-center text-center pb-20">
+          <div className="flex w-full flex-col items-center text-center pb-34">
             <p className="text-3xl font-semibold pb-6">
             גלה מה מחפש לבך בתורה.</p>
             
@@ -623,7 +623,17 @@ export function ChatWorkspace({
                           })()}
                         </>
                       ) : (
-                        <div dir={direction}>{msg.content}</div>
+                        <div dir={direction}>
+                          {msg.isFinal === undefined && !msg.isVoice ? (
+                            msg.content
+                          ) : msg.isFinal || msg.isVoice ? (
+                            <div className="flex items-center justify-end">
+                              <div className="rounded-full bg-muted p-2">
+                                <Mic className="size-4 text-muted-foreground" />
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                       )}
                     </MessageContent>
 
@@ -715,9 +725,9 @@ export function ChatWorkspace({
                             renderLabel={({ isOpen }) => {
                               if (isOpen) {
                                 return (
-                                  <Shimmer as="span" className="text-sm">
+                                  <span className="animate-pulse text-muted-foreground text-sm">
                                     חושב
-                                  </Shimmer>
+                                  </span>
                                 );
                               }
                               const thinkingLabel = buildThinkingLabel(
@@ -734,9 +744,9 @@ export function ChatWorkspace({
                                 if (formattedLabel) {
                                   if (typeof formattedLabel === "string") {
                                     return (
-                                      <Shimmer as="span" className="text-sm">
+                                      <span className="animate-pulse text-muted-foreground text-sm">
                                         {formattedLabel}
-                                      </Shimmer>
+                                      </span>
                                     );
                                   }
                                   return formattedLabel;
@@ -840,10 +850,11 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
 
   const defaultController = useChatController();
   const chatController = controller ?? defaultController;
-  const isEmptyState =
-    chatController.messages.length === 0 && !chatController.isLoading && !chatController.streamingContent && !chatController.isLoadingHistory;
-
+  
   const [isVoiceModeActive, setIsVoiceModeActive] = useState(false);
+  
+  const isEmptyState =
+    chatController.messages.length === 0 && !chatController.isLoading && !chatController.streamingContent && !chatController.isLoadingHistory && !isVoiceModeActive;
 
   // Construct WebSocket URL
   const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -892,7 +903,7 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
     [upsertLiveVoiceMessage]
   );
 
-  const { connect, disconnect, startRecording, isConnected, analyser } = useGeminiLive(
+  const { connect, disconnect, startRecording, isConnected, analyser, ensureAudioContext } = useGeminiLive(
     voiceUrl,
     onChatCreated,
     handleLiveText,
@@ -930,6 +941,7 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
         }
       }
     } else {
+        ensureAudioContext();
         setIsVoiceModeActive(true);
     }
   };
