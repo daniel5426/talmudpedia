@@ -60,8 +60,7 @@ app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 # Add CORS middleware
 from fastapi.middleware.cors import CORSMiddleware
 
-cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://10.0.0.10:3000,reshet-self.vercel.app")
-cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+cors_origins = ['http://localhost:3000', 'http://localhost:3001', 'http://10.0.0.10:3000', 'https://reshet-self.vercel.app']
 
 # If credentials are true, Starlette prohibits ["*"] origins.
 # We handle this by ensuring specific origins are used if credentials are required.
