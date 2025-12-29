@@ -4,11 +4,12 @@ import json
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from pymongo import UpdateOne
+from urllib.parse import quote_plus
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from urllib.parse import quote_plus
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 TREE_FILE = BASE_DIR / "sefaria_tree.json"
@@ -41,55 +42,61 @@ def load_chunk_if_needed(node: Dict[str, Any]) -> List[Dict[str, Any]]:
     return node.get("children") or []
 
 
-def traverse_tree(
+def get_upsert_ops(
     nodes: List[Dict[str, Any]],
     path: List[str],
     path_he: List[str],
     parent_info: Optional[Dict[str, Any]],
     parent_siblings: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    records = []
+) -> List[UpdateOne]:
+    ops = []
     
     for node in nodes:
         children = load_chunk_if_needed(node)
-        
-        # Unique ID for the document: use ref if available, else slug, else generated
         doc_id = node.get("ref") or node.get("slug") or node.get("title")
         if not doc_id:
             continue
 
         record = {
-            "_id": doc_id,
-            "ref": node.get("ref"),
             "title": node.get("title"),
             "heTitle": node.get("heTitle"),
             "type": node.get("type"),
-            "slug": node.get("slug"),
             "path": path.copy(),
             "path_he": path_he.copy(),
             "he_ref": node.get("he_ref") or node.get("heRef"),
+            "hasChildren": node.get("hasChildren") or len(children) > 0,
             "parent": slim_node(parent_info) if parent_info else None,
             "siblings": [slim_node(n) for n in parent_siblings],
             "children": [slim_node(c) for c in children],
         }
-        records.append(record)
+        
+        if node.get("ref"):
+            record["ref"] = node["ref"]
+        if node.get("slug"):
+            record["slug"] = node["slug"]
+        
+        ops.append(UpdateOne(
+            {"_id": doc_id},
+            {"$set": record},
+            upsert=True
+        ))
         
         if children:
             new_path = path + [node.get("title", "")]
             new_path_he = path_he + [node.get("heTitle", "")]
-            child_records = traverse_tree(
+            child_ops = get_upsert_ops(
                 children,
                 new_path,
                 new_path_he,
                 node,
                 children,
             )
-            records.extend(child_records)
+            ops.extend(child_ops)
     
-    return records
+    return ops
 
 
-async def populate_siblings_collection():
+async def upsert_library_nodes():
     user = "daniel"
     password = "Hjsjfk74jkffdDF"
     ip = "155.138.219.192"
@@ -103,34 +110,42 @@ async def populate_siblings_collection():
     print("Loading tree...")
     tree = load_tree()
     
-    print("Traversing tree to build all library records...")
-    records = traverse_tree(tree, [], [], None, tree)
+    print("Traversing tree to generate upsert operations...")
+    ops = get_upsert_ops(tree, [], [], None, tree)
     
-    print(f"Generated {len(records)} records")
+    print(f"Generated {len(ops)} upsert operations")
     
-    print("Dropping existing collection...")
-    await collection.drop()
-    
-    print("Inserting records in batches...")
-    if records:
-        batch_size = 5000
-        total_inserted = 0
+    print("Cleaning up indices...")
+    try:
+        await collection.drop_index("ref_1")
+    except Exception:
+        pass
+    try:
+        await collection.drop_index("slug_1")
+    except Exception:
+        pass
+
+    if ops:
+        batch_size = 2000
+        total_processed = 0
         
-        for i in range(0, len(records), batch_size):
-            batch = records[i:i + batch_size]
-            await collection.insert_many(batch, ordered=False)
-            total_inserted += len(batch)
-            print(f"  Inserted {total_inserted}/{len(records)} records ({(total_inserted/len(records)*100):.1f}%)")
+        for i in range(0, len(ops), batch_size):
+            batch = ops[i:i + batch_size]
+            await collection.bulk_write(batch, ordered=False)
+            total_processed += len(batch)
+            print(f"  Processed {total_processed}/{len(ops)} records ({(total_processed/len(ops)*100):.1f}%)")
     
     print("Creating index on ref...")
     await collection.create_index("ref", sparse=True)
     print("Creating index on slug...")
     await collection.create_index("slug", sparse=True)
+    print("Creating index on path...")
+    await collection.create_index("path")
     
-    print(f"Successfully populated {len(records)} records")
+    print(f"Successfully upserted {len(ops)} records")
     
     client.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(populate_siblings_collection())
+    asyncio.run(upsert_library_nodes())

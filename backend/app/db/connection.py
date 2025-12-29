@@ -4,7 +4,7 @@ from typing import Optional
 from urllib.parse import quote_plus
 
 user = "daniel"
-password = "daniel"
+password = "Hjsjfk74jkffdDF"
 ip = "155.138.219.192"
 db = "sefaria"
 

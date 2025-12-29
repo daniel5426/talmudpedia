@@ -265,39 +265,46 @@ def load_chunk(slug: str) -> List[Dict[str, Any]]:
 
 @router.get("/menu", response_model=List[Dict[str, Any]])
 async def get_library_menu(response: Response):
-    global root_cache
-    if root_cache is None:
+    try:
+        collection = MongoDatabase.get_collection("library_siblings")
+        # Top-level nodes are those with an empty path
+        cursor = collection.find({"path": []}, {"_id": 0}).sort("title", 1)
+        nodes = await cursor.to_list(length=100)
+        
+        # Sort manually to ensure consistent order (Tanakh, Mishnah, etc.)
+        # If sefaria_tree order is preferred, we might need a 'weight' or just rely on the JSON order during population
+        # For now, let's just return what we find.
+        response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+        return nodes
+    except Exception as e:
+        print(f"Error fetching library menu from MongoDB: {e}")
+        # Fallback to local file if MongoDB fails
         if os.path.exists(ROOT_FILE):
-            try:
-                with open(ROOT_FILE, "r") as f:
-                    root_cache = json.load(f)
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=500, detail="Invalid menu data")
-        else:
-            root_cache = load_full_tree()
-    response.headers["Cache-Control"] = "public, max-age=86400, immutable"
-    return root_cache
+            with open(ROOT_FILE, "r") as f:
+                return json.load(f)
+        raise HTTPException(status_code=500, detail="Failed to load library menu")
 
 
 @router.get("/menu/{slug}", response_model=List[Dict[str, Any]])
 async def get_library_chunk(slug: str, response: Response):
-    chunk_path = os.path.join(CHUNK_DIR, f"{slug}.json")
-    path_obj = Path(chunk_path)
-    if not path_obj.exists():
-        raise HTTPException(status_code=404, detail="Chunk not found")
-    mtime = path_obj.stat().st_mtime
-    cached = chunk_cache.get(slug)
-    if cached and cached[0] == mtime:
-        response.headers["Cache-Control"] = "public, max-age=86400, immutable"
-        return cached[1]
     try:
-        with open(path_obj, "r") as f:
-            data = json.load(f)
-            chunk_cache[slug] = (mtime, data)
+        collection = MongoDatabase.get_collection("library_siblings")
+        doc = await collection.find_one({"slug": slug}, {"children": 1, "_id": 0})
+        
+        if doc and "children" in doc:
             response.headers["Cache-Control"] = "public, max-age=86400, immutable"
-            return data
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Invalid menu data")
+            return doc["children"]
+        
+        # Fallback to local chunk if not in MongoDB
+        chunk_path = os.path.join(CHUNK_DIR, f"{slug}.json")
+        if os.path.exists(chunk_path):
+            with open(chunk_path, "r") as f:
+                return json.load(f)
+                
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    except Exception as e:
+        print(f"Error fetching library chunk {slug} from MongoDB: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load library chunk")
 
 
 @router.get("/search", response_model=List[Dict[str, Any]])
