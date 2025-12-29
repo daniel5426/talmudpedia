@@ -416,6 +416,23 @@ async def get_source_text(
                         page_res["highlight_index"] = page_res["highlight_indices"][0]
                 elif current_idx is not None:
                      page_res["highlight_indices"] = [current_idx]
+                # Also check if the original request had a verse/line number
+                elif "verse" in parsed and parsed["verse"]:
+                    v_idx = parsed["verse"] - 1
+                    if 0 <= v_idx < len(full_content):
+                        page_res["highlight_index"] = v_idx
+                        page_res["highlight_indices"] = [v_idx]
+                # Fallback: check the original ref parameter for segment numbers
+                elif ":" in ref:
+                    parts = ref.rsplit(":", 1)
+                    if len(parts) == 2:
+                        seg_part = parts[1].split("-")[0].strip()
+                        if seg_part.isdigit():
+                            seg_num = int(seg_part)
+                            v_idx = seg_num - 1
+                            if 0 <= v_idx < len(full_content):
+                                page_res["highlight_index"] = v_idx
+                                page_res["highlight_indices"] = [v_idx]
 
                 pages.append(page_res)
                 can_load_bottom = False 
@@ -669,11 +686,25 @@ async def get_source_text(
             "highlight_indices": []
         }
         
+        # Check for verse/segment number in the parsed reference
         if "verse" in parsed and parsed["verse"]:
             v_idx = parsed["verse"] - 1
             if 0 <= v_idx < len(segments):
                 page_result["highlight_index"] = v_idx
                 page_result["highlight_indices"] = [v_idx]
+        # Also check the original ref parameter for segment numbers
+        elif ":" in ref:
+            # Extract the segment number after the last colon
+            parts = ref.rsplit(":", 1)
+            if len(parts) == 2:
+                # Handle cases like "301:16" or "301:16-18"
+                seg_part = parts[1].split("-")[0].strip()
+                if seg_part.isdigit():
+                    seg_num = int(seg_part)
+                    v_idx = seg_num - 1
+                    if 0 <= v_idx < len(segments):
+                        page_result["highlight_index"] = v_idx
+                        page_result["highlight_indices"] = [v_idx]
 
         can_load_bottom = False
         extra_pages = []

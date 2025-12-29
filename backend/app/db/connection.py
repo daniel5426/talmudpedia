@@ -1,6 +1,14 @@
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional
+from urllib.parse import quote_plus
+
+user = "daniel"
+password = "daniel"
+ip = "155.138.219.192"
+db = "sefaria"
+
+uri = f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{ip}:27017/{db}?authSource=admin"
 
 class MongoDatabase:
     client: Optional[AsyncIOMotorClient] = None
@@ -8,7 +16,7 @@ class MongoDatabase:
 
     @classmethod
     async def connect(cls):
-        mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+        mongo_uri = os.getenv("MONGO_URI", uri)
         cls.client = AsyncIOMotorClient(mongo_uri)
         print(f"Connected to MongoDB at {mongo_uri}")
 

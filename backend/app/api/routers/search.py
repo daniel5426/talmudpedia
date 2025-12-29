@@ -72,6 +72,13 @@ async def search_documents(request_body: SearchRequest, request: Request):
                 "snippet": metadata.get("text", "")[:200] + "..." if len(metadata.get("text", "")) > 200 else metadata.get("text", ""),
                 "ref": ref,
                 "score": result.get("score", 0),
+                "metadata": {
+                    "ref": ref,
+                    "first_ref": first_ref,
+                    "total_segments": total_segments,
+                    "text": metadata.get("text", ""),
+                    "index_title": metadata.get("index_title", ref)
+                }
             })
         
         return {

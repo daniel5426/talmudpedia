@@ -233,11 +233,31 @@ async def chat_endpoint(
                                     for doc in docs:
                                         meta = doc.get("metadata", {})
                                         shape_path = meta.get("shape_path", [])
+                                        ref = meta.get("ref", "Unknown Source")
+                                        first_ref = meta.get("first_ref") or ref
+                                        total_segments = meta.get("total_segments", 1)
+                                        segment_refs = meta.get("segment_refs", [])
+                                        
+                                        range_ref = first_ref
+                                        if segment_refs and len(segment_refs) > 1:
+                                            range_ref = f"{segment_refs[0]}-{segment_refs[-1]}"
+                                        elif total_segments > 1:
+                                            import re
+                                            match = re.search(r'^(.*?)(\d+)$', first_ref)
+                                            if match:
+                                                prefix = match.group(1)
+                                                start_val = int(match.group(2))
+                                                end_val = start_val + total_segments - 1
+                                                range_ref = f"{first_ref}-{prefix}{end_val}"
+
                                         citation = {
-                                            "title": meta.get("ref", "Unknown Source"),
+                                            "title": ref,
                                             "url": shape_path[0] if shape_path else None,
                                             "sourceRef": shape_path[1] if shape_path else None,
-                                            "ref": meta.get("ref", ""),
+                                            "ref": ref,
+                                            "firstRef": first_ref,
+                                            "totalSegments": total_segments,
+                                            "rangeRef": range_ref,
                                             "description": meta.get("text", "")[:100] + "..."
                                         }
                                         step_citations.append(citation)
