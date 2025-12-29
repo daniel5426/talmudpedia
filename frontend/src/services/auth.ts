@@ -20,6 +20,10 @@ class AuthService {
   async getProfile(): Promise<User> {
     return httpClient.get<User>("/auth/me");
   }
+
+  async googleLogin(credential: string): Promise<AuthResponse> {
+    return httpClient.post<AuthResponse>("/auth/google", { credential });
+  }
 }
 
 export const authService = new AuthService();

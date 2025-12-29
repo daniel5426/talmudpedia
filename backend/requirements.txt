@@ -18,3 +18,4 @@ motor
 google-cloud-speech
 elasticsearch
 websockets
+google-auth

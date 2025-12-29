@@ -5,7 +5,8 @@ from .base import MongoModel
 
 class User(MongoModel):
     email: EmailStr
-    hashed_password: str
+    hashed_password: Optional[str] = None
+    google_id: Optional[str] = None
     full_name: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     role: str = "user"

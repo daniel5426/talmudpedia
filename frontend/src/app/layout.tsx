@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { DirectionProvider, type DirectionMode } from "@/components/direction-provider";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -43,9 +44,11 @@ export default async function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <DirectionProvider initialDirection={initialDirection}>
-            {children}
-          </DirectionProvider>
+          <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}>
+            <DirectionProvider initialDirection={initialDirection}>
+              {children}
+            </DirectionProvider>
+          </GoogleOAuthProvider>
         </ThemeProvider>
       </body>
     </html>
