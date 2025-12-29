@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     await MongoDatabase.connect()
     app.state.vector_store = VectorStore()
     
-    # Pre-load library for instant menu speed
+    # Pre-load library for instant menu speed (if ENABLE_FULL_LIBRARY_CACHE is true)
     from app.api.routers.library import preload_library_cache
     asyncio.create_task(preload_library_cache())
 

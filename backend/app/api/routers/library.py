@@ -11,30 +11,34 @@ from pymongo import DESCENDING
 
 router = APIRouter()
 
-# Cache for menu chunks (identifier -> children)
+# Configurable Cache for menu chunks
+ENABLE_FULL_CACHE = os.getenv("ENABLE_FULL_LIBRARY_CACHE", "false").lower() == "true"
+MENU_CACHE_SIZE = 20000 if ENABLE_FULL_CACHE else 128
 menu_cache: Dict[str, List[Dict[str, Any]]] = {}
-MENU_CACHE_SIZE = 20000 # Enough for all categories
 root_cache: List[Dict[str, Any]] | None = None
 
 async def preload_library_cache():
-    """Background task to load all categories into memory for instant menu speed"""
+    """Background task to load all categories into memory for instant menu speed.
+    Only runs if ENABLE_FULL_LIBRARY_CACHE is true.
+    """
     global root_cache
+    if not ENABLE_FULL_CACHE:
+        return
+        
     try:
-        print("Pre-loading library menu cache...")
+        print("Pre-loading library menu cache (High-RAM Mode)...")
         collection = MongoDatabase.get_collection("library_siblings")
         
         # 1. Load root
         cursor = collection.find({"path": []}, {"_id": 0}).sort("title", 1)
         root_cache = await cursor.to_list(length=100)
         
-        # 2. Load all nodes that have children (the navigation folders)
-        # We only take the children field to keep RAM usage efficient
+        # 2. Load all navigation nodes (folders/categories)
         cursor = collection.find({"hasChildren": True}, {"_id": 1, "slug": 1, "ref": 1, "children": 1})
         count = 0
         async for doc in cursor:
             children = doc.get("children", [])
             if children:
-                # Cache by every possible look-up key
                 if "_id" in doc: menu_cache[doc["_id"]] = children
                 if doc.get("slug"): menu_cache[doc["slug"]] = children
                 if doc.get("ref"): menu_cache[doc["ref"]] = children
