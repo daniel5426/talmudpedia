@@ -4,7 +4,6 @@ import jwt
 import os
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
-from pwdlib.hashers.bcrypt import BcryptHasher
 
 SECRET_KEY = os.getenv("SECRET_KEY", "YOUR_SECRET_KEY_HERE_CHANGE_IN_PRODUCTION")
 ALGORITHM = "HS256"
@@ -13,7 +12,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 90 # 90 days (approx 3 months)
 # uses Argon2id for new hashes, but can verify old bcrypt hashes
 password_hash = PasswordHash((
     Argon2Hasher(),
-    BcryptHasher(),
 ))
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
