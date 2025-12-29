@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 import multiprocessing
 import os
-
+import asyncio
 # Load environment variables BEFORE importing any modules that might need them
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -28,6 +28,10 @@ async def lifespan(app: FastAPI):
     """Bootstraps shared services for the FastAPI lifecycle."""
     await MongoDatabase.connect()
     app.state.vector_store = VectorStore()
+    
+    # Pre-load library for instant menu speed
+    from app.api.routers.library import preload_library_cache
+    asyncio.create_task(preload_library_cache())
 
     print("VectorStore initialized successfully.")
     
@@ -57,8 +61,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 
-# Add CORS middleware
+# Add Middlewares
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 cors_origins = ['http://localhost:3000', 'http://localhost:3001', 'http://10.0.0.10:3000', 'https://reshet-self.vercel.app']
 

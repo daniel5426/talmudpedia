@@ -18,7 +18,7 @@ interface LibraryMenuProps {
 }
 
 export function LibraryMenu({ onBack }: LibraryMenuProps) {
-  const [tree, setTree] = React.useState<TreeNode[]>([]);
+  const [root, setRoot] = React.useState<TreeNode[]>([]);
   const [path, setPath] = React.useState<TreeNode[]>([]);
   const { libraryPathTitles, setLibraryPathTitles, setActiveSource } = useLayoutStore();
   const [loading, setLoading] = React.useState(true);
@@ -29,67 +29,50 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
   const isRTL = direction === "rtl";
   const { state } = useSidebar()
   const isCollapsed = state === "collapsed";
-  const updateChildren = React.useCallback((nodes: TreeNode[], slug: string, children: TreeNode[]): TreeNode[] => {
-    const apply = (list: TreeNode[]): TreeNode[] => {
-      return list.map((node) => {
-        if (node.slug === slug) {
-          return { ...node, children };
-        }
-        if (node.children) {
-          return { ...node, children: apply(node.children) };
-        }
-        return node;
-      });
-    };
-    return apply(nodes);
-  }, []);
-  const loadChildren = React.useCallback(async (node: TreeNode) => {
-    if (!node.hasChildren || node.children || !node.slug) {
-      return node;
-    }
+
+  const getChildren = React.useCallback(async (node: TreeNode) => {
+    if (!node.slug) return [];
+    if (node.children) return node.children;
+    
     setLoadingSlug(node.slug);
     try {
       const children = await libraryService.getChildren(node.slug);
-      setTree((prev) => updateChildren(prev, node.slug as string, children));
+      node.children = children; // Cache in the node object
       setLoadingSlug(null);
-      return { ...node, children };
+      return children;
     } catch {
       setError("Failed to load library menu");
       setLoadingSlug(null);
-      return node;
+      return [];
     }
-  }, [updateChildren]);
+  }, []);
+
   React.useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
         const data = await libraryService.getRoot();
-        if (cancelled) {
-          return;
-        }
-        setTree(data);
+        if (cancelled) return;
+        setRoot(data);
         setLoading(false);
+
+        // Restore path from store
         const savedTitles = initialLibraryPathTitles.current;
-        if (savedTitles.length === 0) {
-          return;
-        }
-        const newPath: TreeNode[] = [];
-        let currentLevel = data;
-        for (const title of savedTitles) {
-          const node = currentLevel.find((n: TreeNode) => n.title === title);
-          if (!node) {
-            break;
+        if (savedTitles.length > 0) {
+          const newPath: TreeNode[] = [];
+          let currentLevel = data;
+          for (const title of savedTitles) {
+            const node = currentLevel.find((n) => n.title === title);
+            if (!node) break;
+            if (node.hasChildren && !node.children && node.slug) {
+              await getChildren(node);
+            }
+            newPath.push(node);
+            currentLevel = node.children || [];
           }
-          let withChildren = node;
-          if (node.hasChildren && !node.children && node.slug) {
-            withChildren = await loadChildren(node);
+          if (!cancelled) {
+            setPath(newPath);
           }
-          newPath.push(withChildren);
-          currentLevel = withChildren.children || [];
-        }
-        if (!cancelled) {
-          setPath(newPath);
-          setLibraryPathTitles(newPath.map((n) => n.title));
         }
       } catch {
         if (!cancelled) {
@@ -99,29 +82,48 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
       }
     };
     load();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadChildren, setLibraryPathTitles]);
+    return () => { cancelled = true; };
+  }, [getChildren]);
 
-  const currentLevel = path.length === 0 ? tree : path[path.length - 1].children || [];
-  const currentTitle = path.length === 0 
-    ? (isRTL ? "הספרייה" : "Library")
-    : (isRTL && path[path.length - 1].heTitle ? path[path.length - 1].heTitle : path[path.length - 1].title);
+  const [visibleItems, setVisibleItems] = React.useState(20);
+
+  const currentLevel = React.useMemo(() => {
+    return path.length === 0 ? root : path[path.length - 1].children || [];
+  }, [path, root]);
+
+  const currentTitle = React.useMemo(() => {
+    if (path.length === 0) return isRTL ? "הספרייה" : "Library";
+    const last = path[path.length - 1];
+    return (isRTL && last.heTitle) ? last.heTitle : last.title;
+  }, [path, isRTL]);
+
+  // Reset visible items when navigating
+  React.useEffect(() => {
+    setVisibleItems(20);
+    
+    if (currentLevel.length > 20) {
+      const timer = setInterval(() => {
+        setVisibleItems((prev) => {
+          if (prev >= currentLevel.length) {
+            clearInterval(timer);
+            return prev;
+          }
+          return prev + 50;
+        });
+      }, 50);
+      return () => clearInterval(timer);
+    }
+  }, [currentLevel]);
 
   const handleNavigate = async (node: TreeNode) => {
-    const hasChildren = (node.children && node.children.length > 0) || node.hasChildren;
-    if (hasChildren) {
-      let withChildren = node;
-      if (node.hasChildren && !node.children && node.slug) {
-        withChildren = await loadChildren(node);
+    if (node.hasChildren) {
+      if (!node.children && node.slug) {
+        await getChildren(node);
       }
-      const newPath = [...path, withChildren];
+      const newPath = [...path, node];
       setPath(newPath);
       setLibraryPathTitles(newPath.map(n => n.title));
-      return;
-    }
-    if (node.ref) {
+    } else if (node.ref) {
       setActiveSource(node.ref);
     }
   };
@@ -132,7 +134,7 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
       setPath(newPath);
       setLibraryPathTitles(newPath.map(n => n.title));
     } else {
-      onBack(); // Exit library mode if at root
+      onBack();
     }
   };
 
@@ -157,7 +159,6 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
     );
   }
 
-
   return (
     <div className="flex flex-col h-full" dir={direction}>
       <div className="flex items-center gap-2 p-2 border-b">
@@ -178,13 +179,13 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
         </Button>
       </div>
       
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-0 space-y-0" dir={direction}>
-          {currentLevel.map((node, idx) => (
+          {currentLevel.slice(0, visibleItems).map((node, idx) => (
             <SidebarMenuButton
-              key={node.slug ?? idx}
+              key={node.slug ?? `${node.title}-${idx}`}
               className={cn(
-                "w-full font-normal min-w-0",
+                "w-full font-normal min-w-0 transition-none",
                 isRTL ? "justify-start text-right" : "justify-start text-left",
                 isCollapsed ? "m-2" : "m-0"
               )}
@@ -193,24 +194,29 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
               tooltip={(isRTL && node.heTitle) ? node.heTitle : node.title}
             >
               {node.type === "category" ? (
-                <Folder className={cn("h-4 w-4 text-muted-foreground", isRTL ? "ml-1" : "mr-1")} />
+                <Folder className={cn("h-4 w-4 text-muted-foreground shrink-0", isRTL ? "ml-1" : "mr-1")} />
               ) : (
-                <Book className={cn(" h-4 w-4 text-muted-foreground", isRTL ? "ml-1" : "mr-1")} />
+                <Book className={cn("h-4 w-4 text-muted-foreground shrink-0", isRTL ? "ml-1" : "mr-1")} />
               )}
               <span
                 dir={direction}
-                className={cn("truncate flex-1", isRTL ? "text-right" : "text-left")}
+                className={cn("truncate flex-1 h-fit leading-tight py-1", isRTL ? "text-right" : "text-left")}
               >
                 {(isRTL && node.heTitle) ? node.heTitle : node.title}
               </span>
-              {(node.hasChildren || (node.children && node.children.length > 0)) && (
-                <ChevronRight className={cn(" h-4 w-4 opacity-50", isRTL ? "rotate-180 mr-auto" : "ml-auto")} />
+              {node.hasChildren && (
+                <ChevronRight className={cn("h-4 w-4 opacity-50 shrink-0", isRTL ? "rotate-180 mr-auto" : "ml-auto")} />
               )}
             </SidebarMenuButton>
           ))}
+          {currentLevel.length > visibleItems && (
+            <div className="text-center text-muted-foreground text-xs py-2">
+              Loading more...
+            </div>
+          )}
           {currentLevel.length === 0 && (
-            <div className="text-center text-muted-foreground text-sm py-4">
-              No items found
+            <div className="text-center text-muted-foreground text-sm py-8 italic">
+              {isRTL ? "לא נמצאו פריטים" : "No items found"}
             </div>
           )}
         </div>

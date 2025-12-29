@@ -11,17 +11,37 @@ from pymongo import DESCENDING
 
 router = APIRouter()
 
-BASE_BACKEND = Path(__file__).resolve().parents[3]
-TREE_FILE = BASE_BACKEND / "sefaria_tree.json"
-CHUNK_DIR = BASE_BACKEND / "library_chunks"
-ROOT_FILE = CHUNK_DIR / "root.json"
-SEARCH_FILE = CHUNK_DIR / "search_index.json"
+# Cache for menu chunks (identifier -> children)
+menu_cache: Dict[str, List[Dict[str, Any]]] = {}
+MENU_CACHE_SIZE = 20000 # Enough for all categories
 root_cache: List[Dict[str, Any]] | None = None
-chunk_cache: Dict[str, Tuple[float, Any]] = {}
-search_index_cache: List[Dict[str, Any]] | None = None
-token_index_cache: Dict[str, List[int]] | None = None
-search_index_mtime: float | None = None
-result_cache: OrderedDict[str, List[Dict[str, Any]]] = OrderedDict()
+
+async def preload_library_cache():
+    """Background task to load all categories into memory for instant menu speed"""
+    global root_cache
+    try:
+        print("Pre-loading library menu cache...")
+        collection = MongoDatabase.get_collection("library_siblings")
+        
+        # 1. Load root
+        cursor = collection.find({"path": []}, {"_id": 0}).sort("title", 1)
+        root_cache = await cursor.to_list(length=100)
+        
+        # 2. Load all nodes that have children (the navigation folders)
+        # We only take the children field to keep RAM usage efficient
+        cursor = collection.find({"hasChildren": True}, {"_id": 1, "slug": 1, "ref": 1, "children": 1})
+        count = 0
+        async for doc in cursor:
+            children = doc.get("children", [])
+            if children:
+                # Cache by every possible look-up key
+                if "_id" in doc: menu_cache[doc["_id"]] = children
+                if doc.get("slug"): menu_cache[doc["slug"]] = children
+                if doc.get("ref"): menu_cache[doc["ref"]] = children
+                count += 1
+        print(f"Library menu cache warmed up: {count} folders loaded into RAM.")
+    except Exception as e:
+        print(f"Failed to preload library cache: {e}")
 RESULT_CACHE_SIZE = 128
 
 
@@ -164,160 +184,81 @@ def _entry_rank(entry: Dict[str, Any], q_norm: str, q_tokens: set[str], section_
         score -= 120
     return int(score)
 
-def load_full_tree():
-    if TREE_FILE.exists():
-        with open(TREE_FILE, "r") as f:
-            return json.load(f)
-    alt = BASE_BACKEND / "backend" / "sefaria_tree.json"
-    if alt.exists():
-        with open(alt, "r") as f:
-            return json.load(f)
-    raise HTTPException(status_code=503, detail="Library menu is being built. Please try again later.")
-
-
-def load_search_index():
-    global search_index_cache, token_index_cache, search_index_mtime
-    current_mtime = SEARCH_FILE.stat().st_mtime if SEARCH_FILE.exists() else None
-    if (
-        search_index_cache is not None
-        and token_index_cache is not None
-        and search_index_mtime is not None
-        and current_mtime is not None
-        and current_mtime == search_index_mtime
-        and search_index_cache
-        and "_he_ref_norm" in search_index_cache[0]
-    ):
-        return search_index_cache
-    if not SEARCH_FILE.exists():
-        raise HTTPException(status_code=503, detail="Search index not available")
-    try:
-        with open(SEARCH_FILE, "r") as f:
-            raw = json.load(f)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Invalid search index")
-    # Accept both list and dict formats; if dict, wrap in list
-    if isinstance(raw, dict):
-        raw = [raw]
-    cleaned: List[Dict[str, Any]] = []
-    if isinstance(raw, list):
-        for entry in raw:
-            if isinstance(entry, str):
-                try:
-                    entry = json.loads(entry)
-                except Exception:
-                    continue
-            if not isinstance(entry, dict):
-                continue
-            title = entry.get("title") or ""
-            he_title = entry.get("heTitle") or ""
-            he_ref = entry.get("heRef") or ""
-            path = entry.get("path") or []
-            path_he = entry.get("path_he") or []
-            parts = [title, he_title] + path + path_he
-            ref = entry.get("ref") or ""
-            parts.append(ref)
-            if he_ref:
-                parts.append(he_ref)
-            blob = " ".join(str(p) for p in parts if p)
-            normalized = normalize_search_text(blob)
-            he_ref_norm = normalize_search_text(he_ref)
-            he_title_norm = normalize_search_text(he_title)
-            title_norm = normalize_search_text(title)
-            ref_norm = normalize_search_text(ref)
-            entry["_he_ref_norm"] = he_ref_norm
-            entry["_he_title_norm"] = he_title_norm
-            entry["_title_norm"] = title_norm
-            entry["_ref_norm"] = ref_norm
-            tokens = set()
-            for field in (he_ref_norm, he_title_norm, title_norm, ref_norm, normalized):
-                if field:
-                    tokens.update(field.split())
-            entry["_tokens"] = tokens
-            entry["_search_blob"] = normalized
-            cleaned.append(entry)
-    search_index_cache = cleaned
-    token_index: Dict[str, List[int]] = {}
-    for idx, entry in enumerate(cleaned):
-        for token in entry.get("_tokens", []):
-            token_index.setdefault(token, []).append(idx)
-    token_index_cache = token_index
-    search_index_mtime = current_mtime
-    return cleaned
-
-
-def load_chunk(slug: str) -> List[Dict[str, Any]]:
-    chunk_path = os.path.join(CHUNK_DIR, f"{slug}.json")
-    path_obj = Path(chunk_path)
-    if not path_obj.exists():
-        raise HTTPException(status_code=404, detail="Chunk not found")
-    mtime = path_obj.stat().st_mtime
-    cached = chunk_cache.get(slug)
-    if cached and cached[0] == mtime:
-        return cached[1]
-    try:
-        with open(path_obj, "r") as f:
-            data = json.load(f)
-            chunk_cache[slug] = (mtime, data)
-            return data
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Invalid menu data")
+# Removed JSON-based loading functions (load_full_tree, load_search_index, load_chunk)
 
 
 @router.get("/menu", response_model=List[Dict[str, Any]])
 async def get_library_menu(response: Response):
+    global root_cache
+    if root_cache is not None:
+        response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+        return root_cache
+        
     try:
         collection = MongoDatabase.get_collection("library_siblings")
         # Top-level nodes are those with an empty path
         cursor = collection.find({"path": []}, {"_id": 0}).sort("title", 1)
-        nodes = await cursor.to_list(length=100)
+        root_cache = await cursor.to_list(length=100)
         
-        # Sort manually to ensure consistent order (Tanakh, Mishnah, etc.)
-        # If sefaria_tree order is preferred, we might need a 'weight' or just rely on the JSON order during population
-        # For now, let's just return what we find.
         response.headers["Cache-Control"] = "public, max-age=86400, immutable"
-        return nodes
+        return root_cache
     except Exception as e:
         print(f"Error fetching library menu from MongoDB: {e}")
-        # Fallback to local file if MongoDB fails
-        if os.path.exists(ROOT_FILE):
-            with open(ROOT_FILE, "r") as f:
-                return json.load(f)
         raise HTTPException(status_code=500, detail="Failed to load library menu")
 
 
-@router.get("/menu/{slug}", response_model=List[Dict[str, Any]])
-async def get_library_chunk(slug: str, response: Response):
+@router.get("/menu/{identifier:path}", response_model=List[Dict[str, Any]])
+async def get_library_chunk(identifier: str, response: Response):
+    # Check cache first
+    if identifier in menu_cache:
+        response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+        return menu_cache[identifier]
+        
     try:
         collection = MongoDatabase.get_collection("library_siblings")
-        doc = await collection.find_one({"slug": slug}, {"children": 1, "_id": 0})
+        
+        # Prioritize _id lookup as it's the fastest indexed field
+        doc = await collection.find_one({"_id": identifier}, {"children": 1})
+        
+        if not doc:
+            # Fallback to slug or ref if not found by unique ID
+            doc = await collection.find_one(
+                {
+                    "$or": [
+                        {"slug": identifier},
+                        {"ref": identifier}
+                    ]
+                },
+                {"children": 1}
+            )
         
         if doc and "children" in doc:
+            children = doc["children"]
+            # Manage cache size
+            if len(menu_cache) >= MENU_CACHE_SIZE:
+                menu_cache.pop(next(iter(menu_cache)))
+            menu_cache[identifier] = children
+            
             response.headers["Cache-Control"] = "public, max-age=86400, immutable"
-            return doc["children"]
+            return children
         
-        # Fallback to local chunk if not in MongoDB
-        chunk_path = os.path.join(CHUNK_DIR, f"{slug}.json")
-        if os.path.exists(chunk_path):
-            with open(chunk_path, "r") as f:
-                return json.load(f)
-                
         raise HTTPException(status_code=404, detail="Chunk not found")
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error fetching library chunk {slug} from MongoDB: {e}")
+        print(f"Error fetching library chunk {identifier} from MongoDB: {e}")
         raise HTTPException(status_code=500, detail="Failed to load library chunk")
 
 
 @router.get("/search", response_model=List[Dict[str, Any]])
 async def search_library(q: str = Query(..., min_length=1), limit: int = Query(20, ge=1, le=50), page: int = Query(1, ge=1)):
-    raw_index = load_search_index()
-    if not raw_index:
-        return []
     q_norm = normalize_search_text(q)
     if not q_norm or len(q_norm) < 2:
         return []
     skip = (page - 1) * limit
     q_tokens = set(q_norm.split())
     section_token = _extract_section_token(q_norm)
+    
     try:
         collection = MongoDatabase.get_collection("library_search")
         fetch_n = min(max(page * limit * 5, limit * 5), 1000)
@@ -369,326 +310,47 @@ async def search_library(q: str = Query(..., min_length=1), limit: int = Query(2
             for entry in page_slice:
                 entry.pop("_id", None)
                 cleaned_results.append(entry)
-            if cleaned_results:
-                return cleaned_results
-    except Exception:
+            return cleaned_results
+            
+    except Exception as e:
+        print(f"Search error: {e}")
         pass
-    cached = result_cache.get(q_norm)
-    if cached is not None:
-        result_cache.move_to_end(q_norm)
-        return cached
 
-    token_index = token_index_cache or {}
-    candidate_indices: List[int] = []
-    if q_tokens:
-        lists = [token_index.get(t) for t in q_tokens if t in token_index]
-        lists = [lst for lst in lists if lst]
-        if lists:
-            lists.sort(key=len)
-            intersect = set(lists[0])
-            for lst in lists[1:]:
-                intersect.intersection_update(lst)
-                if not intersect:
-                    break
-            if intersect:
-                candidate_indices = list(intersect)
-        if not candidate_indices and lists:
-            union_set = set()
-            for lst in lists:
-                union_set.update(lst)
-            candidate_indices = list(union_set)
-    if not candidate_indices:
-        candidate_indices = list(range(len(raw_index)))
-    if len(candidate_indices) > 800:
-        candidate_indices = candidate_indices[:800]
-
-    choices = []
-    choice_to_idx = []
-    for idx in candidate_indices:
-        entry = raw_index[idx]
-        he_ref = entry.get("_he_ref_norm") or ""
-        he_title = entry.get("_he_title_norm") or ""
-        ref = entry.get("_ref_norm") or ""
-        title = entry.get("_title_norm") or ""
-        choice = " ".join(p for p in (he_ref, he_title, ref, title) if p) or entry.get("_search_blob", "")
-        choices.append(choice)
-        choice_to_idx.append(idx)
-
-    matches = process.extract(
-        q_norm,
-        choices,
-        processor=None,
-        scorer=fuzz.token_set_ratio,
-        limit=max(limit * 3, 50),
-        score_cutoff=60,
-    )
-
-    fallback_ranked = []
-    for idx, entry in enumerate(raw_index):
-        is_commentary_path = any("מפרשים" in str(p) for p in entry.get("path_he") or []) or any("commentary" in str(p).lower() for p in entry.get("path") or [])
-        if is_commentary_path:
-            continue
-        he_ref_tokens = set((entry.get("_he_ref_norm") or "").split())
-        if he_ref_tokens and he_ref_tokens.issubset(q_tokens) and len(he_ref_tokens) > 0 and len(he_ref_tokens) <= len(q_tokens) + 1:
-            fallback_ranked.append((500, len(entry.get("path_he") or entry.get("path") or []), idx))
-
-    ranked = []
-    seen = set()
-    for choice, score, match_idx in matches:
-        entry_idx = choice_to_idx[match_idx]
-        if entry_idx in seen:
-            continue
-        seen.add(entry_idx)
-        raw_entry = raw_index[entry_idx]
-        he_ref_norm = raw_entry.get("_he_ref_norm") or ""
-        he_title_norm = raw_entry.get("_he_title_norm") or ""
-        path_he = raw_entry.get("path_he") or []
-        path_en = raw_entry.get("path") or []
-        path_len = len(path_he or path_en)
-        score_adj = score
-        if he_ref_norm == q_norm:
-            score_adj += 80
-        elif he_ref_norm.startswith(q_norm):
-            score_adj += 30
-        elif q_norm in he_ref_norm:
-            score_adj += 15
-        else:
-            he_ref_tokens = set(he_ref_norm.split()) if he_ref_norm else set()
-            if he_ref_tokens:
-                tokens_len = len(he_ref_tokens)
-                overlap = len(he_ref_tokens & q_tokens)
-                if overlap == len(he_ref_tokens) and overlap > 0:
-                    score_adj += 70
-                elif q_tokens and q_tokens.issubset(he_ref_tokens) and len(he_ref_tokens) <= len(q_tokens) + 1:
-                    score_adj += 40
-                elif overlap:
-                    score_adj += 15
-                if tokens_len <= len(q_tokens):
-                    score_adj += 10
-                elif tokens_len <= len(q_tokens) + 1:
-                    score_adj += 50
-                else:
-                    score_adj -= (tokens_len - len(q_tokens) - 1) * 20
-        if he_title_norm == q_norm:
-            score_adj += 20
-        is_commentary_path = any("מפרשים" in str(p) for p in path_he) or any("commentary" in str(p).lower() for p in path_en)
-        if is_commentary_path:
-            score_adj -= 40
-        else:
-            score_adj += 60
-        if path_len > 0:
-            if path_len <= 3:
-                score_adj += 30
-            else:
-                excess = max(path_len - 3, 0)
-                score_adj -= excess * 8
-        ranked.append((score_adj, path_len, entry_idx))
-    ranked.extend(fallback_ranked)
-
-    ranked.sort(key=lambda x: (-x[0], x[1]))
-    primary_candidates = []
-    for _, _, entry_idx in ranked:
-        entry = raw_index[entry_idx]
-        is_commentary_path = any("מפרשים" in str(p) for p in entry.get("path_he") or []) or any("commentary" in str(p).lower() for p in entry.get("path") or [])
-        if is_commentary_path:
-            continue
-        he_ref_tokens = set((entry.get("_he_ref_norm") or "").split())
-        if not he_ref_tokens:
-            continue
-        overlap = len(he_ref_tokens & q_tokens)
-        primary_candidates.append((overlap, len(he_ref_tokens), entry_idx))
-    primary_candidates.sort(key=lambda x: (-x[0], x[1]))
-
-    primary = []
-    secondary = []
-    for score_adj, _, entry_idx in ranked:
-        entry = dict(raw_index[entry_idx])
-        is_commentary_path = any("מפרשים" in str(p) for p in entry.get("path_he") or []) or any("commentary" in str(p).lower() for p in entry.get("path") or [])
-        entry.pop("_search_blob", None)
-        entry.pop("_tokens", None)
-        entry.pop("_he_ref_norm", None)
-        entry.pop("_he_title_norm", None)
-        entry.pop("_title_norm", None)
-        entry.pop("_ref_norm", None)
-        entry["score"] = score_adj
-        if is_commentary_path:
-            secondary.append(entry)
-        else:
-            primary.append(entry)
-    prioritized_ids = {idx for _, _, idx in primary_candidates[:3]}
-    prioritized = [p for p in primary if p.get("ref") in {raw_index[idx].get("ref") for idx in prioritized_ids}]
-    remaining_primary = [p for p in primary if p not in prioritized]
-    results = (prioritized + remaining_primary + secondary)[:limit]
-
-    if len(result_cache) >= RESULT_CACHE_SIZE:
-        result_cache.popitem(last=False)
-    result_cache[q_norm] = results
-    return results
+    return []
 
 
-def select_best_entry(ref: str, entries: List[Dict[str, Any]]) -> Dict[str, Any] | None:
-    target = normalize_search_text(ref)
-    if not target:
-        return None
-    best = None
-    best_score = -1
-    for entry in entries:
-        he_ref_norm = entry.get("_he_ref_norm") or ""
-        ref_norm = entry.get("_ref_norm") or ""
-        title_norm = entry.get("_title_norm") or ""
-        score = -1
-        if target == he_ref_norm or target == ref_norm:
-            score = 1000
-        else:
-            score = max(
-                fuzz.token_set_ratio(target, he_ref_norm or ref_norm),
-                fuzz.token_set_ratio(target, title_norm),
-            )
-        if score > best_score:
-            best_score = score
-            best = entry
-    return best if best_score >= 50 else None
-
-
-def ensure_root_loaded() -> List[Dict[str, Any]]:
-    global root_cache
-    if root_cache is None:
-        if os.path.exists(ROOT_FILE):
-            try:
-                with open(ROOT_FILE, "r") as f:
-                    root_cache = json.load(f)
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=500, detail="Invalid menu data")
-        else:
-            root_cache = load_full_tree()
-    return root_cache or []
-
-
-def find_node_by_path(path: List[str], path_he: List[str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any] | None, List[str], List[str]]:
-    tree = ensure_root_loaded()
-    current_level = tree
-    parent = None
-    parent_path = []
-    parent_path_he = []
-    for idx, title in enumerate(path):
-        he_title = path_he[idx] if idx < len(path_he) else None
-        node = next(
-            (
-                n
-                for n in current_level
-                if n.get("title") == title or (he_title and n.get("heTitle") == he_title)
-            ),
-            None,
-        )
-        if not node:
-            return current_level, None, parent_path, parent_path_he
-        if node.get("hasChildren") and not node.get("children") and node.get("slug"):
-            node["children"] = load_chunk(node["slug"])
-        if idx < len(path) - 1:
-            parent = node
-            parent_path = path[: idx + 1]
-            parent_path_he = path_he[: idx + 1]
-            current_level = node.get("children") or []
-        else:
-            parent_path = path[:-1]
-            parent_path_he = path_he[:-1]
-            return parent.get("children") if parent else tree, node, parent_path, parent_path_he
-    return current_level, None, parent_path, parent_path_he
-
-
-def slim_node(node: Dict[str, Any]) -> Dict[str, Any]:
-    keys = ["title", "heTitle", "ref", "slug", "type"]
-    return {k: node.get(k) for k in keys if k in node}
-
-
-def load_children(node: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if node.get("hasChildren") and not node.get("children") and node.get("slug"):
-        node["children"] = load_chunk(node["slug"])
-    return node.get("children") or []
-
-
-def find_by_ref(
-    nodes: List[Dict[str, Any]],
-    ref: str,
-    path: List[str],
-    path_he: List[str],
-    parent: Dict[str, Any] | None,
-) -> Tuple[List[Dict[str, Any]] | None, Dict[str, Any] | None, List[str], List[str]]:
-    for node in nodes:
-        node_ref = node.get("ref")
-        children = load_children(node)
-        current_path = path + [node.get("title") or ""]
-        current_path_he = path_he + [node.get("heTitle") or ""]
-        if node_ref and node_ref == ref:
-            siblings_level = nodes
-            parent_path = path
-            parent_path_he = path_he
-            return siblings_level, node, parent_path, parent_path_he
-        if children:
-            found = find_by_ref(children, ref, current_path, current_path_he, node)
-            if found[1] is not None:
-                return found
-    return None, None, [], []
+# Removed JSON-based traversal functions
 
 
 @router.get("/siblings/{ref:path}", response_model=Dict[str, Any])
 async def get_siblings(ref: str):
-    mongo_doc = None
     try:
         collection = MongoDatabase.get_collection("library_siblings")
-        mongo_doc = await collection.find_one({"ref": ref}, {"_id": 0})
-    except Exception:
-        mongo_doc = None
-
-    entries = None
-    entry = None
-    resolved_ref = ref
-    path: List[str] = []
-    path_he: List[str] = []
-
-    if mongo_doc is None:
-        entries = load_search_index()
-        if not entries:
-            raise HTTPException(status_code=404, detail="Search index not available")
-        entry = select_best_entry(ref, entries)
-        if not entry:
-            raise HTTPException(status_code=404, detail="Source not found")
-        resolved_ref = entry.get("ref") or ref
-        path = entry.get("path") or []
-        path_he = entry.get("path_he") or []
-        try:
-            collection = MongoDatabase.get_collection("library_siblings")
-            mongo_doc = await collection.find_one({"ref": resolved_ref}, {"_id": 0})
-        except Exception:
-            mongo_doc = None
-
-    if mongo_doc:
-        return mongo_doc
-
-    root = ensure_root_loaded()
-    siblings_level, current_node, parent_path, parent_path_he = find_by_ref(
-        root, resolved_ref, [], [], None
-    )
-    if current_node is None:
-        siblings_level, current_node, parent_path, parent_path_he = find_node_by_path(path, path_he)
-    if current_node is None:
-        raise HTTPException(status_code=404, detail="Source path not found in library")
-    if siblings_level is None:
-        siblings_level = []
-    siblings = [slim_node(node) for node in siblings_level]
-    parent_node = None
-    if parent_path:
-        parent_level, parent_node_candidate, _, _ = find_node_by_path(parent_path, parent_path_he)
-        parent_node = slim_node(parent_node_candidate) if parent_node_candidate else None
-        if parent_node_candidate and parent_node_candidate.get("hasChildren") and not parent_node_candidate.get("children") and parent_node_candidate.get("slug"):
-            parent_node_candidate["children"] = load_chunk(parent_node_candidate["slug"])
-            siblings = [slim_node(n) for n in parent_node_candidate.get("children") or siblings_level]
-    return {
-        "current_ref": resolved_ref,
-        "path": path,
-        "path_he": path_he,
-        "parent_path": parent_path,
-        "parent_path_he": parent_path_he,
-        "parent": parent_node,
-        "siblings": siblings,
-    }
+        # Try finding by ref
+        doc = await collection.find_one({"ref": ref}, {"_id": 0})
+        
+        if not doc:
+            # If not found by exact ref, maybe it's a slug or title (our _id)
+            doc = await collection.find_one({"_id": ref}, {"_id": 0})
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail="Source not found in library")
+            
+        # Map fields to match fontend's LibrarySiblingsResponse
+        path = doc.get("path") or []
+        path_he = doc.get("path_he") or []
+        
+        return {
+            "current_ref": doc.get("ref") or str(doc.get("_id") or ""),
+            "path": path,
+            "path_he": path_he,
+            "parent_path": path[:-1] if path else [],
+            "parent_path_he": path_he[:-1] if path_he else [],
+            "parent": doc.get("parent"),
+            "siblings": doc.get("siblings", []),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching siblings for {ref}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -22,10 +22,23 @@ def load_tree() -> List[Dict[str, Any]]:
     raise FileNotFoundError(f"Tree file not found: {TREE_FILE}")
 
 
-def slim_node(node: Dict[str, Any]) -> Dict[str, Any]:
+def slim_node(node: Dict[str, Any], path: List[str] = []) -> Dict[str, Any]:
+    if not node:
+        return None
+    
+    # Use ref or slug if available, otherwise construct the path-based ID we use in MongoDB
+    node_id = node.get("ref") or node.get("slug") or node.get("title")
+    path_str = "/".join(path)
+    doc_id = f"{path_str}/{node_id}" if path_str else node_id
+
     keys = ["title", "heTitle", "ref", "slug", "type", "hasChildren"]
     res = {k: node.get(k) for k in keys if k in node}
-    if node.get("children"):
+    
+    # Fallback for slug so the frontend always has an identifier
+    if not res.get("slug"):
+        res["slug"] = node.get("ref") or doc_id
+        
+    if node.get("children") or node.get("hasChildren"):
         res["hasChildren"] = True
     return res
 
@@ -42,61 +55,62 @@ def load_chunk_if_needed(node: Dict[str, Any]) -> List[Dict[str, Any]]:
     return node.get("children") or []
 
 
-def get_upsert_ops(
+def get_records(
     nodes: List[Dict[str, Any]],
-    path: List[str],
-    path_he: List[str],
-    parent_info: Optional[Dict[str, Any]],
-    parent_siblings: List[Dict[str, Any]],
-) -> List[UpdateOne]:
-    ops = []
+    path: List[str] = [],
+    path_he: List[str] = [],
+    parent_info: Optional[Dict[str, Any]] = None,
+    records_dict: Dict[str, Dict[str, Any]] = None
+) -> Dict[str, Dict[str, Any]]:
+    if records_dict is None:
+        records_dict = {}
+    
+    # Pre-slim siblings for the current level
+    slim_siblings = [slim_node(n, path) for n in nodes]
+    slim_parent = slim_node(parent_info, path[:-1]) if parent_info else None
     
     for node in nodes:
         children = load_chunk_if_needed(node)
-        doc_id = node.get("ref") or node.get("slug") or node.get("title")
-        if not doc_id:
+        
+        node_id = node.get("ref") or node.get("slug") or node.get("title")
+        if not node_id:
             continue
+            
+        path_str = "/".join(path)
+        doc_id = f"{path_str}/{node_id}" if path_str else node_id
 
         record = {
             "title": node.get("title"),
             "heTitle": node.get("heTitle"),
             "type": node.get("type"),
-            "path": path.copy(),
-            "path_he": path_he.copy(),
+            "path": path,
+            "path_he": path_he,
             "he_ref": node.get("he_ref") or node.get("heRef"),
             "hasChildren": node.get("hasChildren") or len(children) > 0,
-            "parent": slim_node(parent_info) if parent_info else None,
-            "siblings": [slim_node(n) for n in parent_siblings],
-            "children": [slim_node(c) for c in children],
+            "parent": slim_parent,
+            "siblings": slim_siblings,
+            "children": [slim_node(c, path + [node.get("title", "")]) for c in children],
         }
         
-        if node.get("ref"):
-            record["ref"] = node["ref"]
-        if node.get("slug"):
-            record["slug"] = node["slug"]
+        if node.get("ref"): record["ref"] = node["ref"]
+        if node.get("slug"): record["slug"] = node["slug"]
         
-        ops.append(UpdateOne(
-            {"_id": doc_id},
-            {"$set": record},
-            upsert=True
-        ))
+        # Use a dict to automatically handle any duplicates in the source files
+        records_dict[doc_id] = record
         
         if children:
-            new_path = path + [node.get("title", "")]
-            new_path_he = path_he + [node.get("heTitle", "")]
-            child_ops = get_upsert_ops(
+            get_records(
                 children,
-                new_path,
-                new_path_he,
+                path + [node.get("title", "")],
+                path_he + [node.get("heTitle", "")],
                 node,
-                children,
+                records_dict
             )
-            ops.extend(child_ops)
     
-    return ops
+    return records_dict
 
 
-async def upsert_library_nodes():
+async def populate_library_nodes():
     user = "daniel"
     password = "Hjsjfk74jkffdDF"
     ip = "155.138.219.192"
@@ -110,42 +124,37 @@ async def upsert_library_nodes():
     print("Loading tree...")
     tree = load_tree()
     
-    print("Traversing tree to generate upsert operations...")
-    ops = get_upsert_ops(tree, [], [], None, tree)
+    print("Generating unique records in memory...")
+    records_dict = get_records(tree)
+    records = list(records_dict.items())
+    print(f"Generated {len(records)} unique records")
     
-    print(f"Generated {len(ops)} upsert operations")
+    print("Dropping existing collection...")
+    await collection.drop()
     
-    print("Cleaning up indices...")
-    try:
-        await collection.drop_index("ref_1")
-    except Exception:
-        pass
-    try:
-        await collection.drop_index("slug_1")
-    except Exception:
-        pass
-
-    if ops:
-        batch_size = 2000
-        total_processed = 0
-        
-        for i in range(0, len(ops), batch_size):
-            batch = ops[i:i + batch_size]
-            await collection.bulk_write(batch, ordered=False)
-            total_processed += len(batch)
-            print(f"  Processed {total_processed}/{len(ops)} records ({(total_processed/len(ops)*100):.1f}%)")
+    print("Inserting records in large batches...")
+    if records:
+        batch_size = 5000
+        total = len(records)
+        for i in range(0, total, batch_size):
+            batch = records[i:i + batch_size]
+            ops = [
+                UpdateOne({"_id": doc_id}, {"$set": record}, upsert=True)
+                for doc_id, record in batch
+            ]
+            await collection.bulk_write(ops, ordered=False)
+            print(f"  Processed {min(i + batch_size, total)}/{total} records ({(min(i + batch_size, total)/total*100):.1f}%)")
     
-    print("Creating index on ref...")
-    await collection.create_index("ref", sparse=True)
-    print("Creating index on slug...")
-    await collection.create_index("slug", sparse=True)
-    print("Creating index on path...")
-    await collection.create_index("path")
+    print("Creating indices...")
+    await asyncio.gather(
+        collection.create_index("ref", sparse=True),
+        collection.create_index("slug", sparse=True),
+        collection.create_index("path")
+    )
     
-    print(f"Successfully upserted {len(ops)} records")
-    
+    print(f"Successfully populated {len(records)} records")
     client.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(upsert_library_nodes())
+    asyncio.run(populate_library_nodes())
