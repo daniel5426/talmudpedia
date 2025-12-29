@@ -29,6 +29,7 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
   const isRTL = direction === "rtl";
   const { state } = useSidebar()
   const isCollapsed = state === "collapsed";
+  const internalUpdateRef = React.useRef(false);
 
   const getChildren = React.useCallback(async (node: TreeNode) => {
     if (!node.slug) return [];
@@ -47,6 +48,40 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
     }
   }, []);
 
+  // Sync with store path when it changes externally
+  React.useEffect(() => {
+    if (loading || root.length === 0) return;
+
+    const syncPath = async () => {
+      const isInternal = internalUpdateRef.current;
+      internalUpdateRef.current = false;
+
+      if (isInternal) return;
+
+      // Check if path already matches
+      const currentPathTitles = path.map(n => n.title);
+      if (JSON.stringify(currentPathTitles) === JSON.stringify(libraryPathTitles)) {
+        return;
+      }
+
+      // External update (e.g. from SourceSiblingsModal or Home reset)
+      const newPath: TreeNode[] = [];
+      let currentLevel = root;
+      for (const title of libraryPathTitles) {
+        const node = currentLevel.find((n) => n.title === title);
+        if (!node) break;
+        if (node.hasChildren && !node.children && node.slug) {
+          await getChildren(node);
+        }
+        newPath.push(node);
+        currentLevel = node.children || [];
+      }
+      setPath(newPath);
+    };
+
+    syncPath();
+  }, [libraryPathTitles, root, loading, getChildren]);
+
   React.useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -56,12 +91,11 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
         setRoot(data);
         setLoading(false);
 
-        // Restore path from store
-        const savedTitles = initialLibraryPathTitles.current;
-        if (savedTitles.length > 0) {
+        // Initial path restoration
+        if (libraryPathTitles.length > 0) {
           const newPath: TreeNode[] = [];
           let currentLevel = data;
-          for (const title of savedTitles) {
+          for (const title of libraryPathTitles) {
             const node = currentLevel.find((n) => n.title === title);
             if (!node) break;
             if (node.hasChildren && !node.children && node.slug) {
@@ -83,7 +117,7 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
     };
     load();
     return () => { cancelled = true; };
-  }, [getChildren]);
+  }, [getChildren]); // libraryPathTitles intentionally omitted here to handle it in separate effect
 
   const [visibleItems, setVisibleItems] = React.useState(20);
 
@@ -122,6 +156,7 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
       }
       const newPath = [...path, node];
       setPath(newPath);
+      internalUpdateRef.current = true;
       setLibraryPathTitles(newPath.map(n => n.title));
     } else if (node.ref) {
       setActiveSource(node.ref);
@@ -132,10 +167,18 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
     if (path.length > 0) {
       const newPath = path.slice(0, -1);
       setPath(newPath);
+      internalUpdateRef.current = true;
       setLibraryPathTitles(newPath.map(n => n.title));
     } else {
+      // Exit library mode and reset path
+      setLibraryPathTitles([]);
       onBack();
     }
+  };
+
+  const handleHome = () => {
+    setLibraryPathTitles([]);
+    onBack();
   };
 
   if (loading) {
@@ -171,7 +214,7 @@ export function LibraryMenu({ onBack }: LibraryMenuProps) {
         <Button
           variant="ghost"
           size="icon"
-          onClick={onBack}
+          onClick={handleHome}
           className={cn("h-8 w-8", isRTL ? "mr-auto" : "ml-auto")}
           aria-label="Home"
         >

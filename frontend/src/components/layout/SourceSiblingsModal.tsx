@@ -1,12 +1,12 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import {
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { libraryService, type LibrarySiblingsResponse, type LibraryNode } from "@/services/library";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
@@ -132,106 +132,77 @@ export function SourceSiblingsModal({ open, onOpenChange, currentRef }: SourceSi
     `${item.ref || item.slug || item.title || "sibling"}-${idx}`;
 
   return (
-    <CommandDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      showCloseButton={false}
-      className="w-auto max-w-fit sm:max-w-[80vw] p-0"
-      commandProps={{ shouldFilter: false, className: "w-auto min-w-[280px] max-w-[80vw]" }}
-    >
-      <div className="flex items-center justify-between px-4 pt-4" dir={direction}>
-        <div className="flex flex-col">
-          <span className="text-xs text-muted-foreground">
-            {"רשימת מקורות"}
-          </span>
-          <span className="text-base font-semibold">
-            {headerTitle || parentTitle || data?.path_he?.slice(-1)[0] || data?.path?.slice(-1)[0] || currentRef || ""}
-          </span>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="w-[95vw] max-w-[400px] p-0 overflow-hidden"
+      >
+        <DialogHeader className="sr-only">
+          <DialogTitle>רשימת מקורות</DialogTitle>
+          <DialogDescription>בחר מקור מהרשימה</DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center justify-between px-4 pt-4" dir={direction}>
+          <div className="flex flex-col">
+            <span className="text-xs text-muted-foreground">
+              {"רשימת מקורות"}
+            </span>
+            <span className="text-base font-semibold">
+              {headerTitle || parentTitle || data?.path_he?.slice(-1)[0] || data?.path?.slice(-1)[0] || currentRef || ""}
+            </span>
+          </div>
+          <Button variant="outline" className='cursor-pointer' size="sm" onClick={handleOpenSidebar}>
+            <Folder className="size-4" />
+          </Button>
         </div>
-        <Button variant="outline" size="sm" onClick={handleOpenSidebar}>
-          <Folder className="size-4" />
-        </Button>
-      </div>
-      <div className="siblings-scroll-container max-h-[340px] min-h-[340px] overflow-y-scroll border-0" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' } as React.CSSProperties}>
-        <style>{`
-          .siblings-scroll-container {
-            border: none !important;
-          }
-          .siblings-scroll-container::-webkit-scrollbar {
-            display: block !important;
-            width: 8px !important;
-            background: transparent !important;
-            border: none !important;
-            -webkit-appearance: none !important;
-            appearance: none !important;
-          }
-          .siblings-scroll-container::-webkit-scrollbar-track {
-            background: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-            -webkit-box-shadow: none !important;
-            -webkit-border-radius: 0 !important;
-            border-radius: 0 !important;
-          }
-          .siblings-scroll-container::-webkit-scrollbar-thumb {
-            background-color: hsl(var(--border)) !important;
-            border-radius: 4px !important;
-            border: none !important;
-            -webkit-box-shadow: none !important;
-            box-shadow: none !important;
-            outline: none !important;
-          }
-          .siblings-scroll-container::-webkit-scrollbar-thumb:hover {
-            background-color: hsl(var(--muted-foreground) / 0.5) !important;
-          }
-          .siblings-scroll-container::-webkit-scrollbar-corner {
-            background: transparent !important;
-            border: none !important;
-          }
-        `}</style>
-        <CommandList className="overflow-visible">
-          <CommandEmpty className="flex items-center text-sm justify-center min-h-28">
-            {loading ? <Shimmer className="text-sm">טוען...</Shimmer> : error ? error : "לא נמצאו פריטים"}
-          </CommandEmpty>
+        <div 
+          className="siblings-scroll-container max-h-[340px] min-h-[340px] overflow-y-auto border-0 p-1" 
+          style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' } as React.CSSProperties}
+        >
           {loading ? (
-            <CommandGroup>
+            <div className="flex flex-col gap-1 p-1">
               {Array.from({ length: 6 }).map((_, idx) => (
-                <CommandItem key={`skeleton-${idx}`} disabled>
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <div className="h-4 w-40 rounded bg-muted animate-pulse" />
-                    <div className="h-3 w-24 rounded bg-muted animate-pulse" />
-                  </div>
-                </CommandItem>
+                <div key={`skeleton-${idx}`} className="flex min-w-0 flex-1 flex-col gap-1 p-2">
+                  <div className="h-4 w-40 rounded bg-muted animate-pulse" />
+                  <div className="h-3 w-24 rounded bg-muted animate-pulse" />
+                </div>
               ))}
-            </CommandGroup>
+            </div>
+          ) : error ? (
+            <div className="flex items-center text-sm justify-center min-h-28 text-destructive">
+              {error}
+            </div>
           ) : data && data.siblings && data.siblings.length > 0 ? (
-            <CommandGroup>
+            <div className="flex flex-col gap-1">
               {data.siblings.map((item, idx) => (
-                <CommandItem
+                <div
                   key={itemKey(item, idx)}
-                  value={`${item.title || ""} ${item.heTitle || ""}`}
-                  onSelect={() => handleSelect(item)}
+                  onClick={() => handleSelect(item)}
                   className={cn(
-                    "flex items-center gap-2",
-                    isCurrent(item) ? "bg-primary/10 border border-primary/30" : ""
+                    "flex items-center gap-2 px-3 py-2 rounded-md transition-colors cursor-pointer select-none",
+                    "hover:bg-primary/10",
+                    isCurrent(item) ? "bg-primary/5 border border-primary/30" : ""
                   )}
                   ref={(el) => {
                     const key = itemKey(item, idx);
                     itemRefs.current[key] = el;
                   }}
                 >
-                  <div className="flex min-w-0 flex-col" dir={direction}>
-                    <span className="truncate">{item.heTitle || item.title}</span>
+                  <div className="flex min-w-0 flex-col text-sm" dir={direction}>
+                    <span className="truncate font-medium">{item.heTitle || item.title}</span>
                     {item.title && item.heTitle ? (
                       <span className="truncate text-xs text-muted-foreground">{item.title}</span>
                     ) : null}
                   </div>
-                </CommandItem>
+                </div>
               ))}
-            </CommandGroup>
-          ) : null}
-        </CommandList>
-      </div>
-    </CommandDialog>
+            </div>
+          ) : (
+            <div className="flex items-center text-sm justify-center min-h-28 text-muted-foreground">
+              {"לא נמצאו פריטים"}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
