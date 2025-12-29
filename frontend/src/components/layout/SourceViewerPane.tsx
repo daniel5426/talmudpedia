@@ -37,6 +37,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   const setActiveSource = useLayoutStore((state) => state.setActiveSource);
   const activeSource = useLayoutStore((state) => state.activeSource);
   const activePagesAfter = useLayoutStore((state) => state.activePagesAfter);
+  const activeTotalSegments = useLayoutStore((state) => state.activeTotalSegments);
   const setSelectedText = useLayoutStore((state) => state.setSelectedText);
   const refreshTrigger = useLayoutStore((state) => state.refreshTrigger);
 
@@ -71,6 +72,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   const [initialScrollComplete, setInitialScrollComplete] =
     React.useState(false);
   const [siblingsModalOpen, setSiblingsModalOpen] = React.useState(false);
+  const [highlightedGlobalIndices, setHighlightedGlobalIndices] = React.useState<number[]>([]);
   const segmentRefs = React.useRef<(HTMLDivElement | HTMLSpanElement | null)[]>(
     []
   );
@@ -132,13 +134,14 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
 
   // Convert single page to multi-page format
   const convertToMultiPage = (data: SinglePageTextData): MultiPageTextData => {
+    const highlightIndices = data.highlight_indices || [];
     return {
       pages: [
         {
           ref: data.ref,
           segments: data.segments,
-          highlight_index: data.highlight_index,
-          highlight_indices: data.highlight_indices,
+          highlight_index: highlightIndices.length > 0 ? highlightIndices[0] : null,
+          highlight_indices: highlightIndices,
         },
       ],
       main_page_index: 0,
@@ -164,14 +167,27 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       scrollTimeoutRef.current = null;
     }
 
-    // Reset the scroll flag when sourceId changes (and it's a new fetch)
+    // Reset state for new source navigation
     hasScrolledToHighlight.current = false;
     setInitialScrollComplete(false);
+    setHighlightedGlobalIndices([]); // Clear highlights when loading new source
+    segmentRefs.current = []; // CRITICAL: Clear old element references
+    pageContainerRefs.current = [];
     setCanLoadMore({ top: true, bottom: true });
 
     async function fetchText() {
       setIsLoading(true);
+      setTextData(null); // CRITICAL: Clear stale data to prevent 'ghost scrolls'
       setError(null);
+
+      // Reset scroll to top before loading new source to ensure consistent scrolling behavior
+      const scrollViewport = scrollAreaRef.current?.querySelector(
+        "[data-radix-scroll-area-viewport]"
+      ) as HTMLElement;
+      if (scrollViewport) {
+        scrollViewport.scrollTop = 0;
+      }
+
       try {
         const data = await sourceService.getInitial(
           sourceId!,
@@ -203,65 +219,153 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   }, [sourceId, refreshTrigger, activePagesAfter]);
 
   // Calculate global segment index and find highlighted segments
-  const getGlobalSegmentData = React.useCallback(() => {
-    if (!textData)
-      return { totalSegments: 0, highlightedGlobalIndices: [] as number[] };
+  const calculateHighlights = React.useCallback(() => {
+    if (!textData) {
+      setHighlightedGlobalIndices([]);
+      return;
+    }
+
+    // Only highlight if activeTotalSegments is provided (meaning it came from search, not library)
+    if (!activeTotalSegments) {
+      setHighlightedGlobalIndices([]);
+      return;
+    }
 
     let globalIndex = 0;
-    const highlightedGlobalIndices: number[] = [];
+    const calculatedHighlights: number[] = [];
 
+    // First pass: Find all backend-provided highlights
+    const backendHighlights: number[] = [];
     textData.pages.forEach((page, pageIndex) => {
       page.segments.forEach((_, segmentIndex) => {
-        // Check for single highlight (legacy/scroll target)
-        const isSingleHighlight =
-          pageIndex === textData.main_page_index &&
-          page.highlight_index === segmentIndex;
+        const isHighlighted =
+          (pageIndex === textData.main_page_index &&
+            page.highlight_index !== null &&
+            page.highlight_index === segmentIndex) ||
+          (page.highlight_indices && page.highlight_indices.includes(segmentIndex));
 
-        // Check for range highlight
-        const isRangeHighlight = page.highlight_indices?.includes(segmentIndex);
-
-        if (isSingleHighlight || isRangeHighlight) {
-          highlightedGlobalIndices.push(globalIndex);
+        if (isHighlighted) {
+          backendHighlights.push(globalIndex);
         }
         globalIndex++;
       });
     });
 
-    return { totalSegments: globalIndex, highlightedGlobalIndices };
-  }, [textData]);
+    // Fallback: If no backend highlights, try to find the segment from activeSource ref
+    if (backendHighlights.length === 0 && activeSource) {
+      // Improved regex to handle colons, spaces, and commas followed by numbers
+      const match = activeSource.match(/[:\s,]+(\d+)(?:-\d+)?$/);
+      if (match) {
+        const segNum = parseInt(match[1], 10);
+        const targetIndex = segNum - 1;
+        
+        let currentIndex = 0;
+        textData.pages.forEach((page, pageIndex) => {
+          page.segments.forEach((_, segmentIndex) => {
+            if (pageIndex === textData.main_page_index && segmentIndex === targetIndex) {
+              backendHighlights.push(currentIndex);
+            }
+            currentIndex++;
+          });
+        });
+      }
+    }
 
-  // Scroll to highlighted segment when data loads (only on initial load)
+    // If we have total segments count, we can manually determine the range starting from the first highlight
+    if (backendHighlights.length > 0 && activeTotalSegments > 1) {
+      const start = backendHighlights[0];
+      for (let i = 0; i < activeTotalSegments; i++) {
+        calculatedHighlights.push(start + i);
+      }
+    } else {
+      // Use backend-provided highlights (or our parsed fallback)
+      calculatedHighlights.push(...backendHighlights);
+    }
+
+    setHighlightedGlobalIndices(calculatedHighlights);
+  }, [textData, activeTotalSegments, activeSource]);
+
+  // Recalculate highlights whenever textData or related dependencies change
   React.useEffect(() => {
-    // Only scroll to highlight if we haven't done it yet
-    if (hasScrolledToHighlight.current) return;
+    calculateHighlights();
+  }, [calculateHighlights]);
 
-    const { highlightedGlobalIndices } = getGlobalSegmentData();
+  // Scroll to highlighted segment when data loads
+  React.useEffect(() => {
+    if (!textData || hasScrolledToHighlight.current) return;
 
-    // Scroll to the first highlighted segment
-    if (
-      highlightedGlobalIndices.length > 0 &&
-      segmentRefs.current[highlightedGlobalIndices[0]]
-    ) {
-      isScrollingProgrammatically.current = true;
-      hasScrolledToHighlight.current = true; // Mark that we've scrolled
+    // Only scroll if we have highlights (i.e., loaded from search, not library)
+    if (highlightedGlobalIndices.length === 0) {
+      setInitialScrollComplete(true);
+      return;
+    }
 
-      const targetElement = segmentRefs.current[highlightedGlobalIndices[0]];
+    let retryCount = 0;
+    const maxRetries = 30; // 3 seconds
+    let lastOffsetTop = -1;
+    let stableCount = 0;
+    
+    const attemptScroll = () => {
+      // Re-verify we still have data and haven't scrolled yet
+      if (!textData) return;
+
+      const targetIndex = highlightedGlobalIndices[0];
+      if (targetIndex === undefined) {
+        setInitialScrollComplete(true);
+        return;
+      }
+      const targetElement = segmentRefs.current[targetIndex] as HTMLElement;
       const scrollViewport = scrollAreaRef.current?.querySelector(
         "[data-radix-scroll-area-viewport]"
-      );
+      ) as HTMLElement;
 
-      if (targetElement && scrollViewport) {
-        targetElement.scrollIntoView({ block: "center", behavior: "auto" });
-        isScrollingProgrammatically.current = false;
-        setInitialScrollComplete(true);
+      if (targetElement && scrollViewport && targetElement.offsetHeight > 0) {
+        const currentOffsetTop = targetElement.offsetTop;
+        
+        // Wait for the layout to reach a steady state
+        // Use >= 0 because elements at the top have offset 0
+        if (currentOffsetTop >= 0 && currentOffsetTop === lastOffsetTop) {
+          stableCount++;
+        } else {
+          lastOffsetTop = currentOffsetTop;
+          stableCount = 0;
+        }
+
+        // Once the target has stopped 'jumping' for 300ms, we trigger the final scroll
+        if (stableCount >= 3) {
+          isScrollingProgrammatically.current = true;
+          hasScrolledToHighlight.current = true;
+
+          const viewportHeight = scrollViewport.clientHeight;
+          const targetScrollTop = currentOffsetTop - (viewportHeight * 0.3);
+          
+          // Smoother, more controlled scroll
+          scrollViewport.scrollTo({
+            top: targetScrollTop,
+            behavior: "smooth"
+          });
+          
+          // Hold the lock for 1200ms to allow the smooth animation to finish
+          setTimeout(() => {
+            isScrollingProgrammatically.current = false;
+            setInitialScrollComplete(true);
+          }, 1500); // Increased timeout slightly to ensure completion
+          return;
+        }
+
+        retryCount++;
+        setTimeout(attemptScroll, 100);
+      } else if (retryCount < maxRetries) {
+        retryCount++;
+        setTimeout(attemptScroll, 100);
       } else {
         setInitialScrollComplete(true);
       }
-    } else if (textData) {
-      // If data loaded but no highlight (or element missing), mark as done
-      setInitialScrollComplete(true);
-    }
-  }, [textData, getGlobalSegmentData]);
+    };
+
+    const timer = setTimeout(attemptScroll, 100);
+    return () => clearTimeout(timer);
+  }, [textData, highlightedGlobalIndices]);
 
   // Load previous pages
     const loadPreviousPages = React.useCallback(async () => {
@@ -485,17 +589,31 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
               // This prevents reopening the pane when it's animating out
               if (!activeSource) return;
 
-              const pageRef = textData.pages[i].ref.trim();
-              if (currentRef !== pageRef) {
-                setCurrentRef(pageRef);
+              const rawPageRef = textData.pages[i].ref.trim();
+              // Normalize the page ref the same way store does for reliable comparison
+              const pageRef = rawPageRef.replace(/\s*:\s*/g, ":").replace(/\s+/g, " ");
+              
+              const isActiveRefSamePage = activeSource && (
+                activeSource === pageRef || 
+                activeSource.startsWith(pageRef + ":") || 
+                activeSource.startsWith(pageRef + " ") ||
+                activeSource.startsWith(pageRef + ",")
+              );
+
+              if (currentRef !== rawPageRef && !isActiveRefSamePage) {
+                setCurrentRef(rawPageRef);
                 
                 if (scrollTimeoutRef.current) {
                   clearTimeout(scrollTimeoutRef.current);
                 }
                 
                 scrollTimeoutRef.current = setTimeout(() => {
+                  // Final check - only update if still on that page and not scrolling programmatically
+                  if (isScrollingProgrammatically.current) return;
+                  
                   ignoreSourceUpdateRef.current = true;
-                  setActiveSource(pageRef);
+                  // Only update the page reference, leave targeting info intact if on same page
+                  setActiveSource(rawPageRef);
                 }, 500);
               }
               break;
@@ -670,18 +788,15 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   let globalIndex = 0;
 
   if (textData) {
-    textData.pages.forEach((page, pageIndex) => {
+    textData.pages.forEach((page) => {
       const pageSegments: Array<{
         segment: string;
         globalIndex: number;
         isHighlighted: boolean;
       }> = [];
 
-      page.segments.forEach((segment, segmentIndex) => {
-        const isHighlighted =
-          (pageIndex === textData.main_page_index &&
-            segmentIndex === page.highlight_index) ||
-          (page.highlight_indices?.includes(segmentIndex) ?? false);
+      page.segments.forEach((segment) => {
+        const isHighlighted = highlightedGlobalIndices.includes(globalIndex);
 
         pageSegments.push({
           segment,

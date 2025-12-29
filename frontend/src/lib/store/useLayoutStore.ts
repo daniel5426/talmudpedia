@@ -23,6 +23,7 @@ interface LayoutState {
   isSourceListOpen: boolean;
   activeSource: string | null;
   activePagesAfter: number | null;
+  activeTotalSegments: number | null;
   activeChatId: string | null;
   sourceViewerWidth: number;
   sourceList: Source[];
@@ -32,7 +33,7 @@ interface LayoutState {
   refreshTrigger: number;
   toggleSourceList: () => void;
   setSourceListOpen: (isOpen: boolean) => void;
-  setActiveSource: (sourceId: string | null, options?: { pagesAfter?: number | null }) => void;
+  setActiveSource: (sourceId: string | null, options?: { pagesAfter?: number | null, totalSegments?: number | null }) => void;
   setActiveChatId: (chatId: string | null) => void;
   setSourceViewerWidth: (width: number) => void;
   setSourceList: (sources: Source[]) => void;
@@ -53,6 +54,7 @@ export const useLayoutStore = create<LayoutState>()(
       isSourceListOpen: false, // Closed by default until sources are available
       activeSource: null,
       activePagesAfter: null,
+      activeTotalSegments: null,
       activeChatId: null,
       sourceViewerWidth: 600, // Default width for source viewer pane
       sourceList: [],
@@ -66,6 +68,7 @@ export const useLayoutStore = create<LayoutState>()(
         set((state) => ({
           activeSource: normalizeRef(sourceId),
           activePagesAfter: options?.pagesAfter ?? null,
+          activeTotalSegments: options?.totalSegments ?? null,
           refreshTrigger: state.refreshTrigger + 1,
         })),
       setActiveChatId: (chatId) => set({ activeChatId: chatId }),
@@ -76,10 +79,11 @@ export const useLayoutStore = create<LayoutState>()(
       setLibraryPathTitles: (titles) => set({ libraryPathTitles: titles }),
     }),
     {
-      name: 'layout-storage',
+      name: 'reshet-layout-storage',
       partialize: (state) => ({
         activeSource: state.activeSource,
         activePagesAfter: state.activePagesAfter,
+        activeTotalSegments: state.activeTotalSegments,
         isSourceListOpen: state.isSourceListOpen,
         sourceViewerWidth: state.sourceViewerWidth,
         isLibraryMode: state.isLibraryMode,

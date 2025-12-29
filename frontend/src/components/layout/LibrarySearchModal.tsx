@@ -12,6 +12,7 @@ import { Shimmer } from "@/components/ai-elements/shimmer";
 import { libraryService, normalizeLibraryQuery } from "@/services";
 import type { LibrarySearchResult } from "@/services/library";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
+import { openSource } from "@/lib/sourceUtils";
 
 interface LibrarySearchModalProps {
   open: boolean;
@@ -27,7 +28,6 @@ export function LibrarySearchModal({ open, onOpenChange }: LibrarySearchModalPro
 
   const setLibraryMode = useLayoutStore((state) => state.setLibraryMode);
   const setLibraryPathTitles = useLayoutStore((state) => state.setLibraryPathTitles);
-  const setActiveSource = useLayoutStore((state) => state.setActiveSource);
 
   React.useEffect(() => {
     if (searchTimeout.current) {
@@ -92,11 +92,11 @@ export function LibrarySearchModal({ open, onOpenChange }: LibrarySearchModalPro
   const handleOpenSourceResult = React.useCallback(
     (item: LibrarySearchResult) => {
       if (!item.ref) return;
-      setActiveSource(item.ref);
+      openSource(item.ref);
       setLibraryMode(false);
       onOpenChange(false);
     },
-    [setActiveSource, setLibraryMode, onOpenChange]
+    [setLibraryMode, onOpenChange]
   );
 
   return (

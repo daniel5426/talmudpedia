@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/hover-card";
 import { cn } from "@/lib/utils";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
+import { openSource } from "@/lib/sourceUtils";
 import {
   type ComponentProps,
   createContext,
@@ -247,6 +248,9 @@ export type InlineCitationSourceProps = ComponentProps<"div"> & {
   url?: string;
   description?: string;
   sourceRef?: string;
+  totalSegments?: number;
+  firstRef?: string;
+  rangeRef?: string;
 };
 
 export const InlineCitationSource = ({
@@ -254,17 +258,20 @@ export const InlineCitationSource = ({
   url,
   description,
   sourceRef,
+  totalSegments,
+  firstRef,
+  rangeRef,
   className,
   children,
   ...props
 }: InlineCitationSourceProps) => {
   const handleClick = async () => {
-    const targetSource = sourceRef || title;
+    const targetSource = rangeRef || firstRef || sourceRef || title;
     if (targetSource) {
-      // Import the store dynamically to avoid circular dependencies
-      const { useLayoutStore } = await import('@/lib/store/useLayoutStore');
-      const { setActiveSource } = useLayoutStore.getState();
-      setActiveSource(targetSource);
+      openSource(targetSource, { 
+        pagesAfter: 2,
+        totalSegments: totalSegments || 1
+      });
     }
   };
 

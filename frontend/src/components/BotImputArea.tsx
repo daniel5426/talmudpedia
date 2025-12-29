@@ -35,6 +35,7 @@ interface BotImputAreaProps {
   isVoiceModeActive?: boolean;
   onToggleVoiceMode?: () => void;
   analyser?: AnalyserNode | null;
+  animate?: boolean;
 }
 
 export function BotImputArea({ 
@@ -45,7 +46,8 @@ export function BotImputArea({
   onStop,
   isVoiceModeActive,
   onToggleVoiceMode,
-  analyser
+  analyser,
+  animate = true
 }: BotImputAreaProps) {
   const { direction } = useDirection();
   const selectedText = useLayoutStore((state) => state.selectedText);
@@ -88,7 +90,7 @@ export function BotImputArea({
   }
 
    return (
-    <div className="animate-in w-full fade-in slide-in-from-bottom-4 duration-500">
+    <div className={cn("w-full", animate && "animate-in fade-in slide-in-from-bottom-4 duration-500")}>
       <PromptInputProvider>
         <PromptInputAttachments>
           {(attachment) => <NewPromptInputAttachment data={attachment} />}

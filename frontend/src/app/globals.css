@@ -2,6 +2,15 @@
 @import "tw-animate-css";
 @import "../styles/themes.css";
 
+@font-face {
+  font-family: 'Shmulik';
+  src: url('/shmulik/shmulikclm-webfont.woff') format('woff'),
+       url('/shmulik/shmulikclm-webfont.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

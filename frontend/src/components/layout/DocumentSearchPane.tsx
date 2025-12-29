@@ -9,6 +9,7 @@ import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { convertToHebrew } from "@/lib/hebrewUtils";
 import { searchService } from "@/services/search";
+import { openSource } from "@/lib/sourceUtils";
 
 const QUERY_BUBBLE_TITLE = "חפש בכל התורה כולה במשפט אחד";
 
@@ -94,8 +95,11 @@ export function DocumentSearchPane() {
     // Priority: range_ref > first_ref > ref
     let targetRef = doc.range_ref || doc.first_ref || doc.ref;
 
-    // Set active source with a buffer of 2 pages after
-    setActiveSource(targetRef, { pagesAfter: 2 });
+    // Use standardized openSource utility
+    openSource(targetRef, { 
+      pagesAfter: 2,
+      totalSegments: doc.total_segments || 1
+    });
   };
 
 

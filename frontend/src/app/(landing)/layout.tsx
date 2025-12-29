@@ -34,7 +34,7 @@ export default function LandingLayout({
           alt="Kesher Logo"
           width={1800}
           height={1800}
-          className="absolute w-[min(70vw,700px)] opacity-20 -translate-x-[40%] -translate-y-[20%] top-[300px]"
+          className="absolute w-[min(90vw,300px)] md:w-[min(70vw,700px)] opacity-20 -translate-x-[40%] -translate-y-[20%] top-[200px] md:top-[300px]"
           priority
         />
         <Image
@@ -42,7 +42,7 @@ export default function LandingLayout({
           alt="Kesher Logo"
           width={1800}
           height={1800}
-          className="absolute w-[min(70vw,700px)] opacity-20 translate-x-[40%] translate-y-[50%] right-0"
+          className="absolute w-[min(90vw,300px)] md:w-[min(70vw,700px)] opacity-20 translate-x-[40%] translate-y-[50%] right-0"
           priority
         />
         <Image
@@ -50,7 +50,7 @@ export default function LandingLayout({
           alt="Kesher Logo"
           width={1800}
           height={1800}
-          className="absolute w-[min(70vw,200px)] opacity-90 -translate-x-[80%] translate-y-[60%] right-0 filter brightness-0 invert"
+          className="absolute w-[min(50vw,100px)] md:w-[min(70vw,200px)] opacity-90 -translate-x-[80%] translate-y-[60%] right-0 filter brightness-0 invert"
           priority
         />
 
@@ -60,12 +60,13 @@ export default function LandingLayout({
         <main className="bg-transparent flex-1">{children}</main>
         {/* Footer */}
         <footer className="relative z-10 w-full py-12 px-4 border-t border-white/10 bg-white/5 backdrop-blur-sm mt-auto">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="flex flex-col items-center md:items-start">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start gap-6">
+            <div className="flex flex-col md:items-start">
               <div className="text-2xl font-bold text-white mb-2">רשת</div>
               <p className="text-white/60 text-sm">העתיד של לימוד התורה</p>
             </div>
-            <div className="flex gap-8 text-white/80">
+            <div className="flex gap-3 flex-col text-white/80">
+              <div className="text-white font-semibold mb-2">דפים</div>
               <a href="/company" className="hover:text-white transition-colors">החברה</a>
               <a href="/blog" className="hover:text-white transition-colors">בלוג</a>
               <a href="/contact" className="hover:text-white transition-colors">צור קשר</a>

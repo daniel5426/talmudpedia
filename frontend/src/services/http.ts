@@ -31,6 +31,9 @@ class HttpClient {
     const response = await fetch(url, { ...init, headers });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        useAuthStore.getState().logout();
+      }
       let message = "Request failed";
       try {
         const data = await response.json();

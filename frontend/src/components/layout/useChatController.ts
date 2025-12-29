@@ -23,6 +23,9 @@ export interface Citation {
   description: string;
   sourceRef?: string;
   ref?: string;
+  firstRef?: string;
+  totalSegments?: number;
+  rangeRef?: string;
 }
 export interface ChatMessage {
   id: string;
@@ -407,6 +410,9 @@ export function useChatController(): ChatController {
         ref: c.ref || c.title,
         text: c.description,
         version_title: "Sefaria",
+        first_ref: c.firstRef,
+        total_segments: c.totalSegments,
+        range_ref: c.rangeRef,
       },
     }));
     setSourceList(sources);

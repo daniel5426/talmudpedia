@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Search, PanelLeftIcon } from "lucide-react";
 import { GlassCard } from "../ui/glass-card";
 import { searchService } from "@/services/search";
+import { openSource } from "@/lib/sourceUtils";
 
 export function SourceListPane() {
   // Use selectors to prevent unnecessary re-renders
@@ -88,7 +89,13 @@ export function SourceListPane() {
           {sourceList.map((source) => (
             <GlassCard
               key={source.id}
-              onClick={() => setActiveSource(source.metadata.ref)}
+              onClick={() => openSource(
+                (source.metadata.range_ref as string) || (source.metadata.first_ref as string) || source.metadata.ref, 
+                { 
+                  pagesAfter: 2,
+                  totalSegments: (source.metadata.total_segments as number) || 1
+                }
+              )}
               variant="no_border"
               className="p-2"
             >

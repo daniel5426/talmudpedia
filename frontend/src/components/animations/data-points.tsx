@@ -15,7 +15,17 @@ export default function DataPoints({ scrollOffset = 0 }: DataPointsProps) {
   const mouseRef = useRef(new THREE.Vector2());
   const [hoveredLabel, setHoveredLabel] = useState<string | null>(null);
   const [labelPosition, setLabelPosition] = useState({ x: 0, y: 0 });
+  const [isMobile, setIsMobile] = useState(false);
   const isHoveringRef = useRef(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   const dataPoints = [
     "תורה", "נביאים", "כתובים", "תלמוד", "משנה",
@@ -45,13 +55,15 @@ export default function DataPoints({ scrollOffset = 0 }: DataPointsProps) {
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
+    const isMobile = window.innerWidth < 768;
+    
     const camera = new THREE.PerspectiveCamera(
       75,
       container.clientWidth / container.clientHeight,
       0.1,
       1000
     );
-    camera.position.z = 12;
+    camera.position.z = isMobile ? 18 : 12;
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -202,14 +214,20 @@ export default function DataPoints({ scrollOffset = 0 }: DataPointsProps) {
       
       <div className="pointer-events-none absolute inset-0 flex flex-col justify-center items-center z-0">
         <div 
-          className="text-6xl md:text-8xl font-light text-gray-300 tracking-wider mb-4 transition-transform duration-75 ease-out"
-          style={{ transform: `translateX(${scrollOffset * 0.3}px)` }}
+          className="text-3xl md:text-6xl lg:text-8xl text-white tracking-wider mb-4 transition-transform duration-75 ease-out"
+          style={{ 
+            transform: `translateX(${scrollOffset * (isMobile ? 0.2 : 0.3)}px)`,
+            fontFamily: 'Shmulik, serif'
+          }}
         >
           תחקור ותעיין
         </div>
         <div 
-          className="text-6xl md:text-8xl font-light text-gray-300 tracking-wider transition-transform duration-75 ease-out"
-          style={{ transform: `translateX(${-scrollOffset * 0.3}px)` }}
+          className="text-3xl md:text-6xl lg:text-8xl  text-white tracking-wider transition-transform duration-75 ease-out"
+          style={{ 
+            transform: `translateX(${-scrollOffset * (isMobile ? 0.2 : 0.3)}px)`,
+            fontFamily: 'Shmulik, serif'
+          }}
         >
           בכל התורה 
         </div>

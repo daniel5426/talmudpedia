@@ -265,6 +265,9 @@ const ReasoningStepsList = ({
                             <InlineCitationSource
                               key={cIdx}
                               sourceRef={citation.sourceRef}
+                              firstRef={citation.firstRef}
+                              totalSegments={citation.totalSegments}
+                              rangeRef={citation.rangeRef}
                               title={convertToHebrew(citation.title)}
                               description={citation.description}
                               className="p-4"
@@ -504,7 +507,7 @@ export function ChatWorkspace({
       )}
       <ConversationContent className={cn("flex-1 p-0 pt-13", isEmptyState && "h-full justify-center relative z-10")}>
         {isEmptyState ? (
-          <div className="flex w-full flex-col items-center text-center pb-34">
+          <div className="flex w-full flex-col items-center text-center pb-34 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <p className="text-3xl font-semibold pb-6">
             גלה מה מחפש לבך בתורה.</p>
             
@@ -515,6 +518,7 @@ export function ChatWorkspace({
                   isVoiceModeActive={isVoiceModeActive}
                   onToggleVoiceMode={handleToggleVoiceMode}
                   analyser={analyser}
+                  animate={false}
                 />
           </div>
         ) : (
@@ -609,6 +613,9 @@ export function ChatWorkspace({
                                           <InlineCitationSource
                                             key={idx}
                                             sourceRef={citation.ref}
+                                            firstRef={citation.firstRef}
+                                            totalSegments={citation.totalSegments}
+                                            rangeRef={citation.rangeRef}
                                             title={convertToHebrew(citation.title)}
                                             description={citation.description}
                                             className="p-4"

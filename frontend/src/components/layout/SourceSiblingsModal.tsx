@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useDirection } from "../direction-provider";
 import { convertToHebrew } from "@/lib/hebrewUtils";
 import { Folder } from "lucide-react";
+import { openSource } from "@/lib/sourceUtils";
 
 interface SourceSiblingsModalProps {
   open: boolean;
@@ -27,7 +28,6 @@ export function SourceSiblingsModal({ open, onOpenChange, currentRef }: SourceSi
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const { direction } = useDirection();
-  const setActiveSource = useLayoutStore((state) => state.setActiveSource);
   const setLibraryMode = useLayoutStore((state) => state.setLibraryMode);
   const setLibraryPathTitles = useLayoutStore((state) => state.setLibraryPathTitles);
   const previousDataRef = React.useRef<LibrarySiblingsResponse | null>(null);
@@ -101,7 +101,7 @@ export function SourceSiblingsModal({ open, onOpenChange, currentRef }: SourceSi
 
   const handleSelect = (item: Partial<LibraryNode>) => {
     if (!item.ref) return;
-    setActiveSource(item.ref);
+    openSource(item.ref);
     onOpenChange(false);
   };
 

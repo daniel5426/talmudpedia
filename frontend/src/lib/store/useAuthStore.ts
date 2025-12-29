@@ -27,7 +27,7 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: () => !!get().token,
     }),
     {
-      name: 'auth-storage',
+      name: 'reshet-auth-storage',
     }
   )
 );
