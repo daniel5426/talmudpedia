@@ -178,11 +178,8 @@
   html,
   body {
     scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* IE and Edge */
-    overflow: hidden; /* Prevent both vertical and horizontal scrolling on the root */
     height: 100dvh;
     width: 100%;
-    position: fixed; /* Keep it fixed to prevent bounce and UI shifts */
     top: 0;
     left: 0;
     right: 0;
