@@ -65,7 +65,7 @@ app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-app.add_middleware(GZipMiddleware, minimum_size=500)
+# app.add_middleware(GZipMiddleware, minimum_size=500)
 
 cors_origins = ['http://localhost:3000', 'http://localhost:3001', 'http://10.0.0.10:3000', 'https://reshet-self.vercel.app']
 
