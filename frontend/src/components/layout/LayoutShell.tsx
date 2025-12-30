@@ -16,6 +16,8 @@ import { useDirection } from '@/components/direction-provider';
 import { useChatController } from '@/components/layout/useChatController';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 
 function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   // Use selectors to prevent unnecessary re-renders
@@ -25,6 +27,10 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   const setActiveChatId = useLayoutStore((state) => state.setActiveChatId);
   const activeChatId = useLayoutStore((state) => state.activeChatId);
   const setSourceViewerWidth = useLayoutStore((state) => state.setSourceViewerWidth);
+  const toggleSourceList = useLayoutStore((state) => state.toggleSourceList);
+  const setSourceListOpen = useLayoutStore((state) => state.setSourceListOpen);
+  const setActiveSource = useLayoutStore((state) => state.setActiveSource);
+  const isMobile = useIsMobile();
   
   const { token, setAuth } = useAuthStore();
   const [lastActiveSource, setLastActiveSource] = React.useState<string | null>(null);
@@ -181,6 +187,16 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   return (
       <SidebarProvider className="h-full bg-transparent" dir={isRTL ? "rtl" : "ltr"}>
         <MobileSidebarTrigger />
+
+        {/* Mobile Source Viewer Overlay (fixed z-[100] outside restrictive stacking contexts) */}
+        {isMobile && activeSource && (
+          <div className="fixed inset-0 z-[100] bg-background animate-in slide-in-from-bottom duration-300 overflow-hidden">
+            <SourceViewerPane 
+              sourceId={activeSource || lastActiveSource} 
+            />
+          </div>
+        )}
+
         <div
           className={cn(
             "relative flex h-full w-full overflow-hidden transition-colors duration-500",
@@ -189,44 +205,57 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
         >
           <SidebarInset className="relative z-10 h-full flex-1 bg-transparent">
             <div className="flex h-full w-full overflow-hidden bg-transparent">
-            {/* Left Pane: Source List (Collapsible) */}
-            <div
-              className={cn(
-                " transition-all duration-300 ease-in-out h-full",
-                isSourceListOpen ? "w-64 border-r" : "w-0 opacity-0 overflow-hidden"
-              )}
-            >
-              <SourceListPane />
-            </div>
+            {/* Left Pane: Source List (Collapsible / Mobile Sheet) */}
+            {isMobile ? (
+              <Sheet open={isSourceListOpen} onOpenChange={setSourceListOpen}>
+                <SheetContent side={direction === "rtl" ? "right" : "left"} className="p-0 sm:max-w-xs w-[85%]">
+                  <SheetHeader className="sr-only">
+                    <SheetTitle>רשימת מקורות</SheetTitle>
+                  </SheetHeader>
+                  <SourceListPane />
+                </SheetContent>
+              </Sheet>
+            ) : (
+              <div
+                className={cn(
+                  " transition-all duration-300 ease-in-out h-full",
+                  isSourceListOpen ? "w-64 border-r" : "w-0 opacity-0 overflow-hidden"
+                )}
+              >
+                <SourceListPane />
+              </div>
+            )}
 
-            {/* Center Pane: Source Viewer (Collapsible) */}
-            <div
-              ref={sourceViewerRef}
-              className={cn(
-                "shrink-0 min-w-0 z-50 overflow-hidden relative",
-                !isResizing && "transition-all duration-300 ease-in-out",
-                activeSource ? "opacity-100" : "opacity-0"
-              )}
-              style={{ 
-                width: activeSource ? sourceViewerWidth : 0,
-                willChange: isResizing ? 'width' : 'auto'
-              }}
-            >
-              <SourceViewerPane 
-                sourceId={activeSource || lastActiveSource} 
-              />
-              
-              {/* Resize Handle */}
-              {activeSource && (
-                <div
-                  className="absolute z-52 right-0 top-0 bottom-0 w-[0.9px] bg-border cursor-ew-resize flex items-center justify-center group"
-                  onMouseDown={() => setIsResizing(true)}
-                >
-                  <div className="absolute inset-y-0 -left-1 -right-1" />
-                  <GripVertical className="h-4 z-52 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-              )}
-            </div>
+            {/* Center Pane: Source Viewer (Collapsible / Non-Mobile only) */}
+            {!isMobile && (
+              <div
+                ref={sourceViewerRef}
+                className={cn(
+                  "shrink-0 min-w-0 z-50 overflow-hidden relative",
+                  !isResizing && "transition-all duration-300 ease-in-out",
+                  activeSource ? "opacity-100" : "opacity-0"
+                )}
+                style={{ 
+                  width: activeSource ? sourceViewerWidth : 0,
+                  willChange: isResizing ? 'width' : 'auto'
+                }}
+              >
+                <SourceViewerPane 
+                  sourceId={activeSource || lastActiveSource} 
+                />
+                
+                {/* Resize Handle */}
+                {activeSource && (
+                  <div
+                    className="absolute z-52 right-0 top-0 bottom-0 w-[0.9px] bg-border cursor-ew-resize flex items-center justify-center group"
+                    onMouseDown={() => setIsResizing(true)}
+                  >
+                    <div className="absolute inset-y-0 -left-1 -right-1" />
+                    <GripVertical className="h-4 z-52 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Right/Main Pane: Chat */}
             <div className="flex-1 min-w-0 flex flex-col min-h-0">
@@ -252,7 +281,7 @@ function MobileSidebarTrigger() {
       variant="ghost"
       size="icon"
       onClick={() => toggleSidebar()}
-      className="md:hidden fixed top-2 right-3 z-50 h-9 w-9 shadow-lg rounded-full bg-background hover:bg-accent"
+      className="md:hidden fixed top-2 right-3 z-40 h-9 w-9 shadow-lg rounded-full bg-background hover:bg-accent"
     >
       <Image
         src="/kesher.png"

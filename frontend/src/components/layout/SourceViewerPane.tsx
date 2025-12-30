@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { convertToHebrew } from "@/lib/hebrewUtils";
+import { cn, convertToHebrew } from "@/lib/hebrewUtils";
 import { Button } from "@/components/ui/button";
 import { X, Settings2, BookOpen, Type, Languages } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,6 +23,7 @@ import {
   MultiPageTextData,
   SinglePageTextData,
 } from "@/services";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { SourceSiblingsModal } from "./SourceSiblingsModal";
 
 interface SourceViewerPaneProps {
@@ -40,6 +41,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   const activeTotalSegments = useLayoutStore((state) => state.activeTotalSegments);
   const setSelectedText = useLayoutStore((state) => state.setSelectedText);
   const refreshTrigger = useLayoutStore((state) => state.refreshTrigger);
+  const isMobile = useIsMobile();
 
   const [selectionPopup, setSelectionPopup] = React.useState<{
     x: number;
@@ -817,10 +819,16 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   return (
     <div ref={containerRef} className="flex flex-col flex-1 z-50 min-w-20 h-full bg-primary-soft relative">
       {/* Reader Controls Header */}
-      <header className="sticky top-0 z-50 bg-transparent  pt-2 pb-4 p">
+      <header className={cn(
+        "sticky top-0 z-50 bg-transparent pt-2 pb-4",
+        isMobile ? "px-2" : "px-0"
+      )}>
         <GlassCard
           variant="no_border"
-          className="flex items-center z-52 bg-white hover:bg-primary-soft/80 transition-all duration-300 shadow-md  justify-between mx-2 px-4 py-[6px]"
+          className={cn(
+            "flex items-center z-52 bg-white hover:bg-primary-soft/80 transition-all duration-300 shadow-md justify-between px-4 py-[6px]",
+            isMobile ? "mx-0" : "mx-2"
+          )}
         >
           {/* Right: Display Settings */}
           <div className="flex items-center gap-1" dir="rtl">
@@ -888,13 +896,16 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
           </div>
 
           {/* Center: Title and Version Info */}
-          <div className="flex-1 px-4">
+          <div className={cn("flex-1", isMobile ? "px-1" : "px-4")}>
             {textData && (
               <div className="text-center">
                 <div className="flex items-center justify-center gap-2">
                   <BookOpen className="h-4 w-4 text-muted-foreground" />
                   <h1
-                    className="font-semibold text-base cursor-pointer hover:text-primary transition-colors"
+                    className={cn(
+                      "font-semibold cursor-pointer hover:text-primary transition-colors truncate max-w-[150px] sm:max-w-none",
+                      isMobile ? "text-sm" : "text-base"
+                    )}
                     dir={isHebrew ? "rtl" : "ltr"}
                     onClick={openSiblings}
                     role="button"
@@ -947,9 +958,15 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
       {/* Text Content */}
       <ScrollArea
         ref={scrollAreaRef}
-        className="h-full px-6 -mt-[29px] "
+        className={cn(
+          "h-full -mt-[29px]",
+          isMobile ? "px-2" : "px-6"
+        )}
       >
-        <div className="max-w-4xl mx-auto px-6 py-8 pb-102">
+        <div className={cn(
+          "max-w-4xl mx-auto py-8 pb-102",
+          isMobile ? "px-2" : "px-6"
+        )}>
           {isLoading ? (
             <div className="flex items-center justify-center py-20">
               <div className="flex flex-col items-center gap-3">

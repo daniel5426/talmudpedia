@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { cn, convertToHebrew } from "@/lib/hebrewUtils";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, PanelLeftIcon } from "lucide-react";
@@ -16,6 +17,7 @@ export function SourceListPane() {
   const toggleSourceList = useLayoutStore((state) => state.toggleSourceList);
   const sourceList = useLayoutStore((state) => state.sourceList);
   const setSourceList = useLayoutStore((state) => state.setSourceList);
+  const isMobile = useIsMobile();
   
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -89,13 +91,18 @@ export function SourceListPane() {
           {sourceList.map((source) => (
             <GlassCard
               key={source.id}
-              onClick={() => openSource(
-                (source.metadata.range_ref as string) || (source.metadata.first_ref as string) || source.metadata.ref, 
-                { 
-                  pagesAfter: 2,
-                  totalSegments: (source.metadata.total_segments as number) || 1
+              onClick={() => {
+                openSource(
+                  (source.metadata.range_ref as string) || (source.metadata.first_ref as string) || source.metadata.ref, 
+                  { 
+                    pagesAfter: 2,
+                    totalSegments: (source.metadata.total_segments as number) || 1
+                  }
+                );
+                if (isMobile) {
+                  toggleSourceList();
                 }
-              )}
+              }}
               variant="no_border"
               className="p-2"
             >
