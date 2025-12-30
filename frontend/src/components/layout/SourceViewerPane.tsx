@@ -900,7 +900,6 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
             {textData && (
               <div className="text-center">
                 <div className="flex items-center justify-center gap-2">
-                  <BookOpen className="h-4 w-4 text-muted-foreground" />
                   <h1
                     className={cn(
                       "font-semibold cursor-pointer hover:text-primary transition-colors truncate max-w-[150px] sm:max-w-none",

@@ -15,6 +15,7 @@ import { useDirection } from "../direction-provider";
 import { convertToHebrew } from "@/lib/hebrewUtils";
 import { Folder } from "lucide-react";
 import { openSource } from "@/lib/sourceUtils";
+import { useSidebar } from "@/components/ui/sidebar";
 
 interface SourceSiblingsModalProps {
   open: boolean;
@@ -32,6 +33,7 @@ export function SourceSiblingsModal({ open, onOpenChange, currentRef }: SourceSi
   const setLibraryPathTitles = useLayoutStore((state) => state.setLibraryPathTitles);
   const previousDataRef = React.useRef<LibrarySiblingsResponse | null>(null);
   const itemRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+  const { setOpen, setOpenMobile, isMobile } = useSidebar();
 
   React.useEffect(() => {
     let cancelled = false;
@@ -110,6 +112,14 @@ export function SourceSiblingsModal({ open, onOpenChange, currentRef }: SourceSi
     const path = data.parent_path && data.parent_path.length > 0 ? data.parent_path : data.path || [];
     setLibraryMode(true);
     setLibraryPathTitles(path);
+    
+    // Open the sidebar
+    if (isMobile) {
+      setOpenMobile(true);
+    } else {
+      setOpen(true);
+    }
+    
     onOpenChange(false);
   };
 

@@ -329,13 +329,23 @@ async def search_library(q: str = Query(..., min_length=1), limit: int = Query(2
 @router.get("/siblings/{ref:path}", response_model=Dict[str, Any])
 async def get_siblings(ref: str):
     try:
-        collection = MongoDatabase.get_collection("library_siblings")
-        # Try finding by ref
-        doc = await collection.find_one({"ref": ref}, {"_id": 0})
+        # Immediately clean ref of any segment part (usually starting with a colon, e.g., "Book 58:1" -> "Book 58")
+        # This handles the case where a search result ref includes a segment which isn't in library_siblings
+        clean_ref = re.sub(r'[:]\d+(?:-\d+)?$', '', ref.strip())
         
+        collection = MongoDatabase.get_collection("library_siblings")
+        # Try finding by exact cleaned ref first
+        doc = await collection.find_one({"ref": clean_ref}, {"_id": 0})
+        
+        if not doc and clean_ref != ref:
+            # If cleaned ref fails, try original ref (just in case the "segment" was actually needed)
+            doc = await collection.find_one({"ref": ref}, {"_id": 0})
+
         if not doc:
-            # If not found by exact ref, maybe it's a slug or title (our _id)
-            doc = await collection.find_one({"_id": ref}, {"_id": 0})
+            # If still not found, try by _id (slug or title)
+            doc = await collection.find_one({"_id": clean_ref}, {"_id": 0})
+            if not doc and clean_ref != ref:
+                doc = await collection.find_one({"_id": ref}, {"_id": 0})
         
         if not doc:
             raise HTTPException(status_code=404, detail="Source not found in library")

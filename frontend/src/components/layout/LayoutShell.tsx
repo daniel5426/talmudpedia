@@ -188,9 +188,9 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
       <SidebarProvider className="h-full bg-transparent" dir={isRTL ? "rtl" : "ltr"}>
         <MobileSidebarTrigger />
 
-        {/* Mobile Source Viewer Overlay (fixed z-[100] outside restrictive stacking contexts) */}
+        {/* Mobile Source Viewer Overlay (fixed z-[45] outside restrictive stacking contexts) */}
         {isMobile && activeSource && (
-          <div className="fixed inset-0 z-[100] bg-background animate-in slide-in-from-bottom duration-300 overflow-hidden">
+          <div className="fixed inset-0 z-[45] bg-background animate-in slide-in-from-bottom duration-300 overflow-hidden">
             <SourceViewerPane 
               sourceId={activeSource || lastActiveSource} 
             />
@@ -273,6 +273,8 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
 
 function MobileSidebarTrigger() {
   const { toggleSidebar, openMobile } = useSidebar();
+  const isMobile = useIsMobile();
+  const activeSource = useLayoutStore((state) => state.activeSource);
   
   if (openMobile) return null;
 
@@ -281,13 +283,18 @@ function MobileSidebarTrigger() {
       variant="ghost"
       size="icon"
       onClick={() => toggleSidebar()}
-      className="md:hidden fixed top-2 right-3 z-40 h-9 w-9 shadow-lg rounded-full bg-background hover:bg-accent"
+      className={cn(
+        "md:hidden fixed z-[50] h-10 w-10 shadow-md rounded-full bg-background hover:bg-accent border border-border/50 transition-all duration-300",
+        isMobile && activeSource 
+          ? "bottom-6 right-6 scale-110" 
+          : "top-2 right-3"
+      )}
     >
       <Image
         src="/kesher.png"
         alt="TalmudPedia Logo"
-        width={28}
-        height={28}
+        width={32}
+        height={32}
         className="rounded-md object-cover"
         priority
       />
