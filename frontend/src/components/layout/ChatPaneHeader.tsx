@@ -36,10 +36,10 @@ export function ChatPaneHeader({
     >
       <div className="flex items-center gap-2">
         {/* Left side: Dropdown menu (only if chatId) and Search */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 rounded-lg bg-background border-none">
           {chatId && (
             <DropdownMenu>
-              <DropdownMenuTrigger asChild className="shadow-md border-none">
+              <DropdownMenuTrigger asChild className="border-none shadow-none">
                 <Button
                   variant="outline"
                   size="sm"
@@ -50,12 +50,11 @@ export function ChatPaneHeader({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-48" side="bottom" align="start">
-                <DropdownMenuItem onClick={onShareChat} className="cursor-pointer focus:bg-sidebar">
+                <DropdownMenuItem dir="rtl" onClick={onShareChat} className="cursor-pointer focus:bg-sidebar">
                   <Share2 className="mr-2 h-4 w-4" />
                   <span>שתף</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onDeleteChat}
+                <DropdownMenuItem dir="rtl" onClick={onDeleteChat}
                   className="cursor-pointer text-red-600 focus:text-red-600 focus:bg-sidebar"
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
@@ -70,7 +69,7 @@ export function ChatPaneHeader({
             variant="outline"
             dir="rtl"
             size="sm"
-            className="search-button relative flex items-center gap-2 shadow-md border-none text-muted-foreground h-8 rounded-[0.5rem] text-sm font-normal"
+            className="search-button shadow-none relative border-none flex items-center gap-2 text-muted-foreground h-8 rounded-[0.5rem] text-sm font-normal"
             onClick={onSearchOpen}
           >
             <Search className="h-4 w-8 shrink-0" />

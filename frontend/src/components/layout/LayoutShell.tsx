@@ -284,17 +284,17 @@ function MobileSidebarTrigger() {
       size="icon"
       onClick={() => toggleSidebar()}
       className={cn(
-        "md:hidden fixed z-[50] h-10 w-10 shadow-md rounded-full bg-background hover:bg-accent border border-border/50 transition-all duration-300",
+        "md:hidden fixed z-[50] h-8 w-8 rounded-full bg-background hover:bg-accent border-none transition-all duration-300",
         isMobile && activeSource 
-          ? "bottom-6 right-6 scale-110" 
+          ? "bottom-5 right-5" 
           : "top-2 right-3"
       )}
     >
       <Image
         src="/kesher.png"
         alt="TalmudPedia Logo"
-        width={32}
-        height={32}
+        width={28}
+        height={28}
         className="rounded-md object-cover"
         priority
       />

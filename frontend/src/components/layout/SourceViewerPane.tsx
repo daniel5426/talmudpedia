@@ -64,6 +64,37 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [fontSize, setFontSize] = React.useState<FontSize>("medium");
   const [layoutMode, setLayoutMode] = React.useState<LayoutMode>("segmented");
+
+  // Load display settings from cache (localStorage)
+  React.useEffect(() => {
+    const cachedFontSize = localStorage.getItem("tp-source-viewer-font-size") as FontSize;
+    const cachedLayoutMode = localStorage.getItem("tp-source-viewer-layout-mode") as LayoutMode;
+
+    if (cachedFontSize) {
+      setFontSize(cachedFontSize);
+    } else if (isMobile) {
+      // Default to small on mobile if no preference is saved
+      setFontSize("small");
+    } else {
+      // Default to medium on PC if no preference is saved
+      setFontSize("medium");
+    }
+
+    if (cachedLayoutMode) {
+      setLayoutMode(cachedLayoutMode);
+    }
+  }, [isMobile]);
+
+  // Handlers to update state and persist to cache
+  const handleFontSizeChange = (newSize: FontSize) => {
+    setFontSize(newSize);
+    localStorage.setItem("tp-source-viewer-font-size", newSize);
+  };
+
+  const handleLayoutModeChange = (newMode: LayoutMode) => {
+    setLayoutMode(newMode);
+    localStorage.setItem("tp-source-viewer-layout-mode", newMode);
+  };
   const [canLoadMore, setCanLoadMore] = React.useState({
     top: true,
     bottom: true,
@@ -854,7 +885,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                 <DropdownMenuRadioGroup
                   dir="rtl"
                   value={fontSize}
-                  onValueChange={(v) => setFontSize(v as FontSize)}
+                  onValueChange={(v) => handleFontSizeChange(v as FontSize)}
                 >
                   <DropdownMenuRadioItem dir="rtl" value="small">
                     קטן
@@ -882,7 +913,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
                 <DropdownMenuRadioGroup
                   dir="rtl"
                   value={layoutMode}
-                  onValueChange={(v) => setLayoutMode(v as LayoutMode)}
+                  onValueChange={(v) => handleLayoutModeChange(v as LayoutMode)}
                 >
                   <DropdownMenuRadioItem dir="rtl" value="segmented">
                     מחולק
