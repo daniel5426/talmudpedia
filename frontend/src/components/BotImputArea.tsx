@@ -109,7 +109,7 @@ export function BotImputArea({
       <PromptInput
         dir={direction}
         onSubmit={handleFormSubmit}
-        className={`relative ${className} bg-primary-soft shadow-sm border-none rounded-md`}
+        className={`relative ${className} bg-primary-soft shadow-sm border-none rounded-lg`}
       >
         <PromptInputBody>
           <PromptInputTextarea

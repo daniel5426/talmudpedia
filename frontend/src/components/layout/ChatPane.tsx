@@ -39,7 +39,7 @@ import {
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
 
-import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic } from "lucide-react";
+import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic, Loader2 } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotImputArea } from "@/components/BotImputArea";
 import { useChatController, type ChatController, type ChatMessage, type Citation } from "./useChatController";
@@ -54,6 +54,7 @@ import { useAuthStore } from "@/lib/store/useAuthStore";
 // import "@livekit/components-styles";
 import { LibrarySearchModal } from "./LibrarySearchModal";
 import { ChatPaneHeader } from "./ChatPaneHeader";
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 
 const formatThinkingDuration = (durationMs?: number | null) => {
   if (!durationMs || durationMs <= 0) {
@@ -817,6 +818,14 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   
   const router = useRouter();
 
+  const handleRefresh = useCallback(() => {
+    window.location.reload();
+  }, []);
+
+  const { pullDistance, isRefreshing, onTouchStart, onTouchMove, onTouchEnd } = usePullToRefresh({
+    onRefresh: handleRefresh
+  });
+
   const onChatCreated = React.useCallback((newChatId: string) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("chatId", newChatId);
@@ -966,24 +975,48 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   const roomContent = (
     <>
       <LibrarySearchModal open={searchOpen} onOpenChange={setSearchOpen} />
-      <Conversation className="relative flex min-h-full flex-col overflow-hidden bg-background">
-        <div
-          aria-hidden="true"
-          className={cn(
-            "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out",
-            isEmptyState ? "opacity-100" : "opacity-0"
+      <div className="relative h-full flex flex-col bg-background">
+        <div 
+          className="absolute top-0 left-0 right-0 h-10 flex items-center justify-center z-10 pointer-events-none"
+          style={{ 
+            opacity: pullDistance > 0 ? Math.min(pullDistance / 80, 1) : 0,
+            transform: `translateY(${Math.min(pullDistance / 2, 40)}px)` 
+          }}
+        >
+          {isRefreshing ? (
+             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          ) : (
+             <RefreshCcwIcon 
+               className="h-5 w-5 text-muted-foreground transition-transform duration-200" 
+               style={{ transform: `rotate(${pullDistance * 3}deg)` }}
+             />
           )}
-          style={{ background: "linear-gradient(to bottom right,#cce4e6,#008E96)" }}
-        />
-        <ChatPaneHeader
-          chatId={effectiveChatId}
-          onSearchOpen={() => setSearchOpen(true)}
-          onShareChat={handleShareChat}
-          onDeleteChat={handleDeleteChat}
-          isEmptyState={isEmptyState}
-        />
-        {mainContent}
-      </Conversation>
+        </div>
+        <Conversation 
+          className="relative flex min-h-full flex-col overflow-hidden bg-background transition-transform duration-200 ease-out"
+          style={{ transform: `translateY(${pullDistance}px)` }}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+        >
+          <div
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out",
+              isEmptyState ? "opacity-100" : "opacity-0"
+            )}
+            style={{ background: "linear-gradient(to bottom right,#cce4e6,#008E96)" }}
+          />
+          <ChatPaneHeader
+            chatId={effectiveChatId}
+            onSearchOpen={() => setSearchOpen(true)}
+            onShareChat={handleShareChat}
+            onDeleteChat={handleDeleteChat}
+            isEmptyState={isEmptyState}
+          />
+          {mainContent}
+        </Conversation>
+      </div>
     </>
   );
 
