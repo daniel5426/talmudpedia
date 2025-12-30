@@ -8,7 +8,7 @@ interface PersistentLayoutShellProps {
 
 export function PersistentLayoutShell({ children }: PersistentLayoutShellProps) {
   return (
-    <main className="h-screen overflow-hidden bg-background">
+    <main className="h-full overflow-hidden bg-background">
       <LayoutShell>
         {children}
       </LayoutShell>
