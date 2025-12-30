@@ -966,7 +966,7 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   const roomContent = (
     <>
       <LibrarySearchModal open={searchOpen} onOpenChange={setSearchOpen} />
-      <Conversation className="relative flex min-h-screen flex-col overflow-hidden bg-background">
+      <Conversation className="relative flex h-full flex-col overflow-hidden bg-background">
         <div
           aria-hidden="true"
           className={cn(

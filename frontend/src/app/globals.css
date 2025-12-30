@@ -179,7 +179,10 @@
   body {
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none; /* IE and Edge */
-    overflow-x: hidden; /* Prevent horizontal scrolling */
+    overflow: hidden; /* Prevent both vertical and horizontal scrolling on the root */
+    height: 100%;
+    width: 100%;
+    position: fixed; /* Keep it fixed to prevent bounce and UI shifts */
   }
 
   html::-webkit-scrollbar,
