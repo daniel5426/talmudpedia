@@ -93,7 +93,7 @@ export function DocumentSearchPane() {
 
   const handleCardClick = (doc: any) => {
     // Priority: range_ref > first_ref > ref
-    let targetRef = doc.range_ref || doc.first_ref || doc.ref;
+    const targetRef = doc.range_ref || doc.first_ref || doc.ref;
 
     // Use standardized openSource utility
     openSource(targetRef, { 
@@ -105,7 +105,7 @@ export function DocumentSearchPane() {
 
   return (
     <LayoutGroup>
-      <div className="relative flex flex-col h-full bg-[linear-gradient(to_bottom_right,#cce4e6,#008E96)]">
+      <div className="relative flex flex-col h-full bg-linear-to-br from-(--gradient-from) to-(--gradient-to)">
         <div
           dir="ltr"
           className="absolute inset-0 pointer-events-none overflow-visible z-0"

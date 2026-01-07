@@ -5,9 +5,9 @@ import { motion } from "framer-motion";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative min-h-svh flex flex-col items-center justify-center p-6 md:p-10 overflow-hidden">
+    <div className="relative min-h-svh flex flex-col items-center justify-center p-6 md:p-10 overflow-hidden bg-background">
       {/* Dynamic Background Gradient */}
-      <div className="fixed inset-0 bg-[linear-gradient(to_bottom_right,#cce4e6,#008E96)] z-[-1]" />
+      <div className="fixed inset-0 bg-linear-to-br from-(--gradient-from) to-(--gradient-to) z-[-1]" />
 
       {/* Decorative Animated Elements */}
       <div

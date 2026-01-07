@@ -482,7 +482,7 @@ export function ChatWorkspace({
       ref={containerRef}
       className={cn(
         "flex flex-col h-full max-w-3xl mx-auto w-full",
-        isEmptyState ? "px-4" : "px-4 pb-4 bg-transparent"
+        isEmptyState ? "px-4" : "px-4 pb-4 border-none"
       )}
       dir={direction}
     >
@@ -966,14 +966,13 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
   const roomContent = (
     <>
       <LibrarySearchModal open={searchOpen} onOpenChange={setSearchOpen} />
-      <Conversation className="relative flex min-h-full flex-col overflow-hidden bg-background">
+      <Conversation className="relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)">
         <div
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out",
+            "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out bg-linear-to-br from-(--gradient-from) to-(--gradient-to)",
             isEmptyState ? "opacity-100" : "opacity-0"
           )}
-          style={{ background: "linear-gradient(to bottom right,#cce4e6,#008E96)" }}
         />
         <ChatPaneHeader
           chatId={effectiveChatId}

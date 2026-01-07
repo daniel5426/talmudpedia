@@ -21,9 +21,9 @@ export default function LandingLayout({
   }, [setTheme]);
 
   return (
-    <div dir={direction.direction} className="relative min-h-screen overflow-x-hidden">
+    <div dir={direction.direction} className="relative min-h-screen overflow-x-hidden bg-background">
       {/* Fixed Background */}
-      <div className="fixed inset-0 bg-[linear-gradient(to_bottom_right,#cce4e6,#008E96)] z-[-1]" />
+      <div className="fixed inset-0 bg-linear-to-br from-(--gradient-from) to-(--gradient-to) z-[-1]" />
 
       <div
         dir="ltr"

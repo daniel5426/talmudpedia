@@ -13,40 +13,35 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { themes } from "@/lib/themes"
+import { palettes, applyPalette } from "@/lib/themes"
 import { useDirection } from "@/components/direction-provider"
 
 export function ThemeCustomizer() {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = React.useState(false)
-  const [activeColorTheme, setActiveColorTheme] = React.useState("default")
+  const [activePaletteId, setActivePaletteId] = React.useState<number | null>(null)
   const { direction } = useDirection()
 
   React.useEffect(() => {
     setMounted(true)
-    // Read current data-theme from body if available, or default
-    const currentTheme = document.body.getAttribute("data-theme") || "default"
-    setActiveColorTheme(currentTheme)
+    const stored = localStorage.getItem('palette')
+    if (stored) {
+      setActivePaletteId(parseInt(stored, 10))
+    } else {
+      setActivePaletteId(palettes[0].id)
+    }
   }, [])
 
-  // Update active theme when data-theme attribute changes
+  // Re-apply palette when activePaletteId changes
   React.useEffect(() => {
-    const observer = new MutationObserver(() => {
-      const currentTheme = document.body.getAttribute("data-theme") || "default"
-      setActiveColorTheme(currentTheme)
-    })
+    if (activePaletteId) {
+      applyPalette(activePaletteId)
+    }
+  }, [activePaletteId])
 
-    observer.observe(document.body, {
-      attributes: true,
-      attributeFilter: ["data-theme"]
-    })
-
-    return () => observer.disconnect()
-  }, [])
-
-  const handleThemeChange = (themeName: string) => {
-    setActiveColorTheme(themeName)
-    document.body.setAttribute("data-theme", themeName)
+  const handlePaletteChange = (paletteId: number) => {
+    setActivePaletteId(paletteId)
+    applyPalette(paletteId)
   }
 
   if (!mounted) {
@@ -66,25 +61,30 @@ export function ThemeCustomizer() {
           <span className="sr-only">Customize theme</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-40">
-        <DropdownMenuLabel>Theme Color</DropdownMenuLabel>
+      <DropdownMenuContent align="start" className="w-48">
+        <DropdownMenuLabel>Color Palette</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {themes.map((t) => (
-          <DropdownMenuItem
-            key={t.name}
-            onClick={() => handleThemeChange(t.name)}
-            className="flex items-center justify-between"
-          >
-            <div className="flex items-center gap-2">
-              <div
-                className="h-4 w-4 rounded-full border"
-                style={{ backgroundColor: t.activeColor }}
-              />
-              <span className="capitalize">{t.label}</span>
-            </div>
-            {activeColorTheme === t.name && <Check className="h-4 w-4" />}
-          </DropdownMenuItem>
-        ))}
+        <div className="max-h-60 overflow-y-auto">
+          {palettes.map((p) => (
+            <DropdownMenuItem
+              key={p.id}
+              onClick={() => handlePaletteChange(p.id)}
+              className="flex items-center justify-between py-2"
+            >
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="h-3 w-3 rounded-full border"
+                    style={{ backgroundColor: p.light['--primary'] }}
+                  />
+                  <span className="text-sm font-medium">{p.name}</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground line-clamp-1">{p.description}</span>
+              </div>
+              {activePaletteId === p.id && <Check className="h-4 w-4 ml-2" />}
+            </DropdownMenuItem>
+          ))}
+        </div>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Mode</DropdownMenuLabel>
         <DropdownMenuSeparator />

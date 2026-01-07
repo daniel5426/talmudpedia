@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { PaletteInitializer } from "@/components/palette-initializer";
 import { DirectionProvider, type DirectionMode } from "@/components/direction-provider";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 
@@ -51,6 +52,7 @@ export default async function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <PaletteInitializer />
           <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}>
             <DirectionProvider initialDirection={initialDirection}>
               {children}

@@ -26,7 +26,7 @@ export function ChatPaneHeader({
   const backgroundStyles = isEmptyState
     ? { backgroundColor: "transparent" }
     : {
-        background: "linear-gradient(to top, rgba(255,255,255,0) 0%, rgba(255,255,255,0.8) 60%, #ffffffff 100%)",
+        background: "linear-gradient(to top, color-mix(in oklch, var(--chat-background) 0%, transparent) 0%, color-mix(in oklch, var(--chat-background) 80%, transparent) 60%, var(--chat-background) 100%)",
       };
 
   return (
