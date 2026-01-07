@@ -316,7 +316,7 @@ export function initPalette() {
   if (typeof window === 'undefined') return
   
   const stored = localStorage.getItem('palette')
-  const paletteId = stored ? parseInt(stored, 10) : palettes[0].id
+  const paletteId = stored ? parseInt(stored, 10) : 5
 
   if (paletteId && palettes.find((p) => p.id === paletteId)) {
     applyPalette(paletteId)

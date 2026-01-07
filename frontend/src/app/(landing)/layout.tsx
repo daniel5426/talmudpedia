@@ -6,6 +6,7 @@ import Image from "next/image";
 import { KesherHeader } from "@/components/layout/KesherHeader";
 import { useDirection } from "@/components/direction-provider";
 import { useTheme } from "next-themes";
+import { palettes } from "@/lib/themes";
 
 export default function LandingLayout({
   children,
@@ -20,8 +21,27 @@ export default function LandingLayout({
     setTheme("light");
   }, [setTheme]);
 
+  // Use Ocean Breeze (ID 5) variables for landing page
+  const oceanBreeze = palettes.find(p => p.id === 5);
+  const landingStyles = oceanBreeze ? {
+    '--gradient-from': oceanBreeze.light['--gradient-from'],
+    '--gradient-to': oceanBreeze.light['--gradient-to'],
+    '--p-light-primary': oceanBreeze.light['--primary'],
+    '--background': oceanBreeze.light['--background'],
+    '--foreground': oceanBreeze.light['--foreground'],
+    '--chat-background': oceanBreeze.light['--chat-background'],
+    '--primary': oceanBreeze.light['--primary'],
+    '--primary-foreground': oceanBreeze.light['--primary-foreground'],
+    '--muted': oceanBreeze.light['--muted'],
+    '--muted-foreground': oceanBreeze.light['--muted-foreground'],
+    '--destructive': oceanBreeze.light['--destructive'],
+    '--border': oceanBreeze.light['--border'],
+    '--ring': oceanBreeze.light['--ring'],
+    '--primary-soft': `color-mix(in oklch, ${oceanBreeze.light['--primary']} 5%, ${oceanBreeze.light['--background']})`,
+  } as React.CSSProperties : {};
+
   return (
-    <div dir={direction.direction} className="relative min-h-screen overflow-x-hidden bg-background">
+    <div dir={direction.direction} style={landingStyles} className="relative min-h-screen overflow-x-hidden">
       {/* Fixed Background */}
       <div className="fixed inset-0 bg-linear-to-br from-(--gradient-from) to-(--gradient-to) z-[-1]" />
 

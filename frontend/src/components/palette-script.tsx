@@ -14,8 +14,8 @@ export function PaletteScript() {
       try {
         const palettes = ${JSON.stringify(minimalPalettes)};
         const stored = localStorage.getItem('palette');
-        const id = stored ? parseInt(stored, 10) : palettes[0].id;
-        const palette = palettes.find(p => p.id === id) || palettes[0];
+        const id = stored ? parseInt(stored, 10) : 5;
+        const palette = palettes.find(p => p.id === id) || palettes.find(p => p.id === 5) || palettes[0];
         const root = document.documentElement;
         
         Object.entries(palette.light).forEach(([k, v]) => {

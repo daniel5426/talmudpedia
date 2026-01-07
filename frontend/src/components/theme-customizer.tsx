@@ -28,7 +28,7 @@ export function ThemeCustomizer() {
     if (stored) {
       setActivePaletteId(parseInt(stored, 10))
     } else {
-      setActivePaletteId(palettes[0].id)
+      setActivePaletteId(5)
     }
   }, [])
 
