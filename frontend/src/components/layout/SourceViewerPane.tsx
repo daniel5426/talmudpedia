@@ -857,7 +857,7 @@ export function SourceViewerPane({ sourceId }: SourceViewerPaneProps) {
         <GlassCard
           variant="no_border"
           className={cn(
-            "flex items-center z-52 bg-white hover:bg-primary-soft/80 transition-all duration-300 shadow-md justify-between px-4 py-[6px]",
+            "flex items-center z-52 bg-(--chat-background) hover:bg-primary-soft/80 transition-all duration-300 shadow-md justify-between px-4 py-[6px]",
             isMobile ? "mx-0" : "mx-2"
           )}
         >
