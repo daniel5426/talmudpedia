@@ -2,8 +2,10 @@
 
 import { useTheme } from "next-themes";
 import { Monitor, Moon, Sun } from "@aliimam/icons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
+
+const emptySubscribe = () => () => {};
 
 const themes = [
   {
@@ -34,7 +36,11 @@ export const ThemeSwitcher = ({
   className,
 }: ThemeSwitcherProps) => {
   const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
 
   const handleThemeClick = useCallback(
     (themeKey: "light" | "dark" | "system") => {
@@ -44,10 +50,6 @@ export const ThemeSwitcher = ({
   );
 
   // Prevent hydration mismatch
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   if (!mounted) {
     return null;
   }
