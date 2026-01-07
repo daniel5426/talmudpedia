@@ -129,9 +129,9 @@ export const palettes: Palette[] = [
       '--destructive': 'oklch(0.55 0.20 25)',
       '--border': 'oklch(0.90 0.02 220)',
       '--ring': 'oklch(0.50 0.15 220)',
-      '--gradient-from': '#cce4e6',
-      '--gradient-to': '#008E96',
-      '--chat-background': 'oklch(1 0 0)',
+      '--gradient-from': '#dff2f4',
+      '--gradient-to': '#1ca4ac',
+      '--chat-background': 'oklch(0.9916 0.005 228.82)',
     },
     dark: {
       '--background': 'oklch(0.18 0.02 240)',

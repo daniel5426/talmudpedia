@@ -1,15 +1,14 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import Image from "next/image";
 import { DocumentSearchInputArea } from "@/components/DocumentSearchInputArea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
-import { convertToHebrew } from "@/lib/hebrewUtils";
 import { searchService } from "@/services/search";
 import { openSource } from "@/lib/sourceUtils";
+import { BackgroundLogos } from "@/components/ui/background-logos";
 
 const QUERY_BUBBLE_TITLE = "חפש בכל התורה כולה במשפט אחד";
 
@@ -68,7 +67,6 @@ export function DocumentSearchPane() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   
   // Use selectors to prevent unnecessary re-renders
-  const setActiveSource = useLayoutStore((state) => state.setActiveSource);
 
   const handleSearch = async (message: { text: string; files: any[] }) => {
     if (!message.text.trim()) return;
@@ -106,35 +104,7 @@ export function DocumentSearchPane() {
   return (
     <LayoutGroup>
       <div className="relative flex flex-col h-full bg-linear-to-br from-(--gradient-from) to-(--gradient-to)">
-        <div
-          dir="ltr"
-          className="absolute inset-0 pointer-events-none overflow-visible z-0"
-        >
-          <Image
-            src="/kesher.png"
-            alt="Kesher Logo"
-            width={1800}
-            height={1800}
-            className="absolute w-[min(70vw,700px)] opacity-20 -translate-x-[40%] -translate-y-[20%] top-1/4"
-            priority
-          />
-          <Image
-            src="/kesher.png"
-            alt="Kesher Logo"
-            width={1800}
-            height={1800}
-            className="absolute w-[min(70vw,700px)] opacity-20 translate-x-[40%] translate-y-[50%] right-0"
-            priority
-          />
-          <Image
-            src="/kesher.png"
-            alt="Kesher Logo"
-            width={1800}
-            height={1800}
-            className="absolute w-[min(70vw,200px)] opacity-90 -translate-x-[10%] translate-y-[10%] right-0 filter brightness-0 invert"
-            priority
-          />
-        </div>
+        <BackgroundLogos />
         <div className="relative z-10 flex flex-col justify-center h-full">
           <div className="flex-1 overflow-hidden relative flex items-center">
             

@@ -48,6 +48,7 @@ import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { chatService, ttsService } from "@/services";
 import { useRouter, useSearchParams } from "next/navigation";
 import { KesherLogo } from "@/components/ui/KesherLogo";
+import { BackgroundLogos } from "@/components/ui/background-logos";
 import { useGeminiLive } from "@/hooks/useGeminiLive";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 // import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
@@ -487,23 +488,7 @@ export function ChatWorkspace({
       dir={direction}
     >
       {isEmptyState && containerWidth >= 650 && (
-        <div
-          dir="ltr"
-          className="absolute inset-0 pointer-events-none overflow-visible z-0"
-        >
-          <KesherLogo
-            variant="background"
-            className="-translate-x-[40%] -translate-y-[20%] top-1/4"
-          />
-          <KesherLogo
-            variant="background"
-            className="translate-x-[40%] translate-y-[50%] right-0"
-          />
-          <KesherLogo
-            variant="accent"
-            className="-translate-x-[10%] translate-y-[10%] right-0"
-          />
-        </div>
+        <BackgroundLogos />
       )}
       <ConversationContent className={cn("flex-1 p-0 pt-13", isEmptyState && "h-full justify-center relative z-10")}>
         {isEmptyState ? (

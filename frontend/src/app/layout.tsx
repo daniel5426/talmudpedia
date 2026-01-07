@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { PaletteInitializer } from "@/components/palette-initializer";
+import { PaletteScript } from "@/components/palette-script";
 import { DirectionProvider, type DirectionMode } from "@/components/direction-provider";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 
@@ -40,6 +41,9 @@ export default async function RootLayout({
 
   return (
     <html lang="en" dir={initialDirection} data-direction={initialDirection} suppressHydrationWarning>
+      <head>
+        <PaletteScript />
+      </head>
       <body
         suppressHydrationWarning
         dir={initialDirection}

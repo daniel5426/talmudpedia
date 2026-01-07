@@ -1,15 +1,12 @@
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 
-type KesherLogoProps = {
+interface KesherLogoProps {
   variant?: "avatar" | "background" | "accent";
   className?: string;
   size?: number;
-};
+}
 
-/**
- * Reusable Kesher logo component
- */
 export function KesherLogo({ variant = "avatar", className, size }: KesherLogoProps) {
   const baseProps = {
     src: "/kesher.png",
@@ -17,31 +14,50 @@ export function KesherLogo({ variant = "avatar", className, size }: KesherLogoPr
     priority: true,
   };
 
+  // Common mask style to color the PNG based on the theme
+  const maskStyle = {
+    maskImage: "url(/kesher.png)",
+    WebkitMaskImage: "url(/kesher.png)",
+    maskSize: "contain",
+    WebkitMaskSize: "contain",
+    maskRepeat: "no-repeat",
+    WebkitMaskRepeat: "no-repeat",
+    maskPosition: "center",
+    WebkitMaskPosition: "center",
+  };
+
   if (variant === "avatar") {
     return (
-      <Image
-        {...baseProps}
-        width={size || 40}
-        height={size || 40}
+      <div
         className={cn(
-          "h-6 w-6 rounded-md object-cover hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+          "h-6 w-6 rounded-md bg-primary shrink-0 transition-colors hover:bg-primary/80",
           className
         )}
+        style={{
+          ...maskStyle,
+          width: size,
+          height: size,
+        }}
+        role="img"
+        aria-label="Kesher Logo"
       />
     );
   }
 
   if (variant === "background") {
     return (
-      <Image
-        {...baseProps}
-        width={1800}
-        height={1800}
-        className={cn("absolute w-[min(70vw,700px)] opacity-20", className)}
+      <div
+        className={cn(
+          "absolute w-[min(70vw,700px)] aspect-square opacity-20 bg-primary pointer-events-none",
+          className
+        )}
+        style={maskStyle}
+        role="presentation"
       />
     );
   }
 
+  // The "white" version remains unchanged using the filter approach
   if (variant === "accent") {
     return (
       <Image
@@ -49,7 +65,7 @@ export function KesherLogo({ variant = "avatar", className, size }: KesherLogoPr
         width={1800}
         height={1800}
         className={cn(
-          "absolute w-[min(70vw,200px)] opacity-90 filter brightness-0 invert",
+          "absolute w-[min(70vw,200px)] opacity-90 filter brightness-0 invert pointer-events-none",
           className
         )}
       />
