@@ -43,7 +43,6 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   const pathname = usePathname();
   const chatController = useChatController();
   const { direction } = useDirection();
-  const isRTL = direction !== "rtl";
   const isChatRoute = pathname?.startsWith('/chat');
 
   React.useEffect(() => {
@@ -185,46 +184,23 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   }, [isResizing, setSourceViewerWidth, isSourceListOpen]);
 
   return (
-      <SidebarProvider className="h-full bg-transparent" dir={isRTL ? "rtl" : "ltr"}>
+      <SidebarProvider className="h-full bg-transparent" dir={direction}>
         <MobileSidebarTrigger />
-
-        {/* Mobile Source Viewer Overlay (fixed z-[45] outside restrictive stacking contexts) */}
-        {isMobile && activeSource && (
-          <div className="fixed inset-0 z-[45] bg-background animate-in slide-in-from-bottom duration-300 overflow-hidden">
-            <SourceViewerPane 
-              sourceId={activeSource || lastActiveSource} 
-            />
-          </div>
-        )}
-
         <div
           className={cn(
             "relative flex h-full w-full overflow-hidden transition-colors duration-500",
             "bg-background"
           )}
         >
+          <div className="relative z-10">
+            <AppSidebar />
+          </div>
           <SidebarInset className="relative z-10 h-full flex-1 bg-transparent">
             <div className="flex h-full w-full overflow-hidden bg-transparent">
-            {/* Left Pane: Source List (Collapsible / Mobile Sheet) */}
-            {isMobile ? (
-              <Sheet open={isSourceListOpen} onOpenChange={setSourceListOpen}>
-                <SheetContent side={direction === "rtl" ? "right" : "left"} className="p-0 sm:max-w-xs w-[85%]">
-                  <SheetHeader className="sr-only">
-                    <SheetTitle>רשימת מקורות</SheetTitle>
-                  </SheetHeader>
-                  <SourceListPane />
-                </SheetContent>
-              </Sheet>
-            ) : (
-              <div
-                className={cn(
-                  " transition-all duration-300 ease-in-out h-full",
-                  isSourceListOpen ? "w-64 border-r" : "w-0 opacity-0 overflow-hidden"
-                )}
-              >
-                <SourceListPane />
-              </div>
-            )}
+            {/* Right/Main Pane: Chat */}
+            <div className="flex-1 min-w-0 flex flex-col min-h-0">
+              {children || <ChatPane controller={chatController} />}
+            </div>
 
             {/* Center Pane: Source Viewer (Collapsible / Non-Mobile only) */}
             {!isMobile && (
@@ -257,16 +233,39 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
               </div>
             )}
 
-            {/* Right/Main Pane: Chat */}
-            <div className="flex-1 min-w-0 flex flex-col min-h-0">
-              {children || <ChatPane controller={chatController} />}
-            </div>
+            {isMobile ? (
+              <Sheet open={isSourceListOpen} onOpenChange={setSourceListOpen}>
+                <SheetContent side={direction === "rtl" ? "right" : "left"} className="p-0 sm:max-w-xs w-[85%]">
+                  <SheetHeader className="sr-only">
+                    <SheetTitle>רשימת מקורות</SheetTitle>
+                  </SheetHeader>
+                  <SourceListPane />
+                </SheetContent>
+              </Sheet>
+            ) : (
+              <div
+                className={cn(
+                  " transition-all duration-300 ease-in-out h-full",
+                  isSourceListOpen ? "w-64 border-r" : "w-0 opacity-0 overflow-hidden"
+                )}
+              >
+                <SourceListPane />
+              </div>
+            )}
+
             </div>
           </SidebarInset>
-          <div className="relative z-10">
-            <AppSidebar />
-          </div>
         </div>
+
+        {/* Mobile Source Viewer Overlay (fixed z-[45] outside restrictive stacking contexts) */}
+        {isMobile && activeSource && (
+          <div className="fixed inset-0 z-[45] bg-background animate-in slide-in-from-bottom duration-300 overflow-hidden">
+            <SourceViewerPane 
+              sourceId={activeSource || lastActiveSource} 
+            />
+          </div>
+        )}
+
       </SidebarProvider>
   );
 }

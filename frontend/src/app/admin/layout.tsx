@@ -8,7 +8,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { direction } = useDirection()
   
   return (
-    <SidebarProvider className="h-full" dir={direction === "rtl" ? "rtl" : "ltr"}>
+    <SidebarProvider className="h-full" dir={direction}>
       <AppSidebar />
       <SidebarInset className="h-full">
         <div className="flex h-full w-full overflow-hidden bg-background">

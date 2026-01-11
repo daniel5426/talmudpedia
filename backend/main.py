@@ -80,10 +80,19 @@ app.add_middleware(
     expose_headers=["X-Chat-ID"],
 )
 
-from app.api.routers import agent, auth, chat, general, search, stt, texts, library, admin, tts
+from app.api.routers import agent, auth, chat, general, search, stt, texts, library, admin, tts, rag_admin
+from app.api.routers import org_units as org_units_router
+from app.api.routers import rbac as rbac_router
+from app.api.routers import audit as audit_router
+from app.api.routers import rag_pipelines as rag_pipelines_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
+app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
+app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
+app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
+app.include_router(audit_router.router, prefix="/api", tags=["audit"])
 app.include_router(library.router, prefix="/api/library", tags=["library"])
 app.include_router(agent.router, tags=["agent"])
 app.include_router(chat.router, prefix="/chats", tags=["chats"])
@@ -93,8 +102,9 @@ app.include_router(stt.router, prefix="/stt", tags=["stt"])
 app.include_router(texts.router, tags=["texts"])
 app.include_router(tts.router, prefix="/tts", tags=["tts"])
 
-from app.api.routers import voice_ws
+from app.api.routers import voice_ws, rag_ws
 app.include_router(voice_ws.router, prefix="/api/voice", tags=["voice"])
+app.include_router(rag_ws.router, prefix="/admin/rag/ws", tags=["rag-websocket"])
 
 @app.get("/health")
 def health_check():

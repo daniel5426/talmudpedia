@@ -212,21 +212,25 @@ export default function DataPoints({ scrollOffset = 0 }: DataPointsProps) {
     <div className="relative w-full h-full bg-transparent overflow-hidden">
       <div ref={containerRef} className="absolute inset-0 z-10" />
       
-      <div className="pointer-events-none absolute inset-0 flex flex-col justify-center items-center z-0">
+      <div className="pointer-events-none absolute inset-0 flex flex-col justify-center items-center z-50">
         <div 
-          className="text-3xl md:text-6xl lg:text-8xl text-white tracking-wider mb-4 transition-transform duration-75 ease-out"
+          className="text-3xl md:text-6xl lg:text-8xl tracking-wider mb-4 transition-transform duration-75 ease-out"
           style={{ 
             transform: `translateX(${scrollOffset * (isMobile ? 0.2 : 0.3)}px)`,
-            fontFamily: 'Shmulik, serif'
+            fontFamily: 'Shmulik, serif',
+            color: '#ffffff',
+            opacity: 1
           }}
         >
           תחקור ותעיין
         </div>
         <div 
-          className="text-3xl md:text-6xl lg:text-8xl  text-white tracking-wider transition-transform duration-75 ease-out"
+          className="text-3xl md:text-6xl lg:text-8xl tracking-wider transition-transform duration-75 ease-out"
           style={{ 
             transform: `translateX(${-scrollOffset * (isMobile ? 0.2 : 0.3)}px)`,
-            fontFamily: 'Shmulik, serif'
+            fontFamily: 'Shmulik, serif',
+            color: '#ffffff',
+            opacity: 1
           }}
         >
           בכל התורה 
@@ -235,7 +239,7 @@ export default function DataPoints({ scrollOffset = 0 }: DataPointsProps) {
       
       {hoveredLabel && (
         <div
-          className="absolute pointer-events-none bg-white/90 text-black px-3 py-1.5 rounded text-sm font-medium shadow-lg z-10"
+          className="absolute pointer-events-none bg-white text-black px-3 py-1.5 rounded text-sm font-medium shadow-lg z-100"
           dir="rtl"
           style={{
             left: `${labelPosition.x}px`,

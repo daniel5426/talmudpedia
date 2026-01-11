@@ -34,11 +34,12 @@ import { ThemeCustomizer } from "./theme-customizer";
 import { useDirection } from "@/components/direction-provider";
 import { DirectionToggle } from "./direction-toggle";
 import { LibraryMenu } from "@/components/library-menu";
+import { TenantSwitcher } from "@/components/tenant-switcher";
 
 // Static data for other sections
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Users, MessageSquare, LogIn } from "lucide-react";
+import { LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow } from "lucide-react";
 
 const data = {
   navMain: [
@@ -57,6 +58,24 @@ const data = {
       items: [],
     },
     {
+      title: "Organization",
+      url: "/admin/organization",
+      icon: Landmark,
+      items: [],
+    },
+    {
+      title: "Security & Roles",
+      url: "/admin/security",
+      icon: ShieldCheck,
+      items: [],
+    },
+    {
+      title: "Audit Logs",
+      url: "/admin/audit",
+      icon: History,
+      items: [],
+    },
+    {
       title: "משתמשים",
       url: "/admin/users",
       icon: Users,
@@ -67,6 +86,23 @@ const data = {
       url: "/admin/chats",
       icon: MessageSquare,
       items: [],
+    },
+    {
+      title: "RAG Management",
+      url: "/admin/rag",
+      icon: Database,
+      items: [
+        {
+          title: "Dashboard",
+          url: "/admin/rag",
+          icon: LayoutDashboard,
+        },
+        {
+          title: "Pipeline Builder",
+          url: "/admin/pipelines",
+          icon: Workflow,
+        },
+      ],
     },
   ]
 };
@@ -93,7 +129,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
   const isAdminPath = pathname?.startsWith("/admin");
 
-  const navItems = isAdminPath ? data.adminNavMain : data.navMain;
+  const navItems = React.useMemo(() => {
+    const rawItems = isAdminPath ? data.adminNavMain : data.navMain;
+    return rawItems.map(item => ({
+      ...item,
+      isActive: pathname === item.url || (item.items?.some(sub => pathname === sub.url) ?? false),
+      items: item.items?.map(sub => ({
+        ...sub,
+        isActive: pathname === sub.url
+      }))
+    }));
+  }, [isAdminPath, pathname]);
 
   const fetchChats = React.useCallback(async (mode: FetchMode = "reset") => {
     if (isFetchingRef.current) return;
@@ -221,7 +267,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 );
 
   return (
-    <Sidebar collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50 shadow-none" {...props}>
+    <Sidebar collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50 shadow-none border" {...props}>
       <SidebarHeader>
         <div dir={direction} className="flex items-center justify-between gap-2">
 
@@ -236,6 +282,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <LibraryMenu onBack={() => setLibraryMode(false)} />
         ) : (
           <>
+            {user && (user.role === "admin" || isAdminPath) && (
+              <div className="px-2 pt-2">
+                <TenantSwitcher />
+              </div>
+            )}
             <div className=" ">
               <NavMain 
                 items={navItems} 

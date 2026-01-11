@@ -7,6 +7,7 @@ import { PaletteInitializer } from "@/components/palette-initializer";
 import { PaletteScript } from "@/components/palette-script";
 import { DirectionProvider, type DirectionMode } from "@/components/direction-provider";
 import { GoogleOAuthProvider } from "@react-oauth/google";
+import { TenantProvider } from "@/contexts/TenantContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -59,7 +60,9 @@ export default async function RootLayout({
           <PaletteInitializer />
           <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}>
             <DirectionProvider initialDirection={initialDirection}>
-              {children}
+              <TenantProvider>
+                {children}
+              </TenantProvider>
             </DirectionProvider>
           </GoogleOAuthProvider>
         </ThemeProvider>

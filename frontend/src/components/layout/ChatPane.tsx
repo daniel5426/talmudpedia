@@ -291,6 +291,7 @@ const ReasoningStepsList = ({
 type ChatPaneProps = {
   controller?: ChatController;
   chatId?: string;
+  noHeader?: boolean;
 };
 
 export function ChatWorkspace({
@@ -791,7 +792,7 @@ export function ChatWorkspace({
   );
 }
 
-export function ChatPane({ controller, chatId }: ChatPaneProps) {
+export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps) {
   // Auto (Agent Router) - Get chatId from URL search params if not provided as prop
   const searchParams = useSearchParams();
   const effectiveChatId = chatId || searchParams.get('chatId');
@@ -959,13 +960,13 @@ export function ChatPane({ controller, chatId }: ChatPaneProps) {
             isEmptyState ? "opacity-100" : "opacity-0"
           )}
         />
-        <ChatPaneHeader
+        {!noHeader && <ChatPaneHeader
           chatId={effectiveChatId}
           onSearchOpen={() => setSearchOpen(true)}
           onShareChat={handleShareChat}
           onDeleteChat={handleDeleteChat}
           isEmptyState={isEmptyState}
-        />
+        />}
         {mainContent}
       </Conversation>
     </>

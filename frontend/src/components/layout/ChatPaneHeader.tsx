@@ -36,7 +36,7 @@ export function ChatPaneHeader({
     >
       <div className="flex items-center gap-2">
         {/* Left side: Dropdown menu (only if chatId) and Search */}
-        <div className="flex items-center gap-2 rounded-lg bg-background border-none">
+        <div className="flex shadow-md items-center gap-1 rounded-lg bg-background border-none">
           {chatId && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild className="border-none shadow-none">

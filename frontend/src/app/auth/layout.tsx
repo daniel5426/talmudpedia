@@ -2,12 +2,43 @@
 
 import Image from "next/image";
 import { motion } from "framer-motion";
+import { useEffect } from "react";
+import { useTheme } from "next-themes";
+import { palettes } from "@/lib/themes";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
+  const { setTheme } = useTheme();
+
+  useEffect(() => {
+    setTheme("light");
+  }, [setTheme]);
+
+  const oceanBreeze = palettes.find(p => p.id === 5);
+  const authStyles = oceanBreeze ? {
+    '--gradient-from': oceanBreeze.light['--gradient-from'],
+    '--gradient-to': oceanBreeze.light['--gradient-to'],
+    '--p-light-primary': oceanBreeze.light['--primary'],
+    '--background': oceanBreeze.light['--background'],
+    '--foreground': oceanBreeze.light['--foreground'],
+    '--chat-background': oceanBreeze.light['--chat-background'],
+    '--primary': oceanBreeze.light['--primary'],
+    '--primary-foreground': oceanBreeze.light['--primary-foreground'],
+    '--muted': oceanBreeze.light['--muted'],
+    '--muted-foreground': oceanBreeze.light['--muted-foreground'],
+    '--destructive': oceanBreeze.light['--destructive'],
+    '--border': oceanBreeze.light['--border'],
+    '--ring': oceanBreeze.light['--ring'],
+    '--primary-soft': `color-mix(in oklch, ${oceanBreeze.light['--primary']} 5%, ${oceanBreeze.light['--background']})`,
+  } as React.CSSProperties : {};
+
   return (
-    <div className="relative min-h-svh flex flex-col items-center justify-center p-6 md:p-10 overflow-hidden bg-background">
-      {/* Dynamic Background Gradient */}
-      <div className="fixed inset-0 bg-linear-to-br from-(--gradient-from) to-(--gradient-to) z-[-1]" />
+    <div className="relative min-h-svh flex flex-col items-center justify-center p-6 md:p-10 overflow-hidden bg-background" style={authStyles}>
+      <div 
+        className="fixed inset-0 z-[-1]"
+        style={{
+          background: `linear-gradient(to bottom right, ${oceanBreeze?.light['--gradient-from'] || '#dff2f4'}, ${oceanBreeze?.light['--gradient-to'] || '#1ca4ac'})`
+        }}
+      />
 
       {/* Decorative Animated Elements */}
       <div

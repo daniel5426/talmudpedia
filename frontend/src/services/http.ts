@@ -61,6 +61,12 @@ class HttpClient {
     return this.request<T>(path, { ...init, method: "POST", body: preparedBody });
   }
 
+  put<T>(path: string, body?: any, init?: RequestInit) {
+    const preparedBody =
+      body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined;
+    return this.request<T>(path, { ...init, method: "PUT", body: preparedBody });
+  }
+
   patch<T>(path: string, body?: any, init?: RequestInit) {
     const preparedBody =
       body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined;

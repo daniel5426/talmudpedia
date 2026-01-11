@@ -178,7 +178,7 @@ export function LandingPage({
       </div>
 
       {/* Background Animation Section */}
-      <div className="w-full h-[550px] md:h-[900px] flex justify-center items-center opacity-60 relative z-0">
+      <div className="w-full h-[550px] md:h-[900px] flex justify-center items-center relative z-0">
          <DataPoints scrollOffset={scrollY} />
       </div>
 
