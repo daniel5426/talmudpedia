@@ -62,20 +62,26 @@ import { cn } from "@/lib/utils"
 
 const CAPABILITY_ICONS: Record<ModelCapabilityType, React.ElementType> = {
     chat: MessageSquare,
+    completion: MessageSquare,
     embedding: Cpu,
     rerank: SearchIcon,
     vision: Eye,
     speech_to_text: Mic,
     text_to_speech: Bot,
+    image: Eye,
+    audio: Mic,
 }
 
 const CAPABILITY_LABELS: Record<ModelCapabilityType, string> = {
     chat: "Chat / LLM",
+    completion: "Completion",
     embedding: "Embedding",
     rerank: "Reranker",
     vision: "Vision",
     speech_to_text: "Speech to Text",
     text_to_speech: "Text to Speech",
+    image: "Image Generation",
+    audio: "Audio Processing",
 }
 
 const PROVIDER_LABELS: Record<ModelProviderType, string> = {
@@ -85,6 +91,11 @@ const PROVIDER_LABELS: Record<ModelProviderType, string> = {
     huggingface: "HuggingFace",
     local: "Local",
     custom: "Custom",
+    google: "Google AI",
+    cohere: "Cohere",
+    groq: "Groq",
+    mistral: "Mistral",
+    together: "Together AI",
 }
 
 function CapabilityBadge({ type }: { type: ModelCapabilityType }) {

@@ -1,4 +1,8 @@
-import api from "./api";
+import { httpClient } from "./http";
+
+// ============================================================================
+// Types
+// ============================================================================
 
 export interface Agent {
   id: string;
@@ -13,99 +17,234 @@ export interface Agent {
   published_at?: string;
 }
 
-export type ModelStatus = 'active' | 'inactive' | 'deprecated' | 'disabled';
-export type ModelProviderType = 'openai' | 'anthropic' | 'google' | 'cohere' | 'groq' | 'mistral' | 'together' | 'local' | 'gemini' | 'huggingface';
-export type ModelCapabilityType = 'chat' | 'completion' | 'embedding' | 'image' | 'vision' | 'audio' | 'rerank' | 'speech_to_text';
+export type ModelStatus = 'active' | 'deprecated' | 'disabled';
+export type ModelProviderType = 'openai' | 'anthropic' | 'google' | 'cohere' | 'groq' | 'mistral' | 'together' | 'local' | 'gemini' | 'huggingface' | 'custom';
+export type ModelCapabilityType = 'chat' | 'completion' | 'embedding' | 'image' | 'vision' | 'audio' | 'rerank' | 'speech_to_text' | 'text_to_speech';
 
 export interface LogicalModel {
   id: string;
   name: string;
   slug: string;
   description?: string;
-  provider: ModelProviderType;
-  providers?: any[]; 
-  external_model_id: string;
-  capabilities: ModelCapabilityType[];
-  capability_type?: ModelCapabilityType;
-  is_active: boolean;
+  capability_type: ModelCapabilityType;
+  metadata: Record<string, unknown>;
+  default_resolution_policy: Record<string, unknown>;
+  version: number;
   status: ModelStatus;
+  tenant_id: string;
+  created_at: string;
+  updated_at: string;
+  providers: ModelProviderSummary[];
+}
+
+export interface ModelProviderSummary {
+  id: string;
+  provider: ModelProviderType;
+  provider_model_id: string;
+  priority: number;
+  is_enabled: boolean;
+  config?: Record<string, unknown>;
 }
 
 export interface CreateModelRequest {
   name: string;
-  slug?: string;
+  slug: string;
   description?: string;
-  provider?: ModelProviderType;
-  external_model_id?: string;
-  capability_type?: ModelCapabilityType;
-  capabilities?: ModelCapabilityType[];
+  capability_type: ModelCapabilityType;
+  metadata?: Record<string, unknown>;
+  default_resolution_policy?: Record<string, unknown>;
+}
+
+export interface UpdateModelRequest {
+  name?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+  default_resolution_policy?: Record<string, unknown>;
+  status?: ModelStatus;
 }
 
 export interface CreateProviderRequest {
-  name: string;
-  type: ModelProviderType;
-  provider?: ModelProviderType;
-  provider_model_id?: string;
+  provider: ModelProviderType;
+  provider_model_id: string;
+  config?: Record<string, unknown>;
+  credentials_ref?: string;
   priority?: number;
-  config?: Record<string, any>;
 }
 
-export interface AgentListResponse {
-  agents: Agent[];
+export interface ModelsListResponse {
+  models: LogicalModel[];
   total: number;
 }
 
+// Tool Types
+export type ToolImplementationType = "internal" | "http" | "rag_retrieval" | "function" | "custom";
+export type ToolStatus = "draft" | "published" | "deprecated" | "disabled";
+
+export interface ToolDefinition {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  implementation_type: ToolImplementationType;
+  implementation_config: Record<string, unknown>;
+  execution_config: Record<string, unknown>;
+  version: string;
+  status: ToolStatus;
+  tenant_id: string;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+}
+
+export interface CreateToolRequest {
+  name: string;
+  slug: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  implementation_type: ToolImplementationType;
+  implementation_config?: Record<string, unknown>;
+  execution_config?: Record<string, unknown>;
+}
+
+export interface UpdateToolRequest {
+  name?: string;
+  description?: string;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  implementation_config?: Record<string, unknown>;
+  execution_config?: Record<string, unknown>;
+}
+
+export interface ToolsListResponse {
+  tools: ToolDefinition[];
+  total: number;
+}
+
+// ============================================================================
+// Services
+// ============================================================================
+
 export const agentService = {
   async listAgents(params?: { status?: string, skip?: number, limit?: number }) {
-    const response = await api.get<AgentListResponse>('/agents', { params });
-    return response.data;
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.skip) query.set("skip", String(params.skip));
+    if (params?.limit) query.set("limit", String(params.limit));
+    const queryString = query.toString();
+    const path = `/agents${queryString ? `?${queryString}` : ""}`;
+    return httpClient.get<{ agents: Agent[], total: number }>(path);
   },
 
   async getAgent(id: string) {
-    const response = await api.get<Agent>(`/agents/${id}`);
-    return response.data;
+    return httpClient.get<Agent>(`/agents/${id}`);
   },
 
   async createAgent(data: Partial<Agent>) {
-    const response = await api.post<Agent>('/agents', data);
-    return response.data;
+    return httpClient.post<Agent>('/agents', data);
   },
 
   async updateAgent(id: string, data: Partial<Agent>) {
-    const response = await api.patch<Agent>(`/agents/${id}`, data);
-    return response.data;
+    return httpClient.patch<Agent>(`/agents/${id}`, data);
   },
 
   async publishAgent(id: string) {
-    const response = await api.post<Agent>(`/agents/${id}/publish`);
-    return response.data;
+    return httpClient.post<Agent>(`/agents/${id}/publish`, {});
   },
 
   async executeAgent(id: string, input: Record<string, any>) {
-    const response = await api.post(`/agents/${id}/execute`, { input_params: input });
-    return response.data;
+    return httpClient.post(`/agents/${id}/execute`, { input_params: input });
   }
 };
 
 export const modelsService = {
-  async listModels() {
-    const response = await api.get<LogicalModel[]>('/models');
-    return response.data;
+  async listModels(
+    capabilityType?: ModelCapabilityType,
+    status?: ModelStatus,
+    skip = 0,
+    limit = 50
+  ): Promise<ModelsListResponse> {
+    const query = new URLSearchParams();
+    if (capabilityType) query.set("capability_type", capabilityType);
+    if (status) query.set("status", status);
+    query.set("skip", String(skip));
+    query.set("limit", String(limit));
+    const queryString = query.toString();
+    
+    return httpClient.get<ModelsListResponse>(`/models?${queryString}`);
   },
-  async createModel(data: CreateModelRequest) {
-    const response = await api.post<LogicalModel>('/models', data);
-    return response.data;
+
+  async getModel(id: string): Promise<LogicalModel> {
+    return httpClient.get<LogicalModel>(`/models/${id}`);
   },
-  async deleteModel(id: string) {
-    const response = await api.delete(`/models/${id}`);
-    return response.data;
+
+  async createModel(data: CreateModelRequest): Promise<LogicalModel> {
+    return httpClient.post<LogicalModel>('/models', data);
   },
-  async addProvider(modelId: string, data: CreateProviderRequest) {
-    const response = await api.post(`/models/${modelId}/providers`, data);
-    return response.data;
+
+  async updateModel(id: string, data: UpdateModelRequest): Promise<LogicalModel> {
+    return httpClient.put<LogicalModel>(`/models/${id}`, data);
   },
-  async removeProvider(modelId: string, providerId: string) {
-    const response = await api.delete(`/models/${modelId}/providers/${providerId}`);
-    return response.data;
-  }
+
+  async deleteModel(id: string): Promise<void> {
+    await httpClient.delete(`/models/${id}`);
+  },
+
+  async addProvider(modelId: string, data: CreateProviderRequest): Promise<ModelProviderSummary> {
+    return httpClient.post<ModelProviderSummary>(`/models/${modelId}/providers`, data);
+  },
+
+  async removeProvider(modelId: string, providerId: string): Promise<void> {
+    await httpClient.delete(`/models/${modelId}/providers/${providerId}`);
+  },
 };
+
+export const toolsService = {
+  async listTools(
+    implementationType?: ToolImplementationType,
+    status?: ToolStatus,
+    skip = 0,
+    limit = 50
+  ): Promise<ToolsListResponse> {
+    const query = new URLSearchParams();
+    if (implementationType) query.set("implementation_type", implementationType);
+    if (status) query.set("status", status);
+    query.set("skip", String(skip));
+    query.set("limit", String(limit));
+    const queryString = query.toString();
+    
+    return httpClient.get<ToolsListResponse>(`/tools?${queryString}`);
+  },
+
+  async getTool(id: string): Promise<ToolDefinition> {
+    return httpClient.get<ToolDefinition>(`/tools/${id}`);
+  },
+
+  async createTool(data: CreateToolRequest): Promise<ToolDefinition> {
+    return httpClient.post<ToolDefinition>('/tools', data);
+  },
+
+  async updateTool(id: string, data: UpdateToolRequest): Promise<ToolDefinition> {
+    return httpClient.put<ToolDefinition>(`/tools/${id}`, data);
+  },
+
+  async publishTool(id: string): Promise<ToolDefinition> {
+    return httpClient.post<ToolDefinition>(`/tools/${id}/publish`, {});
+  },
+
+  async createVersion(id: string, newVersion: string): Promise<ToolDefinition> {
+    return httpClient.post<ToolDefinition>(`/tools/${id}/version?new_version=${encodeURIComponent(newVersion)}`, {});
+  },
+
+  async deleteTool(id: string): Promise<void> {
+    await httpClient.delete(`/tools/${id}`);
+  },
+
+  async testTool(id: string, input: Record<string, unknown>): Promise<unknown> {
+    return httpClient.post(`/tools/${id}/test`, { input });
+  },
+};
+
+

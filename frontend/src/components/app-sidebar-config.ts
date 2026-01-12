@@ -60,11 +60,11 @@ export const sidebarContent = {
         },
         {
           title: "Models Registry",
-          url: "/admin/agents/resources/models",
+          url: "/admin/models",
         },
         {
           title: "Tools Registry",
-          url: "/admin/agents/resources/tools",
+          url: "/admin/tools",
         },
       ],
     },

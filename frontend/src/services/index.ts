@@ -43,7 +43,7 @@ export { auditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";
 
 // Agent Resources (Models & Tools Registry)
-export { modelsService, toolsService } from "./agent-resources";
+export { modelsService, toolsService, agentService } from "./agent-resources";
 export type {
   LogicalModel,
   ModelCapabilityType,
@@ -53,5 +53,6 @@ export type {
   ToolDefinition,
   ToolImplementationType,
   ToolStatus,
+  Agent,
 } from "./agent-resources";
 
