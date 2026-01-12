@@ -80,7 +80,8 @@ app.add_middleware(
     expose_headers=["X-Chat-ID"],
 )
 
-from app.api.routers import agent, auth, chat, general, search, stt, texts, library, admin, tts, rag_admin
+from app.api.routers import auth, chat, general, search, stt, texts, library, admin, tts, rag_admin
+from app.api.routers.agents import router as agents_router
 from app.api.routers import org_units as org_units_router
 from app.api.routers import rbac as rbac_router
 from app.api.routers import audit as audit_router
@@ -89,6 +90,7 @@ from app.api.routers import models as models_router
 from app.api.routers import tools as tools_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(agents_router, prefix="/api/v1/agents", tags=["Agents"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
 app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])

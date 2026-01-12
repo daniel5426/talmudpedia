@@ -1,0 +1,98 @@
+"""
+Graph Schema - Pydantic models for agent graph validation.
+"""
+from enum import Enum
+from typing import Any, Optional
+from pydantic import BaseModel, Field, ConfigDict
+
+
+class NodeType(str, Enum):
+    """Types of nodes in an agent graph."""
+    INPUT = "input"
+    OUTPUT = "output"
+    LLM_CALL = "llm_call"
+    TOOL_CALL = "tool_call"
+    CONDITIONAL = "conditional"
+    LOOP = "loop"
+    PARALLEL = "parallel"
+    TRANSFORM = "transform"
+    RAG_RETRIEVAL = "rag_retrieval"
+
+
+class EdgeType(str, Enum):
+    """Types of edges in an agent graph."""
+    CONTROL = "control"
+    DATA = "data"
+
+
+class AgentNodePosition(BaseModel):
+    """Position of a node in the visual editor."""
+    x: float
+    y: float
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentNode(BaseModel):
+    """A node in the agent graph."""
+    id: str
+    type: NodeType
+    position: AgentNodePosition
+    label: Optional[str] = None
+    config: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentEdge(BaseModel):
+    """An edge connecting nodes in the agent graph."""
+    id: str
+    source: str
+    target: str
+    type: EdgeType = EdgeType.CONTROL
+    source_handle: Optional[str] = None
+    target_handle: Optional[str] = None
+    label: Optional[str] = None
+    condition: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentGraph(BaseModel):
+    """The complete graph definition of an agent."""
+    nodes: list[AgentNode] = Field(default_factory=list)
+    edges: list[AgentEdge] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+    
+    def get_node(self, node_id: str) -> Optional[AgentNode]:
+        for node in self.nodes:
+            if node.id == node_id:
+                return node
+        return None
+    
+    def get_input_nodes(self) -> list[AgentNode]:
+        return [n for n in self.nodes if n.type == NodeType.INPUT]
+    
+    def get_output_nodes(self) -> list[AgentNode]:
+        return [n for n in self.nodes if n.type == NodeType.OUTPUT]
+    
+    def get_outgoing_edges(self, node_id: str) -> list[AgentEdge]:
+        return [e for e in self.edges if e.source == node_id]
+    
+    def get_incoming_edges(self, node_id: str) -> list[AgentEdge]:
+        return [e for e in self.edges if e.target == node_id]
+
+
+class MemoryConfig(BaseModel):
+    """Configuration for agent memory."""
+    short_term_enabled: bool = True
+    short_term_max_messages: int = 20
+    long_term_enabled: bool = False
+    long_term_index_id: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class ExecutionConstraints(BaseModel):
+    """Constraints for agent execution."""
+    timeout_seconds: int = 300
+    max_tokens: Optional[int] = None
+    max_iterations: int = 10
+    allow_parallel_tools: bool = True
+    model_config = ConfigDict(extra="forbid")
