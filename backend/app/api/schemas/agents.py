@@ -64,3 +64,17 @@ class AgentRunResponse(BaseModel):
     completed_at: Optional[datetime] = None
     
     model_config = ConfigDict(from_attributes=True)
+
+
+class ExecuteAgentRequest(BaseModel):
+    input: Optional[str] = None
+    messages: list[dict[str, Any]] = []
+    context: Optional[dict[str, Any]] = None
+
+
+class ExecuteAgentResponse(BaseModel):
+    run_id: str
+    output: dict[str, Any]
+    steps: list[dict[str, Any]]
+    messages: list[dict[str, Any]]
+    usage: dict[str, Any]
