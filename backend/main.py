@@ -80,7 +80,7 @@ app.add_middleware(
     expose_headers=["X-Chat-ID"],
 )
 
-from app.api.routers import auth, chat, general, search, stt, texts, library, admin, tts, rag_admin
+from app.api.routers import auth, chat, general, search, stt, texts, library, admin, tts, rag_admin, agent
 from app.api.routers.agents import router as agents_router
 from app.api.routers import org_units as org_units_router
 from app.api.routers import rbac as rbac_router
