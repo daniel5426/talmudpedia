@@ -120,8 +120,9 @@ export const palettes: Palette[] = [
     name: 'Ocean Breeze',
     description: 'Calm, refreshing, professional',
     light: {
-      '--background': 'oklch(0.99 0.01 220)',
+      '--background': 'oklch(1 0 0)',
       '--foreground': 'oklch(0.20 0.02 240)',
+      '--sidebar': 'oklch(0.9789 0.006 223.46)',
       '--primary': 'oklch(0.50 0.15 220)',
       '--primary-foreground': 'oklch(0.99 0.01 220)',
       '--muted': 'oklch(0.95 0.02 225)',
@@ -131,7 +132,7 @@ export const palettes: Palette[] = [
       '--ring': 'oklch(0.50 0.15 220)',
       '--gradient-from': '#dff2f4',
       '--gradient-to': '#1ca4ac',
-      '--chat-background': 'oklch(0.9916 0.005 228.82)',
+      '--chat-background': 'oklch(1 0 0)',
     },
     dark: {
       '--background': 'oklch(0.18 0.02 240)',

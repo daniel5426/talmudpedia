@@ -41,3 +41,17 @@ export type { Permission, Role, RoleAssignment, UserPermissions } from "./rbac";
 
 export { auditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";
+
+// Agent Resources (Models & Tools Registry)
+export { modelsService, toolsService } from "./agent-resources";
+export type {
+  LogicalModel,
+  ModelCapabilityType,
+  ModelProviderType,
+  ModelStatus,
+  ModelProviderSummary,
+  ToolDefinition,
+  ToolImplementationType,
+  ToolStatus,
+} from "./agent-resources";
+

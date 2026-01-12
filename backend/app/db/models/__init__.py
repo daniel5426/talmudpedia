@@ -29,6 +29,38 @@ from .rbac import (
     RoleAssignment,
 )
 from .audit import AuditLog, AuditResult
+from .model_registry import (
+    LogicalModel,
+    ModelProvider,
+    ModelMetadata,
+    ModelResolutionPolicy,
+    ModelCapabilityType,
+    ModelProviderType,
+    ModelStatus,
+)
+from .tool_registry import (
+    ToolDefinition,
+    ToolExecution,
+    ToolImplementationType,
+    ToolStatus,
+    ToolFailurePolicy,
+    ToolRetryConfig,
+    ToolExecutionConfig,
+    ToolExecutionStatus,
+)
+from .agent import (
+    AgentDefinition,
+    AgentVersion,
+    AgentStatus,
+    AgentGraph,
+    AgentNode,
+    AgentEdge,
+    NodeType,
+    EdgeType,
+    AgentNodePosition,
+    MemoryConfig,
+    ExecutionConstraints,
+)
 
 __all__ = [
     "MongoModel",
@@ -63,4 +95,33 @@ __all__ = [
     "RoleAssignment",
     "AuditLog",
     "AuditResult",
+    # Model Registry
+    "LogicalModel",
+    "ModelProvider",
+    "ModelMetadata",
+    "ModelResolutionPolicy",
+    "ModelCapabilityType",
+    "ModelProviderType",
+    "ModelStatus",
+    # Tool Registry
+    "ToolDefinition",
+    "ToolExecution",
+    "ToolImplementationType",
+    "ToolStatus",
+    "ToolFailurePolicy",
+    "ToolRetryConfig",
+    "ToolExecutionConfig",
+    "ToolExecutionStatus",
+    # Agent
+    "AgentDefinition",
+    "AgentVersion",
+    "AgentStatus",
+    "AgentGraph",
+    "AgentNode",
+    "AgentEdge",
+    "NodeType",
+    "EdgeType",
+    "AgentNodePosition",
+    "MemoryConfig",
+    "ExecutionConstraints",
 ]

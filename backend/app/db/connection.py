@@ -27,11 +27,18 @@ class MongoDatabase:
             print("Closed MongoDB connection")
 
     @classmethod
-    def get_db(cls):
+    def get_sefaria_collection(cls, collection_name: str):
+        """
+        Get a Sefaria-specific collection. 
+        Only allows access to 'library_siblings' and 'library_search'.
+        """
+        ALLOWED_COLLECTIONS = {"library_siblings", "library_search"}
+        
+        if collection_name not in ALLOWED_COLLECTIONS:
+            raise ValueError(f"Access to collection '{collection_name}' is restricted. Only Sefaria collections are allowed via Mongo.")
+
         if cls.client is None:
             raise Exception("Database not initialized. Call connect() first.")
-        return cls.client[cls.db_name]
+        
+        return cls.client[cls.db_name][collection_name]
 
-    @classmethod
-    def get_collection(cls, collection_name: str):
-        return cls.get_db()[collection_name]

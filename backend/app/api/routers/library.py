@@ -27,7 +27,7 @@ async def preload_library_cache():
         
     try:
         print("Pre-loading library menu cache (High-RAM Mode)...")
-        collection = MongoDatabase.get_collection("library_siblings")
+        collection = MongoDatabase.get_sefaria_collection("library_siblings")
         
         # 1. Load root
         cursor = collection.find({"path": []}, {"_id": 0}).sort("title", 1)
@@ -199,7 +199,7 @@ async def get_library_menu(response: Response):
         return root_cache
         
     try:
-        collection = MongoDatabase.get_collection("library_siblings")
+        collection = MongoDatabase.get_sefaria_collection("library_siblings")
         # Top-level nodes are those with an empty path
         cursor = collection.find({"path": []}, {"_id": 0}).sort("title", 1)
         root_cache = await cursor.to_list(length=100)
@@ -219,7 +219,7 @@ async def get_library_chunk(identifier: str, response: Response):
         return menu_cache[identifier]
         
     try:
-        collection = MongoDatabase.get_collection("library_siblings")
+        collection = MongoDatabase.get_sefaria_collection("library_siblings")
         
         # Prioritize _id lookup as it's the fastest indexed field
         doc = await collection.find_one({"_id": identifier}, {"children": 1})
@@ -264,7 +264,7 @@ async def search_library(q: str = Query(..., min_length=1), limit: int = Query(2
     section_token = _extract_section_token(q_norm)
     
     try:
-        collection = MongoDatabase.get_collection("library_search")
+        collection = MongoDatabase.get_sefaria_collection("library_search")
         fetch_n = min(max(page * limit * 5, limit * 5), 1000)
         merged: Dict[str, Dict[str, Any]] = {}
         for search_str in _mongo_search_strings(q):
@@ -333,7 +333,7 @@ async def get_siblings(ref: str):
         # This handles the case where a search result ref includes a segment which isn't in library_siblings
         clean_ref = re.sub(r'[:]\d+(?:-\d+)?$', '', ref.strip())
         
-        collection = MongoDatabase.get_collection("library_siblings")
+        collection = MongoDatabase.get_sefaria_collection("library_siblings")
         # Try finding by exact cleaned ref first
         doc = await collection.find_one({"ref": clean_ref}, {"_id": 0})
         

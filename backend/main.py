@@ -85,11 +85,15 @@ from app.api.routers import org_units as org_units_router
 from app.api.routers import rbac as rbac_router
 from app.api.routers import audit as audit_router
 from app.api.routers import rag_pipelines as rag_pipelines_router
+from app.api.routers import models as models_router
+from app.api.routers import tools as tools_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
 app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
+app.include_router(models_router.router, prefix="/api/v1", tags=["models"])
+app.include_router(tools_router.router, prefix="/api/v1", tags=["tools"])
 app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
 app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
 app.include_router(audit_router.router, prefix="/api", tags=["audit"])
