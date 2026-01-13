@@ -57,6 +57,8 @@ interface PipelineNodeData {
   outputType: string
   isConfigured: boolean
   hasErrors: boolean
+  // Index signature for ReactFlow compatibility
+  [key: string]: unknown
 }
 
 export default function PipelinesPage() {
@@ -90,7 +92,7 @@ export default function PipelinesPage() {
         ragAdminService.listVisualPipelines(currentTenant?.slug),
         ragAdminService.getOperatorCatalog(),
       ])
-      
+
       const fetchedPipelines = pipelinesRes.pipelines
       setPipelines(fetchedPipelines)
       setCatalog(catalogRes)

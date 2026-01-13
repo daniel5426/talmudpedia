@@ -63,7 +63,8 @@ def agent_to_response(agent) -> AgentResponse:
         memory_config=agent.memory_config or {},
         execution_constraints=agent.execution_constraints or {},
         version=agent.version,
-        status=agent.status.value if agent.status else "draft",
+        status=agent.status.value if hasattr(agent.status, "value") else (agent.status or "draft"),
+
         is_active=agent.is_active,
         is_public=agent.is_public,
         created_at=agent.created_at,

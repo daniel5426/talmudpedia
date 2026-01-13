@@ -1,6 +1,6 @@
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, Tuple, List, Dict
 from uuid import UUID
 from dataclasses import dataclass, field
@@ -133,7 +133,7 @@ class AgentService:
         """Update an existing agent."""
         agent = await self.get_agent(agent_id)
         
-        if agent.status == AgentStatus.PUBLISHED:
+        if agent.status == AgentStatus.published:
             # Maybe allow some updates, but usually draft only
             pass
 
@@ -177,14 +177,14 @@ class AgentService:
             agent_id=agent.id,
             version=agent.version,
             config_snapshot=agent.graph_definition,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         self.db.add(snapshot)
         
         # Update agent status
-        agent.status = AgentStatus.PUBLISHED
+        agent.status = AgentStatus.published
         agent.version += 1
-        agent.published_at = datetime.utcnow()
+        agent.published_at = datetime.now(timezone.utc)
         
         await self.db.commit()
         await self.db.refresh(agent)

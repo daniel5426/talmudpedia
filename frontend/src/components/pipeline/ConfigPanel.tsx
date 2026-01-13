@@ -7,11 +7,11 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { 
-  PipelineNodeData, 
-  ConfigFieldSpec, 
+import {
+  PipelineNodeData,
+  ConfigFieldSpec,
   OperatorSpec,
-  CATEGORY_COLORS 
+  CATEGORY_COLORS
 } from "./types"
 
 interface ConfigPanelProps {
@@ -44,7 +44,7 @@ function ConfigField({
             "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
             "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
           )}
-          value={(value as string) || field.default || ""}
+          value={(value as string) || (field.default as string) || ""}
           onChange={(e) => onChange(e.target.value)}
         >
           <option value="">Select...</option>

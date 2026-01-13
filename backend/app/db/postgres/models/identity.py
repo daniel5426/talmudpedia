@@ -12,19 +12,19 @@ from ..base import Base
 
 # Enums
 class TenantStatus(str, enum.Enum):
-    ACTIVE = "active"
-    SUSPENDED = "suspended"
-    PENDING = "pending"
+    active = "active"
+    suspended = "suspended"
+    pending = "pending"
 
 class OrgUnitType(str, enum.Enum):
-    ORG = "org"
-    DEPT = "dept"
-    TEAM = "team"
+    org = "org"
+    dept = "dept"
+    team = "team"
 
 class UserRole(str, enum.Enum):
-    USER = "user"
-    ADMIN = "admin"
-    SYSTEM = "system"
+    user = "user"
+    admin = "admin"
+    system = "system"
 
 # Models
 
@@ -34,7 +34,7 @@ class Tenant(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     slug = Column(String, unique=True, nullable=False, index=True)
-    status = Column(SQLEnum(TenantStatus), default=TenantStatus.ACTIVE, nullable=False)
+    status = Column(SQLEnum(TenantStatus), default=TenantStatus.active, nullable=False)
     settings = Column(JSONB, default={}, nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

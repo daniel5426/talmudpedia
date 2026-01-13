@@ -26,11 +26,12 @@ class HybridRetriever(Retriever):
         """
         Retrieve from both sources, merge, and rerank.
         """
-        # 1. Retrieve from Lexical (Elasticsearch)
-        lexical_docs = await self.lexical_retriever.retrieve(query, limit=self.lexical_limit, **kwargs)
+        # 1. Retrieve from both sources in parallel
+        import asyncio
+        lexical_task = self.lexical_retriever.retrieve(query, limit=self.lexical_limit, **kwargs)
+        semantic_task = self.semantic_retriever.retrieve(query, limit=self.semantic_limit, **kwargs)
         
-        # 2. Retrieve from Semantic (Pinecone)
-        semantic_docs = await self.semantic_retriever.retrieve(query, limit=self.semantic_limit, **kwargs)
+        lexical_docs, semantic_docs = await asyncio.gather(lexical_task, semantic_task)
         
         # 3. Merge and Deduplicate
         merged_docs = []

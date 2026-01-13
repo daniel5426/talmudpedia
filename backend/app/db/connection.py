@@ -1,14 +1,17 @@
 import os
+import logging
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional
 from urllib.parse import quote_plus
 
+logger = logging.getLogger(__name__)
+
 user = "daniel"
 password = "Hjsjfk74jkffdDF"
 ip = "155.138.219.192"
-db = "sefaria"
+db_name = "sefaria"
 
-uri = f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{ip}:27017/{db}?authSource=admin"
+uri = f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{ip}:27017/{db_name}?authSource=admin"
 
 class MongoDatabase:
     client: Optional[AsyncIOMotorClient] = None
@@ -17,7 +20,7 @@ class MongoDatabase:
     @classmethod
     async def connect(cls):
         mongo_uri = os.getenv("MONGO_URI", uri)
-        cls.client = AsyncIOMotorClient(mongo_uri)
+        cls.client = AsyncIOMotorClient(mongo_uri, uuidRepresentation='standard')
         print(f"Connected to MongoDB at {mongo_uri}")
 
     @classmethod
@@ -25,6 +28,14 @@ class MongoDatabase:
         if cls.client:
             cls.client.close()
             print("Closed MongoDB connection")
+
+    @classmethod
+    def get_db(cls):
+        if cls.client is None:
+            # Try to connect if not connected
+            mongo_uri = os.getenv("MONGO_URI", uri)
+            cls.client = AsyncIOMotorClient(mongo_uri, uuidRepresentation='standard')
+        return cls.client[cls.db_name]
 
     @classmethod
     def get_sefaria_collection(cls, collection_name: str):
@@ -37,8 +48,5 @@ class MongoDatabase:
         if collection_name not in ALLOWED_COLLECTIONS:
             raise ValueError(f"Access to collection '{collection_name}' is restricted. Only Sefaria collections are allowed via Mongo.")
 
-        if cls.client is None:
-            raise Exception("Database not initialized. Call connect() first.")
-        
-        return cls.client[cls.db_name][collection_name]
-
+        db = cls.get_db()
+        return db[collection_name]

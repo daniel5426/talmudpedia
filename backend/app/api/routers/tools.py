@@ -89,11 +89,12 @@ async def list_tools(
     db = MongoDatabase.get_db()
     collection = db["tool_definitions"]
     
-    query = {"tenant_id": ObjectId(tenant_ctx["tenant_id"])}
-    if implementation_type:
-        query["implementation_type"] = implementation_type.value
-    if status:
-        query["status"] = status.value
+    try:
+        tenant_id_obj = ObjectId(tenant_ctx["tenant_id"])
+    except Exception:
+        tenant_id_obj = str(tenant_ctx["tenant_id"])
+
+    query = {"tenant_id": tenant_id_obj}
     
     total = await collection.count_documents(query)
     cursor = collection.find(query).skip(skip).limit(limit).sort("name", 1)

@@ -12,7 +12,7 @@ import {
 } from "lucide-react"
 
 export const sidebarContent = {
-  navMain: [
+  adminNav: [
     {
       title: "Dashboard",
       url: "/admin",
@@ -84,4 +84,22 @@ export const sidebarContent = {
       icon: Settings,
     },
   ],
+  workspaceNav: [
+    {
+      title: "שיחה",
+      url: "/chat",
+      icon: MessageSquare,
+      isActive: true,
+    },
+    {
+      title: "חיפוש במסמכים",
+      url: "/document-search",
+      icon: FileSearch,
+    },
+    {
+      title: "חזרה לניהול",
+      url: "/admin",
+      icon: LayoutDashboard,
+    }
+  ]
 }

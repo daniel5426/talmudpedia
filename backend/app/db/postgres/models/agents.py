@@ -11,10 +11,10 @@ from ..base import Base
 
 class AgentStatus(str, enum.Enum):
     """Lifecycle status of an agent."""
-    DRAFT = "draft"
-    PUBLISHED = "published"
-    DEPRECATED = "deprecated"
-    ARCHIVED = "archived"
+    draft = "draft"
+    published = "published"
+    deprecated = "deprecated"
+    archived = "archived"
 
 
 class Agent(Base):
@@ -59,7 +59,7 @@ class Agent(Base):
     
     # Versioning & Status
     version = Column(Integer, default=1, nullable=False)
-    status = Column(SQLEnum(AgentStatus), default=AgentStatus.DRAFT, nullable=False)
+    status = Column(SQLEnum(AgentStatus), default=AgentStatus.draft, nullable=False)
     
     is_active = Column(Boolean, default=True, nullable=False)
     is_public = Column(Boolean, default=False, nullable=False)
@@ -92,11 +92,11 @@ class AgentVersion(Base):
 
 
 class RunStatus(str, enum.Enum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    cancelled = "cancelled"
 
 
 class AgentRun(Base):
@@ -107,7 +107,7 @@ class AgentRun(Base):
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     
-    status = Column(SQLEnum(RunStatus), default=RunStatus.QUEUED, nullable=False)
+    status = Column(SQLEnum(RunStatus), default=RunStatus.queued, nullable=False)
     
     input_params = Column(JSONB, default={})
     output_result = Column(JSONB, nullable=True)

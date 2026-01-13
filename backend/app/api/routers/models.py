@@ -90,11 +90,14 @@ async def list_models(
     collection = db["logical_models"]
     providers_collection = db["model_providers"]
     
-    query = {"tenant_id": ObjectId(tenant_ctx["tenant_id"])}
-    if capability_type:
-        query["capability_type"] = capability_type.value
-    if status:
-        query["status"] = status.value
+    try:
+        tenant_id_obj = ObjectId(tenant_ctx["tenant_id"])
+    except Exception:
+        # If we can't convert to ObjectId, it's likely a UUID from Postgres
+        # For now, we'll try to find a tenant in Mongo with the same string ID or fail gracefully
+        tenant_id_obj = str(tenant_ctx["tenant_id"])
+
+    query = {"tenant_id": tenant_id_obj}
     
     total = await collection.count_documents(query)
     cursor = collection.find(query).skip(skip).limit(limit).sort("name", 1)

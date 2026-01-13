@@ -18,6 +18,7 @@ class VectorStore:
         self.pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         self.index_name = index_name
         
+        t_start = time.perf_counter()
         # Create index if not exists (simplified for serverless)
         if index_name not in self.pc.list_indexes().names():
             print(f"Creating index {index_name}...")
@@ -30,6 +31,7 @@ class VectorStore:
                     region="us-east-1"
                 )
             )
+        print(f"[TIMER] Pinecone list_indexes: {time.perf_counter()-t_start:.4f}s")
         
         self.index = self.pc.Index(index_name)
 

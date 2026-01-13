@@ -27,14 +27,14 @@ class PineconeReranker(Reranker):
         docs_content = [doc.content for doc in documents]
 
         try:
-            # The user provided example uses pc.inference.rerank
-            # We assume this is available in the installed pinecone version
-            results = self.pc.inference.rerank(
+            import asyncio
+            results = await asyncio.to_thread(
+                self.pc.inference.rerank,
                 model=self.model,
                 query=query,
                 documents=docs_content,
                 top_n=top_n,
-                return_documents=False # We only need indices and scores
+                return_documents=False
             )
             
             # Reconstruct the list of documents based on the reranked results

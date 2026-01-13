@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 from app.db.postgres.base import Base  # Import your Base
-from app.db.postgres.engine import DATABASE_URL # We'll use the URL from engine directly or reconstruct it
+from app.db.postgres.models import * # Import all models to register them
+from app.db.postgres.engine import DATABASE_URL
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -33,6 +33,8 @@ export interface PipelineNodeData {
   outputType: DataType
   isConfigured: boolean
   hasErrors: boolean
+  // Index signature for ReactFlow compatibility
+  [key: string]: unknown
 }
 
 export type PipelineNode = Node<PipelineNodeData, string>

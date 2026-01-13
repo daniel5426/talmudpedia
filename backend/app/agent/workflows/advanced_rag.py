@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any, Dict, List, Literal, Optional
 
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
@@ -23,6 +24,7 @@ class AdvancedRAGWorkflow(BaseAgent):
     """
 
     def __init__(self, llm: OpenAILLM, retriever: VectorRetriever):
+        print("[TIMER] AdvancedRAGWorkflow init started")
         super().__init__()
         # We use ChatOpenAI for standard tool calling support
         # We try to use the same model name as the passed llm, or default to gpt-4o
@@ -38,6 +40,7 @@ class AdvancedRAGWorkflow(BaseAgent):
         self.reranker = PineconeReranker()
         self.lexical_retriever = LexicalRetriever()
         
+        ti = time.perf_counter()
         self.retriever = HybridRetriever(
             lexical_retriever=self.lexical_retriever,
             semantic_retriever=retriever,
@@ -45,6 +48,7 @@ class AdvancedRAGWorkflow(BaseAgent):
             lexical_limit=5,
             semantic_limit=20
         )
+        print(f"[TIMER] HybridRetriever setup: {time.perf_counter()-ti:.4f}s")
         
         self.retrieval_tool = RetrievalTool(retriever=self.retriever)
         self.tools = [self.retrieval_tool]

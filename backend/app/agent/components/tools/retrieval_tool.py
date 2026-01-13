@@ -56,10 +56,6 @@ class RetrievalTool(BaseTool):
             {"query": query},
         )
         
-        # Add delay to verify independent event dispatch (TESTING ONLY)
-        import asyncio
-        await asyncio.sleep(1)
-        
         # Perform retrieval
         docs = await self.retriever.retrieve(query)
 

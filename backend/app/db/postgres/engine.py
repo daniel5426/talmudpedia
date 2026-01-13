@@ -23,7 +23,7 @@ def create_async_engine() -> AsyncEngine:
     return _create_async_engine(
         DATABASE_URL,
         echo=False,  # Set to True for SQL logging
-        pool_pre_ping=True,  # Check connection health before using
+        pool_pre_ping=False,  # Can cause MissingGreenlet in async mode
         pool_size=20,
         max_overflow=10,
     )

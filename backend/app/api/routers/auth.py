@@ -1,15 +1,18 @@
-from typing import Any
+from typing import Any, Optional
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
-from app.db.models.user import User
-from app.db.connection import MongoDatabase
-from app.core.security import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
-from bson import ObjectId
+from sqlalchemy import select, or_
+from sqlalchemy.ext.asyncio import AsyncSession
 import jwt
 import os
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
+
+from app.db.postgres.models.identity import User, UserRole
+from app.db.postgres.session import get_db
+from app.core.security import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
 
 router = APIRouter()
 
@@ -36,7 +39,10 @@ class UserResponse(BaseModel):
     avatar: str = None
     role: str = "user"
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -50,16 +56,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     except jwt.PyJWTError:
         raise credentials_exception
 
-    db = MongoDatabase.get_db()
-    user_doc = await db.users.find_one({"_id": ObjectId(user_id)})
-    if user_doc is None:
+    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if user is None:
         raise credentials_exception
-    return User(**user_doc)
+    return user
 
 @router.post("/register", response_model=UserResponse)
-async def register(user_in: UserCreate):
-    db = MongoDatabase.get_db()
-    existing_user = await db.users.find_one({"email": user_in.email})
+async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == user_in.email))
+    existing_user = result.scalar_one_or_none()
     if existing_user:
         raise HTTPException(
             status_code=400,
@@ -72,26 +78,26 @@ async def register(user_in: UserCreate):
         full_name=user_in.full_name,
         avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={user_in.full_name or user_in.email}"
     )
-    result = await db.users.insert_one(user.model_dump(by_alias=True))
-    user.id = result.inserted_id
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
     return UserResponse(id=str(user.id), email=user.email, full_name=user.full_name, avatar=user.avatar, role=user.role)
 
 @router.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    db = MongoDatabase.get_db()
-    user_doc = await db.users.find_one({"email": form_data.username})
-    if not user_doc or not verify_password(form_data.password, user_doc["hashed_password"]):
+async def login(db: AsyncSession = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
+    result = await db.execute(select(User).where(User.email == form_data.username))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = User(**user_doc)
     access_token = create_access_token(subject=str(user.id))
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/google", response_model=Token)
-async def google_auth(token_in: GoogleToken):
+async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db)):
     try:
         # Verify the ID token
         id_info = id_token.verify_oauth2_token(
@@ -114,12 +120,10 @@ async def google_auth(token_in: GoogleToken):
             detail=f"Invalid Google token: {str(e)}",
         )
 
-    db = MongoDatabase.get_db()
+    result = await db.execute(select(User).where(or_(User.google_id == google_id, User.email == email)))
+    user = result.scalar_one_or_none()
     
-    # Check if user exists by google_id or email
-    user_doc = await db.users.find_one({"$or": [{"google_id": google_id}, {"email": email}]})
-    
-    if not user_doc:
+    if not user:
         # Create new user
         user = User(
             email=email,
@@ -127,16 +131,16 @@ async def google_auth(token_in: GoogleToken):
             full_name=full_name,
             avatar=avatar or f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or email}"
         )
-        result = await db.users.insert_one(user.model_dump(by_alias=True))
-        user_id = str(result.inserted_id)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        user_id = str(user.id)
     else:
-        user_id = str(user_doc["_id"])
+        user_id = str(user.id)
         # Update google_id if it was missing (e.g. user existed with email but first time using Google)
-        if not user_doc.get("google_id"):
-            await db.users.update_one(
-                {"_id": user_doc["_id"]},
-                {"$set": {"google_id": google_id}}
-            )
+        if not user.google_id:
+            user.google_id = google_id
+            await db.commit()
 
     access_token = create_access_token(subject=user_id)
     return {"access_token": access_token, "token_type": "bearer"}

@@ -13,15 +13,17 @@ class LexicalRetriever(Retriever):
     def __init__(self, index_name: str = "reshet"):
         es_url = os.getenv("ELASTICSEARCH_URL")
         es_api_key = os.getenv("ELASTICSEARCH_API_KEY")
+        enable_es = os.getenv("ENABLE_ELASTICSEARCH", "true").lower() == "true"
         
-        if not es_url:
+        if not es_url or not enable_es:
             self.client = None
             self.index_name = index_name
             return
         
         self.client = AsyncElasticsearch(
             es_url,
-            api_key=es_api_key
+            api_key=es_api_key,
+            request_timeout=5.0 # Set a reasonable timeout to avoid hanging
         )
         self.index_name = index_name
 
