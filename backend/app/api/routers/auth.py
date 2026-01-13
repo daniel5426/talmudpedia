@@ -10,7 +10,7 @@ import os
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
-from app.db.postgres.models.identity import User, UserRole
+from app.db.postgres.models.identity import User, UserRole, Tenant, OrgUnit, OrgMembership, OrgUnitType
 from app.db.postgres.session import get_db
 from app.core.security import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
 
@@ -38,6 +38,8 @@ class UserResponse(BaseModel):
     full_name: str = None
     avatar: str = None
     role: str = "user"
+    tenant_id: Optional[str] = None
+    org_unit_id: Optional[str] = None
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -53,6 +55,7 @@ async def get_current_user(
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
+        # Extract tenant/org if we want to attach them to the user object or request state
     except jwt.PyJWTError:
         raise credentials_exception
 
@@ -79,9 +82,44 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
         avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={user_in.full_name or user_in.email}"
     )
     db.add(user)
+    await db.flush() # Get user.id
+
+    # Create default tenant and org unit for the new user
+    tenant = Tenant(
+        name=f"{user.full_name or user.email}'s Organization",
+        slug=f"org-{str(user.id)[:8]}"
+    )
+    db.add(tenant)
+    await db.flush()
+
+    org_unit = OrgUnit(
+        tenant_id=tenant.id,
+        name="Root",
+        slug="root",
+        type=OrgUnitType.org
+    )
+    db.add(org_unit)
+    await db.flush()
+
+    membership = OrgMembership(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        org_unit_id=org_unit.id,
+        status="active"
+    )
+    db.add(membership)
+    
     await db.commit()
-    await db.refresh(user)
-    return UserResponse(id=str(user.id), email=user.email, full_name=user.full_name, avatar=user.avatar, role=user.role)
+    
+    return UserResponse(
+        id=str(user.id), 
+        email=user.email, 
+        full_name=user.full_name, 
+        avatar=user.avatar, 
+        role=user.role,
+        tenant_id=str(tenant.id),
+        org_unit_id=str(org_unit.id)
+    )
 
 @router.post("/login", response_model=Token)
 async def login(db: AsyncSession = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
@@ -93,7 +131,20 @@ async def login(db: AsyncSession = Depends(get_db), form_data: OAuth2PasswordReq
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token = create_access_token(subject=str(user.id))
+    # Get user membership for context
+    msg_result = await db.execute(
+        select(OrgMembership).where(OrgMembership.user_id == user.id).limit(1)
+    )
+    membership = msg_result.scalar_one_or_none()
+    
+    tenant_id = str(membership.tenant_id) if membership else None
+    org_unit_id = str(membership.org_unit_id) if membership else None
+
+    access_token = create_access_token(
+        subject=str(user.id),
+        tenant_id=tenant_id,
+        org_unit_id=org_unit_id
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/google", response_model=Token)
@@ -132,6 +183,33 @@ async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db))
             avatar=avatar or f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or email}"
         )
         db.add(user)
+        await db.flush()
+
+        # Create default tenant and org unit for the new user
+        tenant = Tenant(
+            name=f"{user.full_name or user.email}'s Organization",
+            slug=f"org-{str(user.id)[:8]}"
+        )
+        db.add(tenant)
+        await db.flush()
+
+        org_unit = OrgUnit(
+            tenant_id=tenant.id,
+            name="Root",
+            slug="root",
+            type=OrgUnitType.org
+        )
+        db.add(org_unit)
+        await db.flush()
+
+        membership = OrgMembership(
+            tenant_id=tenant.id,
+            user_id=user.id,
+            org_unit_id=org_unit.id,
+            status="active"
+        )
+        db.add(membership)
+        
         await db.commit()
         await db.refresh(user)
         user_id = str(user.id)
@@ -142,9 +220,48 @@ async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db))
             user.google_id = google_id
             await db.commit()
 
-    access_token = create_access_token(subject=user_id)
+    # Get user membership for context
+    msg_result = await db.execute(
+        select(OrgMembership).where(OrgMembership.user_id == UUID(user_id)).limit(1)
+    )
+    membership = msg_result.scalar_one_or_none()
+    
+    tenant_id = str(membership.tenant_id) if membership else None
+    org_unit_id = str(membership.org_unit_id) if membership else None
+
+    access_token = create_access_token(
+        subject=user_id,
+        tenant_id=tenant_id,
+        org_unit_id=org_unit_id
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
-    return UserResponse(id=str(current_user.id), email=current_user.email, full_name=current_user.full_name, avatar=current_user.avatar, role=current_user.role)
+async def read_users_me(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    # Extract context from token if available, or fetch from DB
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    tenant_id = payload.get("tenant_id")
+    org_unit_id = payload.get("org_unit_id")
+
+    if not tenant_id:
+        result = await db.execute(
+            select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
+        )
+        membership = result.scalar_one_or_none()
+        if membership:
+            tenant_id = str(membership.tenant_id)
+            org_unit_id = str(membership.org_unit_id)
+
+    return UserResponse(
+        id=str(current_user.id), 
+        email=current_user.email, 
+        full_name=current_user.full_name, 
+        avatar=current_user.avatar, 
+        role=current_user.role,
+        tenant_id=tenant_id,
+        org_unit_id=org_unit_id
+    )
