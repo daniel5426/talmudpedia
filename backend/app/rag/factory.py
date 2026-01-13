@@ -11,10 +11,10 @@ from app.rag.interfaces import (
 )
 from app.rag.providers.embedding.gemini import GeminiEmbeddingProvider
 from app.rag.providers.embedding.openai import OpenAIEmbeddingProvider
-from app.rag.providers.embedding.huggingface import HuggingFaceEmbeddingProvider
+# Deferred: from app.rag.providers.embedding.huggingface import HuggingFaceEmbeddingProvider
 from app.rag.providers.vector_store.pinecone import PineconeVectorStore
 from app.rag.providers.vector_store.pgvector import PgvectorVectorStore
-from app.rag.providers.vector_store.qdrant import QdrantVectorStore
+# Deferred: from app.rag.providers.vector_store.qdrant import QdrantVectorStore
 from app.rag.providers.chunker.token_based import TokenBasedChunker
 from app.rag.providers.chunker.recursive import RecursiveChunker
 from app.rag.providers.loader.local_file import LocalFileLoader
@@ -119,6 +119,7 @@ class RAGFactory:
                 **config.extra
             )
         elif config.provider == EmbeddingProviderType.HUGGINGFACE:
+            from app.rag.providers.embedding.huggingface import HuggingFaceEmbeddingProvider
             provider = HuggingFaceEmbeddingProvider(
                 model=config.model or "sentence-transformers/all-MiniLM-L6-v2",
                 **config.extra
@@ -157,6 +158,7 @@ class RAGFactory:
                 **config.extra
             )
         elif config.provider == VectorStoreType.QDRANT:
+            from app.rag.providers.vector_store.qdrant import QdrantVectorStore
             provider = QdrantVectorStore(
                 url=config.url,
                 api_key=config.api_key,
