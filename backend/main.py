@@ -67,7 +67,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 # app.add_middleware(GZipMiddleware, minimum_size=500)
 
-cors_origins = ['http://localhost:3000', 'http://localhost:3001', 'http://10.0.0.10:3000', 'https://reshet-self.vercel.app']
+cors_origins = ['http://localhost:3000', 'https://www.rishta.co.il', 'http://10.0.0.10:3000', 'https://reshet-self.vercel.app']
 
 # If credentials are true, Starlette prohibits ["*"] origins.
 # We handle this by ensuring specific origins are used if credentials are required.
