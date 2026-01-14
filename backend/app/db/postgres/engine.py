@@ -75,6 +75,8 @@ def create_async_engine() -> AsyncEngine:
         pool_pre_ping=True,  # Enable pre-ping to handle closed connections
         pool_size=20,
         max_overflow=10,
+        # Disable prepared statements for PgBouncer compatibility (prevents DuplicatePreparedStatementError)
+        connect_args={"statement_cache_size": 0},
     )
 
 # Create a global engine instance
