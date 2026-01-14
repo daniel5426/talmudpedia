@@ -5,36 +5,45 @@ from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine, 
 # Postgres (Supabase) configuration from environment variables
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-if DATABASE_URL:
-    # Ensure usage of asyncpg driver
     try:
         # Heroku/Supabase often sets the password plain text in DATABASE_URL,
         # but SQLAlchemy/asyncpg needs special chars to be URL-encoded.
         if "://" in DATABASE_URL:
              # Basic parse to handle simple cases where special chars might be in password
-            prefix, rest = DATABASE_URL.split("://", 1)
+            scheme, rest = DATABASE_URL.split("://", 1)
             
             # Switch driver first
-            if prefix == "postgres":
-                prefix = "postgresql+asyncpg"
-            elif prefix == "postgresql":
-                if "+asyncpg" not in prefix:
-                    prefix = "postgresql+asyncpg"
+            if scheme == "postgres" or scheme == "postgresql":
+                if "+asyncpg" not in scheme:
+                    scheme = "postgresql+asyncpg"
 
+            # Use rsplit('@', 1) to split at the LAST @, which separates creds from host.
+            # This correctly handles passwords that contain '@'.
             if "@" in rest:
-                creds, location = rest.split("@", 1)
+                creds, location = rest.rsplit("@", 1)
+                
                 if ":" in creds:
+                    # Split username:password
                     u, p = creds.split(":", 1)
+                    
+                    # Log the username we found to verify we aren't truncating it
+                    # (Helpful if error says "failed for user 'postgres'")
+                    print(f"DEBUG: Parsed DB User: '{u}'")
+                    print(f"DEBUG: Parsed DB Host: '{location}'")
+                    
                     # Force encode the password part
                     p_encoded = urllib.parse.quote_plus(p)
-                    DATABASE_URL = f"{prefix}://{u}:{p_encoded}@{location}"
+                    DATABASE_URL = f"{scheme}://{u}:{p_encoded}@{location}"
                 else:
-                    # No password or strange format, keep as is but switch protocol
-                    DATABASE_URL = f"{prefix}://{rest}"
+                    # No password found in creds section
+                    print("DEBUG: No password found in connection string credentials.")
+                    DATABASE_URL = f"{scheme}://{rest}"
             else:
-                 DATABASE_URL = f"{prefix}://{rest}"
+                 print("DEBUG: No '@' found in connection string (no host/creds separation).")
+                 DATABASE_URL = f"{scheme}://{rest}"
+                 
     except Exception as e:
-        print(f"WARN: Failed to re-encode DATABASE_URL password: {e}")
+        print(f"ERROR: Failed to re-encode DATABASE_URL password: {e}")
         # Fallback to simple replacement if parsing fails
         if DATABASE_URL.startswith("postgres://"):
             DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
