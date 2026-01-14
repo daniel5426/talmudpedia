@@ -3,18 +3,28 @@ import urllib.parse
 from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine, async_sessionmaker, AsyncEngine
 
 # Postgres (Supabase) configuration from environment variables
-user = os.getenv("POSTGRES_USER", "postgres")
-password = os.getenv("POSTGRES_PASSWORD", "")
-host = os.getenv("POSTGRES_HOST", "localhost")
-port = os.getenv("POSTGRES_PORT", "5432")
-db = os.getenv("POSTGRES_DB", "postgres")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Quote password for URL characters (like &, $, #)
-quoted_password = urllib.parse.quote_plus(password)
+if DATABASE_URL:
+    # Ensure usage of asyncpg driver
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
+         DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+else:
+    user = os.getenv("POSTGRES_USER", "postgres")
+    password = os.getenv("POSTGRES_PASSWORD", "")
+    host = os.getenv("POSTGRES_HOST", "localhost")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    db = os.getenv("POSTGRES_DB", "postgres")
 
-# Construct the Async Database URL
-# We use the asyncpg driver which is compatible with SQLAlchemy's async support
-DATABASE_URL = f"postgresql+asyncpg://{user}:{quoted_password}@{host}:{port}/{db}"
+    # Quote password for URL characters (like &, $, #)
+    quoted_password = urllib.parse.quote_plus(password)
+    
+    # Construct the Async Database URL
+    DATABASE_URL = f"postgresql+asyncpg://{user}:{quoted_password}@{host}:{port}/{db}"
+
+print(f"DEBUG: Initializing DB Engine with URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else 'HIDDEN'}")  # Log host/db only
 
 def create_async_engine() -> AsyncEngine:
     """
@@ -23,7 +33,7 @@ def create_async_engine() -> AsyncEngine:
     return _create_async_engine(
         DATABASE_URL,
         echo=False,  # Set to True for SQL logging
-        pool_pre_ping=False,  # Can cause MissingGreenlet in async mode
+        pool_pre_ping=True,  # Enable pre-ping to handle closed connections
         pool_size=20,
         max_overflow=10,
     )

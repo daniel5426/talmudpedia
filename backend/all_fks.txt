@@ -1,0 +1,36 @@
+Inspecting ALL foreign keys...
+Table                     | Column               | Ref Table            | Delete Rule  | Constraint Name
+--------------------------------------------------------------------------------------------------------------
+agent_runs                | agent_id             | agents               | NO ACTION    | agent_runs_agent_id_fkey
+agent_runs                | tenant_id            | tenants              | NO ACTION    | agent_runs_tenant_id_fkey
+agent_runs                | user_id              | users                | NO ACTION    | agent_runs_user_id_fkey
+agent_traces              | run_id               | agent_runs           | NO ACTION    | agent_traces_run_id_fkey
+agent_versions            | agent_id             | agents               | NO ACTION    | agent_versions_agent_id_fkey
+agent_versions            | created_by           | users                | NO ACTION    | agent_versions_created_by_fkey
+agents                    | tenant_id            | tenants              | NO ACTION    | agents_tenant_id_fkey
+agents                    | created_by           | users                | NO ACTION    | agents_created_by_fkey
+audit_logs                | org_unit_id          | org_units            | NO ACTION    | audit_logs_org_unit_id_fkey
+audit_logs                | tenant_id            | tenants              | NO ACTION    | audit_logs_tenant_id_fkey
+chats                     | tenant_id            | tenants              | CASCADE      | chats_tenant_id_fkey
+chats                     | user_id              | users                | CASCADE      | chats_user_id_fkey
+ingestion_jobs            | pipeline_id          | rag_pipelines        | NO ACTION    | ingestion_jobs_pipeline_id_fkey
+ingestion_jobs            | tenant_id            | tenants              | NO ACTION    | ingestion_jobs_tenant_id_fkey
+ingestion_jobs            | created_by           | users                | NO ACTION    | ingestion_jobs_created_by_fkey
+messages                  | chat_id              | chats                | NO ACTION    | messages_chat_id_fkey
+model_registry            | tenant_id            | tenants              | NO ACTION    | model_registry_tenant_id_fkey
+org_memberships           | org_unit_id          | org_units            | CASCADE      | org_memberships_org_unit_id_fkey
+org_memberships           | tenant_id            | tenants              | CASCADE      | org_memberships_tenant_id_fkey
+org_memberships           | user_id              | users                | CASCADE      | org_memberships_user_id_fkey
+org_units                 | tenant_id            | tenants              | CASCADE      | org_units_tenant_id_fkey
+org_units                 | parent_id            | org_units            | CASCADE      | org_units_parent_id_fkey
+rag_pipelines             | tenant_id            | tenants              | NO ACTION    | rag_pipelines_tenant_id_fkey
+rag_pipelines             | created_by           | users                | NO ACTION    | rag_pipelines_created_by_fkey
+role_assignments          | assigned_by          | users                | NO ACTION    | role_assignments_assigned_by_fkey
+role_assignments          | user_id              | users                | CASCADE      | role_assignments_user_id_fkey
+role_assignments          | tenant_id            | tenants              | CASCADE      | role_assignments_tenant_id_fkey
+role_assignments          | role_id              | roles                | CASCADE      | role_assignments_role_id_fkey
+role_permissions          | role_id              | roles                | CASCADE      | role_permissions_role_id_fkey
+roles                     | tenant_id            | tenants              | CASCADE      | roles_tenant_id_fkey
+tool_registry             | tenant_id            | tenants              | NO ACTION    | tool_registry_tenant_id_fkey
+tool_versions             | tool_id              | tool_registry        | CASCADE      | tool_versions_tool_id_fkey
+tool_versions             | created_by           | users                | NO ACTION    | tool_versions_created_by_fkey
