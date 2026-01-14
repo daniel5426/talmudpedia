@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine, 
 # Postgres (Supabase) configuration from environment variables
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+if DATABASE_URL:
     try:
         # Heroku/Supabase often sets the password plain text in DATABASE_URL,
         # but SQLAlchemy/asyncpg needs special chars to be URL-encoded.
@@ -55,7 +56,7 @@ else:
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     db = os.getenv("POSTGRES_DB", "postgres")
-
+    print(f"DEBUG: Initializing DB Engine with URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else 'HIDDEN'}")  # Log host/db only
     # Quote password for URL characters (like &, $, #)
     quoted_password = urllib.parse.quote_plus(password)
     
