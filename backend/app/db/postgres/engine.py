@@ -10,7 +10,7 @@ if DATABASE_URL:
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
     elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
-         DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 else:
     user = os.getenv("POSTGRES_USER", "postgres")
     password = os.getenv("POSTGRES_PASSWORD", "")
