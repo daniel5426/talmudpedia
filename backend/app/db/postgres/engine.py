@@ -7,10 +7,39 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 if DATABASE_URL:
     # Ensure usage of asyncpg driver
-    if DATABASE_URL.startswith("postgres://"):
-        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
-    elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
-        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    try:
+        # Heroku/Supabase often sets the password plain text in DATABASE_URL,
+        # but SQLAlchemy/asyncpg needs special chars to be URL-encoded.
+        if "://" in DATABASE_URL:
+             # Basic parse to handle simple cases where special chars might be in password
+            prefix, rest = DATABASE_URL.split("://", 1)
+            
+            # Switch driver first
+            if prefix == "postgres":
+                prefix = "postgresql+asyncpg"
+            elif prefix == "postgresql":
+                if "+asyncpg" not in prefix:
+                    prefix = "postgresql+asyncpg"
+
+            if "@" in rest:
+                creds, location = rest.split("@", 1)
+                if ":" in creds:
+                    u, p = creds.split(":", 1)
+                    # Force encode the password part
+                    p_encoded = urllib.parse.quote_plus(p)
+                    DATABASE_URL = f"{prefix}://{u}:{p_encoded}@{location}"
+                else:
+                    # No password or strange format, keep as is but switch protocol
+                    DATABASE_URL = f"{prefix}://{rest}"
+            else:
+                 DATABASE_URL = f"{prefix}://{rest}"
+    except Exception as e:
+        print(f"WARN: Failed to re-encode DATABASE_URL password: {e}")
+        # Fallback to simple replacement if parsing fails
+        if DATABASE_URL.startswith("postgres://"):
+            DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
+            DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 else:
     user = os.getenv("POSTGRES_USER", "postgres")
     password = os.getenv("POSTGRES_PASSWORD", "")
