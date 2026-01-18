@@ -1,4 +1,5 @@
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
+import operator
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
@@ -21,14 +22,14 @@ class AgentState(TypedDict):
     retrieved_docs: List[Dict[str, Any]]  # Keeping Dict for compatibility with existing frontend for now
     
     # Reasoning and artifacts
-    reasoning_items: List[Dict[str, Any]]
-    reasoning_steps_parsed: List[Dict[str, Any]]
+    reasoning_items: Annotated[List[Dict[str, Any]], operator.add]
+    reasoning_steps_parsed: Annotated[List[Dict[str, Any]], operator.add]
     
     # File attachments
     files: Optional[List[Dict[str, Any]]]
     
     # Execution trace
-    steps: List[str]
+    steps: Annotated[List[str], operator.add]
     
     # Error handling
     error: Optional[str]

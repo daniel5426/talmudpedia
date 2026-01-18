@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.session import get_db
 from app.db.postgres.models.chat import Chat, Message, MessageRole
 from app.db.postgres.models.identity import User, Tenant
-from app.api.routers.auth import oauth2_scheme
+from app.api.routers.auth import oauth2_scheme, get_current_user
 
 # Initialize the agent
 chat_agent = AgentFactory.create_agent(AgentConfig())
@@ -25,7 +25,7 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
-    chatId: Optional[str] = None
+    chatId: Optional[UUID] = None
     files: Optional[List[Dict[str, Any]]] = None
 
 
@@ -76,6 +76,7 @@ async def get_tenant_id(db: AsyncSession) -> UUID:
 async def chat_endpoint(
     request_body: ChatRequest,
     request: Request,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     t_enter = time.perf_counter()
@@ -84,6 +85,65 @@ async def chat_endpoint(
     chat_id = request_body.chatId
     user_message = request_body.message
     files = request_body.files or []
+
+    # --- DB SETUP ---
+    t_heavy_start = time.perf_counter()
+    
+    # Fetch Tenant (Tenant is cached)
+    tenant_id = await get_tenant_id(db)
+
+    history_messages: List[Any] = []
+    msg_count = 0
+    chat = None
+    
+    if chat_id:
+        # chatId is already a UUID due to Pydantic conversion
+        # OPTIMIZATION: Fetch Chat and Messages in ONE round-trip using selectinload
+        result = await db.execute(
+            select(Chat)
+            .options(selectinload(Chat.messages))
+            .where(Chat.id == chat_id, Chat.user_id == current_user.id)
+        )
+        chat = result.scalar_one_or_none()
+        
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        
+        # Chat.messages is already populated due to selectinload
+        msg_count = len(chat.messages)
+        for msg in chat.messages:
+            if msg.role == MessageRole.USER:
+                history_messages.append(HumanMessage(content=msg.content))
+            elif msg.role == MessageRole.ASSISTANT:
+                history_messages.append(AIMessage(content=msg.content))
+    else:
+        # New chat
+        chat = Chat(
+            title=user_message[:30] + "...",
+            user_id=current_user.id,
+            tenant_id=tenant_id
+        )
+        db.add(chat)
+        await db.flush()
+        chat_id = str(chat.id)
+        msg_count = 0
+
+    # Save user message and commit (One final round trip)
+    user_msg_db = Message(
+        chat_id=chat.id,
+        role=MessageRole.USER,
+        content=user_message,
+        index=msg_count,
+    )
+    db.add(user_msg_db)
+    chat.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    
+    # Add the NEW user message to history so the AI sees it
+    history_messages.append(HumanMessage(content=user_message))
+    
+    print(f"[TIMER] Total Heavy Setup (Optimized): {time.perf_counter()-t_heavy_start:.4f}s")
+    # --- END AUTH AND DB SETUP ---
     
     async def event_generator():
         t_gen_start = time.perf_counter()
@@ -100,87 +160,8 @@ async def chat_endpoint(
             collected_reasoning.append(init_reasoning)
             yield json.dumps({"type": "reasoning", "data": init_reasoning}) + "\n"
             
-            # 2. Do Auth and DB work inside the generator
-            t_heavy_start = time.perf_counter()
+            # Logic moved above
             
-            from fastapi.security.utils import get_authorization_scheme_param
-            authorization: str = request.headers.get("Authorization")
-            scheme, param = get_authorization_scheme_param(authorization)
-            
-            if not authorization or scheme.lower() != "bearer":
-                yield json.dumps({"type": "error", "data": {"message": "Not authenticated"}}) + "\n"
-                return
-            
-            from app.core.security import SECRET_KEY, ALGORITHM
-            import jwt
-            try:
-                payload = jwt.decode(param, SECRET_KEY, algorithms=[ALGORITHM])
-                user_id: str = payload.get("sub")
-            except Exception:
-                yield json.dumps({"type": "error", "data": {"message": "Invalid token"}}) + "\n"
-                return
-
-            # Fetch User and Tenant (Tenant is cached)
-            tenant_id = await get_tenant_id(db)
-            user_result = await db.execute(select(User).where(User.id == UUID(user_id)))
-            current_user = user_result.scalar_one_or_none()
-            
-            if not current_user:
-                yield json.dumps({"type": "error", "data": {"message": "User not found"}}) + "\n"
-                return
-
-            nonlocal chat_id
-            history_messages: List[Any] = []
-            msg_count = 0
-            
-            if chat_id:
-                try:
-                    chat_uuid = UUID(chat_id)
-                except (ValueError, TypeError):
-                    yield json.dumps({"type": "error", "data": {"message": "Invalid Chat ID format"}}) + "\n"
-                    return
-                
-                # OPTIMIZATION: Fetch Chat and Messages in ONE round-trip using selectinload
-                result = await db.execute(
-                    select(Chat)
-                    .options(selectinload(Chat.messages))
-                    .where(Chat.id == chat_uuid, Chat.user_id == current_user.id)
-                )
-                chat = result.scalar_one_or_none()
-                
-                if not chat:
-                    yield json.dumps({"type": "reasoning", "data": {"step": "Error", "status": "error", "message": "Chat not found"}}) + "\n"
-                    return
-                
-                # Chat.messages is already populated due to selectinload
-                msg_count = len(chat.messages)
-                for msg in chat.messages:
-                    if msg.role == MessageRole.USER:
-                        history_messages.append(HumanMessage(content=msg.content))
-                    elif msg.role == MessageRole.ASSISTANT:
-                        history_messages.append(AIMessage(content=msg.content))
-            else:
-                # New chat
-                chat = Chat(
-                    title=user_message[:30] + "...",
-                    user_id=current_user.id,
-                    tenant_id=tenant_id
-                )
-                db.add(chat)
-                await db.flush()
-                msg_count = 0
-
-            # Save user message and commit (One final round trip)
-            user_msg_db = Message(
-                chat_id=chat.id,
-                role=MessageRole.USER,
-                content=user_message,
-                index=msg_count,
-            )
-            db.add(user_msg_db)
-            chat.updated_at = datetime.now(timezone.utc)
-            await db.commit()
-            print(f"[TIMER] Total Heavy Setup (Optimized): {time.perf_counter()-t_heavy_start:.4f}s")
             
             inputs = {
                 "messages": history_messages,

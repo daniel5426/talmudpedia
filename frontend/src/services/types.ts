@@ -17,6 +17,10 @@ export interface Message {
   content: string;
   citations?: Citation[];
   reasoning_steps?: Array<{ step: string; status: string; message: string }>;
+  tool_calls?: { 
+    reasoning?: Array<{ step: string; status: string; message: string; citations?: Citation[]; query?: string; sources?: any[] }>;
+    citations?: Citation[];
+  };
   attachments?: MessageAttachmentPayload[];
 }
 
@@ -49,6 +53,9 @@ export interface User {
   full_name?: string;
   avatar?: string;
   role?: string;
+  org_role?: string;
+  tenant_id?: string;
+  org_unit_id?: string;
   created_at?: string;
 }
 

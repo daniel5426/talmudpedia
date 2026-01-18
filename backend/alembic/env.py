@@ -30,6 +30,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+print(f"DEBUG: target_metadata.tables = {list(target_metadata.tables.keys())}")
 
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
@@ -51,11 +52,21 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = DATABASE_URL
+    # Force use of psycopg (v3) instead of asyncpg for migrations
+    url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+    if "postgresql+psycopg://" not in url:
+             if "postgres://" in url:
+                 url = url.replace("postgres://", "postgresql+psycopg://")
+             elif "postgresql://" in url:
+                 url = url.replace("postgresql://", "postgresql+psycopg://")
+
+    configuration["sqlalchemy.url"] = url
+    
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"prepare_threshold": None},
     )
 
     async with connectable.connect() as connection:

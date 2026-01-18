@@ -19,7 +19,7 @@ class LexicalRetriever(Retriever):
             self.client = None
             self.index_name = index_name
             return
-        
+         
         self.client = AsyncElasticsearch(
             es_url,
             api_key=es_api_key,

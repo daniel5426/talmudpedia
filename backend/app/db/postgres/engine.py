@@ -56,27 +56,37 @@ else:
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     db = os.getenv("POSTGRES_DB", "postgres")
-    print(f"DEBUG: Initializing DB Engine with URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else 'HIDDEN'}")  # Log host/db only
     # Quote password for URL characters (like &, $, #)
     quoted_password = urllib.parse.quote_plus(password)
     
     # Construct the Async Database URL
     DATABASE_URL = f"postgresql+asyncpg://{user}:{quoted_password}@{host}:{port}/{db}"
-
-print(f"DEBUG: Initializing DB Engine with URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else 'HIDDEN'}")  # Log host/db only
+    print(f"DEBUG: Initializing DB Engine with URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else 'HIDDEN'}")  # Log host/db only
+from sqlalchemy.pool import NullPool
 
 def create_async_engine() -> AsyncEngine:
     """
     Creates and returns a new SQLAlchemy AsyncEngine instance.
     """
+    # asyncpg struggles with disabling prepared statements reliably in some SQLAlchemy configurations
+    url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+    if "postgresql+psycopg://" not in url and "socket" not in url:
+        # Fallback if URL was "postgres://" or otherwise
+        if "postgres://" in url:
+            url = url.replace("postgres://", "postgresql+psycopg://")
+        elif "postgresql://" in url:
+            url = url.replace("postgresql://", "postgresql+psycopg://")
+
+    print(f"DEBUG: Creating Async Engine with Psycopg (v3) and prepare_threshold=None")
     return _create_async_engine(
-        DATABASE_URL,
-        echo=False,  # Set to True for SQL logging
-        pool_pre_ping=True,  # Enable pre-ping to handle closed connections
-        pool_size=20,
-        max_overflow=10,
-        # Disable prepared statements for PgBouncer compatibility (prevents DuplicatePreparedStatementError)
-        connect_args={"statement_cache_size": 0},
+        url,
+        echo=False,
+        # Disable pre-ping for transaction poolers to avoid 'SELECT 1' overhead/issues
+        pool_pre_ping=False,
+        # Use NullPool for external transaction pooling
+        poolclass=NullPool,
+        # Disable prepared statements for PgBouncer compatibility (Psycopg v3 specific)
+        connect_args={"prepare_threshold": None},
     )
 
 # Create a global engine instance

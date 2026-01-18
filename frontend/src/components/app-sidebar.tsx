@@ -401,7 +401,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             name: user.full_name || user.email.split('@')[0],
             email: user.email,
             avatar: user.avatar || "/avatars/shadcn.jpg",
-            role: user.role
+            role: user.role,
+            org_role: user.org_role
           }} />
         ) : (
           <SidebarMenu dir={direction}>

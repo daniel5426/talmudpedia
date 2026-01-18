@@ -3,14 +3,17 @@ Graph Schema - Pydantic models for agent graph validation.
 """
 from enum import Enum
 from typing import Any, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class NodeType(str, Enum):
     """Types of nodes in an agent graph."""
     INPUT = "input"
+    START = "start" # Alias for INPUT
     OUTPUT = "output"
+    END = "end" # Alias for OUTPUT
     LLM_CALL = "llm_call"
+    LLM = "llm" # Alias for LLM_CALL
     TOOL_CALL = "tool_call"
     CONDITIONAL = "conditional"
     LOOP = "loop"
@@ -29,7 +32,7 @@ class AgentNodePosition(BaseModel):
     """Position of a node in the visual editor."""
     x: float
     y: float
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
 
 class AgentNode(BaseModel):
@@ -39,7 +42,20 @@ class AgentNode(BaseModel):
     position: AgentNodePosition
     label: Optional[str] = None
     config: dict[str, Any] = Field(default_factory=dict)
-    model_config = ConfigDict(extra="forbid")
+    data: Optional[dict[str, Any]] = None # React Flow data support
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode='before')
+    @classmethod
+    def lift_config_from_data(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Check if config is provided at top level
+            if "config" not in data or not data["config"]:
+                # Try to find it in data.config
+                node_data = data.get("data", {})
+                if node_data and isinstance(node_data, dict) and "config" in node_data:
+                    data["config"] = node_data["config"]
+        return data
 
 
 class AgentEdge(BaseModel):
@@ -52,14 +68,14 @@ class AgentEdge(BaseModel):
     target_handle: Optional[str] = None
     label: Optional[str] = None
     condition: Optional[str] = None
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
 
 class AgentGraph(BaseModel):
     """The complete graph definition of an agent."""
     nodes: list[AgentNode] = Field(default_factory=list)
     edges: list[AgentEdge] = Field(default_factory=list)
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     def get_node(self, node_id: str) -> Optional[AgentNode]:
         for node in self.nodes:
@@ -68,10 +84,10 @@ class AgentGraph(BaseModel):
         return None
     
     def get_input_nodes(self) -> list[AgentNode]:
-        return [n for n in self.nodes if n.type == NodeType.INPUT]
+        return [n for n in self.nodes if n.type in (NodeType.INPUT, NodeType.START)]
     
     def get_output_nodes(self) -> list[AgentNode]:
-        return [n for n in self.nodes if n.type == NodeType.OUTPUT]
+        return [n for n in self.nodes if n.type in (NodeType.OUTPUT, NodeType.END)]
     
     def get_outgoing_edges(self, node_id: str) -> list[AgentEdge]:
         return [e for e in self.edges if e.source == node_id]

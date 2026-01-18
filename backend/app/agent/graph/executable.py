@@ -14,39 +14,18 @@ class ExecutableAgent:
     for running and streaming agent executions.
     """
     
-    def __init__(self, graph_definition: AgentGraph, config: dict[str, Any]):
+    def __init__(self, graph_definition: AgentGraph, compiled_graph: Any, config: dict[str, Any]):
         self.graph_definition = graph_definition
+        self.compiled_graph = compiled_graph
         self.config = config
-        self._compiled_graph = None
-
-    async def _ensure_compiled(self):
-        """Builds the internal LangGraph state machine if not already built."""
-        if self._compiled_graph:
-            return
-            
-        # This is where the magic happens: converting our AgentGraph (nodes/edges)
-        # into a LangGraph StateGraph.
-        
-        # Placeholder for LangGraph integration
-        # from langgraph.graph import StateGraph, END
-        # ... builder logic ...
-        
-        self._compiled_graph = "compiled_placeholder"
 
     async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Executes the agent and returns the final result."""
-        await self._ensure_compiled()
         logger.info("Executing agent...")
-        
-        # Placeholder for actual execution
-        return {"status": "success", "output": "Execution result placeholder"}
+        return await self.compiled_graph.ainvoke(input_data)
 
     async def stream(self, input_data: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         """Executes the agent and yields execution events/tokens."""
-        await self._ensure_compiled()
         logger.info("Streaming agent execution...")
-        
-        # Placeholder for actual streaming
-        yield {"type": "node_start", "node": "input"}
-        yield {"type": "node_end", "node": "input"}
-        yield {"type": "result", "output": "Stream result placeholder"}
+        async for event in self.compiled_graph.astream_events(input_data, version="v2"):
+            yield event

@@ -93,13 +93,13 @@ class TextService:
         return False
     
     @staticmethod
-    async def _find_best_document(db, index_title: str, preferred_version: Optional[str] = None, ref: Optional[str] = None, schema: Optional[Dict[str, Any]] = None):
+    async def _find_best_document(texts_col, index_title: str, preferred_version: Optional[str] = None, ref: Optional[str] = None, schema: Optional[Dict[str, Any]] = None):
         """Find best text document, optionally preferring a specific version and filtering by ref coverage."""
         if preferred_version:
             # Note: Logic for strict preferred version filtering
             pass
 
-        all_he_docs = await db.texts.find({
+        all_he_docs = await texts_col.find({
             "title": {"$regex": f"^{index_title}$", "$options": "i"},
             "language": "he"
         }).to_list(length=None)
@@ -164,7 +164,7 @@ class TextService:
             if all_he_docs:
                 return all_he_docs[0]
         
-        doc = await db.texts.find_one({"title": index_title, "language": "he"})
+        doc = await texts_col.find_one({"title": index_title, "language": "he"})
         return doc
 
     @staticmethod
@@ -220,10 +220,10 @@ class TextService:
 @router.get("/texts/{ref}")
 async def get_text(ref: str):
     """Returns the stored text document for the requested ref."""
-    db = MongoDatabase.get_db()
-    doc = await db.texts.find_one({"title": ref})
+    col = MongoDatabase.get_sefaria_collection("texts")
+    doc = await col.find_one({"title": ref})
     if not doc:
-        doc = await db.texts.find_one({"title": {"$regex": f"^{ref}$", "$options": "i"}})
+        doc = await col.find_one({"title": {"$regex": f"^{ref}$", "$options": "i"}})
     if doc:
         return Text(**doc)
     raise HTTPException(status_code=404, detail="Text not found")
@@ -246,14 +246,16 @@ async def get_source_text(
     pages_after: int = Query(0, description="Number of pages/sections to fetch after the reference")
 ):
     """Returns rich source payloads with optional pagination, supporting both simple and complex texts."""
-    db = MongoDatabase.get_db()
+    texts_col = MongoDatabase.get_sefaria_collection("texts")
+    index_col = MongoDatabase.get_sefaria_collection("index")
+    
     range_info = ReferenceNavigator.parse_range_ref(ref)
     primary_ref = range_info["start"] if range_info else ref
     
     parsed = ReferenceNavigator.parse_ref(primary_ref)
     index_title = parsed["index"]
     
-    index_doc = await db.index.find_one({"title": index_title})
+    index_doc = await index_col.find_one({"title": index_title})
     schema = index_doc.get("schema", {}) if index_doc else {}
     
     if "chapter" in parsed and "daf" not in parsed and _schema_has_talmud_default(schema):
@@ -269,15 +271,15 @@ async def get_source_text(
             primary_ref = first_ref
             parsed = ReferenceNavigator.parse_ref(primary_ref)
     
-    doc = await TextService._find_best_document(db, index_title, preferred_version, ref=primary_ref, schema=schema)
+    doc = await TextService._find_best_document(texts_col, index_title, preferred_version, ref=primary_ref, schema=schema)
     
     if not doc and "," in primary_ref:
         base_title = primary_ref.split(",")[0].strip()
         if not index_doc:
-            index_doc = await db.index.find_one({"title": base_title})
+            index_doc = await index_col.find_one({"title": base_title})
             schema = index_doc.get("schema", {}) if index_doc else {}
         
-        doc = await TextService._find_best_document(db, base_title, preferred_version, ref=primary_ref, schema=schema)
+        doc = await TextService._find_best_document(texts_col, base_title, preferred_version, ref=primary_ref, schema=schema)
         if doc:
             index_title = base_title
     

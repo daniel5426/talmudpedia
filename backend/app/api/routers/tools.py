@@ -1,25 +1,16 @@
-"""
-Tools Registry API - CRUD operations for tool definitions.
-"""
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from bson import ObjectId
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, delete, func
 
-from app.db.models.tool_registry import (
-    ToolDefinition,
-    ToolExecution,
-    ToolImplementationType,
-    ToolStatus,
-    ToolFailurePolicy,
-    ToolExecutionStatus,
-)
-from app.db.connection import MongoDatabase
+from app.db.postgres.models.registry import ToolRegistry, ToolVersion, ToolDefinitionScope
+from app.db.postgres.session import get_db
 from app.api.dependencies import get_current_user, get_tenant_context
 
 router = APIRouter(prefix="/tools", tags=["tools"])
-
 
 # ============================================================================
 # Request/Response Schemas
@@ -28,49 +19,38 @@ router = APIRouter(prefix="/tools", tags=["tools"])
 class CreateToolRequest(BaseModel):
     name: str
     slug: str
-    description: str
+    description: Optional[str] = None
     input_schema: dict
     output_schema: dict
-    implementation_type: ToolImplementationType
-    implementation_config: Optional[dict] = None
-    execution_config: Optional[dict] = None
-
+    config_schema: Optional[dict] = None
+    scope: ToolDefinitionScope = ToolDefinitionScope.TENANT
 
 class UpdateToolRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     input_schema: Optional[dict] = None
     output_schema: Optional[dict] = None
-    implementation_config: Optional[dict] = None
-    execution_config: Optional[dict] = None
-
-
-class TestToolRequest(BaseModel):
-    input: dict
-
+    config_schema: Optional[dict] = None
+    is_active: Optional[bool] = None
 
 class ToolResponse(BaseModel):
-    id: str
+    id: uuid.UUID
+    tenant_id: Optional[uuid.UUID]
     name: str
     slug: str
-    description: str
+    description: Optional[str]
+    scope: str
     input_schema: dict
     output_schema: dict
-    implementation_type: str
-    implementation_config: dict
-    execution_config: dict
-    version: str
-    status: str
-    tenant_id: str
+    config_schema: dict
+    is_active: bool
+    is_system: bool
     created_at: datetime
     updated_at: datetime
-    published_at: Optional[datetime] = None
-
 
 class ToolListResponse(BaseModel):
     tools: list[ToolResponse]
     total: int
-
 
 # ============================================================================
 # Endpoints
@@ -78,314 +58,210 @@ class ToolListResponse(BaseModel):
 
 @router.get("", response_model=ToolListResponse)
 async def list_tools(
-    implementation_type: Optional[ToolImplementationType] = None,
-    status: Optional[ToolStatus] = None,
+    scope: Optional[ToolDefinitionScope] = None,
+    is_active: bool = True,
     skip: int = 0,
     limit: int = 50,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """List all tools for the current tenant."""
-    db = MongoDatabase.get_db()
-    collection = db["tool_definitions"]
+    """List all tools for the current tenant or global tools."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    try:
-        tenant_id_obj = ObjectId(tenant_ctx["tenant_id"])
-    except Exception:
-        tenant_id_obj = str(tenant_ctx["tenant_id"])
-
-    query = {"tenant_id": tenant_id_obj}
+    stmt = select(ToolRegistry).where(
+        and_(
+            (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None),
+            ToolRegistry.is_active == is_active
+        )
+    ).offset(skip).limit(limit).order_by(ToolRegistry.name.asc())
     
-    total = await collection.count_documents(query)
-    cursor = collection.find(query).skip(skip).limit(limit).sort("name", 1)
-    tools = await cursor.to_list(length=limit)
+    result = await db.execute(stmt)
+    tools = result.scalars().all()
+    
+    count_stmt = select(func.count(ToolRegistry.id)).where(
+        (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None)
+    )
+    total_res = await db.execute(count_stmt)
+    total = total_res.scalar()
     
     return ToolListResponse(
         tools=[ToolResponse(
-            id=str(t["_id"]),
-            name=t["name"],
-            slug=t["slug"],
-            description=t["description"],
-            input_schema=t.get("input_schema", {}),
-            output_schema=t.get("output_schema", {}),
-            implementation_type=t["implementation_type"],
-            implementation_config=t.get("implementation_config", {}),
-            execution_config=t.get("execution_config", {}),
-            version=t.get("version", "1.0.0"),
-            status=t.get("status", "draft"),
-            tenant_id=str(t["tenant_id"]),
-            created_at=t["created_at"],
-            updated_at=t["updated_at"],
-            published_at=t.get("published_at"),
+            id=t.id,
+            tenant_id=t.tenant_id,
+            name=t.name,
+            slug=t.slug,
+            description=t.description,
+            scope=t.scope.value,
+            input_schema=t.schema.get("input", {}),
+            output_schema=t.schema.get("output", {}),
+            config_schema=t.config_schema or {},
+            is_active=t.is_active,
+            is_system=t.is_system,
+            created_at=t.created_at,
+            updated_at=t.updated_at
         ) for t in tools],
         total=total
     )
 
-
 @router.post("", response_model=ToolResponse)
 async def create_tool(
     request: CreateToolRequest,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
     """Create a new tool definition."""
-    db = MongoDatabase.get_db()
-    collection = db["tool_definitions"]
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     # Check for duplicate slug
-    existing = await collection.find_one({
-        "slug": request.slug,
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
-    if existing:
+    stmt = select(ToolRegistry).where(ToolRegistry.slug == request.slug)
+    res = await db.execute(stmt)
+    if res.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"Tool with slug '{request.slug}' already exists")
     
-    tool_doc = {
-        "name": request.name,
-        "slug": request.slug,
-        "description": request.description,
-        "input_schema": request.input_schema,
-        "output_schema": request.output_schema,
-        "implementation_type": request.implementation_type.value,
-        "implementation_config": request.implementation_config or {},
-        "execution_config": request.execution_config or {
-            "timeout_seconds": 30,
-            "retry_config": {
-                "max_attempts": 3,
-                "backoff_multiplier": 2.0,
-                "initial_delay_ms": 1000,
-                "max_delay_ms": 30000,
-            },
-            "failure_policy": ToolFailurePolicy.FAIL_FAST.value,
-            "circuit_breaker_threshold": 5,
+    new_tool = ToolRegistry(
+        tenant_id=tid if request.scope == ToolDefinitionScope.TENANT else None,
+        name=request.name,
+        slug=request.slug,
+        description=request.description,
+        scope=request.scope,
+        schema={
+            "input": request.input_schema,
+            "output": request.output_schema
         },
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"]),
-        "version": "1.0.0",
-        "status": ToolStatus.DRAFT.value,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-        "created_by": ObjectId(current_user["id"]) if current_user.get("id") else None,
-    }
+        config_schema=request.config_schema or {},
+        is_active=True,
+        is_system=False
+    )
     
-    result = await collection.insert_one(tool_doc)
-    tool_doc["_id"] = result.inserted_id
+    db.add(new_tool)
+    await db.commit()
+    await db.refresh(new_tool)
     
     return ToolResponse(
-        id=str(tool_doc["_id"]),
-        name=tool_doc["name"],
-        slug=tool_doc["slug"],
-        description=tool_doc["description"],
-        input_schema=tool_doc["input_schema"],
-        output_schema=tool_doc["output_schema"],
-        implementation_type=tool_doc["implementation_type"],
-        implementation_config=tool_doc["implementation_config"],
-        execution_config=tool_doc["execution_config"],
-        version=tool_doc["version"],
-        status=tool_doc["status"],
-        tenant_id=str(tool_doc["tenant_id"]),
-        created_at=tool_doc["created_at"],
-        updated_at=tool_doc["updated_at"],
+        id=new_tool.id,
+        tenant_id=new_tool.tenant_id,
+        name=new_tool.name,
+        slug=new_tool.slug,
+        description=new_tool.description,
+        scope=new_tool.scope.value,
+        input_schema=new_tool.schema.get("input", {}),
+        output_schema=new_tool.schema.get("output", {}),
+        config_schema=new_tool.config_schema or {},
+        is_active=new_tool.is_active,
+        is_system=new_tool.is_system,
+        created_at=new_tool.created_at,
+        updated_at=new_tool.updated_at
     )
-
 
 @router.get("/{tool_id}", response_model=ToolResponse)
 async def get_tool(
-    tool_id: str,
+    tool_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
     """Get a specific tool by ID."""
-    db = MongoDatabase.get_db()
-    collection = db["tool_definitions"]
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    tool = await collection.find_one({
-        "_id": ObjectId(tool_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
+    stmt = select(ToolRegistry).where(
+        and_(
+            ToolRegistry.id == tool_id,
+            (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None)
+        )
+    )
+    res = await db.execute(stmt)
+    tool = res.scalar_one_or_none()
+    
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
-    
+        
     return ToolResponse(
-        id=str(tool["_id"]),
-        name=tool["name"],
-        slug=tool["slug"],
-        description=tool["description"],
-        input_schema=tool.get("input_schema", {}),
-        output_schema=tool.get("output_schema", {}),
-        implementation_type=tool["implementation_type"],
-        implementation_config=tool.get("implementation_config", {}),
-        execution_config=tool.get("execution_config", {}),
-        version=tool.get("version", "1.0.0"),
-        status=tool.get("status", "draft"),
-        tenant_id=str(tool["tenant_id"]),
-        created_at=tool["created_at"],
-        updated_at=tool["updated_at"],
-        published_at=tool.get("published_at"),
+        id=tool.id,
+        tenant_id=tool.tenant_id,
+        name=tool.name,
+        slug=tool.slug,
+        description=tool.description,
+        scope=tool.scope.value,
+        input_schema=tool.schema.get("input", {}),
+        output_schema=tool.schema.get("output", {}),
+        config_schema=tool.config_schema or {},
+        is_active=tool.is_active,
+        is_system=tool.is_system,
+        created_at=tool.created_at,
+        updated_at=tool.updated_at
     )
-
 
 @router.put("/{tool_id}", response_model=ToolResponse)
 async def update_tool(
-    tool_id: str,
+    tool_id: uuid.UUID,
     request: UpdateToolRequest,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """Update a tool definition (only drafts can be modified)."""
-    db = MongoDatabase.get_db()
-    collection = db["tool_definitions"]
+    """Update a tool definition."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    tool = await collection.find_one({
-        "_id": ObjectId(tool_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
-    if not tool:
-        raise HTTPException(status_code=404, detail="Tool not found")
-    
-    if tool.get("status") == ToolStatus.PUBLISHED.value:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot modify published tool. Create a new version instead."
-        )
-    
-    update_doc = {"updated_at": datetime.utcnow()}
-    if request.name is not None:
-        update_doc["name"] = request.name
-    if request.description is not None:
-        update_doc["description"] = request.description
-    if request.input_schema is not None:
-        update_doc["input_schema"] = request.input_schema
-    if request.output_schema is not None:
-        update_doc["output_schema"] = request.output_schema
-    if request.implementation_config is not None:
-        update_doc["implementation_config"] = request.implementation_config
-    if request.execution_config is not None:
-        update_doc["execution_config"] = request.execution_config
-    
-    await collection.update_one({"_id": ObjectId(tool_id)}, {"$set": update_doc})
-    
-    return await get_tool(tool_id, tenant_ctx, current_user)
-
-
-@router.post("/{tool_id}/publish", response_model=ToolResponse)
-async def publish_tool(
-    tool_id: str,
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
-):
-    """Publish a tool, making it immutable and available for use."""
-    db = MongoDatabase.get_db()
-    collection = db["tool_definitions"]
-    
-    tool = await collection.find_one({
-        "_id": ObjectId(tool_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
-    if not tool:
-        raise HTTPException(status_code=404, detail="Tool not found")
-    
-    if tool.get("status") == ToolStatus.PUBLISHED.value:
-        raise HTTPException(status_code=400, detail="Tool is already published")
-    
-    await collection.update_one(
-        {"_id": ObjectId(tool_id)},
-        {
-            "$set": {
-                "status": ToolStatus.PUBLISHED.value,
-                "published_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-            }
-        }
+    stmt = select(ToolRegistry).where(
+        and_(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid)
     )
+    res = await db.execute(stmt)
+    tool = res.scalar_one_or_none()
     
-    return await get_tool(tool_id, tenant_ctx, current_user)
-
-
-@router.post("/{tool_id}/version", response_model=ToolResponse)
-async def create_new_version(
-    tool_id: str,
-    new_version: str,
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
-):
-    """Create a new draft version of a tool."""
-    db = MongoDatabase.get_db()
-    collection = db["tool_definitions"]
-    
-    tool = await collection.find_one({
-        "_id": ObjectId(tool_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
+        
+    if tool.is_system:
+        raise HTTPException(status_code=400, detail="Cannot modify system tools")
+        
+    if request.name is not None:
+        tool.name = request.name
+    if request.description is not None:
+        tool.description = request.description
     
-    # Create new document as draft
-    new_tool = {k: v for k, v in tool.items() if k != "_id"}
-    new_tool["version"] = new_version
-    new_tool["status"] = ToolStatus.DRAFT.value
-    new_tool["created_at"] = datetime.utcnow()
-    new_tool["updated_at"] = datetime.utcnow()
-    new_tool["published_at"] = None
+    # Update nested schema
+    current_schema = dict(tool.schema or {})
+    if request.input_schema is not None:
+        current_schema["input"] = request.input_schema
+    if request.output_schema is not None:
+        current_schema["output"] = request.output_schema
+    tool.schema = current_schema
     
-    result = await collection.insert_one(new_tool)
+    if request.config_schema is not None:
+        tool.config_schema = request.config_schema
+    if request.is_active is not None:
+        tool.is_active = request.is_active
+        
+    await db.commit()
+    await db.refresh(tool)
     
-    return await get_tool(str(result.inserted_id), tenant_ctx, current_user)
-
+    return await get_tool(tool.id, db, tenant_ctx, current_user)
 
 @router.delete("/{tool_id}")
 async def delete_tool(
-    tool_id: str,
+    tool_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """Delete a tool (only drafts can be deleted)."""
-    db = MongoDatabase.get_db()
-    collection = db["tool_definitions"]
+    """Delete a tool (only custom tenant tools can be deleted)."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    tool = await collection.find_one({
-        "_id": ObjectId(tool_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
+    stmt = select(ToolRegistry).where(
+        and_(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid)
+    )
+    res = await db.execute(stmt)
+    tool = res.scalar_one_or_none()
+    
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
-    
-    if tool.get("status") == ToolStatus.PUBLISHED.value:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete published tool. Deprecate it instead."
-        )
-    
-    await collection.delete_one({"_id": ObjectId(tool_id)})
+        
+    if tool.is_system:
+        raise HTTPException(status_code=400, detail="Cannot delete system tools")
+        
+    await db.delete(tool)
+    await db.commit()
     
     return {"status": "deleted", "id": tool_id}
-
-
-@router.post("/{tool_id}/test")
-async def test_tool(
-    tool_id: str,
-    request: TestToolRequest,
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
-):
-    """Test a tool execution with sample input."""
-    db = MongoDatabase.get_db()
-    collection = db["tool_definitions"]
-    
-    tool = await collection.find_one({
-        "_id": ObjectId(tool_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
-    if not tool:
-        raise HTTPException(status_code=404, detail="Tool not found")
-    
-    # TODO: Implement actual tool execution
-    # For now, return a mock response showing the tool would be invoked
-    
-    return {
-        "tool_id": tool_id,
-        "tool_name": tool["name"],
-        "input": request.input,
-        "status": "mock_success",
-        "message": "Tool execution not yet implemented. This is a placeholder response.",
-        "output": None,
-    }

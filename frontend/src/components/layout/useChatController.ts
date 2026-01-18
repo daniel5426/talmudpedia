@@ -324,8 +324,10 @@ export function useChatController(): ChatController {
         }
         const formattedMessages: ChatMessage[] = history.messages.map(
           (msg, index) => {
-            const reasoningStepsRaw = msg.reasoning_steps
-              ? msg.reasoning_steps.map((step: any) => {
+            // Check both old flattened format and new nested tool_calls format
+            const rawSteps = msg.reasoning_steps || (msg.tool_calls && msg.tool_calls.reasoning);
+            const reasoningStepsRaw = rawSteps
+              ? rawSteps.map((step: any) => {
                   const baseCitations = Array.isArray(step.citations)
                     ? step.citations
                     : undefined;

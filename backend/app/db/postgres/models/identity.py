@@ -26,6 +26,17 @@ class UserRole(str, enum.Enum):
     admin = "admin"
     system = "system"
 
+class OrgRole(str, enum.Enum):
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+
+class MembershipStatus(str, enum.Enum):
+    active = "active"
+    pending = "pending"
+    invited = "invited"
+    suspended = "suspended"
+
 # Models
 
 class Tenant(Base):
@@ -90,14 +101,34 @@ class OrgMembership(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     org_unit_id = Column(UUID(as_uuid=True), ForeignKey("org_units.id"), nullable=False)
     
-    status = Column(String, default="active", nullable=False)
+    role = Column(SQLEnum(OrgRole), default=OrgRole.member, nullable=False)
+    status = Column(SQLEnum(MembershipStatus), default=MembershipStatus.active, nullable=False)
     joined_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="memberships")
     user = relationship("User", back_populates="memberships")
     org_unit = relationship("OrgUnit", back_populates="memberships")
+
+
+class OrgInvite(Base):
+    __tablename__ = "org_invites"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String, nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    role = Column(SQLEnum(OrgRole), default=OrgRole.member, nullable=False)
+    token = Column(String, unique=True, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    tenant = relationship("Tenant")
+    creator = relationship("User")
 

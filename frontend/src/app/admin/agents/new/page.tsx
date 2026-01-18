@@ -26,6 +26,7 @@ import { agentService } from "@/services/agent-resources"
 export default function NewAgentPage() {
     const router = useRouter()
     const [isLoading, setIsLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
     const [name, setName] = useState("")
     const [slug, setSlug] = useState("")
     const [description, setDescription] = useState("")
@@ -33,6 +34,7 @@ export default function NewAgentPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (!name || !slug) return
+        setError(null)
 
         try {
             setIsLoading(true)
@@ -43,9 +45,9 @@ export default function NewAgentPage() {
                 status: 'draft'
             })
             router.push(`/admin/agents/${newAgent.id}/builder`)
-        } catch (error) {
-            console.error("Failed to create agent:", error)
-            alert("Failed to create agent. Check if the slug is unique.")
+        } catch (err: any) {
+            console.error("Failed to create agent:", err)
+            setError(err.message || "Failed to create agent. Please try again.")
         } finally {
             setIsLoading(false)
         }
@@ -97,13 +99,28 @@ export default function NewAgentPage() {
                                 id="slug"
                                 placeholder="e.g. research-assistant"
                                 value={slug}
-                                onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/\s+/g, '-'))}
+                                onChange={(e) => {
+                                    setSlug(e.target.value.toLowerCase().replace(/\s+/g, '-'))
+                                    setError(null)
+                                }}
+                                className={error?.includes("slug") ? "border-red-500" : ""}
                                 required
                             />
-                            <p className="text-[10px] text-muted-foreground">
-                                This is used in API calls and cannot be changed later.
-                            </p>
+                            {error?.includes("slug") ? (
+                                <p className="text-sm font-medium text-red-500">
+                                    {error}
+                                </p>
+                            ) : (
+                                <p className="text-[10px] text-muted-foreground">
+                                    This is used in API calls and cannot be changed later.
+                                </p>
+                            )}
                         </div>
+                        {error && !error.includes("slug") && (
+                            <div className="p-3 rounded-md bg-red-50 border border-red-200 text-sm text-red-600">
+                                {error}
+                            </div>
+                        )}
                         <div className="space-y-2">
                             <Label htmlFor="description">Description (Optional)</Label>
                             <Textarea
@@ -115,7 +132,7 @@ export default function NewAgentPage() {
                             />
                         </div>
                     </CardContent>
-                    <CardFooter className="flex justify-end gap-3 border-t pt-6">
+                    <CardFooter className="flex justify-end gap-3 pt-6">
                         <Button variant="outline" type="button" onClick={() => router.push("/admin/agents")}>
                             Cancel
                         </Button>

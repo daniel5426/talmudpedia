@@ -1,3 +1,9 @@
+"""
+Gemini Live Voice Session - PostgreSQL implementation.
+
+Handles real-time voice interactions with Gemini, persisting
+chat messages to PostgreSQL.
+"""
 import os
 import asyncio
 import json
@@ -6,62 +12,24 @@ import traceback
 import logging
 from typing import AsyncGenerator, Dict, Any, List, Optional
 from datetime import datetime
+from uuid import UUID, uuid4
 
-import google.generativeai as genai
 import websockets
-from bson import ObjectId
 
 from dotenv import load_dotenv
 from pathlib import Path
-from uuid import uuid4
+
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.components.retrieval.vector import VectorRetriever
-from app.db.connection import MongoDatabase
-from app.db.models.chat import Chat
-
-from pathlib import Path
-from dotenv import load_dotenv
+from app.db.postgres.models.chat import Chat, Message, MessageRole
+from app.db.postgres.engine import sessionmaker as async_sessionmaker
 
 # Robustly load .env from the backend root directory
 backend_root = Path(__file__).resolve().parent.parent.parent
 env_path = backend_root / ".env"
 load_dotenv(env_path)
-
-# Configure the Gemini API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-# Define the RAG function definition for Gemini
-# This describes the tool to the model
-search_tool = {
-    "function_declarations": [
-        {
-            "name": "retrieve_sources",
-            "description": "Search Rabbinic texts (Talmud, Halakhah, etc.) for relevant information. Use this whenever the user asks a question that requires knowledge from Jewish texts.",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "query": {
-                        "type": "STRING",
-                        "description": "The search query to find relevant texts."
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    ]
-}
-
-
-import logging
-import asyncio
-import json
-import base64
-import os
-import traceback
-from typing import AsyncGenerator, Dict, Any, List, Optional
-import websockets
-
-from app.agent.components.retrieval.vector import VectorRetriever
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -97,27 +65,6 @@ HOST = "generativelanguage.googleapis.com"
 MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 URI = f"wss://{HOST}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
 
-search_tool = [
-    {
-        "function_declarations": [
-            {
-                "name": "retrieve_sources",
-                "description": "Search Rabbinic texts (Talmud, Halakhah, etc.) for relevant information. Use this whenever the user asks a question that requires knowledge from Jewish texts.",
-                "parameters": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "query": {
-                            "type": "STRING",
-                            "description": "The search query to find relevant texts."
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        ]
-    }
-]
-
 ENABLE_GEMINI_TOOLS = True
 GEMINI_TOOLS = [
     {
@@ -140,13 +87,17 @@ GEMINI_TOOLS = [
     }
 ]
 
+
 class GeminiLiveSession:
-    def __init__(self, chat_id: str = None):
+    """Manages a live voice session with Gemini, using PostgreSQL for persistence."""
+    
+    def __init__(self, chat_id: Optional[UUID] = None, tenant_id: Optional[UUID] = None, user_id: Optional[UUID] = None):
         self.ws = None
         self.retriever = VectorRetriever()
         self.is_connected = False
         self.chat_id = chat_id
-        self.db = MongoDatabase.get_db()
+        self.tenant_id = tenant_id
+        self.user_id = user_id
         self.frontend_ws = None
         self.current_ai_text = ""
         self.current_user_text = ""
@@ -158,7 +109,12 @@ class GeminiLiveSession:
         self._pending_citations: List[Dict[str, Any]] = []
         self._pending_reasoning_steps: List[Dict[str, Any]] = []
 
+    async def _get_db_session(self) -> AsyncSession:
+        """Get a database session."""
+        return await async_sessionmaker().__aenter__()
+
     async def _flush_user_message(self):
+        """Save buffered user message to database."""
         if self.current_user_text and self.current_user_text != self._last_saved_user_text:
             await self._save_message("user", self.current_user_text, is_voice=True)
             self._last_saved_user_text = self.current_user_text
@@ -172,6 +128,7 @@ class GeminiLiveSession:
             self.current_user_text = ""
 
     def _format_history_for_system_instruction(self, turns: List[Dict[str, Any]]) -> str:
+        """Format chat history for system instruction."""
         out: List[str] = []
         total = 0
         max_total = 6000
@@ -203,6 +160,7 @@ class GeminiLiveSession:
         return "\n".join(out).strip()
 
     async def _ws_send_json(self, payload: Dict[str, Any], label: str):
+        """Send JSON to Gemini websocket."""
         if not self.ws:
             logger.error("ws_send_json called without ws")
             return
@@ -223,6 +181,7 @@ class GeminiLiveSession:
                 raise
 
     def _merge_partial_text(self, current: str, incoming: str) -> str:
+        """Merge partial transcription text."""
         inc = (incoming or "").strip()
         if not inc:
             return (current or "").strip()
@@ -314,38 +273,45 @@ class GeminiLiveSession:
             logger.error(f"Failed to connect to Gemini: {e}")
             raise
 
-    async def _get_history_context(self):
-        """Loads chat history for context."""
+    async def _get_history_context(self) -> List[Dict[str, Any]]:
+        """Loads chat history for context from PostgreSQL."""
         if not self.chat_id:
             return []
 
         try:
-            chat_doc = await self.db.chats.find_one({"_id": ObjectId(self.chat_id)})
-            if not chat_doc:
-                return []
+            async with async_sessionmaker() as db:
+                # Get chat
+                query = select(Chat).where(Chat.id == self.chat_id)
+                result = await db.execute(query)
+                chat = result.scalar_one_or_none()
+                
+                if not chat:
+                    return []
 
-            messages = chat_doc.get("messages", [])
-            recent_messages = messages[-10:]
-            
-            turns = []
-            for msg in recent_messages:
-                role = "user" if msg["role"] == "user" else "model"
-                text = msg.get("content")
-                if text:
-                    turns.append({
-                        "role": role,
-                        "parts": [{"text": text}]
-                    })
-            
-            # CRITICAL FIX: Ensure history does NOT end with a user turn.
-            # If the last turn is 'user', Gemini native audio models will try to 
-            # generate an audio response immediately from this text "input" during setup,
-            # which fails with "Cannot extract voices from a non-audio request".
-            if turns and turns[-1]["role"] == "user":
-                logger.info("Dropping last user message from history to prevent setup crash.")
-                turns.pop()
+                # Get recent messages
+                msg_query = select(Message).where(
+                    Message.chat_id == self.chat_id
+                ).order_by(Message.index.desc()).limit(10)
+                
+                msg_result = await db.execute(msg_query)
+                messages = list(msg_result.scalars().all())
+                messages.reverse()  # Oldest first
+                
+                turns = []
+                for msg in messages:
+                    role = "user" if msg.role == MessageRole.USER else "model"
+                    if msg.content:
+                        turns.append({
+                            "role": role,
+                            "parts": [{"text": msg.content}]
+                        })
+                
+                # CRITICAL FIX: Ensure history does NOT end with a user turn.
+                if turns and turns[-1]["role"] == "user":
+                    logger.info("Dropping last user message from history to prevent setup crash.")
+                    turns.pop()
 
-            return turns
+                return turns
 
         except Exception as e:
             logger.error(f"Failed to get history: {e}")
@@ -369,6 +335,7 @@ class GeminiLiveSession:
         await self._ws_send_json(msg, "audio")
 
     async def send_user_text(self, text: str, turn_complete: bool = True):
+        """Send user text message."""
         if not self.is_connected:
             return
         t = (text or "").strip()
@@ -392,32 +359,59 @@ class GeminiLiveSession:
         reasoning_steps: Optional[List[Dict[str, Any]]] = None,
         is_voice: bool = False,
     ):
+        """Save message to PostgreSQL."""
         if not self.chat_id or not content:
             return
             
         try:
-            msg = {
-                "role": role,
-                "content": content,
-                "created_at": datetime.utcnow()
-            }
-            if is_voice:
-                msg["is_voice"] = True
-            if citations:
-                msg["citations"] = citations
-            if reasoning_steps:
-                msg["reasoning_steps"] = reasoning_steps
-            # Append to mongo
-            await self.db.chats.update_one(
-                {"_id": ObjectId(self.chat_id)},
-                {"$push": {"messages": msg}, "$set": {"updated_at": datetime.utcnow()}}
-            )
-            logger.info(f"Saved {role} message to DB: {content[:50]}...")
+            async with async_sessionmaker() as db:
+                # Get current max index
+                max_idx_query = select(func.max(Message.index)).where(Message.chat_id == self.chat_id)
+                result = await db.execute(max_idx_query)
+                current_max = result.scalar() or -1
+                
+                role_map = {
+                    "user": MessageRole.USER,
+                    "assistant": MessageRole.ASSISTANT,
+                    "system": MessageRole.SYSTEM,
+                    "tool": MessageRole.TOOL,
+                }
+                msg_role = role_map.get(role, MessageRole.USER)
+                
+                # Store metadata in tool_calls JSONB
+                tool_calls = None
+                if citations or reasoning_steps or is_voice:
+                    tool_calls = {}
+                    if citations:
+                        tool_calls["citations"] = citations
+                    if reasoning_steps:
+                        tool_calls["reasoning_steps"] = reasoning_steps
+                    if is_voice:
+                        tool_calls["is_voice"] = True
+                
+                message = Message(
+                    chat_id=self.chat_id,
+                    role=msg_role,
+                    content=content,
+                    index=current_max + 1,
+                    tool_calls=tool_calls,
+                )
+                db.add(message)
+                
+                # Update chat updated_at
+                chat_query = select(Chat).where(Chat.id == self.chat_id)
+                chat_result = await db.execute(chat_query)
+                chat = chat_result.scalar_one_or_none()
+                if chat:
+                    chat.updated_at = datetime.utcnow()
+                
+                await db.commit()
+                logger.info(f"Saved {role} message to DB: {content[:50]}...")
         except Exception as e:
             logger.error(f"Failed to save message: {e}")
 
     async def _handle_gemini_message(self, msg: Dict[str, Any]):
-        # logger.info(f"RX: {msg.keys()}") 
+        """Handle incoming message from Gemini."""
         _agent_log("B", "gemini_live.py:receive_loop", "ws_rx", {"topKeys": list(msg.keys())})
         if "error" in msg:
             logger.error(f"Gemini Error: {msg}")
@@ -452,42 +446,16 @@ class GeminiLiveSession:
             input_transcription = server_content.get("input_transcription") or server_content.get("inputTranscription")
             if input_transcription and isinstance(input_transcription, dict):
                 t = input_transcription.get("text") or ""
-                # MODIFICATION: Do NOT send partial text updates to frontend.
-                # Only track it internally.
                 if t and t != self._last_input_transcription:
-                    # If this is the FIRST time we have user text for this turn, send a placeholder
-                    # so frontend shows "User speaking..." shimmer.
-                    if not self.current_user_text:
-                        pass
-                        # await frontend_ws.send_json({
-                        #     "type": "live_text",
-                        #     "role": "user",
-                        #     "content": "", # Empty content triggers shimmer in frontend if is_final=False
-                        #     "is_final": False
-                        # })
-                    
                     self._last_input_transcription = t
                     self.current_user_text = self._merge_partial_text(self.current_user_text, t)
-                    # Do NOT send the partial text
-                    # await frontend_ws.send_json({...})
 
             input_transcriptions = server_content.get("input_transcriptions") or server_content.get("inputTranscriptions")
             if input_transcriptions and isinstance(input_transcriptions, list):
                 joined = " ".join([(x or {}).get("text", "") for x in input_transcriptions]).strip()
                 if joined and joined != self._last_input_transcription:
-                    # Same logic: send placeholder if new turn, otherwise silence
-                    if not self.current_user_text:
-                        pass
-                        # await frontend_ws.send_json({
-                        #     "type": "live_text",
-                        #     "role": "user",
-                        #     "content": "",
-                        #     "is_final": False
-                        # })
-
                     self._last_input_transcription = joined
                     self.current_user_text = self._merge_partial_text(self.current_user_text, joined)
-
 
             output_transcription = server_content.get("output_transcription") or server_content.get("outputTranscription")
             if output_transcription and isinstance(output_transcription, dict):
@@ -508,13 +476,12 @@ class GeminiLiveSession:
                             "is_final": False
                         })
 
-            # 1. Model Audio & Text
+            # Model Audio & Text
             model_turn = server_content.get("modelTurn")
             if model_turn:
                 await self._flush_user_message()
                 parts = model_turn.get("parts", [])
                 for part in parts:
-                    # Audio
                     inline_data = part.get("inlineData")
                     if inline_data:
                         audio_data = inline_data.get("data")
@@ -528,7 +495,7 @@ class GeminiLiveSession:
                     if text_data and not self._last_output_transcription:
                         self.current_ai_text += text_data
 
-            # 2. Turn Complete (Save accumulated text)
+            # Turn Complete
             if server_content.get("turn_complete") or server_content.get("turnComplete"):
                 if self.current_ai_text:
                     await self._save_message(
@@ -544,14 +511,12 @@ class GeminiLiveSession:
                             "content": self.current_ai_text,
                             "is_final": True
                         })
-                    # Notify frontend text (optional, for UI sync)
-                    # await frontend_ws.send_json({"type": "text", "content": self.current_ai_text, "role": "assistant"})
                     self.current_ai_text = ""
                     self._last_output_transcription = ""
                     self._pending_citations = []
                     self._pending_reasoning_steps = []
             
-            # 3. Tool Call
+            # Tool Call
             tool_call = msg.get("tool_call") or msg.get("toolCall")
             if not tool_call:
                 tool_call = server_content.get("tool_call") or server_content.get("toolCall")
@@ -562,23 +527,11 @@ class GeminiLiveSession:
                 if ENABLE_GEMINI_TOOLS:
                     await self._handle_tool_call(tool_call)
 
-            # 4. Unknown/User Transcript?
-            # We look for keys like 'recognitionResult' or 'speechRecognitionResults'
-            # which indicate user speech transcription
-            # Since we don't know the exact key yet, we'll log keys to discover it.
-            # Commonly for Gemini Live: 'speechRecognitionResult' -> 'transcript'
-            # Or 'currentUserInput' -> 'content'
-            # If found, save as 'user' message.
             if "modelTurn" not in server_content and "turnComplete" not in server_content and "toolCall" not in server_content:
-                    logger.info(f"Potential User Transcript? Keys: {server_content.keys()}")
-                    # Try to extract text validation
-                    # e.g. if server_content.get('speechRecognitionResults'): ...
+                logger.info(f"Potential User Transcript? Keys: {server_content.keys()}")
 
     async def receive_loop(self, frontend_ws):
-        """
-        Loops to receive messages from Gemini and forward audio to frontend.
-        Also handles tool calls and collecting text for persistence.
-        """
+        """Loops to receive messages from Gemini and forward audio to frontend."""
         try:
             self.frontend_ws = frontend_ws
             async for raw_msg in self.ws:
@@ -590,6 +543,7 @@ class GeminiLiveSession:
             traceback.print_exc()
 
     async def _handle_tool_call(self, tool_call):
+        """Handle tool calls from Gemini."""
         use_camel = "functionCalls" in tool_call
         function_calls = tool_call.get("function_calls") or tool_call.get("functionCalls") or []
         _agent_log("B", "gemini_live.py:_handle_tool_call", "dispatching", {"useCamel": bool(use_camel), "count": len(function_calls), "names": [c.get("name") for c in function_calls]})
@@ -599,18 +553,18 @@ class GeminiLiveSession:
             task.add_done_callback(self._tool_tasks.discard)
 
     async def _run_tool_call(self, call: Dict[str, Any], use_camel: bool):
+        """Execute a tool call."""
         name = call.get("name")
         args = call.get("args") or {}
         call_id = call.get("id")
         logger.info(f"Tool call received name={name} id={call_id} args_keys={list(args.keys())}")
         _agent_log("B", "gemini_live.py:_run_tool_call", "start", {"name": name, "hasId": bool(call_id), "argsKeys": list(args.keys()), "useCamel": bool(use_camel)})
         
-        # Flush user message if pending (e.g. user asked a question, model decided to call tool)
+        # Flush user message if pending
         if self.current_user_text and self.current_user_text != self._last_saved_user_text:
             await self._save_message("user", self.current_user_text, is_voice=True)
             self._last_saved_user_text = self.current_user_text
-            # Also notify frontend that user turn is done (so it shows icon)
-        # Also notify frontend that user turn is done (so it shows icon)
+        
         if self.frontend_ws:
             await self.frontend_ws.send_json({
                 "type": "live_text",
@@ -714,6 +668,7 @@ class GeminiLiveSession:
         await self._ws_send_json(resp_msg, label)
 
     async def close(self):
+        """Close the session and save any pending messages."""
         ai = (self.current_ai_text or "").strip()
         if ai:
             await self._save_message(
@@ -732,6 +687,3 @@ class GeminiLiveSession:
             self.current_user_text = ""
         if self.ws:
             await self.ws.close()
-
-
-

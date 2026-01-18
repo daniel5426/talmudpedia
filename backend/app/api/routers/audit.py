@@ -1,23 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime
-from bson import ObjectId
+import uuid
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, func
 
-from app.db.models.rbac import Action, ResourceType, Permission
-from app.db.models.audit import AuditResult
-from app.db.connection import MongoDatabase
-from app.core.rbac import get_tenant_context, check_permission
-
+from app.db.postgres.models.audit import AuditLog, AuditResult
+from app.db.postgres.models.rbac import Action, ResourceType
+from app.db.postgres.session import get_db
+from app.core.rbac import get_tenant_context, check_permission, Permission, parse_id
 
 router = APIRouter()
 
-
 class AuditLogResponse(BaseModel):
-    id: str
-    tenant_id: str
-    org_unit_id: Optional[str]
-    actor_id: str
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    org_unit_id: Optional[uuid.UUID]
+    actor_id: uuid.UUID
     actor_type: str
     actor_email: str
     action: str
@@ -31,12 +31,10 @@ class AuditLogResponse(BaseModel):
     timestamp: datetime
     duration_ms: Optional[int]
 
-
 class AuditLogDetailResponse(AuditLogResponse):
     before_state: Optional[dict]
     after_state: Optional[dict]
     request_params: Optional[dict]
-
 
 @router.get("/tenants/{tenant_slug}/audit-logs", response_model=List[AuditLogResponse])
 async def list_audit_logs(
@@ -52,66 +50,61 @@ async def list_audit_logs(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     ctx: tuple = Depends(get_tenant_context),
+    db: AsyncSession = Depends(get_db),
 ):
     tenant, user = ctx
-    db = MongoDatabase.get_db()
 
     has_permission = await check_permission(
         user_id=user.id,
         tenant_id=tenant.id,
         required_permission=Permission(resource_type=ResourceType.AUDIT, action=Action.READ),
+        db=db
     )
 
     if not has_permission and user.role != "admin":
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    query = {"tenant_id": tenant.id}
+    conditions = [AuditLog.tenant_id == tenant.id]
 
     if actor_id:
-        query["actor_id"] = ObjectId(actor_id)
+        conditions.append(AuditLog.actor_id == parse_id(actor_id))
     if action:
-        query["action"] = action.value
+        conditions.append(AuditLog.action == action)
     if resource_type:
-        query["resource_type"] = resource_type.value
+        conditions.append(AuditLog.resource_type == resource_type)
     if resource_id:
-        query["resource_id"] = resource_id
+        conditions.append(AuditLog.resource_id == resource_id)
     if result:
-        query["result"] = result.value
+        conditions.append(AuditLog.result == result)
     if org_unit_id:
-        query["org_unit_id"] = ObjectId(org_unit_id)
+        conditions.append(AuditLog.org_unit_id == parse_id(org_unit_id))
+    if start_date:
+        conditions.append(AuditLog.timestamp >= start_date)
+    if end_date:
+        conditions.append(AuditLog.timestamp <= end_date)
 
-    if start_date or end_date:
-        query["timestamp"] = {}
-        if start_date:
-            query["timestamp"]["$gte"] = start_date
-        if end_date:
-            query["timestamp"]["$lte"] = end_date
+    stmt = select(AuditLog).where(and_(*conditions)).order_by(AuditLog.timestamp.desc()).offset(skip).limit(limit)
+    res = await db.execute(stmt)
+    logs = res.scalars().all()
 
-    cursor = db.audit_logs.find(query).sort("timestamp", -1).skip(skip).limit(limit)
-
-    logs = []
-    async for doc in cursor:
-        logs.append(AuditLogResponse(
-            id=str(doc["_id"]),
-            tenant_id=str(doc["tenant_id"]),
-            org_unit_id=str(doc["org_unit_id"]) if doc.get("org_unit_id") else None,
-            actor_id=str(doc["actor_id"]),
-            actor_type=doc["actor_type"],
-            actor_email=doc["actor_email"],
-            action=doc["action"],
-            resource_type=doc["resource_type"],
-            resource_id=doc.get("resource_id"),
-            resource_name=doc.get("resource_name"),
-            result=doc["result"],
-            failure_reason=doc.get("failure_reason"),
-            ip_address=doc.get("ip_address"),
-            user_agent=doc.get("user_agent"),
-            timestamp=doc["timestamp"],
-            duration_ms=doc.get("duration_ms"),
-        ))
-
-    return logs
-
+    return [AuditLogResponse(
+        id=log.id,
+        tenant_id=log.tenant_id,
+        org_unit_id=log.org_unit_id,
+        actor_id=log.actor_id,
+        actor_type=log.actor_type.value if hasattr(log.actor_type, 'value') else log.actor_type,
+        actor_email=log.actor_email,
+        action=log.action.value if hasattr(log.action, 'value') else log.action,
+        resource_type=log.resource_type.value if hasattr(log.resource_type, 'value') else log.resource_type,
+        resource_id=log.resource_id,
+        resource_name=log.resource_name,
+        result=log.result.value if hasattr(log.result, 'value') else log.result,
+        failure_reason=log.failure_reason,
+        ip_address=log.ip_address,
+        user_agent=log.user_agent,
+        timestamp=log.timestamp,
+        duration_ms=log.duration_ms
+    ) for log in logs]
 
 @router.get("/tenants/{tenant_slug}/audit-logs/count")
 async def count_audit_logs(
@@ -123,178 +116,85 @@ async def count_audit_logs(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     ctx: tuple = Depends(get_tenant_context),
+    db: AsyncSession = Depends(get_db),
 ):
     tenant, user = ctx
-    db = MongoDatabase.get_db()
 
     has_permission = await check_permission(
         user_id=user.id,
         tenant_id=tenant.id,
         required_permission=Permission(resource_type=ResourceType.AUDIT, action=Action.READ),
+        db=db
     )
 
     if not has_permission and user.role != "admin":
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    query = {"tenant_id": tenant.id}
+    conditions = [AuditLog.tenant_id == tenant.id]
 
     if actor_id:
-        query["actor_id"] = ObjectId(actor_id)
+        conditions.append(AuditLog.actor_id == parse_id(actor_id))
     if action:
-        query["action"] = action.value
+        conditions.append(AuditLog.action == action)
     if resource_type:
-        query["resource_type"] = resource_type.value
+        conditions.append(AuditLog.resource_type == resource_type)
     if result:
-        query["result"] = result.value
+        conditions.append(AuditLog.result == result)
+    if start_date:
+        conditions.append(AuditLog.timestamp >= start_date)
+    if end_date:
+        conditions.append(AuditLog.timestamp <= end_date)
 
-    if start_date or end_date:
-        query["timestamp"] = {}
-        if start_date:
-            query["timestamp"]["$gte"] = start_date
-        if end_date:
-            query["timestamp"]["$lte"] = end_date
-
-    count = await db.audit_logs.count_documents(query)
+    stmt = select(func.count(AuditLog.id)).where(and_(*conditions))
+    count = (await db.execute(stmt)).scalar()
 
     return {"count": count}
-
 
 @router.get("/tenants/{tenant_slug}/audit-logs/{log_id}", response_model=AuditLogDetailResponse)
 async def get_audit_log(
     tenant_slug: str,
     log_id: str,
     ctx: tuple = Depends(get_tenant_context),
+    db: AsyncSession = Depends(get_db),
 ):
     tenant, user = ctx
-    db = MongoDatabase.get_db()
 
     has_permission = await check_permission(
         user_id=user.id,
         tenant_id=tenant.id,
         required_permission=Permission(resource_type=ResourceType.AUDIT, action=Action.READ),
+        db=db
     )
 
     if not has_permission and user.role != "admin":
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    doc = await db.audit_logs.find_one({"_id": ObjectId(log_id), "tenant_id": tenant.id})
-    if not doc:
+    lid = parse_id(log_id)
+    stmt = select(AuditLog).where(and_(AuditLog.id == lid, AuditLog.tenant_id == tenant.id))
+    res = await db.execute(stmt)
+    log = res.scalar_one_or_none()
+    
+    if not log:
         raise HTTPException(status_code=404, detail="Audit log not found")
 
     return AuditLogDetailResponse(
-        id=str(doc["_id"]),
-        tenant_id=str(doc["tenant_id"]),
-        org_unit_id=str(doc["org_unit_id"]) if doc.get("org_unit_id") else None,
-        actor_id=str(doc["actor_id"]),
-        actor_type=doc["actor_type"],
-        actor_email=doc["actor_email"],
-        action=doc["action"],
-        resource_type=doc["resource_type"],
-        resource_id=doc.get("resource_id"),
-        resource_name=doc.get("resource_name"),
-        result=doc["result"],
-        failure_reason=doc.get("failure_reason"),
-        ip_address=doc.get("ip_address"),
-        user_agent=doc.get("user_agent"),
-        timestamp=doc["timestamp"],
-        duration_ms=doc.get("duration_ms"),
-        before_state=doc.get("before_state"),
-        after_state=doc.get("after_state"),
-        request_params=doc.get("request_params"),
+        id=log.id,
+        tenant_id=log.tenant_id,
+        org_unit_id=log.org_unit_id,
+        actor_id=log.actor_id,
+        actor_type=log.actor_type.value if hasattr(log.actor_type, 'value') else log.actor_type,
+        actor_email=log.actor_email,
+        action=log.action.value if hasattr(log.action, 'value') else log.action,
+        resource_type=log.resource_type.value if hasattr(log.resource_type, 'value') else log.resource_type,
+        resource_id=log.resource_id,
+        resource_name=log.resource_name,
+        result=log.result.value if hasattr(log.result, 'value') else log.result,
+        failure_reason=log.failure_reason,
+        ip_address=log.ip_address,
+        user_agent=log.user_agent,
+        timestamp=log.timestamp,
+        duration_ms=log.duration_ms,
+        before_state=log.before_state,
+        after_state=log.after_state,
+        request_params=log.request_params,
     )
-
-
-@router.get("/tenants/{tenant_slug}/audit-logs/stats/actions")
-async def get_action_stats(
-    tenant_slug: str,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    ctx: tuple = Depends(get_tenant_context),
-):
-    tenant, user = ctx
-    db = MongoDatabase.get_db()
-
-    has_permission = await check_permission(
-        user_id=user.id,
-        tenant_id=tenant.id,
-        required_permission=Permission(resource_type=ResourceType.AUDIT, action=Action.READ),
-    )
-
-    if not has_permission and user.role != "admin":
-        raise HTTPException(status_code=403, detail="Permission denied")
-
-    match_stage = {"tenant_id": tenant.id}
-    if start_date or end_date:
-        match_stage["timestamp"] = {}
-        if start_date:
-            match_stage["timestamp"]["$gte"] = start_date
-        if end_date:
-            match_stage["timestamp"]["$lte"] = end_date
-
-    pipeline = [
-        {"$match": match_stage},
-        {"$group": {
-            "_id": {"action": "$action", "result": "$result"},
-            "count": {"$sum": 1}
-        }},
-        {"$sort": {"count": -1}}
-    ]
-
-    results = await db.audit_logs.aggregate(pipeline).to_list(length=100)
-
-    stats = {}
-    for r in results:
-        action = r["_id"]["action"]
-        result = r["_id"]["result"]
-        if action not in stats:
-            stats[action] = {"success": 0, "failure": 0, "denied": 0}
-        stats[action][result] = r["count"]
-
-    return {"stats": stats}
-
-
-@router.get("/tenants/{tenant_slug}/audit-logs/stats/actors")
-async def get_actor_stats(
-    tenant_slug: str,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    limit: int = Query(10, ge=1, le=50),
-    ctx: tuple = Depends(get_tenant_context),
-):
-    tenant, user = ctx
-    db = MongoDatabase.get_db()
-
-    has_permission = await check_permission(
-        user_id=user.id,
-        tenant_id=tenant.id,
-        required_permission=Permission(resource_type=ResourceType.AUDIT, action=Action.READ),
-    )
-
-    if not has_permission and user.role != "admin":
-        raise HTTPException(status_code=403, detail="Permission denied")
-
-    match_stage = {"tenant_id": tenant.id}
-    if start_date or end_date:
-        match_stage["timestamp"] = {}
-        if start_date:
-            match_stage["timestamp"]["$gte"] = start_date
-        if end_date:
-            match_stage["timestamp"]["$lte"] = end_date
-
-    pipeline = [
-        {"$match": match_stage},
-        {"$group": {
-            "_id": "$actor_email",
-            "count": {"$sum": 1},
-            "last_action": {"$max": "$timestamp"}
-        }},
-        {"$sort": {"count": -1}},
-        {"$limit": limit}
-    ]
-
-    results = await db.audit_logs.aggregate(pipeline).to_list(length=limit)
-
-    return {"actors": [
-        {"email": r["_id"], "action_count": r["count"], "last_action": r["last_action"]}
-        for r in results
-    ]}

@@ -1,76 +1,80 @@
-"""
-Models Registry API - CRUD operations for logical model definitions.
-"""
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from bson import ObjectId
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, delete, func
 
-from app.db.models.model_registry import (
-    LogicalModel,
-    ModelProvider,
-    ModelCapabilityType,
-    ModelProviderType,
+from sqlalchemy.orm import selectinload
+
+from app.db.postgres.models.registry import (
+    ModelRegistry, 
+    ModelProviderType, 
+    ModelCapabilityType, 
     ModelStatus,
-    ModelMetadata,
-    ModelResolutionPolicy,
+    ModelProviderBinding
 )
-from app.db.connection import MongoDatabase
+from app.db.postgres.session import get_db
 from app.api.dependencies import get_current_user, get_tenant_context
 
 router = APIRouter(prefix="/models", tags=["models"])
-
 
 # ============================================================================
 # Request/Response Schemas
 # ============================================================================
 
+class CreateProviderRequest(BaseModel):
+    provider: ModelProviderType
+    provider_model_id: str
+    priority: int = 0
+    config: Optional[dict] = None
+
+class ModelProviderSummary(BaseModel):
+    id: uuid.UUID
+    provider: ModelProviderType
+    provider_model_id: str
+    priority: int
+    is_enabled: bool
+    config: dict
+
 class CreateModelRequest(BaseModel):
-    name: str
-    slug: str
+    name: str # Display Name
+    slug: str # Unique ID
     description: Optional[str] = None
-    capability_type: ModelCapabilityType
+    capability_type: ModelCapabilityType = ModelCapabilityType.CHAT
     metadata: Optional[dict] = None
     default_resolution_policy: Optional[dict] = None
-
 
 class UpdateModelRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    status: Optional[ModelStatus] = None
+    is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
     metadata: Optional[dict] = None
     default_resolution_policy: Optional[dict] = None
-    status: Optional[ModelStatus] = None
-
-
-class CreateProviderRequest(BaseModel):
-    provider: ModelProviderType
-    provider_model_id: str
-    config: Optional[dict] = None
-    credentials_ref: Optional[str] = None
-    priority: int = 0
-
 
 class ModelResponse(BaseModel):
-    id: str
+    id: uuid.UUID
+    tenant_id: Optional[uuid.UUID]
     name: str
     slug: str
     description: Optional[str]
-    capability_type: str
+    capability_type: ModelCapabilityType
+    status: ModelStatus
+    version: int
     metadata: dict
     default_resolution_policy: dict
-    version: int
-    status: str
-    tenant_id: str
+    is_active: bool
+    is_default: bool
+    providers: List[ModelProviderSummary] = []
     created_at: datetime
     updated_at: datetime
-    providers: list[dict] = []
-
 
 class ModelListResponse(BaseModel):
-    models: list[ModelResponse]
+    models: List[ModelResponse]
     total: int
-
 
 # ============================================================================
 # Endpoints
@@ -78,294 +82,287 @@ class ModelListResponse(BaseModel):
 
 @router.get("", response_model=ModelListResponse)
 async def list_models(
-    capability_type: Optional[ModelCapabilityType] = None,
-    status: Optional[ModelStatus] = Query(default=ModelStatus.ACTIVE),
+    capability_type: Optional[ModelCapabilityType] = Query(None),
+    is_active: Optional[bool] = Query(default=True),
     skip: int = 0,
     limit: int = 50,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """List all logical models for the current tenant."""
-    db = MongoDatabase.get_db()
-    collection = db["logical_models"]
-    providers_collection = db["model_providers"]
+    """List all logical models."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    try:
-        tenant_id_obj = ObjectId(tenant_ctx["tenant_id"])
-    except Exception:
-        # If we can't convert to ObjectId, it's likely a UUID from Postgres
-        # For now, we'll try to find a tenant in Mongo with the same string ID or fail gracefully
-        tenant_id_obj = str(tenant_ctx["tenant_id"])
-
-    query = {"tenant_id": tenant_id_obj}
+    stmt = select(ModelRegistry).where(
+        and_(
+            (ModelRegistry.tenant_id == tid) | (ModelRegistry.tenant_id == None),
+            ModelRegistry.is_active == is_active if is_active is not None else True
+        )
+    )
     
-    total = await collection.count_documents(query)
-    cursor = collection.find(query).skip(skip).limit(limit).sort("name", 1)
-    models = await cursor.to_list(length=limit)
-    
-    # Fetch providers for each model
-    result = []
-    for model in models:
-        providers = await providers_collection.find({
-            "logical_model_id": model["_id"]
-        }).to_list(length=10)
+    if capability_type:
+        stmt = stmt.where(ModelRegistry.capability_type == capability_type)
         
-        result.append(ModelResponse(
-            id=str(model["_id"]),
-            name=model["name"],
-            slug=model["slug"],
-            description=model.get("description"),
-            capability_type=model["capability_type"],
-            metadata=model.get("metadata", {}),
-            default_resolution_policy=model.get("default_resolution_policy", {}),
-            version=model.get("version", 1),
-            status=model.get("status", "active"),
-            tenant_id=str(model["tenant_id"]),
-            created_at=model["created_at"],
-            updated_at=model["updated_at"],
-            providers=[{
-                "id": str(p["_id"]),
-                "provider": p["provider"],
-                "provider_model_id": p["provider_model_id"],
-                "priority": p.get("priority", 0),
-                "is_enabled": p.get("is_enabled", True),
-            } for p in providers]
-        ))
+    stmt = stmt.offset(skip).limit(limit).order_by(ModelRegistry.name.asc()).options(selectinload(ModelRegistry.providers))
     
-    return ModelListResponse(models=result, total=total)
-
+    result = await db.execute(stmt)
+    models = result.scalars().all()
+    
+    # Count total
+    count_stmt = select(func.count(ModelRegistry.id)).where(
+        (ModelRegistry.tenant_id == tid) | (ModelRegistry.tenant_id == None)
+    )
+    if capability_type:
+        count_stmt = count_stmt.where(ModelRegistry.capability_type == capability_type)
+        
+    total_res = await db.execute(count_stmt)
+    total = total_res.scalar()
+    
+    return ModelListResponse(
+        models=[ModelResponse(
+            id=m.id,
+            tenant_id=m.tenant_id,
+            name=m.name,
+            slug=m.slug,
+            description=m.description,
+            capability_type=m.capability_type,
+            status=m.status,
+            version=m.version,
+            metadata=m.metadata_ or {},
+            default_resolution_policy=m.default_resolution_policy or {},
+            is_active=m.is_active,
+            is_default=m.is_default,
+            created_at=m.created_at,
+            updated_at=m.updated_at,
+            providers=[ModelProviderSummary(
+                id=p.id,
+                provider=p.provider,
+                provider_model_id=p.provider_model_id,
+                priority=p.priority,
+                is_enabled=p.is_enabled,
+                config=p.config or {}
+            ) for p in m.providers]
+        ) for m in models],
+        total=total
+    )
 
 @router.post("", response_model=ModelResponse)
 async def create_model(
     request: CreateModelRequest,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """Create a new logical model."""
-    db = MongoDatabase.get_db()
-    collection = db["logical_models"]
+    """Register a new logical model."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    # Check for duplicate slug
-    existing = await collection.find_one({
-        "slug": request.slug,
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Model with slug '{request.slug}' already exists")
-    
-    model_doc = {
-        "name": request.name,
-        "slug": request.slug,
-        "description": request.description,
-        "capability_type": request.capability_type.value,
-        "metadata": request.metadata or {},
-        "default_resolution_policy": request.default_resolution_policy or {},
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"]),
-        "version": 1,
-        "status": ModelStatus.ACTIVE.value,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-        "created_by": ObjectId(current_user["id"]) if current_user.get("id") else None,
-    }
-    
-    result = await collection.insert_one(model_doc)
-    model_doc["_id"] = result.inserted_id
-    
-    return ModelResponse(
-        id=str(model_doc["_id"]),
-        name=model_doc["name"],
-        slug=model_doc["slug"],
-        description=model_doc.get("description"),
-        capability_type=model_doc["capability_type"],
-        metadata=model_doc["metadata"],
-        default_resolution_policy=model_doc["default_resolution_policy"],
-        version=model_doc["version"],
-        status=model_doc["status"],
-        tenant_id=str(model_doc["tenant_id"]),
-        created_at=model_doc["created_at"],
-        updated_at=model_doc["updated_at"],
-        providers=[]
+    # Check for existing slug in tenant
+    stmt = select(ModelRegistry).where(
+        and_(
+            ModelRegistry.tenant_id == tid,
+            ModelRegistry.slug == request.slug
+        )
     )
+    res = await db.execute(stmt)
+    if res.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"Model slug '{request.slug}' already exists for this tenant")
 
+    model = ModelRegistry(
+        tenant_id=tid,
+        name=request.name,
+        slug=request.slug,
+        description=request.description,
+        capability_type=request.capability_type,
+        metadata_=request.metadata or {},
+        default_resolution_policy=request.default_resolution_policy or {}
+    )
+    
+    db.add(model)
+    await db.commit()
+    await db.refresh(model)
+    
+    # Re-fetch with providers
+    return await get_model(model.id, db, tenant_ctx, current_user)
 
 @router.get("/{model_id}", response_model=ModelResponse)
 async def get_model(
-    model_id: str,
+    model_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """Get a specific model by ID."""
-    db = MongoDatabase.get_db()
-    collection = db["logical_models"]
-    providers_collection = db["model_providers"]
+    """Get details for a specific model."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    model = await collection.find_one({
-        "_id": ObjectId(model_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
+    stmt = select(ModelRegistry).where(
+        and_(
+            ModelRegistry.id == model_id,
+            (ModelRegistry.tenant_id == tid) | (ModelRegistry.tenant_id == None)
+        )
+    ).options(selectinload(ModelRegistry.providers))
+    
+    res = await db.execute(stmt)
+    model = res.scalar_one_or_none()
+    
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    
-    providers = await providers_collection.find({
-        "logical_model_id": model["_id"]
-    }).to_list(length=10)
-    
+        
     return ModelResponse(
-        id=str(model["_id"]),
-        name=model["name"],
-        slug=model["slug"],
-        description=model.get("description"),
-        capability_type=model["capability_type"],
-        metadata=model.get("metadata", {}),
-        default_resolution_policy=model.get("default_resolution_policy", {}),
-        version=model.get("version", 1),
-        status=model.get("status", "active"),
-        tenant_id=str(model["tenant_id"]),
-        created_at=model["created_at"],
-        updated_at=model["updated_at"],
-        providers=[{
-            "id": str(p["_id"]),
-            "provider": p["provider"],
-            "provider_model_id": p["provider_model_id"],
-            "priority": p.get("priority", 0),
-            "is_enabled": p.get("is_enabled", True),
-            "config": p.get("config", {}),
-        } for p in providers]
+        id=model.id,
+        tenant_id=model.tenant_id,
+        name=model.name,
+        slug=model.slug,
+        description=model.description,
+        capability_type=model.capability_type,
+        status=model.status,
+        version=model.version,
+        metadata=model.metadata_ or {},
+        default_resolution_policy=model.default_resolution_policy or {},
+        is_active=model.is_active,
+        is_default=model.is_default,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+        providers=[ModelProviderSummary(
+            id=p.id,
+            provider=p.provider,
+            provider_model_id=p.provider_model_id,
+            priority=p.priority,
+            is_enabled=p.is_enabled,
+            config=p.config or {}
+        ) for p in model.providers]
     )
-
 
 @router.put("/{model_id}", response_model=ModelResponse)
 async def update_model(
-    model_id: str,
+    model_id: uuid.UUID,
     request: UpdateModelRequest,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """Update a logical model."""
-    db = MongoDatabase.get_db()
-    collection = db["logical_models"]
+    """Update a logical model definition."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    model = await collection.find_one({
-        "_id": ObjectId(model_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
+    stmt = select(ModelRegistry).where(
+        and_(ModelRegistry.id == model_id, ModelRegistry.tenant_id == tid)
+    )
+    res = await db.execute(stmt)
+    model = res.scalar_one_or_none()
+    
     if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
-    
-    update_doc = {"updated_at": datetime.utcnow()}
+        raise HTTPException(status_code=404, detail="Model not found or permission denied")
+        
     if request.name is not None:
-        update_doc["name"] = request.name
+        model.name = request.name
     if request.description is not None:
-        update_doc["description"] = request.description
-    if request.metadata is not None:
-        update_doc["metadata"] = request.metadata
-    if request.default_resolution_policy is not None:
-        update_doc["default_resolution_policy"] = request.default_resolution_policy
+        model.description = request.description
     if request.status is not None:
-        update_doc["status"] = request.status.value
-    
-    await collection.update_one({"_id": ObjectId(model_id)}, {"$set": update_doc})
-    
-    return await get_model(model_id, tenant_ctx, current_user)
-
+        model.status = request.status
+    if request.is_active is not None:
+        model.is_active = request.is_active
+    if request.is_default is not None:
+        model.is_default = request.is_default
+    if request.metadata is not None:
+        model.metadata_ = request.metadata
+    if request.default_resolution_policy is not None:
+        model.default_resolution_policy = request.default_resolution_policy
+        
+    await db.commit()
+    return await get_model(model.id, db, tenant_ctx, current_user)
 
 @router.delete("/{model_id}")
 async def delete_model(
-    model_id: str,
+    model_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """Delete a logical model and its providers."""
-    db = MongoDatabase.get_db()
-    collection = db["logical_models"]
-    providers_collection = db["model_providers"]
+    """Remove a model from the registry."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    model = await collection.find_one({
-        "_id": ObjectId(model_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
+    stmt = select(ModelRegistry).where(
+        and_(ModelRegistry.id == model_id, ModelRegistry.tenant_id == tid)
+    )
+    res = await db.execute(stmt)
+    model = res.scalar_one_or_none()
+    
     if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
-    
-    # Delete providers first
-    await providers_collection.delete_many({"logical_model_id": ObjectId(model_id)})
-    
-    # Delete model
-    await collection.delete_one({"_id": ObjectId(model_id)})
+        raise HTTPException(status_code=404, detail="Model not found or permission denied")
+        
+    await db.delete(model)
+    await db.commit()
     
     return {"status": "deleted", "id": model_id}
 
+# --- Provider Binding Endpoints ---
 
-# ============================================================================
-# Provider Endpoints
-# ============================================================================
-
-@router.post("/{model_id}/providers")
-async def add_provider(
-    model_id: str,
+@router.post("/{model_id}/providers", response_model=ModelProviderSummary)
+async def add_provider_binding(
+    model_id: uuid.UUID,
     request: CreateProviderRequest,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """Add a provider binding to a model."""
-    db = MongoDatabase.get_db()
-    models_collection = db["logical_models"]
-    providers_collection = db["model_providers"]
+    """Add a provider binding to a logical model."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    model = await models_collection.find_one({
-        "_id": ObjectId(model_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
+    # Verify model exists and belongs to tenant
+    stmt = select(ModelRegistry).where(
+        and_(ModelRegistry.id == model_id, ModelRegistry.tenant_id == tid)
+    )
+    res = await db.execute(stmt)
+    model = res.scalar_one_or_none()
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
+        
+    binding = ModelProviderBinding(
+        model_id=model_id,
+        tenant_id=tid,
+        provider=request.provider,
+        provider_model_id=request.provider_model_id,
+        priority=request.priority,
+        config=request.config or {}
+    )
     
-    provider_doc = {
-        "logical_model_id": ObjectId(model_id),
-        "provider": request.provider.value,
-        "provider_model_id": request.provider_model_id,
-        "config": request.config or {},
-        "credentials_ref": request.credentials_ref,
-        "priority": request.priority,
-        "is_enabled": True,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-    }
+    db.add(binding)
+    await db.commit()
+    await db.refresh(binding)
     
-    result = await providers_collection.insert_one(provider_doc)
-    
-    return {
-        "id": str(result.inserted_id),
-        "provider": request.provider.value,
-        "provider_model_id": request.provider_model_id,
-        "priority": request.priority,
-    }
-
+    return ModelProviderSummary(
+        id=binding.id,
+        provider=binding.provider,
+        provider_model_id=binding.provider_model_id,
+        priority=binding.priority,
+        is_enabled=binding.is_enabled,
+        config=binding.config or {}
+    )
 
 @router.delete("/{model_id}/providers/{provider_id}")
-async def remove_provider(
-    model_id: str,
-    provider_id: str,
+async def remove_provider_binding(
+    model_id: uuid.UUID,
+    provider_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    """Remove a provider binding from a model."""
-    db = MongoDatabase.get_db()
-    models_collection = db["logical_models"]
-    providers_collection = db["model_providers"]
+    """Remove a provider binding."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    model = await models_collection.find_one({
-        "_id": ObjectId(model_id),
-        "tenant_id": ObjectId(tenant_ctx["tenant_id"])
-    })
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
+    stmt = select(ModelProviderBinding).where(
+        and_(
+            ModelProviderBinding.id == provider_id,
+            ModelProviderBinding.model_id == model_id,
+            ModelProviderBinding.tenant_id == tid
+        )
+    )
+    res = await db.execute(stmt)
+    binding = res.scalar_one_or_none()
     
-    result = await providers_collection.delete_one({
-        "_id": ObjectId(provider_id),
-        "logical_model_id": ObjectId(model_id)
-    })
+    if not binding:
+        raise HTTPException(status_code=404, detail="Provider binding not found")
+        
+    await db.delete(binding)
+    await db.commit()
     
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Provider not found")
-    
-    return {"status": "deleted", "id": provider_id}
+    return {"status": "deleted"}

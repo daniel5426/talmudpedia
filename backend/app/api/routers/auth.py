@@ -10,7 +10,7 @@ import os
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
-from app.db.postgres.models.identity import User, UserRole, Tenant, OrgUnit, OrgMembership, OrgUnitType
+from app.db.postgres.models.identity import User, UserRole, Tenant, OrgUnit, OrgMembership, OrgUnitType, OrgRole, MembershipStatus
 from app.db.postgres.session import get_db
 from app.core.security import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
 
@@ -37,9 +37,11 @@ class UserResponse(BaseModel):
     email: EmailStr
     full_name: str = None
     avatar: str = None
-    role: str = "user"
+    role: str = "user" # System role
     tenant_id: Optional[str] = None
     org_unit_id: Optional[str] = None
+    org_role: Optional[str] = None # Role within the tenant (owner, admin, member)
+
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -52,14 +54,19 @@ async def get_current_user(
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
+        user_id_str: str = payload.get("sub")
+        if user_id_str is None:
             raise credentials_exception
-        # Extract tenant/org if we want to attach them to the user object or request state
+        
+        try:
+            user_id = UUID(user_id_str)
+        except ValueError:
+            raise credentials_exception
+            
     except jwt.PyJWTError:
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
@@ -79,6 +86,7 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
         email=user_in.email,
         hashed_password=get_password_hash(user_in.password),
         full_name=user_in.full_name,
+        role="admin",
         avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={user_in.full_name or user_in.email}"
     )
     db.add(user)
@@ -105,7 +113,8 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
         tenant_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
-        status="active"
+        role=OrgRole.owner,
+        status=MembershipStatus.active
     )
     db.add(membership)
     
@@ -118,7 +127,8 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
         avatar=user.avatar, 
         role=user.role,
         tenant_id=str(tenant.id),
-        org_unit_id=str(org_unit.id)
+        org_unit_id=str(org_unit.id),
+        org_role=OrgRole.owner.value
     )
 
 @router.post("/login", response_model=Token)
@@ -139,11 +149,16 @@ async def login(db: AsyncSession = Depends(get_db), form_data: OAuth2PasswordReq
     
     tenant_id = str(membership.tenant_id) if membership else None
     org_unit_id = str(membership.org_unit_id) if membership else None
+    org_role = membership.role.value if membership and hasattr(membership, 'role') else None
 
+    # If role is Enum, we access .value, if it's string (legacy or fallback) it's direct.
+    # In Pydantic response we need string.
+    
     access_token = create_access_token(
         subject=str(user.id),
         tenant_id=tenant_id,
-        org_unit_id=org_unit_id
+        org_unit_id=org_unit_id,
+        org_role=org_role
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -180,6 +195,7 @@ async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db))
             email=email,
             google_id=google_id,
             full_name=full_name,
+            role="admin",
             avatar=avatar or f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or email}"
         )
         db.add(user)
@@ -206,7 +222,8 @@ async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db))
             tenant_id=tenant.id,
             user_id=user.id,
             org_unit_id=org_unit.id,
-            status="active"
+            role=OrgRole.owner,
+            status=MembershipStatus.active
         )
         db.add(membership)
         
@@ -221,18 +238,29 @@ async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db))
             await db.commit()
 
     # Get user membership for context
+    try:
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+
     msg_result = await db.execute(
-        select(OrgMembership).where(OrgMembership.user_id == UUID(user_id)).limit(1)
+        select(OrgMembership).where(OrgMembership.user_id == user_id).limit(1)
     )
     membership = msg_result.scalar_one_or_none()
     
     tenant_id = str(membership.tenant_id) if membership else None
     org_unit_id = str(membership.org_unit_id) if membership else None
+    org_role = membership.role.value if membership and hasattr(membership, 'role') else None
 
     access_token = create_access_token(
         subject=user_id,
         tenant_id=tenant_id,
-        org_unit_id=org_unit_id
+        org_unit_id=org_unit_id,
+        org_role=org_role
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -247,7 +275,9 @@ async def read_users_me(
     tenant_id = payload.get("tenant_id")
     org_unit_id = payload.get("org_unit_id")
 
-    if not tenant_id:
+    org_role = payload.get("org_role")
+
+    if not tenant_id or not org_role:
         result = await db.execute(
             select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
         )
@@ -255,6 +285,8 @@ async def read_users_me(
         if membership:
             tenant_id = str(membership.tenant_id)
             org_unit_id = str(membership.org_unit_id)
+            # Ensure we get the string value of the Enum
+            org_role = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
 
     return UserResponse(
         id=str(current_user.id), 
@@ -263,5 +295,6 @@ async def read_users_me(
         avatar=current_user.avatar, 
         role=current_user.role,
         tenant_id=tenant_id,
-        org_unit_id=org_unit_id
+        org_unit_id=org_unit_id,
+        org_role=org_role
     )

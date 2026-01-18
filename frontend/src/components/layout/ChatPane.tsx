@@ -710,7 +710,7 @@ export function ChatWorkspace({
                   </div>
                 )}
                 <Message from="assistant" className="max-w-3xl" dir={direction}>
-                  <MessageContent>
+                  <MessageContent dir={direction}>
                     {currentReasoning && currentReasoning.length > 0 && (
                       <div className="mb-1 space-y-4">
                         <ChainOfThought defaultOpen={false} dir={direction}>
@@ -762,7 +762,7 @@ export function ChatWorkspace({
                     )}
 
                     <div dir={direction}>
-                      <MessageResponse>{streamingContent}</MessageResponse>
+                      <MessageResponse  >{streamingContent}</MessageResponse>
                     </div>
                   </MessageContent>
                 </Message>
@@ -917,7 +917,7 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
       }
   }, [isConnected, isVoiceModeActive, startRecording]);
 
-
+  const { direction } = useDirection();
 
   const handleToggleVoiceMode = async () => {
     if (isVoiceModeActive) {
@@ -952,7 +952,7 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   const roomContent = (
     <>
       <LibrarySearchModal open={searchOpen} onOpenChange={setSearchOpen} />
-      <Conversation className="relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)">
+      <Conversation dir={direction} className="relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)">
         <div
           aria-hidden="true"
           className={cn(

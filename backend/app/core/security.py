@@ -24,6 +24,7 @@ def create_access_token(
     subject: Union[str, Any], 
     tenant_id: Optional[str] = None,
     org_unit_id: Optional[str] = None,
+    org_role: Optional[str] = None,
     expires_delta: Optional[timedelta] = None
 ) -> str:
     if expires_delta:
@@ -36,6 +37,8 @@ def create_access_token(
         to_encode["tenant_id"] = str(tenant_id)
     if org_unit_id:
         to_encode["org_unit_id"] = str(org_unit_id)
+    if org_role:
+        to_encode["org_role"] = str(org_role)
         
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

@@ -109,10 +109,12 @@ class AgentService:
 
     async def create_agent(self, data: CreateAgentData, user_id: Optional[UUID] = None) -> Agent:
         """Create a new agent."""
-        # Check if slug exists
-        existing = await self.db.execute(select(Agent).where(Agent.slug == data.slug))
+        # Check if slug exists in this tenant
+        existing = await self.db.execute(
+            select(Agent).where(and_(Agent.slug == data.slug, Agent.tenant_id == self.tenant_id))
+        )
         if existing.scalar_one_or_none():
-            raise AgentSlugExistsError(f"Agent with slug '{data.slug}' already exists")
+            raise AgentSlugExistsError(f"Agent with slug '{data.slug}' already exists in this account")
 
         agent = Agent(
             tenant_id=self.tenant_id,
@@ -208,14 +210,72 @@ class AgentService:
         """Orchestrates the execution of an agent."""
         agent = await self.get_agent(agent_id)
         
-        # Placeholder for actual execution logic (calling compilers etc)
-        # For now return a summary result as expected by router
-        class ExecResult:
-            def __init__(self, run_id, output, steps, messages, usage):
-                self.run_id = str(UUID(int=0)) # Placeholder
-                self.output = {"text": "Agent execution placeholder"}
-                self.steps = []
-                self.messages = []
-                self.usage = {"tokens": 0}
+        # Build graph objects
+        from ..agent.graph.schema import AgentGraph, MemoryConfig, ExecutionConstraints
+        from ..agent.graph.compiler import AgentCompiler
         
-        return ExecResult(None, None, None, None, None)
+        # Create compiler
+        compiler = AgentCompiler(tenant_id=self.tenant_id, db=self.db)
+        
+        # Parse config
+        try:
+            graph_def = AgentGraph(**agent.graph_definition)
+            memory_config = MemoryConfig(**agent.memory_config)
+            constraints = ExecutionConstraints(**agent.execution_constraints)
+        except Exception as e:
+            raise AgentServiceError(f"Invalid agent configuration: {e}")
+            
+        try:
+            # Compile
+            executable = await compiler.compile(
+                agent_id=agent.id,
+                version=agent.version,
+                graph=graph_def,
+                memory_config=memory_config,
+                execution_constraints=constraints
+            )
+            
+            # Prepare input
+            # We need to map ExecuteAgentData to the AgentState dict
+            input_state = {
+                "messages": data.messages, # Assuming these are compatible dicts or need conversion
+                "files": [], # TODO: handle files
+                "query": data.input,
+                "context": "",
+                "reasoning_items": [],
+                "reasoning_steps_parsed": [],
+                "steps": [],
+                "retrieved_docs": [],
+                "error": None
+            }
+            if data.input:
+                # Add user message if input string provided
+                input_state["messages"].append({"role": "user", "content": data.input})
+                
+            # Execute
+            result_state = await executable.run(input_state)
+            
+            # Format output for response
+            # Extract last AI message content
+            last_message = result_state["messages"][-1] if result_state["messages"] else None
+            output_text = last_message.content if last_message else ""
+            
+            class ExecResult:
+                def __init__(self, run_id, output, steps, messages, usage):
+                    self.run_id = run_id
+                    self.output = output
+                    self.steps = steps
+                    self.messages = messages
+                    self.usage = usage
+            
+            run_id = str(UUID(int=0))
+            output = {"text": output_text}
+            steps = result_state.get("reasoning_steps_parsed", [])
+            messages = result_state.get("messages", [])
+            usage = {"tokens": 0}
+
+            return ExecResult(run_id, output, steps, messages, usage)
+
+        except Exception as e:
+            logger.error(f"Agent execution failed: {e}")
+            raise AgentServiceError(f"Execution failed: {e}")

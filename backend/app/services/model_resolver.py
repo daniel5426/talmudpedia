@@ -2,26 +2,36 @@
 Model Resolver - Late-bound resolution of logical models to providers.
 
 Implements policy-driven model resolution with fallback, compliance,
-and cost tier support.
+and cost tier support. Now uses PostgreSQL.
 """
 from typing import Optional
-from bson import ObjectId
+from uuid import UUID
 
-from app.db.models.model_registry import (
-    LogicalModel,
-    ModelProvider,
-    ModelProviderType,
-    ModelResolutionPolicy,
-)
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.postgres.models.registry import ModelRegistry, ModelProviderType
 from app.agent.core.interfaces import LLMProvider
 from app.agent.components.llm.openai import OpenAILLM
 from app.agent.components.llm.gemini import GeminiLLM
-from app.db.connection import MongoDatabase
 
 
 class ModelResolverError(Exception):
     """Error during model resolution."""
     pass
+
+
+class ModelResolutionPolicy:
+    """Policy for model resolution."""
+    def __init__(
+        self,
+        priority: Optional[list] = None,
+        fallback_enabled: bool = True,
+        cost_tier: Optional[str] = None,
+    ):
+        self.priority = priority or []
+        self.fallback_enabled = fallback_enabled
+        self.cost_tier = cost_tier
 
 
 class ModelResolver:
@@ -35,8 +45,9 @@ class ModelResolver:
     - Cost tier selection
     """
     
-    def __init__(self, tenant_id: str):
-        self.tenant_id = ObjectId(tenant_id)
+    def __init__(self, db: AsyncSession, tenant_id: UUID):
+        self.db = db
+        self.tenant_id = tenant_id
         self._provider_cache: dict[str, LLMProvider] = {}
     
     async def resolve(
@@ -48,7 +59,7 @@ class ModelResolver:
         Resolve a logical model ID to a provider instance.
         
         Args:
-            model_id: The logical model ID or slug
+            model_id: The model ID, name, or slug
             policy_override: Optional policy to override model defaults
             
         Returns:
@@ -57,32 +68,24 @@ class ModelResolver:
         Raises:
             ModelResolverError: If no suitable provider found
         """
-        db = MongoDatabase.get_db()
-        
-        # Fetch logical model
-        model = await self._get_model(db, model_id)
+        # Fetch model from registry
+        model = await self._get_model(model_id)
         if not model:
             raise ModelResolverError(f"Model not found: {model_id}")
         
-        # Use override policy or model default
-        policy = policy_override or model.get("default_resolution_policy", {})
+        # Use override policy or defaults
+        policy = policy_override or ModelResolutionPolicy()
         
-        # Fetch available providers for this model
-        providers = await self._get_providers(db, model["_id"], policy)
-        if not providers:
-            raise ModelResolverError(f"No providers available for model: {model_id}")
-        
-        # Try providers in priority order
-        for provider_doc in providers:
-            try:
-                return self._create_provider_instance(provider_doc)
-            except Exception as e:
-                # Log and try next provider if fallback enabled
-                if policy.get("fallback_enabled", True):
-                    continue
-                raise ModelResolverError(f"Provider failed: {e}")
-        
-        raise ModelResolverError(f"All providers failed for model: {model_id}")
+        # Create provider instance
+        try:
+            return self._create_provider_instance(model)
+        except Exception as e:
+            if policy.fallback_enabled:
+                # Try to find an alternative model
+                fallback = await self._get_fallback_model(model)
+                if fallback:
+                    return self._create_provider_instance(fallback)
+            raise ModelResolverError(f"Provider failed: {e}")
     
     async def resolve_with_fallback(
         self,
@@ -102,69 +105,63 @@ class ModelResolver:
         
         raise ModelResolverError(f"All models in fallback chain failed: {all_models}")
     
-    async def _get_model(self, db, model_id: str) -> Optional[dict]:
-        """Fetch model by ID or slug."""
-        collection = db["logical_models"]
-        
-        # Try as ObjectId first
-        if ObjectId.is_valid(model_id):
-            model = await collection.find_one({
-                "_id": ObjectId(model_id),
-                "tenant_id": self.tenant_id,
-                "status": "active"
-            })
+    async def _get_model(self, model_id: str) -> Optional[ModelRegistry]:
+        """Fetch model by ID, name, or as UUID."""
+        # Try as UUID first
+        try:
+            model_uuid = UUID(model_id)
+            query = select(ModelRegistry).where(
+                ModelRegistry.id == model_uuid,
+                ModelRegistry.is_active == True,
+                # Allow tenant-specific or global (null tenant_id) models
+                (ModelRegistry.tenant_id == self.tenant_id) | (ModelRegistry.tenant_id.is_(None))
+            )
+            result = await self.db.execute(query)
+            model = result.scalar_one_or_none()
             if model:
                 return model
+        except (ValueError, AttributeError):
+            pass
         
-        # Try as slug
-        return await collection.find_one({
-            "slug": model_id,
-            "tenant_id": self.tenant_id,
-            "status": "active"
-        })
+        # Try by name
+        query = select(ModelRegistry).where(
+            ModelRegistry.name == model_id,
+            ModelRegistry.is_active == True,
+            (ModelRegistry.tenant_id == self.tenant_id) | (ModelRegistry.tenant_id.is_(None))
+        )
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
     
-    async def _get_providers(
-        self,
-        db,
-        model_id: ObjectId,
-        policy: dict
-    ) -> list[dict]:
-        """Fetch providers matching policy constraints."""
-        collection = db["model_providers"]
-        
-        query = {
-            "logical_model_id": model_id,
-            "is_enabled": True
-        }
-        
-        # Filter by priority list if specified
-        priority_list = policy.get("priority", [])
-        if priority_list:
-            query["provider"] = {"$in": priority_list}
-        
-        # Fetch and sort by priority
-        cursor = collection.find(query).sort("priority", 1)
-        return await cursor.to_list(length=10)
+    async def _get_fallback_model(self, failed_model: ModelRegistry) -> Optional[ModelRegistry]:
+        """Get a fallback model of the same provider type."""
+        query = select(ModelRegistry).where(
+            ModelRegistry.provider == failed_model.provider,
+            ModelRegistry.is_active == True,
+            ModelRegistry.id != failed_model.id,
+            (ModelRegistry.tenant_id == self.tenant_id) | (ModelRegistry.tenant_id.is_(None))
+        ).limit(1)
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
     
-    def _create_provider_instance(self, provider_doc: dict) -> LLMProvider:
-        """Create an LLMProvider instance from provider config."""
-        provider_type = provider_doc["provider"]
-        model_id = provider_doc["provider_model_id"]
-        config = provider_doc.get("config", {})
+    def _create_provider_instance(self, model: ModelRegistry) -> LLMProvider:
+        """Create an LLMProvider instance from model registry entry."""
+        metadata = model.metadata_ or {}
+        api_key = metadata.get("api_key")  # In production, should come from secrets
+        config = {k: v for k, v in metadata.items() if k != "api_key"}
         
-        if provider_type == ModelProviderType.OPENAI.value:
+        if model.provider == ModelProviderType.OPENAI:
             return OpenAILLM(
-                model=model_id,
-                api_key=config.get("api_key"),  # Should come from secrets
-                **{k: v for k, v in config.items() if k != "api_key"}
+                model=model.name,
+                api_key=api_key,
+                **config
             )
-        elif provider_type == ModelProviderType.GEMINI.value:
+        elif model.provider == ModelProviderType.GOOGLE:
             return GeminiLLM(
-                model=model_id,
+                model=model.name,
                 **config
             )
         else:
-            raise ModelResolverError(f"Unsupported provider type: {provider_type}")
+            raise ModelResolverError(f"Unsupported provider type: {model.provider}")
     
     def clear_cache(self):
         """Clear the provider cache."""

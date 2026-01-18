@@ -11,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
 from app.db.postgres.session import get_db
-from app.db.postgres.models.identity import Tenant
+from app.api.routers.auth import get_current_user
+from app.db.postgres.models.identity import User, OrgMembership, OrgRole
+from typing import Dict, Any
+import jwt
+from app.core.security import SECRET_KEY, ALGORITHM
+from fastapi import Request
+
 from app.services.agent_service import (
     AgentService,
     CreateAgentData,
@@ -42,13 +48,28 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 # Helpers
 # =============================================================================
 
-async def get_tenant_id(db: AsyncSession) -> UUID:
-    """Get current tenant ID - placeholder for auth integration."""
-    result = await db.execute(select(Tenant).limit(1))
-    tenant = result.scalar_one_or_none()
-    if not tenant:
-        raise HTTPException(status_code=500, detail="No tenant configured")
-    return tenant.id
+async def get_agent_context(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Returns a context dict with 'user' and 'tenant_id'.
+    Users can manage agents if they are System Admins OR have an Org role.
+    """
+    # Identify tenant via membership
+    result = await db.execute(
+        select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
+    )
+    membership = result.scalar_one_or_none()
+    
+    if membership:
+        return {"user": current_user, "tenant_id": membership.tenant_id}
+    
+    # If admin and no membership (true system admin), they can see everything but creation might fail
+    if current_user.role == "admin":
+         return {"user": current_user, "tenant_id": None}
+        
+    raise HTTPException(status_code=403, detail="Not authorized to manage agents")
 
 
 def agent_to_response(agent) -> AgentResponse:
@@ -95,10 +116,11 @@ async def list_agents(
     status: str = None,
     skip: int = 0,
     limit: int = 50,
+    context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
     """List all agents."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     agents, total = await service.list_agents(status=status, skip=skip, limit=limit)
@@ -112,51 +134,61 @@ async def list_agents(
 @router.post("", response_model=AgentResponse)
 async def create_agent(
     request: CreateAgentRequest,
+    context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new agent."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        agent = await service.create_agent(CreateAgentData(
-            name=request.name,
-            slug=request.slug,
-            description=request.description,
-            graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
-            memory_config=request.memory_config,
-            execution_constraints=request.execution_constraints,
-        ))
+        agent = await service.create_agent(
+            data=CreateAgentData(
+                name=request.name,
+                slug=request.slug,
+                description=request.description,
+                graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
+                memory_config=request.memory_config,
+                execution_constraints=request.execution_constraints,
+            ),
+            user_id=context["user"].id
+        )
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
-async def get_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def get_agent(
+    agent_id: UUID, 
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db)
+):
     """Get an agent by ID."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        agent = await service.get_agent(UUID(agent_id))
+        agent = await service.get_agent(agent_id)
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
 
 
 @router.put("/{agent_id}", response_model=AgentResponse)
+@router.patch("/{agent_id}", response_model=AgentResponse)
 async def update_agent(
-    agent_id: str,
+    agent_id: UUID,
     request: UpdateAgentRequest,
+    context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an agent."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        agent = await service.update_agent(UUID(agent_id), UpdateAgentData(
+        agent = await service.update_agent(agent_id, UpdateAgentData(
             name=request.name,
             description=request.description,
             graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
@@ -166,33 +198,36 @@ async def update_agent(
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
-
-
 @router.put("/{agent_id}/graph", response_model=AgentResponse)
 async def update_graph(
-    agent_id: str,
+    agent_id: UUID,
     request: GraphDefinitionSchema,
+    context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
     """Update agent graph."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        agent = await service.update_graph(UUID(agent_id), request.model_dump())
+        agent = await service.update_graph(agent_id, request.model_dump())
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
 
 
 @router.delete("/{agent_id}")
-async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_agent(
+    agent_id: UUID, 
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db)
+):
     """Delete or archive an agent."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        return await service.delete_agent(UUID(agent_id))
+        return await service.delete_agent(agent_id)
     except AgentServiceError as e:
         handle_service_error(e)
 
@@ -202,26 +237,34 @@ async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
 # =============================================================================
 
 @router.post("/{agent_id}/validate")
-async def validate_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def validate_agent(
+    agent_id: UUID, 
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db)
+):
     """Validate agent graph."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        result = await service.validate_agent(UUID(agent_id))
+        result = await service.validate_agent(agent_id)
         return {"valid": result.valid, "errors": result.errors}
     except AgentServiceError as e:
         handle_service_error(e)
 
 
 @router.post("/{agent_id}/publish", response_model=AgentResponse)
-async def publish_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def publish_agent(
+    agent_id: UUID, 
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db)
+):
     """Publish an agent."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        agent = await service.publish_agent(UUID(agent_id))
+        agent = await service.publish_agent(agent_id)
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
@@ -232,26 +275,35 @@ async def publish_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
 # =============================================================================
 
 @router.get("/{agent_id}/versions")
-async def list_versions(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def list_versions(
+    agent_id: UUID, 
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db)
+):
     """List agent versions."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        versions = await service.list_versions(UUID(agent_id))
+        versions = await service.list_versions(agent_id)
         return {"versions": versions}
     except AgentServiceError as e:
         handle_service_error(e)
 
 
 @router.get("/{agent_id}/versions/{version}")
-async def get_version(agent_id: str, version: int, db: AsyncSession = Depends(get_db)):
+async def get_version(
+    agent_id: UUID, 
+    version: int, 
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db)
+):
     """Get specific version."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        return await service.get_version(UUID(agent_id), version)
+        return await service.get_version(agent_id, version)
     except AgentServiceError as e:
         handle_service_error(e)
 
@@ -262,25 +314,38 @@ async def get_version(agent_id: str, version: int, db: AsyncSession = Depends(ge
 
 @router.post("/{agent_id}/execute", response_model=ExecuteAgentResponse)
 async def execute_agent(
-    agent_id: str,
+    agent_id: UUID,
     request: ExecuteAgentRequest,
+    context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
     """Execute a published agent."""
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        result = await service.execute_agent(UUID(agent_id), ExecuteAgentData(
+        result = await service.execute_agent(agent_id, ExecuteAgentData(
             input=request.input,
             messages=request.messages,
             context=request.context,
         ))
+        # Convert LangChain messages to dicts for Pydantic validation
+        serialized_messages = []
+        for msg in result.messages:
+            if isinstance(msg, dict):
+                serialized_messages.append(msg)
+            elif hasattr(msg, "model_dump"):
+                serialized_messages.append(msg.model_dump())
+            elif hasattr(msg, "dict"):
+                serialized_messages.append(msg.dict())
+            else:
+                serialized_messages.append({"content": str(msg), "type": "unknown"})
+
         return ExecuteAgentResponse(
             run_id=result.run_id,
             output=result.output,
             steps=result.steps,
-            messages=result.messages,
+            messages=serialized_messages,
             usage=result.usage,
         )
     except AgentServiceError as e:
@@ -289,19 +354,20 @@ async def execute_agent(
 
 @router.post("/{agent_id}/stream")
 async def stream_agent(
-    agent_id: str,
+    agent_id: UUID,
     request: ExecuteAgentRequest,
+    context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
     """Stream agent execution (SSE)."""
     from app.agent.graph.schema import AgentGraph, MemoryConfig, ExecutionConstraints
     from app.agent.graph.compiler import AgentCompiler
     
-    tenant_id = await get_tenant_id(db)
+    tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
-        agent = await service.get_agent(UUID(agent_id))
+        agent = await service.get_agent(agent_id)
     except AgentServiceError as e:
         handle_service_error(e)
     

@@ -127,29 +127,13 @@ async def entrypoint(ctx: JobContext):
     try:
         print("[INIT] Starting entrypoint...")
         
-        print("[INIT] Connecting to MongoDB...")
-        try:
-            await MongoDatabase.connect()
-            print("[INIT] MongoDB connected successfully")
-        except Exception as e:
-            print(f"[INIT ERROR] MongoDB connection failed: {e}")
-            traceback.print_exc()
-            raise
-            
-        print("[INIT] Connecting to LiveKit room...")
-        try:
-            await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-            print(f"[INIT] Connected to room: {ctx.room.name}")
-        except Exception as e:
-            print(f"[INIT ERROR] LiveKit connection failed: {e}")
-            traceback.print_exc()
-            raise
-            
+        # Identity and context from participant metadata
         user_id = None
         chat_id = None
+        tenant_id = None
         
         async def wait_for_participant():
-            nonlocal user_id, chat_id
+            nonlocal user_id, chat_id, tenant_id
             print("[INIT] Checking for existing participants...")
             for participant in ctx.room.remote_participants.values():
                 if participant.metadata:
@@ -157,7 +141,8 @@ async def entrypoint(ctx: JobContext):
                         metadata = json.loads(participant.metadata)
                         user_id = metadata.get("userId")
                         chat_id = metadata.get("chatId")
-                        print(f"[INIT] Found existing participant: user_id={user_id}, chat_id={chat_id}")
+                        tenant_id = metadata.get("tenantId")
+                        print(f"[INIT] Found existing participant: user_id={user_id}, chat_id={chat_id}, tenant_id={tenant_id}")
                         return
                     except json.JSONDecodeError:
                         pass
@@ -172,7 +157,8 @@ async def entrypoint(ctx: JobContext):
                         metadata = json.loads(participant.metadata)
                         user_id = metadata.get("userId")
                         chat_id = metadata.get("chatId")
-                        print(f"[INIT] Participant metadata: user_id={user_id}, chat_id={chat_id}")
+                        tenant_id = metadata.get("tenantId")
+                        print(f"[INIT] Participant metadata: user_id={user_id}, chat_id={chat_id}, tenant_id={tenant_id}")
                     except json.JSONDecodeError:
                         print("[INIT] Failed to parse participant metadata")
                         pass
@@ -185,15 +171,57 @@ async def entrypoint(ctx: JobContext):
             traceback.print_exc()
             raise
             
-        if not user_id:
-            print("[INIT] Warning: No user_id found in participant metadata, using 'anonymous'")
-            user_id = "anonymous"
+        # Validate and convert IDs to UUIDs
+        from uuid import UUID
+        def _to_uuid(val):
+            if not val: return None
+            try: return UUID(str(val))
+            except: return None
+
+        user_uuid = _to_uuid(user_id)
+        chat_uuid = _to_uuid(chat_id)
+        tenant_uuid = _to_uuid(tenant_id)
+
+        if not tenant_uuid:
+            # Fallback to a default tenant ID if needed, or error out
+            print("[INIT] Warning: No tenant_id found, using environment default if available")
+            tenant_uuid = _to_uuid(os.getenv("DEFAULT_TENANT_ID"))
             
-        print(f"[INIT] Creating session manager for user_id={user_id}, chat_id={chat_id}")
+        if not user_uuid:
+            print("[INIT] Warning: No user_uuid found, using environment default if available")
+            user_uuid = _to_uuid(os.getenv("DEFAULT_USER_ID"))
+
+        if not tenant_uuid or not user_uuid:
+            print("[INIT ERROR] Missing required tenant_id or user_id for persistence. Cannot proceed.")
+            # raise Exception("Missing required identity metadata")
+            # For now, allow proceed without persistence or with a mock? 
+            # Better to show we need these for Phase 3 parity.
+            pass
+
+        print(f"[INIT] Connecting to LiveKit room...")
         try:
-            session_manager = VoiceSessionManager(user_id=user_id, chat_id=chat_id)
-            chat_id = await session_manager.ensure_chat()
-            print(f"[INIT] Chat ensured: {chat_id}")
+            await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+            print(f"[INIT] Connected to room: {ctx.room.name}")
+        except Exception as e:
+            print(f"[INIT ERROR] LiveKit connection failed: {e}")
+            traceback.print_exc()
+            raise
+            
+        # Database session management
+        from app.db.postgres.engine import sessionmaker as async_sessionmaker
+        db_session_factory = async_sessionmaker()
+        db = await db_session_factory.__aenter__()
+
+        print(f"[INIT] Creating session manager...")
+        try:
+            session_manager = VoiceSessionManager(
+                db=db, 
+                user_id=user_uuid, 
+                tenant_id=tenant_uuid, 
+                chat_id=chat_uuid
+            )
+            chat_uuid = await session_manager.ensure_chat()
+            print(f"[INIT] Chat ensured: {chat_uuid}")
         except Exception as e:
             print(f"[INIT ERROR] Session manager creation failed: {e}")
             traceback.print_exc()
@@ -492,14 +520,18 @@ async def entrypoint(ctx: JobContext):
                 await agent_session.aclose()
             finally:
                 # Save any remaining user messages in the buffer
-                if user_message_buffer:
+                if 'session_manager' in locals() and user_message_buffer:
                     concatenated_user_message = " ".join(user_message_buffer)
                     print(f"[FINALIZE] Saving remaining buffered user messages: {concatenated_user_message[:100]}...")
                     session_manager.buffer_message("user", concatenated_user_message)
                     user_message_buffer.clear()
                 
-                await asyncio.shield(session_manager.finalize_session())
-                await MongoDatabase.close()
+                if 'session_manager' in locals():
+                    await asyncio.shield(session_manager.finalize_session())
+                
+                if 'db' in locals():
+                    await db.__aexit__(None, None, None)
+                    print("[FINALIZE] DB session closed")
     except Exception as e:
         print("entrypoint exception:", e)
         traceback.print_exc()

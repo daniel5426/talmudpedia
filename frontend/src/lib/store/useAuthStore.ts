@@ -7,6 +7,9 @@ interface User {
   full_name?: string;
   avatar?: string;
   role?: string;
+  tenant_id?: string;
+  org_unit_id?: string;
+  org_role?: string;
 }
 
 interface AuthState {

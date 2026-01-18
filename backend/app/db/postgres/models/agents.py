@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -24,7 +24,7 @@ class Agent(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     
     name = Column(String, nullable=False)
-    slug = Column(String, unique=True, nullable=False, index=True)
+    slug = Column(String, nullable=False, index=True)
     description = Column(String, nullable=True)
     
     # Graph Definition (DAG nodes and edges for visual builder)
@@ -73,6 +73,10 @@ class Agent(Base):
     tenant = relationship("Tenant")
     creator = relationship("User")
     runs = relationship("AgentRun", back_populates="agent", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slug", name="uq_agent_tenant_slug"),
+    )
 
 
 class AgentVersion(Base):

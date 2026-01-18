@@ -1,0 +1,6 @@
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+DEBUG: Parsed DB User: 'postgres.agcaksaulbccclyngwfn'
+DEBUG: Parsed DB Host: 'aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres'
+DEBUG: Creating Async Engine with Psycopg (v3) and prepare_threshold=None
+4e6b690a38e2 (head)

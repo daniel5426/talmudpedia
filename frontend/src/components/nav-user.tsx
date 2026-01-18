@@ -43,6 +43,7 @@ export function NavUser({
     email: string
     avatar: string
     role?: string
+    org_role?: string
   }
 }) {
   const { isMobile } = useSidebar()
@@ -101,11 +102,11 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            {user.role === "admin" && (
+            {(user.role === "admin" || user.org_role === "owner" || user.org_role === "admin") && (
               <>
                 <DropdownMenuGroup>
-                  <DropdownMenuItem 
-                    className="cursor-pointer" 
+                  <DropdownMenuItem
+                    className="cursor-pointer"
                     onClick={() => router.push("/admin/dashboard")}
                   >
                     <Sparkles />

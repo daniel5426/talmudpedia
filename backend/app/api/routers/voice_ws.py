@@ -3,11 +3,13 @@ import logging
 from app.services.gemini_live import GeminiLiveSession
 import json
 import asyncio
-from app.db.connection import MongoDatabase
-from app.db.models.chat import Chat
+from uuid import UUID
 from datetime import datetime
-from bson import ObjectId
 import jwt
+from sqlalchemy import select
+
+from app.db.postgres.session import sessionmaker
+from app.db.postgres.models.chat import Chat
 from app.core.security import SECRET_KEY, ALGORITHM
 
 router = APIRouter()
@@ -28,34 +30,40 @@ async def websocket_voice_session(websocket: WebSocket):
     if token:
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            user_id = payload.get("sub")
+            user_id = payload.get("sub") # user_id is a UUID string
         except Exception:
             user_id = None
     
     # Create new chat if not provided
     if not chat_id or chat_id == "null" or chat_id == "undefined":
-        db = MongoDatabase.get_db()
-        new_chat = Chat(
-            title="Voice Conversation",
-            messages=[],
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            user_id=str(user_id) if user_id else None
-        )
-        result = await db.chats.insert_one(new_chat.model_dump(by_alias=True, exclude=["id"]))
-        chat_id = str(result.inserted_id)
+        async with sessionmaker() as db:
+            new_chat = Chat(
+                title="Voice Conversation",
+                user_id=UUID(user_id) if user_id else None
+            )
+            db.add(new_chat)
+            await db.commit()
+            await db.refresh(new_chat)
+            chat_id = str(new_chat.id)
         logger.info(f"Created new voice chat: {chat_id}")
     else:
         if user_id:
-            db = MongoDatabase.get_db()
-            existing = await db.chats.find_one({"_id": ObjectId(chat_id)})
-            if existing:
-                existing_user_id = existing.get("user_id")
-                if existing_user_id and existing_user_id != str(user_id):
-                    await websocket.close(code=1008, reason="forbidden")
+            async with sessionmaker() as db:
+                try:
+                    chat_uuid = UUID(chat_id)
+                    stmt = select(Chat).where(Chat.id == chat_uuid)
+                    res = await db.execute(stmt)
+                    existing = res.scalar_one_or_none()
+                    if existing:
+                        if existing.user_id and existing.user_id != UUID(user_id):
+                            await websocket.close(code=1008, reason="forbidden")
+                            return
+                        if not existing.user_id:
+                            existing.user_id = UUID(user_id)
+                            await db.commit()
+                except ValueError:
+                    await websocket.close(code=1008, reason="invalid chat_id")
                     return
-                if not existing_user_id:
-                    await db.chats.update_one({"_id": ObjectId(chat_id)}, {"$set": {"user_id": str(user_id)}})
         
     gemini_session = GeminiLiveSession(chat_id=chat_id)
     
@@ -76,21 +84,14 @@ async def websocket_voice_session(websocket: WebSocket):
         # Loop for receiving from Frontend
         try:
             while True:
-                # Expecting JSON with {type: "audio", data: "base64..."} or other controls
-                # Or raw bytes if we decide to optimize
                 data = await websocket.receive_text()
                 message = json.loads(data)
                 
                 if message.get("type") == "audio":
-                    a = message.get("data") or ""
-                    logger.debug(f"Voice WS RX audio bytes={len(a)}")
                     await gemini_session.send_audio(message.get("data"))
                 elif message.get("type") == "user_text":
                     t = message.get("text") or message.get("content") or ""
-                    logger.info(f"Voice WS RX user_text len={len((t or '').strip())}")
                     await gemini_session.send_user_text(t, turn_complete=True)
-                
-                # Handle other types if needed (e.g. interrupt)
                 
         except WebSocketDisconnect:
             logger.info("Frontend WebSocket disconnected")
