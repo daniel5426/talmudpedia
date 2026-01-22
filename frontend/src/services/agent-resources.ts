@@ -156,6 +156,13 @@ export const agentService = {
 
   async executeAgent(id: string, input: Record<string, any>) {
     return httpClient.post(`/agents/${id}/execute`, { input_params: input });
+  },
+
+  async streamAgent(id: string, input: Record<string, any>) {
+    return httpClient.requestRaw(`/agents/${id}/stream`, {
+      method: "POST",
+      body: JSON.stringify({ input: input.text, messages: [], context: {} }),
+    });
   }
 };
 

@@ -38,9 +38,7 @@ import {
   XCircle,
   AlertCircle,
   Loader2,
-  ArrowLeft,
   Save,
-  Workflow,
 } from "lucide-react"
 import { PipelineBuilder } from "@/components/pipeline"
 import { Node, Edge } from "@xyflow/react"
@@ -391,56 +389,8 @@ export default function PipelinesPage() {
     if (!catalog) return null
 
     return (
-      <div className="flex flex-col h-[calc(100vh-120px)]">
-        <div className="flex items-center justify-between p-4 border-b shrink-0">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" onClick={() => setViewModeWithUrl("list")}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back
-            </Button>
-            <div className="flex items-center gap-3">
-              <Input
-                value={pipelineName}
-                onChange={(e) => setPipelineName(e.target.value)}
-                placeholder="Pipeline name"
-                className="w-64"
-              />
-              <Input
-                value={pipelineDescription}
-                onChange={(e) => setPipelineDescription(e.target.value)}
-                placeholder="Description (optional)"
-                className="w-64"
-              />
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {viewMode === "edit" && selectedPipeline && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCompile}
-                disabled={compiling}
-              >
-                {compiling ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4 mr-2" />
-                )}
-                Compile
-              </Button>
-            )}
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              {saving ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4 mr-2" />
-              )}
-              Save
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex-1">
+      <div className="flex flex-col h-full bg-muted/20">
+        <div className="flex-1 overflow-hidden relative">
           <PipelineBuilder
             catalog={catalog as any}
             operatorSpecs={operatorSpecs as any}
@@ -519,15 +469,62 @@ export default function PipelinesPage() {
 
   return (
     <div className="flex flex-col h-full w-full">
-      <div className="p-4 border-b shrink-0">
-        <CustomBreadcrumb
-          items={[
-            { label: "Dashboard", href: "/admin/dashboard" },
-            { label: "RAG Management", href: "/admin/rag" },
-            { label: "Pipeline Builder", href: "/admin/pipelines", active: true },
-          ]}
-        />
-      </div>
+      <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <CustomBreadcrumb
+              items={[
+                { label: "Dashboard", href: "/admin/dashboard" },
+                { label: "RAG Management", href: "/admin/rag" },
+                { label: "Pipeline Builder", href: "/admin/pipelines", active: viewMode === "list" },
+                ...(viewMode === "create" ? [{ label: "New Pipeline", active: true }] : []),
+                ...(viewMode === "edit" ? [{ label: pipelineName || "Edit Pipeline", active: true }] : []),
+              ]}
+            />
+          </div>
+        </div>
+        {!loading && viewMode !== "list" && (
+          <div className="flex items-center gap-2">
+            <Input
+              value={pipelineName}
+              onChange={(e) => setPipelineName(e.target.value)}
+              placeholder="Pipeline name"
+              className="w-48 h-9"
+            />
+            <Input
+              value={pipelineDescription}
+              onChange={(e) => setPipelineDescription(e.target.value)}
+              placeholder="Description (optional)"
+              className="w-64 h-9 hidden md:block" // Hide on small screens to save space
+            />
+            <div className="w-px h-6 bg-border mx-1" />
+            {viewMode === "edit" && selectedPipeline && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={handleCompile}
+                disabled={compiling}
+              >
+                {compiling ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4 mr-2" />
+                )}
+                Compile
+              </Button>
+            )}
+            <Button size="sm" onClick={handleSave} disabled={saving} className="h-9">
+              {saving ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4 mr-2" />
+              )}
+              Save
+            </Button>
+          </div>
+        )}
+      </header>
       <div className="flex-1 overflow-auto">
         {loading ? (
           <div className="p-4 space-y-4">

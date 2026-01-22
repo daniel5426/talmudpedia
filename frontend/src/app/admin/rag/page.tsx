@@ -5,11 +5,11 @@ import { useDirection } from "@/components/direction-provider"
 import { useTenant } from "@/contexts/TenantContext"
 import { usePermissions } from "@/hooks/usePermission"
 import { orgUnitsService, OrgUnit } from "@/services/org-units"
-import { 
-  ragAdminService, 
-  RAGStats, 
-  RAGIndex, 
-  RAGJob, 
+import {
+  ragAdminService,
+  RAGStats,
+  RAGIndex,
+  RAGJob,
   JobProgress,
   VisualPipeline,
   PipelineJob
@@ -23,12 +23,12 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
-import { 
-  Database, 
+import {
+  Database,
   Edit,
-  Layers, 
-  CheckCircle2, 
-  XCircle, 
+  Layers,
+  CheckCircle2,
+  XCircle,
   Loader2,
   Plus,
   RefreshCw,
@@ -64,16 +64,16 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
-function StatCard({ 
-  title, 
-  value, 
-  icon: Icon, 
-  description 
-}: { 
+function StatCard({
+  title,
+  value,
+  icon: Icon,
+  description
+}: {
   title: string
   value: number | string
   icon: React.ElementType
-  description?: string 
+  description?: string
 }) {
   return (
     <Card>
@@ -100,14 +100,14 @@ function JobStatusBadge({ status }: { status: string }) {
     cancelled: "outline",
     queued: "outline"
   }
-  
+
   const icons: Record<string, React.ReactNode> = {
     completed: <CheckCircle2 className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />,
     running: <Loader2 className={cn("h-3 w-3 animate-spin", isRTL ? "ml-1" : "mr-1")} />,
     failed: <XCircle className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />,
     queued: <Activity className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />,
   }
-  
+
   return (
     <Badge variant={variants[status] || "outline"} className="capitalize">
       {icons[status]}
@@ -131,7 +131,7 @@ function LiveJobCard({ jobId, onComplete }: { jobId: string; onComplete?: () => 
         const data = JSON.parse(event.data)
         if (data.type === "ping") return
         setProgress(data)
-        
+
         if (data.status === "completed" || data.status === "failed") {
           onComplete?.()
         }
@@ -182,9 +182,9 @@ function LiveJobCard({ jobId, onComplete }: { jobId: string; onComplete?: () => 
             {progress.current_stage}
           </Badge>
         </div>
-        
+
         <Progress value={progress.percent_complete} className="h-2" />
-        
+
         <div className="grid grid-cols-4 gap-2 text-xs text-muted-foreground">
           <div className={isRTL ? "text-right" : "text-left"}>
             <span className="block font-medium text-foreground">{progress.processed_documents}</span>
@@ -203,7 +203,7 @@ function LiveJobCard({ jobId, onComplete }: { jobId: string; onComplete?: () => 
             Failed
           </div>
         </div>
-        
+
         {progress.error_message && (
           <p className={cn("text-xs text-destructive", isRTL ? "text-right" : "text-left")}>{progress.error_message}</p>
         )}
@@ -225,8 +225,8 @@ function CreateIndexDialog({ onCreated, tenantSlug, orgUnits }: { onCreated: () 
     if (!name) return
     setLoading(true)
     try {
-      await ragAdminService.createIndex({ 
-        name, 
+      await ragAdminService.createIndex({
+        name,
         display_name: displayName || name,
         owner_id: ownerId || undefined
       }, tenantSlug)
@@ -280,7 +280,7 @@ function CreateIndexDialog({ onCreated, tenantSlug, orgUnits }: { onCreated: () 
           </div>
           <div className="space-y-2">
             <Label htmlFor="ownerId" className={isRTL ? "text-right block" : "text-left block"}>Owner Unit (optional)</Label>
-            <select 
+            <select
               id="ownerId"
               className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm", isRTL ? "text-right" : "text-left")}
               value={ownerId}
@@ -318,10 +318,10 @@ function ChunkPreviewDialog() {
     if (!text) return
     setLoading(true)
     try {
-      const result = await ragAdminService.chunkPreview({ 
-        text, 
-        chunk_size: chunkSize, 
-        chunk_overlap: chunkOverlap 
+      const result = await ragAdminService.chunkPreview({
+        text,
+        chunk_size: chunkSize,
+        chunk_overlap: chunkOverlap
       })
       setChunks(result.chunks)
     } catch (error) {
@@ -472,11 +472,15 @@ export default function RAGAdminPage() {
 
   return (
     <div className="flex flex-col h-full w-full" dir={direction}>
-      <div className="p-4 border-b shrink-0 flex items-center justify-between">
-        <CustomBreadcrumb items={[
-          { label: "Dashboard", href: "/admin/dashboard" },
-          { label: "RAG Management", href: "/admin/rag", active: true },
-        ]} />
+      <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <CustomBreadcrumb items={[
+              { label: "Dashboard", href: "/admin/dashboard" },
+              { label: "RAG Management", href: "/admin/rag", active: true },
+            ]} />
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" asChild>
             <Link href="/admin/pipelines">
@@ -491,7 +495,7 @@ export default function RAGAdminPage() {
             </Link>
           </Button>
         </div>
-      </div>
+      </header>
       <div className="flex-1 overflow-auto p-4">
         {loading ? (
           <div className="space-y-4">
@@ -701,7 +705,7 @@ export default function RAGAdminPage() {
                     Refresh
                   </Button>
                 </div>
-                
+
                 {activeJobIds.length > 0 && (
                   <div className="space-y-3">
                     <h3 className={cn("text-sm font-medium flex items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}>
@@ -710,9 +714,9 @@ export default function RAGAdminPage() {
                     </h3>
                     <div className="grid gap-3 md:grid-cols-2">
                       {activeJobIds.map((jobId) => (
-                        <LiveJobCard 
-                          key={jobId} 
-                          jobId={jobId} 
+                        <LiveJobCard
+                          key={jobId}
+                          jobId={jobId}
                           onComplete={() => {
                             setActiveJobIds(prev => prev.filter(id => id !== jobId))
                             handleJobComplete()
@@ -722,7 +726,7 @@ export default function RAGAdminPage() {
                     </div>
                   </div>
                 )}
-                
+
                 <div className="grid gap-6">
                   <Card>
                     <CardHeader className={cn("pb-2", isRTL ? "text-right" : "text-left")}>
@@ -766,8 +770,8 @@ export default function RAGAdminPage() {
                                 {new Date(job.created_at).toLocaleString()}
                               </TableCell>
                               <TableCell className={isRTL ? "text-right" : "text-left"}>
-                                {job.finished_at && job.started_at ? 
-                                  `${Math.round((new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()) / 1000)}s` 
+                                {job.finished_at && job.started_at ?
+                                  `${Math.round((new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()) / 1000)}s`
                                   : "-"}
                               </TableCell>
                             </TableRow>

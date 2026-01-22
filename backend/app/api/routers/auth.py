@@ -1,4 +1,5 @@
-from typing import Any, Optional
+from typing import Any, Optional, Dict
+import time
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -43,34 +44,63 @@ class UserResponse(BaseModel):
     org_role: Optional[str] = None # Role within the tenant (owner, admin, member)
 
 
+# Simple in-memory cache: {user_id: (User, expires_at)}
+_user_cache: Dict[str, Any] = {}
+CACHE_TTL = 300  # 5 minutes
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db)  # Kept for initial fetch and dependency compatibility
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    # start_time = time.time()
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id_str: str = payload.get("sub")
-        if user_id_str is None:
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            user_id_str: str = payload.get("sub")
+            if user_id_str is None:
+                raise credentials_exception
+            
+            # Check Cache
+            now = time.time()
+            if user_id_str in _user_cache:
+                cached_user, expires_at = _user_cache[user_id_str]
+                if now < expires_at:
+                    # print(f"DEBUG: get_current_user cache hit for {user_id_str}")
+                    return cached_user
+                else:
+                    del _user_cache[user_id_str]
+
+            try:
+                user_id = UUID(user_id_str)
+            except ValueError:
+                raise credentials_exception
+                
+        except jwt.PyJWTError:
+            raise credentials_exception
+
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
             raise credentials_exception
         
-        try:
-            user_id = UUID(user_id_str)
-        except ValueError:
-            raise credentials_exception
-            
-    except jwt.PyJWTError:
-        raise credentials_exception
-
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise credentials_exception
-    return user
+        # Expunge from session to make it safe to cache and reuse across sessions
+        db.expunge(user)
+        
+        # Update Cache
+        _user_cache[user_id_str] = (user, now + CACHE_TTL)
+        
+        # duration = time.time() - start_time
+        # print(f"DEBUG: get_current_user took {duration:.4f} seconds (Cache Miss)")
+        return user
+    except Exception as e:
+        # duration = time.time() - start_time
+        # print(f"DEBUG: get_current_user failed after {duration:.4f} seconds with error: {e}")
+        raise e
 
 @router.post("/register", response_model=UserResponse)
 async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):

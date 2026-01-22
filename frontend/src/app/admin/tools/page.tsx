@@ -290,14 +290,18 @@ export default function ToolsPage() {
 
     return (
         <div className="flex flex-col h-full w-full" dir={direction}>
-            <div className="p-4 border-b shrink-0 flex items-center justify-between">
-                <CustomBreadcrumb items={[
-                    { label: "Dashboard", href: "/admin/dashboard" },
-                    { label: "Tools Registry", href: "/admin/tools", active: true },
-                ]} />
+            <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                        <CustomBreadcrumb items={[
+                            { label: "Dashboard", href: "/admin/dashboard" },
+                            { label: "Tools Registry", href: "/admin/tools", active: true },
+                        ]} />
+                    </div>
+                </div>
                 <div className="flex items-center gap-2">
                     <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ToolStatus | "all")}>
-                        <SelectTrigger className="w-[140px]">
+                        <SelectTrigger className="h-9 w-[140px]">
                             <SelectValue placeholder="Filter" />
                         </SelectTrigger>
                         <SelectContent>
@@ -307,13 +311,13 @@ export default function ToolsPage() {
                             <SelectItem value="deprecated">Deprecated</SelectItem>
                         </SelectContent>
                     </Select>
-                    <Button variant="outline" size="sm" onClick={fetchTools}>
+                    <Button variant="outline" size="sm" className="h-9" onClick={fetchTools}>
                         <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
                         Refresh
                     </Button>
                     <CreateToolDialog onCreated={fetchTools} />
                 </div>
-            </div>
+            </header>
 
             <div className="flex-1 overflow-auto p-4">
                 {loading ? (

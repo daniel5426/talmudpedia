@@ -168,7 +168,7 @@ export function LandingPage({
           </div>
           <div className="w-full max-w-3xl mt-2">
              <BotImputArea
-                className="bg-white/10 backdrop-blur-md border border-white/20 shadow-2xl"
+                className="bg-white/10 backdrop-blur-md border-none shadow-2xl"
                 textareaRef={useRef(null)}
                 handleSubmit={handleLandingSubmit}
                 isLoading={isRedirecting}

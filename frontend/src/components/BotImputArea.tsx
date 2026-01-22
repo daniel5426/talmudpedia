@@ -109,7 +109,13 @@ export function BotImputArea({
       <PromptInput
         dir={direction}
         onSubmit={handleFormSubmit}
-        className={`relative ${className} bg-primary-soft border-[0.4px] ring-none active:ring-none focus-visible:ring-none rounded-lg`}
+        className={cn(
+          "relative",
+          className,
+          "bg-primary-soft border-[0.4px] rounded-lg",
+          "[&_[data-slot=input-group]]:has-[[data-slot=input-group-control]:focus-visible]:ring-0",
+          "[&_[data-slot=input-group]]:has-[[data-slot=input-group-control]:focus-visible]:border-input"
+        )}
       >
         <PromptInputBody>
           <PromptInputTextarea

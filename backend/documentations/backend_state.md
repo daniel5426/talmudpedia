@@ -43,13 +43,17 @@ This document provides a comprehensive overview of the current state of the back
     - `models.py`: Managing logical `ModelRegistry` and provider bindings.
     - `org_units.py`: Organizational units management.
     - `projects.py`: Project-based isolation endpoints.
-    - `rag_admin.py`: Administration for RAG pipelines.
+    - `rag_admin.py`: Administration for RAG pipelines and vector indices.
     - `rag_pipelines.py`: CRUD for RAG pipelines.
     - `search.py`: Search endpoints.
     - `tools.py`: Tool registry management endpoints.
     - `users.py`: User management endpoints.
     - `voice.py`: Voice agent REST endpoints.
     - `voice_ws.py`: WebSocket endpoints for real-time voice interaction (LiveKit).
+- **`schemas/`**
+    - `agents.py`: Schemas for agent API.
+    - `rag.py`: Schemas for RAG and index management.
+    - `common.py`: Shared API schemas.
 
 #### `backend/app/core`
 *Core Infrastructure & Config*
@@ -94,6 +98,7 @@ This document provides a comprehensive overview of the current state of the back
 - `gemini_live.py`: Integration with Gemini Live API.
 - `model_resolver.py`: Resolves logical model IDs to concrete providers.
 - `rag_service.py`: RAG pipeline execution logic.
+- `rag_admin_service.py`: Business logic for RAG administration and index management.
 - `tool_service.py`: Management of available tools using `ToolRegistry`.
 - `user_service.py`: User CRUD and management.
 - **`voice/`**

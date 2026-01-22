@@ -4,16 +4,21 @@ Model Resolver - Late-bound resolution of logical models to providers.
 Implements policy-driven model resolution with fallback, compliance,
 and cost tier support. Now uses PostgreSQL.
 """
+import logging
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.db.postgres.models.registry import ModelRegistry, ModelProviderType
+from app.db.postgres.models.registry import ModelRegistry, ModelProviderType, ModelProviderBinding
 from app.agent.core.interfaces import LLMProvider
 from app.agent.components.llm.openai import OpenAILLM
 from app.agent.components.llm.gemini import GeminiLLM
+
+
+logger = logging.getLogger(__name__)
 
 
 class ModelResolverError(Exception):
@@ -69,23 +74,41 @@ class ModelResolver:
             ModelResolverError: If no suitable provider found
         """
         # Fetch model from registry
+        logger.debug(f"Resolving model {model_id} for tenant {self.tenant_id}")
         model = await self._get_model(model_id)
         if not model:
+            logger.error(f"Model resolution failed: Model {model_id} not found for tenant {self.tenant_id} (or global)")
             raise ModelResolverError(f"Model not found: {model_id}")
         
-        # Use override policy or defaults
-        policy = policy_override or ModelResolutionPolicy()
+        logger.info(f"Resolved logical model: {model.name} ({model.id})")
+
+        # Determine which provider to use
+        # 1. Search for active bindings
+        active_bindings = [b for b in model.providers if b.is_enabled]
+        logger.debug(f"Found {len(active_bindings)} active bindings for model {model.name}")
         
-        # Create provider instance
-        try:
-            return self._create_provider_instance(model)
-        except Exception as e:
-            if policy.fallback_enabled:
-                # Try to find an alternative model
-                fallback = await self._get_fallback_model(model)
-                if fallback:
-                    return self._create_provider_instance(fallback)
-            raise ModelResolverError(f"Provider failed: {e}")
+        if active_bindings:
+            # Pick highest priority (lowest value)
+            binding = min(active_bindings, key=lambda x: x.priority)
+            logger.info(f"Selecting binding: {binding.provider} -> {binding.provider_model_id} (priority: {binding.priority})")
+            try:
+                return self._create_provider_instance_from_binding(binding)
+            except Exception as e:
+                logger.error(f"Failed to create provider from binding {binding.id}: {e}")
+                # If fallback is enabled, we could try other bindings or other models
+                pass
+
+        # 2. Policy-driven fallback
+        policy = policy_override or ModelResolutionPolicy()
+        if policy.fallback_enabled:
+            logger.warning(f"No active bindings found for {model.name}. Attempting policy-driven fallback.")
+            fallback = await self._get_fallback_model(model)
+            if fallback:
+                logger.info(f"Falling back to model: {fallback.name} ({fallback.id})")
+                return await self.resolve(str(fallback.id))
+        
+        logger.error(f"Resolution failed: No suitable provider found for model: {model_id}")
+        raise ModelResolverError(f"No suitable provider found for model: {model_id}")
     
     async def resolve_with_fallback(
         self,
@@ -96,73 +119,87 @@ class ModelResolver:
         Resolve model with explicit fallback chain.
         """
         all_models = [model_id] + fallback_model_ids
+        logger.info(f"Resolving model chain: {all_models}")
         
         for mid in all_models:
             try:
-                return await self.resolve(mid)
-            except ModelResolverError:
+                resolved = await self.resolve(mid)
+                logger.info(f"Successfully resolved model {mid} in fallback chain")
+                return resolved
+            except ModelResolverError as e:
+                logger.warning(f"Failed to resolve model {mid} in fallback chain: {e}")
                 continue
         
+        logger.error(f"All models in fallback chain failed: {all_models}")
         raise ModelResolverError(f"All models in fallback chain failed: {all_models}")
     
     async def _get_model(self, model_id: str) -> Optional[ModelRegistry]:
-        """Fetch model by ID, name, or as UUID."""
+        """Fetch model by ID, name, or as UUID with providers loaded."""
         # Try as UUID first
         try:
             model_uuid = UUID(model_id)
+            logger.debug(f"Searching for model by UUID: {model_uuid}")
             query = select(ModelRegistry).where(
                 ModelRegistry.id == model_uuid,
                 ModelRegistry.is_active == True,
                 # Allow tenant-specific or global (null tenant_id) models
-                (ModelRegistry.tenant_id == self.tenant_id) | (ModelRegistry.tenant_id.is_(None))
-            )
+                or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id.is_(None))
+            ).options(selectinload(ModelRegistry.providers))
             result = await self.db.execute(query)
             model = result.scalar_one_or_none()
             if model:
+                logger.debug(f"Found model by UUID: {model.name}")
                 return model
         except (ValueError, AttributeError):
             pass
         
-        # Try by name
+        # Try by name/slug
+        logger.debug(f"Searching for model by name/slug: {model_id}")
         query = select(ModelRegistry).where(
-            ModelRegistry.name == model_id,
+            or_(ModelRegistry.name == model_id, ModelRegistry.slug == model_id),
             ModelRegistry.is_active == True,
-            (ModelRegistry.tenant_id == self.tenant_id) | (ModelRegistry.tenant_id.is_(None))
-        )
+            or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id.is_(None))
+        ).options(selectinload(ModelRegistry.providers))
         result = await self.db.execute(query)
-        return result.scalar_one_or_none()
+        model = result.scalar_one_or_none()
+        if model:
+            logger.debug(f"Found model by name/slug: {model.name} (ID: {model.id})")
+        else:
+            logger.debug(f"Model not found for ID/Name: {model_id}")
+        return model
     
     async def _get_fallback_model(self, failed_model: ModelRegistry) -> Optional[ModelRegistry]:
-        """Get a fallback model of the same provider type."""
+        """Get a fallback model of the same capability type."""
         query = select(ModelRegistry).where(
-            ModelRegistry.provider == failed_model.provider,
+            ModelRegistry.capability_type == failed_model.capability_type,
             ModelRegistry.is_active == True,
             ModelRegistry.id != failed_model.id,
-            (ModelRegistry.tenant_id == self.tenant_id) | (ModelRegistry.tenant_id.is_(None))
+            or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id.is_(None))
         ).limit(1)
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
     
-    def _create_provider_instance(self, model: ModelRegistry) -> LLMProvider:
-        """Create an LLMProvider instance from model registry entry."""
-        metadata = model.metadata_ or {}
-        api_key = metadata.get("api_key")  # In production, should come from secrets
-        config = {k: v for k, v in metadata.items() if k != "api_key"}
+    def _create_provider_instance_from_binding(self, binding: ModelProviderBinding) -> LLMProvider:
+        """Create an LLMProvider instance from a provider binding."""
+        config = binding.config or {}
+        # In production, credentials should be fetched via binding.credentials_ref
+        # For now, we fall back to environment variables or binding config
+        api_key = config.get("api_key")
         
-        if model.provider == ModelProviderType.OPENAI:
+        if binding.provider == ModelProviderType.OPENAI:
             return OpenAILLM(
-                model=model.name,
+                model=binding.provider_model_id,
                 api_key=api_key,
-                **config
+                **{k: v for k, v in config.items() if k != "api_key"}
             )
-        elif model.provider == ModelProviderType.GOOGLE:
+        elif binding.provider == ModelProviderType.GOOGLE or binding.provider == ModelProviderType.GEMINI:
             return GeminiLLM(
-                model=model.name,
-                **config
+                model=binding.provider_model_id,
+                **{k: v for k, v in config.items() if k != "api_key"}
             )
         else:
-            raise ModelResolverError(f"Unsupported provider type: {model.provider}")
-    
+            raise ModelResolverError(f"Unsupported provider type in binding: {binding.provider}")
+
     def clear_cache(self):
         """Clear the provider cache."""
         self._provider_cache.clear()

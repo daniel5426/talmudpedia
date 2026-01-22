@@ -4,15 +4,15 @@ import React, { useState, useEffect, useCallback } from "react"
 import { useTenant } from "@/contexts/TenantContext"
 import { useDirection } from "@/components/direction-provider"
 import { orgUnitsService, OrgUnitTree, OrgMember } from "@/services/org-units"
-import { 
-  Plus, 
-  Trash2, 
-  Edit2, 
-  ChevronRight, 
-  ChevronDown, 
+import {
+  Plus,
+  Trash2,
+  Edit2,
+  ChevronRight,
+  ChevronDown,
   ChevronLeft,
-  Building2, 
-  Landmark, 
+  Building2,
+  Landmark,
   Users,
   UserPlus,
   MoreVertical,
@@ -48,6 +48,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 export default function OrganizationPage() {
   const { currentTenant } = useTenant()
@@ -168,29 +169,29 @@ export default function OrganizationPage() {
       <div className="flex flex-col relative">
         {/* Hierarchy line for depth > 0 */}
         {depth > 0 && parentExpanded && (
-          <div 
+          <div
             className={cn(
               "absolute top-0 w-px bg-border/60",
               isRTL ? "right-[-12px]" : "left-[-12px]",
               isLast ? "h-3" : "h-full"
-            )} 
+            )}
           />
         )}
         {depth > 0 && parentExpanded && (
-          <div 
+          <div
             className={cn(
               "absolute top-3 h-px bg-border/60 w-3",
               isRTL ? "right-[-12px]" : "left-[-12px]"
-            )} 
+            )}
           />
         )}
 
-        <div 
+        <div
           className={cn(
             "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer group transition-all duration-200 relative",
             isSelected ? 'bg-primary/10 text-primary font-medium shadow-sm' : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
           )}
-          style={{ 
+          style={{
             marginLeft: isRTL ? '0' : `${depth > 0 ? 12 : 0}px`,
             marginRight: isRTL ? `${depth > 0 ? 12 : 0}px` : '0',
             marginTop: depth === 0 ? '4px' : '2px'
@@ -220,16 +221,16 @@ export default function OrganizationPage() {
           <div className={cn(
             "p-1 rounded-md shrink-0",
             unit.type === "org" ? "bg-blue-100/50 text-blue-600 dark:bg-blue-900/30" :
-            unit.type === "dept" ? "bg-green-100/50 text-green-600 dark:bg-green-900/30" :
-            "bg-purple-100/50 text-purple-600 dark:bg-purple-900/30"
+              unit.type === "dept" ? "bg-green-100/50 text-green-600 dark:bg-green-900/30" :
+                "bg-purple-100/50 text-purple-600 dark:bg-purple-900/30"
           )}>
             {unit.type === "org" && <Landmark className="size-3.5" />}
             {unit.type === "dept" && <Building2 className="size-3.5" />}
             {unit.type === "team" && <Users className="size-3.5" />}
           </div>
-          
+
           <span className="flex-1 truncate text-[13px]">{unit.name}</span>
-          
+
           <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
             <Button variant="ghost" size="icon" className="size-7 hover:bg-background/80" onClick={(e) => {
               e.stopPropagation()
@@ -261,10 +262,10 @@ export default function OrganizationPage() {
         {isExpanded && (
           <div className="flex flex-col">
             {unit.children.map((child, idx) => (
-              <TreeNode 
-                key={child.id} 
-                unit={child} 
-                depth={depth + 1} 
+              <TreeNode
+                key={child.id}
+                unit={child}
+                depth={depth + 1}
                 isLast={idx === unit.children.length - 1}
                 parentExpanded={isExpanded}
               />
@@ -284,259 +285,264 @@ export default function OrganizationPage() {
   }
 
   return (
-    <div className="flex flex-col h-full gap-6 p-6 w-full">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Organization Units</h1>
-          <p className="text-muted-foreground">
-            Manage the hierarchy of departments and teams for {currentTenant.name}.
-          </p>
+    <div className="flex flex-col h-full w-full overflow-hidden">
+      <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <CustomBreadcrumb items={[
+              { label: "Dashboard", href: "/admin/dashboard" },
+              { label: "Organization Units", active: true },
+            ]} />
+          </div>
         </div>
-        <Button onClick={() => {
+        <Button size="sm" className="h-9" onClick={() => {
           setNewUnitData({ name: "", slug: "", type: "dept", parent_id: "" })
           setIsCreateDialogOpen(true)
         }}>
           <Plus className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> New Root Unit
         </Button>
-      </div>
+      </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1">
-        {/* Hierarchy Tree */}
-        <Card className="md:col-span-1 flex flex-col overflow-hidden">
-          <CardHeader className="py-4">
-            <CardTitle className={cn("text-base", isRTL ? "text-right" : "text-left")}>Hierarchy</CardTitle>
-          </CardHeader>
-          <CardContent className="flex-1 overflow-auto px-2 py-0 pb-4">
-            {isLoading ? (
-              <div className="space-y-2 p-2">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-              </div>
-            ) : tree.length === 0 ? (
-              <div className={cn("p-4 text-center text-sm text-muted-foreground", isRTL ? "text-right" : "text-left")}>
-                No units created yet.
-              </div>
-            ) : (
-              tree.map(unit => <TreeNode key={unit.id} unit={unit} />)
-            )}
-          </CardContent>
-        </Card>
+      <div className="flex-1 overflow-auto p-6 space-y-6">
 
-        {/* Selected Unit Details */}
-        <Card className="md:col-span-2 flex flex-col">
-          <Tabs defaultValue="members" className="flex-1 flex flex-col" dir={direction}>
-            <CardHeader className="py-4 border-b">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-primary/10 rounded-lg">
-                    {tree.find(u => u.id === selectedUnitId)?.type === "org" && <Landmark className="size-5 text-primary" />}
-                    {tree.find(u => u.id === selectedUnitId)?.type === "dept" && <Building2 className="size-5 text-primary" />}
-                    {tree.find(u => u.id === selectedUnitId)?.type === "team" && <Users className="size-5 text-primary" />}
-                  </div>
-                  <div>
-                    <CardTitle className={cn("text-lg", isRTL ? "text-right" : "text-left")}>
-                      {tree.find(u => u.id === selectedUnitId)?.name || "Select a unit"}
-                    </CardTitle>
-                    <CardDescription className={isRTL ? "text-right" : "text-left"}>
-                      {tree.find(u => u.id === selectedUnitId)?.slug || "No description"}
-                    </CardDescription>
-                  </div>
-                </div>
-                <TabsList>
-                  <TabsTrigger value="members">Members</TabsTrigger>
-                  <TabsTrigger value="settings">Settings</TabsTrigger>
-                </TabsList>
-              </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1">
+          {/* Hierarchy Tree */}
+          <Card className="md:col-span-1 flex flex-col overflow-hidden">
+            <CardHeader className="py-4">
+              <CardTitle className={cn("text-base", isRTL ? "text-right" : "text-left")}>Hierarchy</CardTitle>
             </CardHeader>
-            <CardContent className="flex-1 overflow-hidden p-0">
-              <TabsContent value="members" className="h-full m-0 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className={cn("text-sm font-medium", isRTL ? "text-right" : "text-left")}>Unit Members</h3>
-                  <Button variant="outline" size="sm" onClick={() => setIsMemberDialogOpen(true)}>
-                    <UserPlus className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> Add Member
-                  </Button>
+            <CardContent className="flex-1 overflow-auto px-2 py-0 pb-4">
+              {isLoading ? (
+                <div className="space-y-2 p-2">
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
                 </div>
-                {isMembersLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                  </div>
-                ) : members.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
-                    No members in this unit.
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className={isRTL ? "text-right" : "text-left"}>User</TableHead>
-                        <TableHead className={isRTL ? "text-right" : "text-left"}>Joined</TableHead>
-                        <TableHead className={isRTL ? "text-left" : "text-right"}>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {members.map(member => (
-                        <TableRow key={member.membership_id}>
-                          <TableCell className={isRTL ? "text-right" : "text-left"}>
-                            <div>
-                              <div className="font-medium">{member.full_name || "Unknown User"}</div>
-                              <div className="text-xs text-muted-foreground">{member.email}</div>
-                            </div>
-                          </TableCell>
-                          <TableCell className={cn("text-sm", isRTL ? "text-right" : "text-left")}>
-                            {new Date(member.joined_at).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell className={isRTL ? "text-left" : "text-right"}>
-                            <Button variant="ghost" size="icon" onClick={() => {
-                              if (confirm("Remove user from this unit?")) {
-                                orgUnitsService.removeMember(currentTenant.slug, member.membership_id)
-                                  .then(fetchMembers)
-                                  .catch(console.error)
-                              }
-                            }}>
-                              <Trash2 className="size-4 text-destructive" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </TabsContent>
-              <TabsContent value="settings" className="h-full m-0 p-6" dir={direction}>
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className={isRTL ? "text-right block" : "text-left block"}>Unit ID</Label>
-                    <Input value={selectedUnitId || ""} disabled className={isRTL ? "text-right" : "text-left"} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className={isRTL ? "text-right block" : "text-left block"}>Slug (Namespace)</Label>
-                    <Input value={tree.find(u => u.id === selectedUnitId)?.slug || ""} disabled className={isRTL ? "text-right" : "text-left"} />
-                  </div>
-                  <div className={cn("pt-4 flex gap-2", isRTL ? "justify-start" : "justify-end")}>
-                    <Button variant="outline" onClick={() => {
-                      setEditUnit(tree.find(u => u.id === selectedUnitId) || null)
-                      setIsEditDialogOpen(true)
-                    }}>Edit Basic Details</Button>
-                    <Button variant="destructive" onClick={() => handleDeleteUnit(selectedUnitId!)}>Delete Unit</Button>
-                  </div>
+              ) : tree.length === 0 ? (
+                <div className={cn("p-4 text-center text-sm text-muted-foreground", isRTL ? "text-right" : "text-left")}>
+                  No units created yet.
                 </div>
-              </TabsContent>
+              ) : (
+                tree.map(unit => <TreeNode key={unit.id} unit={unit} />)
+              )}
             </CardContent>
-          </Tabs>
-        </Card>
-      </div>
+          </Card>
 
-      {/* Create Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create New Organization Unit</DialogTitle>
-            <DialogDescription>
-              Add a new department or team to your hierarchy.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Unit Name</Label>
-              <Input 
-                id="name" 
-                placeholder="Engineering" 
-                value={newUnitData.name}
-                onChange={e => setNewUnitData({ ...newUnitData, name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="slug">Slug (URL friendly)</Label>
-              <Input 
-                id="slug" 
-                placeholder="engineering" 
-                value={newUnitData.slug}
-                onChange={e => setNewUnitData({ ...newUnitData, slug: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="type">Type</Label>
-              <select 
-                id="type"
-                className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                value={newUnitData.type}
-                onChange={e => setNewUnitData({ ...newUnitData, type: e.target.value as any })}
-              >
-                <option value="dept">Department</option>
-                <option value="team">Team</option>
-              </select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreateUnit} disabled={!newUnitData.name || !newUnitData.slug}>Create</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          {/* Selected Unit Details */}
+          <Card className="md:col-span-2 flex flex-col">
+            <Tabs defaultValue="members" className="flex-1 flex flex-col" dir={direction}>
+              <CardHeader className="py-4 border-b">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-lg">
+                      {tree.find(u => u.id === selectedUnitId)?.type === "org" && <Landmark className="size-5 text-primary" />}
+                      {tree.find(u => u.id === selectedUnitId)?.type === "dept" && <Building2 className="size-5 text-primary" />}
+                      {tree.find(u => u.id === selectedUnitId)?.type === "team" && <Users className="size-5 text-primary" />}
+                    </div>
+                    <div>
+                      <CardTitle className={cn("text-lg", isRTL ? "text-right" : "text-left")}>
+                        {tree.find(u => u.id === selectedUnitId)?.name || "Select a unit"}
+                      </CardTitle>
+                      <CardDescription className={isRTL ? "text-right" : "text-left"}>
+                        {tree.find(u => u.id === selectedUnitId)?.slug || "No description"}
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <TabsList>
+                    <TabsTrigger value="members">Members</TabsTrigger>
+                    <TabsTrigger value="settings">Settings</TabsTrigger>
+                  </TabsList>
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1 overflow-hidden p-0">
+                <TabsContent value="members" className="h-full m-0 p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className={cn("text-sm font-medium", isRTL ? "text-right" : "text-left")}>Unit Members</h3>
+                    <Button variant="outline" size="sm" onClick={() => setIsMemberDialogOpen(true)}>
+                      <UserPlus className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> Add Member
+                    </Button>
+                  </div>
+                  {isMembersLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  ) : members.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
+                      No members in this unit.
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>User</TableHead>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>Joined</TableHead>
+                          <TableHead className={isRTL ? "text-left" : "text-right"}>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {members.map(member => (
+                          <TableRow key={member.membership_id}>
+                            <TableCell className={isRTL ? "text-right" : "text-left"}>
+                              <div>
+                                <div className="font-medium">{member.full_name || "Unknown User"}</div>
+                                <div className="text-xs text-muted-foreground">{member.email}</div>
+                              </div>
+                            </TableCell>
+                            <TableCell className={cn("text-sm", isRTL ? "text-right" : "text-left")}>
+                              {new Date(member.joined_at).toLocaleDateString()}
+                            </TableCell>
+                            <TableCell className={isRTL ? "text-left" : "text-right"}>
+                              <Button variant="ghost" size="icon" onClick={() => {
+                                if (confirm("Remove user from this unit?")) {
+                                  orgUnitsService.removeMember(currentTenant.slug, member.membership_id)
+                                    .then(fetchMembers)
+                                    .catch(console.error)
+                                }
+                              }}>
+                                <Trash2 className="size-4 text-destructive" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </TabsContent>
+                <TabsContent value="settings" className="h-full m-0 p-6" dir={direction}>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className={isRTL ? "text-right block" : "text-left block"}>Unit ID</Label>
+                      <Input value={selectedUnitId || ""} disabled className={isRTL ? "text-right" : "text-left"} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className={isRTL ? "text-right block" : "text-left block"}>Slug (Namespace)</Label>
+                      <Input value={tree.find(u => u.id === selectedUnitId)?.slug || ""} disabled className={isRTL ? "text-right" : "text-left"} />
+                    </div>
+                    <div className={cn("pt-4 flex gap-2", isRTL ? "justify-start" : "justify-end")}>
+                      <Button variant="outline" onClick={() => {
+                        setEditUnit(tree.find(u => u.id === selectedUnitId) || null)
+                        setIsEditDialogOpen(true)
+                      }}>Edit Basic Details</Button>
+                      <Button variant="destructive" onClick={() => handleDeleteUnit(selectedUnitId!)}>Delete Unit</Button>
+                    </div>
+                  </div>
+                </TabsContent>
+              </CardContent>
+            </Tabs>
+          </Card>
+        </div>
 
-      {/* Edit Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Organization Unit</DialogTitle>
-          </DialogHeader>
-          {editUnit && (
+        {/* Create Dialog */}
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create New Organization Unit</DialogTitle>
+              <DialogDescription>
+                Add a new department or team to your hierarchy.
+              </DialogDescription>
+            </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-name">Unit Name</Label>
-                <Input 
-                  id="edit-name" 
-                  value={editUnit.name}
-                  onChange={e => setEditUnit({ ...editUnit, name: e.target.value })}
+                <Label htmlFor="name">Unit Name</Label>
+                <Input
+                  id="name"
+                  placeholder="Engineering"
+                  value={newUnitData.name}
+                  onChange={e => setNewUnitData({ ...newUnitData, name: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-slug">Slug</Label>
-                <Input 
-                  id="edit-slug" 
-                  value={editUnit.slug}
-                  onChange={e => setEditUnit({ ...editUnit, slug: e.target.value })}
+                <Label htmlFor="slug">Slug (URL friendly)</Label>
+                <Input
+                  id="slug"
+                  placeholder="engineering"
+                  value={newUnitData.slug}
+                  onChange={e => setNewUnitData({ ...newUnitData, slug: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="type">Type</Label>
+                <select
+                  id="type"
+                  className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                  value={newUnitData.type}
+                  onChange={e => setNewUnitData({ ...newUnitData, type: e.target.value as any })}
+                >
+                  <option value="dept">Department</option>
+                  <option value="team">Team</option>
+                </select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>Cancel</Button>
+              <Button onClick={handleCreateUnit} disabled={!newUnitData.name || !newUnitData.slug}>Create</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Dialog */}
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Organization Unit</DialogTitle>
+            </DialogHeader>
+            {editUnit && (
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-name">Unit Name</Label>
+                  <Input
+                    id="edit-name"
+                    value={editUnit.name}
+                    onChange={e => setEditUnit({ ...editUnit, name: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-slug">Slug</Label>
+                  <Input
+                    id="edit-slug"
+                    value={editUnit.slug}
+                    onChange={e => setEditUnit({ ...editUnit, slug: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+              <Button onClick={handleUpdateUnit}>Save Changes</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add Member Dialog */}
+        <Dialog open={isMemberDialogOpen} onOpenChange={setIsMemberDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add Member to Unit</DialogTitle>
+              <DialogDescription>
+                Invite a user to join this organization unit.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="member-email">User Email</Label>
+                <Input
+                  id="member-email"
+                  type="email"
+                  placeholder="user@example.com"
+                  value={newMemberEmail}
+                  onChange={e => setNewMemberEmail(e.target.value)}
                 />
               </div>
             </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleUpdateUnit}>Save Changes</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Member Dialog */}
-      <Dialog open={isMemberDialogOpen} onOpenChange={setIsMemberDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add Member to Unit</DialogTitle>
-            <DialogDescription>
-              Invite a user to join this organization unit.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="member-email">User Email</Label>
-              <Input 
-                id="member-email" 
-                type="email"
-                placeholder="user@example.com" 
-                value={newMemberEmail}
-                onChange={e => setNewMemberEmail(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsMemberDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleAddMember} disabled={!newMemberEmail}>Invite User</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsMemberDialogOpen(false)}>Cancel</Button>
+              <Button onClick={handleAddMember} disabled={!newMemberEmail}>Invite User</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
     </div>
   )
 }

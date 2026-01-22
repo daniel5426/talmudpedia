@@ -58,15 +58,19 @@ export default function AdminUserPage() {
 
   return (
     <div className="flex flex-col h-full w-full">
-      <div className="p-4 border-b shrink-0 flex items-center justify-between">
-        <CustomBreadcrumb
-          items={[
-            { label: "Users", href: "/admin/users" },
-            { label: user.full_name || user.email, active: true },
-          ]}
-        />
-      </div>
-      
+      <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <CustomBreadcrumb
+              items={[
+                { label: "Users", href: "/admin/users" },
+                { label: user.full_name || user.email, active: true },
+              ]}
+            />
+          </div>
+        </div>
+      </header>
+
       <div className="flex-1 overflow-auto p-6 space-y-8">
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>

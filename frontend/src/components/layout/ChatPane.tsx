@@ -299,14 +299,16 @@ export function ChatWorkspace({
   chatId,
   isVoiceModeActive,
   handleToggleVoiceMode,
-  analyser
+  analyser,
+  noBackground = false
 }: {
   controller: ReturnType<typeof useChatController>;
   chatId?: string;
   isVoiceModeActive: boolean;
   handleToggleVoiceMode: () => void;
   analyser?: AnalyserNode | null;
-}) {
+  noBackground?: boolean;
+  }) {
   // Auto (Agent Router) - Extract controller methods and state
   const {
     messages,
@@ -488,7 +490,7 @@ export function ChatWorkspace({
       )}
       dir={direction}
     >
-      {isEmptyState && containerWidth >= 650 && (
+      {isEmptyState && containerWidth >= 650 && !noBackground && (
         <BackgroundLogos />
       )}
       <ConversationContent className={cn("flex-1 p-0 pt-13", isEmptyState && "h-full justify-center relative z-10")}>

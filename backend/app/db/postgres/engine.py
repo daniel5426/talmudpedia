@@ -81,10 +81,14 @@ def create_async_engine() -> AsyncEngine:
     return _create_async_engine(
         url,
         echo=False,
-        # Disable pre-ping for transaction poolers to avoid 'SELECT 1' overhead/issues
-        pool_pre_ping=False,
-        # Use NullPool for external transaction pooling
-        poolclass=NullPool,
+        # Enable pre-ping to ensure connections in the pool are alive
+        pool_pre_ping=True,
+        # Standard QueuePool (default) is better for performance than NullPool
+        # especially when SSL handshakes are expensive (5s latency observed).
+        # We manually disable prepared statements below for PgBouncer compatibility.
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=300,
         # Disable prepared statements for PgBouncer compatibility (Psycopg v3 specific)
         connect_args={"prepare_threshold": None},
     )

@@ -5,9 +5,9 @@ import { useTenant } from "@/contexts/TenantContext"
 import { useDirection } from "@/components/direction-provider"
 import { cn } from "@/lib/utils"
 import { auditService, AuditLog, AuditLogDetail, AuditFilters } from "@/services/audit"
-import { 
-  Search, 
-  User, 
+import {
+  Search,
+  User,
   Activity,
   CheckCircle2,
   XCircle,
@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 export default function AuditPage() {
   const { currentTenant } = useTenant()
@@ -117,20 +118,20 @@ export default function AuditPage() {
 
   return (
     <div className="flex flex-col h-full bg-muted/20 w-full" dir={direction}>
-      <div className="flex flex-col gap-1 p-6 pb-0">
-        <div className="flex items-center justify-between">
-          <div className={cn("space-y-1", isRTL ? "text-right" : "text-left")}>
-            <h1 className="text-2xl font-bold tracking-tight">Audit Logs</h1>
-            <p className="text-[13px] text-muted-foreground max-w-2xl">
-              Compliance and security history trail. Monitor all actions and data access patterns for {currentTenant.name}.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground bg-background px-3 py-1.5 rounded-full border shadow-sm">
-            <Activity className="size-4 text-primary" />
-            <span className="font-medium">Total: {total.toLocaleString()} entries</span>
+      <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <CustomBreadcrumb items={[
+              { label: "Dashboard", href: "/admin/dashboard" },
+              { label: "Audit Logs", active: true },
+            ]} />
           </div>
         </div>
-      </div>
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-muted/50 px-2 py-0.5 rounded-full border">
+          <Activity className="size-3 text-primary" />
+          <span className="font-medium whitespace-nowrap">Total: {total.toLocaleString()} entries</span>
+        </div>
+      </header>
 
       <div className="flex-1 p-6 min-h-0 overflow-hidden">
         <Card className="h-full flex flex-col border-none shadow-md ring-1 ring-border/50 overflow-hidden">
@@ -138,14 +139,14 @@ export default function AuditPage() {
             <div className="flex flex-wrap gap-4">
               <div className="flex-1 min-w-[200px] relative">
                 <Search className={cn("absolute top-2.5 size-4 text-muted-foreground", isRTL ? "right-2.5" : "left-2.5")} />
-                <Input 
-                  placeholder="Search by Actor ID..." 
+                <Input
+                  placeholder="Search by Actor ID..."
                   className={cn("bg-background shadow-sm", isRTL ? "pr-9 text-right" : "pl-9 text-left")}
                   onChange={e => setFilters(prev => ({ ...prev, actor_id: e.target.value, skip: 0 }))}
                 />
               </div>
               <div className="w-48">
-                <select 
+                <select
                   className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm shadow-sm", isRTL ? "text-right" : "text-left")}
                   onChange={e => setFilters(prev => ({ ...prev, action: e.target.value || undefined, skip: 0 }))}
                   dir={direction}
@@ -155,7 +156,7 @@ export default function AuditPage() {
                 </select>
               </div>
               <div className="w-48">
-                <select 
+                <select
                   className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm shadow-sm", isRTL ? "text-right" : "text-left")}
                   onChange={e => setFilters(prev => ({ ...prev, resource_type: e.target.value || undefined, skip: 0 }))}
                   dir={direction}
@@ -264,7 +265,7 @@ export default function AuditPage() {
               {selectedLog && <ResultBadge result={selectedLog.result} />}
             </DialogTitle>
           </DialogHeader>
-          
+
           {selectedLog && (
             <div className="space-y-6 py-4">
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm border p-4 rounded-xl bg-muted/10">

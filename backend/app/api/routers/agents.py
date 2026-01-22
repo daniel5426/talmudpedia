@@ -362,6 +362,23 @@ async def stream_agent(
     """Stream agent execution (SSE)."""
     from app.agent.graph.schema import AgentGraph, MemoryConfig, ExecutionConstraints
     from app.agent.graph.compiler import AgentCompiler
+    from langchain_core.messages import BaseMessage
+    
+    def serialize_event(obj):
+        """Custom serializer for LangGraph events."""
+        if isinstance(obj, BaseMessage):
+            return {"type": obj.__class__.__name__, "content": obj.content}
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()
+        if hasattr(obj, "dict"):
+            return obj.dict()
+        if hasattr(obj, "__dict__"):
+            return obj.__dict__
+        return str(obj)
+    
+    class LangChainEncoder(json.JSONEncoder):
+        def default(self, obj):
+            return serialize_event(obj)
     
     tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
@@ -372,10 +389,17 @@ async def stream_agent(
         handle_service_error(e)
     
     async def event_generator():
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[STREAM] Starting event generator for agent {agent_id}")
+        
         try:
             graph = AgentGraph(**agent.graph_definition)
             memory_config = MemoryConfig(**agent.memory_config)
             execution_constraints = ExecutionConstraints(**agent.execution_constraints)
+            
+            logger.info(f"[STREAM] Graph nodes: {[n.id for n in graph.nodes]}")
+            logger.info(f"[STREAM] Graph node types: {[n.type for n in graph.nodes]}")
             
             compiler = AgentCompiler(tenant_id=tenant_id, db=db)
             executable = await compiler.compile(
@@ -390,11 +414,32 @@ async def stream_agent(
             if request.input:
                 initial_messages.append({"role": "user", "content": request.input})
             
-            async for event in executable.stream({"messages": initial_messages, "steps": []}):
-                yield f"data: {json.dumps(event)}\n\n"
+            logger.info(f"[STREAM] Input messages: {initial_messages}")
             
+            event_count = 0
+            chat_model_events = 0
+            
+            async for event in executable.stream({"messages": initial_messages, "steps": []}):
+                event_count += 1
+                event_type = event.get("event", "unknown")
+                event_name = event.get("name", "")
+                
+                if event_type == "on_chat_model_stream":
+                    chat_model_events += 1
+                    chunk = event.get("data", {}).get("chunk", {})
+                    content = chunk.get("content", "") if isinstance(chunk, dict) else getattr(chunk, "content", "")
+                    logger.info(f"[STREAM] Chat model stream #{chat_model_events}: '{content[:50] if content else ''}...'")
+                elif event_type in ("on_chain_start", "on_chain_end"):
+                    logger.debug(f"[STREAM] Event: {event_type} - {event_name}")
+                
+                yield f"data: {json.dumps(event, cls=LangChainEncoder)}\n\n"
+            
+            logger.info(f"[STREAM] Completed. Total events: {event_count}, Chat model events: {chat_model_events}")
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
+            logger.error(f"[STREAM] Error: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(f"[STREAM] Traceback: {traceback.format_exc()}")
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
     
     return StreamingResponse(

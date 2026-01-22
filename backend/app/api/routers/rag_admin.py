@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 import uuid
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, delete, func
 
@@ -13,91 +12,109 @@ from app.api.routers.auth import get_current_user
 from app.core.rbac import get_tenant_context, check_permission, Permission, Action, ResourceType, parse_id
 from app.core.audit import log_simple_action
 
-# Keep the RAG factory and orchestrator imports
-from app.rag.factory import (
-    RAGFactory,
-    RAGConfig,
-    EmbeddingConfig,
-    VectorStoreConfig,
-    ChunkerConfig,
-    LoaderConfig,
-    EmbeddingProviderType,
-    VectorStoreType,
-    ChunkerType,
-    LoaderType,
+from app.api.schemas.rag import (
+    RAGIndex, 
+    RAGStats, 
+    CreateIndexRequest, 
+    ChunkPreviewRequest, 
+    IngestionRequest
 )
-from app.rag.pipeline.orchestrator import RAGOrchestrator
-from app.rag.pipeline.job import IngestionJobConfig
+from app.services.rag_admin_service import RAGAdminService
+from app.rag.factory import RAGFactory
 
 router = APIRouter()
 
-async def get_admin_user(current_user: User = Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    return current_user
+async def get_rag_admin_service(db: AsyncSession = Depends(get_db)):
+    return RAGAdminService(db)
 
-class CreateIndexRequest(BaseModel):
-    name: str
-    display_name: Optional[str] = None
-    dimension: int = 768
-    namespace: Optional[str] = None
-    metadata: Dict[str, Any] = {}
-    owner_id: Optional[str] = None
-
-class ChunkPreviewRequest(BaseModel):
-    text: str
-    chunk_size: int = 650
-    chunk_overlap: int = 50
-
-class IngestionRequest(BaseModel):
-    index_name: str
-    documents: List[Dict[str, Any]]
-    namespace: Optional[str] = None
-    embedding_provider: str = "gemini"
-    vector_store_provider: str = "pinecone"
-    chunker_strategy: str = "token_based"
-    chunk_size: int = 650
-    chunk_overlap: int = 50
-    use_celery: bool = True
-
-@router.get("/stats")
+@router.get("/stats", response_model=RAGStats)
 async def get_rag_stats(
     tenant_slug: Optional[str] = None,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    service: RAGAdminService = Depends(get_rag_admin_service),
 ):
     tenant = None
     if tenant_slug:
-        ctx = await get_tenant_context(tenant_slug, current_user, db)
+        ctx = await get_tenant_context(tenant_slug, current_user, service.db)
         tenant, _ = ctx
 
     if current_user.role != "admin" and not tenant:
          raise HTTPException(status_code=403, detail="Access denied")
 
     tid = tenant.id if tenant else None
-    
-    # Total pipelines
-    pipe_stmt = select(func.count(RAGPipeline.id))
-    if tid: pipe_stmt = pipe_stmt.where(RAGPipeline.tenant_id == tid)
-    total_pipelines = (await db.execute(pipe_stmt)).scalar()
-    
-    # Jobs
-    job_stmt = select(func.count(IngestionJob.id))
-    if tid: job_stmt = job_stmt.where(IngestionJob.tenant_id == tid)
-    total_jobs = (await db.execute(job_stmt)).scalar()
-    
-    completed_jobs = (await db.execute(job_stmt.where(IngestionJob.status == IngestionStatus.COMPLETED))).scalar()
-    failed_jobs = (await db.execute(job_stmt.where(IngestionJob.status == IngestionStatus.FAILED))).scalar()
-    running_jobs = (await db.execute(job_stmt.where(IngestionJob.status == IngestionStatus.PROCESSING))).scalar()
+    return await service.get_stats(tenant_id=tid)
 
-    return {
-        "total_pipelines": total_pipelines,
-        "total_jobs": total_jobs,
-        "completed_jobs": completed_jobs,
-        "failed_jobs": failed_jobs,
-        "running_jobs": running_jobs,
-        "available_providers": RAGFactory.get_available_providers()
-    }
+@router.get("/indices", response_model=Dict[str, List[RAGIndex]])
+async def list_indices(
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    service: RAGAdminService = Depends(get_rag_admin_service),
+):
+    # Permission check
+    if current_user.role != "admin":
+        if not tenant_slug:
+             raise HTTPException(status_code=403, detail="Admin role or tenant context required")
+        await get_tenant_context(tenant_slug, current_user, service.db)
+    
+    indices = await service.list_indices()
+    return {"indices": indices}
+
+@router.post("/indices")
+async def create_index(
+    request: CreateIndexRequest,
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    service: RAGAdminService = Depends(get_rag_admin_service),
+):
+    # Permission check
+    if current_user.role != "admin":
+        if not tenant_slug:
+             raise HTTPException(status_code=403, detail="Admin role or tenant context required")
+        await get_tenant_context(tenant_slug, current_user, service.db)
+
+    success = await service.create_index(request.name, request.dimension)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to create index")
+    
+    return {"status": "created", "name": request.name, "dimension": request.dimension}
+
+@router.get("/indices/{name}", response_model=RAGIndex)
+async def get_index(
+    name: str,
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    service: RAGAdminService = Depends(get_rag_admin_service),
+):
+    # Permission check
+    if current_user.role != "admin":
+        if not tenant_slug:
+             raise HTTPException(status_code=403, detail="Admin role or tenant context required")
+        await get_tenant_context(tenant_slug, current_user, service.db)
+
+    index = await service.get_index(name)
+    if not index:
+        raise HTTPException(status_code=404, detail="Index not found")
+    
+    return index
+
+@router.delete("/indices/{name}")
+async def delete_index(
+    name: str,
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    service: RAGAdminService = Depends(get_rag_admin_service),
+):
+    # Permission check
+    if current_user.role != "admin":
+        if not tenant_slug:
+             raise HTTPException(status_code=403, detail="Admin role or tenant context required")
+        await get_tenant_context(tenant_slug, current_user, service.db)
+
+    success = await service.delete_index(name)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete index")
+    
+    return {"status": "deleted", "name": name}
 
 @router.get("/pipelines")
 async def list_pipelines(

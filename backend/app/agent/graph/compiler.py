@@ -130,7 +130,10 @@ class AgentCompiler:
         async def output_node(state: Any):
             return state
 
-        async def llm_node(state: Any):
+        async def llm_node(state: Any, config: Any = None):
+            # Extract system prompt from node config
+            system_prompt = node.config.get("system_prompt", None)
+            
             # Resolve Model
             if not self.db or not self.tenant_id:
                 # Fallback to mock if no dependencies provided (or raise error)
@@ -176,12 +179,21 @@ class AgentCompiler:
                 else:
                     formatted_messages.append(HumanMessage(content=str(msg)))
 
-            # System Prompt from Config? 
-            system_prompt = node.config.get("system_prompt", None)
-            
             # Execute
+            from app.agent.core.llm_adapter import LLMProviderAdapter
+            
             try:
-                response = await provider.generate(formatted_messages, system_prompt=system_prompt)
+                # Wrap our custom provider in a LangChain adapter
+                # This allows LangGraph to intercept streaming events
+                adapter = LLMProviderAdapter(provider)
+                
+                # Execute via adapter
+                # Pass the config to ensure callbacks (streaming) are wired up
+                response = await adapter.ainvoke(
+                    formatted_messages, 
+                    config=config,
+                    system_prompt=system_prompt
+                )
                 
                 # Logic to parse response into steps/reasoning if applicable?
                 # For now, raw response

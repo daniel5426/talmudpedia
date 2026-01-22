@@ -349,14 +349,18 @@ export default function ModelsPage() {
 
     return (
         <div className="flex flex-col h-full w-full" dir={direction}>
-            <div className="p-4 border-b shrink-0 flex items-center justify-between">
-                <CustomBreadcrumb items={[
-                    { label: "Dashboard", href: "/admin/dashboard" },
-                    { label: "Models Registry", href: "/admin/models", active: true },
-                ]} />
+            <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                        <CustomBreadcrumb items={[
+                            { label: "Dashboard", href: "/admin/dashboard" },
+                            { label: "Models Registry", href: "/admin/models", active: true },
+                        ]} />
+                    </div>
+                </div>
                 <div className="flex items-center gap-2">
                     <Select value={filter} onValueChange={(v) => setFilter(v as ModelCapabilityType | "all")}>
-                        <SelectTrigger className="w-[180px]">
+                        <SelectTrigger className="h-9 w-[180px]">
                             <SelectValue placeholder="Filter by type" />
                         </SelectTrigger>
                         <SelectContent>
@@ -366,13 +370,13 @@ export default function ModelsPage() {
                             ))}
                         </SelectContent>
                     </Select>
-                    <Button variant="outline" size="sm" onClick={fetchModels}>
+                    <Button variant="outline" size="sm" className="h-9" onClick={fetchModels}>
                         <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
                         Refresh
                     </Button>
                     <CreateModelDialog onCreated={fetchModels} />
                 </div>
-            </div>
+            </header>
 
             <div className="flex-1 overflow-auto p-4">
                 {loading ? (

@@ -9,9 +9,11 @@ import {
     ChevronLeft,
     Loader2,
     AlertCircle,
-    CheckCircle2
+    CheckCircle2,
 } from "lucide-react"
 import { Node, Edge } from "@xyflow/react"
+
+import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -122,50 +124,28 @@ export default function AgentBuilderPage() {
         }
     }
 
-    if (isLoading) {
-        return (
-            <div className="flex w-full flex-col items-center justify-center min-h-screen space-y-4">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-muted-foreground">Loading agent builder...</p>
-            </div>
-        )
-    }
-
-    if (error || !agent) {
-        return (
-            <div className="flex w-full flex-col items-center justify-center min-h-screen space-y-4 text-center p-6">
-                <AlertCircle className="h-12 w-12 text-destructive" />
-                <div className="space-y-2">
-                    <h3 className="text-lg font-medium">Error</h3>
-                    <p className="text-muted-foreground max-w-sm">{error || "Agent not found"}</p>
-                </div>
-                <Button variant="outline" onClick={() => router.push("/admin/agents")}>
-                    Back to Agents
-                </Button>
-            </div>
-        )
-    }
-
     return (
         <div className="flex w-full flex-col h-screen overflow-hidden">
             {/* Header */}
-            <header className="border-b bg-background flex items-center justify-between px-6 py-3 shrink-0">
-                <div className="flex items-center gap-4">
-                    <Button variant="ghost" size="icon" onClick={() => router.push("/admin/agents")}>
-                        <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <div className="flex flex-col">
-                        <div className="flex items-center gap-2">
-                            <h1 className="font-semibold text-lg">{agent.name}</h1>
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">v{agent.version}</Badge>
-                            <Badge
-                                variant={agent.status === "published" ? "default" : "outline"}
-                                className="text-[10px] px-1.5 py-0 h-4"
-                            >
-                                {agent.status}
-                            </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground">{agent.slug}</p>
+            <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                        <CustomBreadcrumb items={[
+                            { label: "Agents", href: "/admin/agents" },
+                            { label: agent?.name || "Loading...", active: true },
+                            { label: "Builder", active: true }
+                        ]} />
+                        {agent && (
+                            <div className="flex items-center gap-2 ml-2">
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">v{agent.version}</Badge>
+                                <Badge
+                                    variant={agent.status === "published" ? "default" : "outline"}
+                                    className="text-[10px] px-1.5 py-0 h-4"
+                                >
+                                    {agent.status}
+                                </Badge>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -182,33 +162,61 @@ export default function AgentBuilderPage() {
                             Save failed
                         </span>
                     )}
-                    <Button variant="outline" size="sm" onClick={handleSave} disabled={isSaving}>
+                    <Button variant="outline" size="sm" onClick={handleSave} disabled={isSaving || isLoading} className="h-8 text-xs">
                         {isSaving && saveStatus === "saving" ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
                         ) : (
-                            <Save className="mr-2 h-4 w-4" />
+                            <Save className="mr-2 h-3 w-3" />
                         )}
                         Save Draft
                     </Button>
                     <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs"
+                        onClick={() => router.push(`/admin/agents/${id}/run`)}
+                        disabled={isLoading}
+                    >
+                        <Play className="mr-2 h-3 w-3" />
+                        Try
+                    </Button>
+                    <Button
                         size="sm"
                         variant="default"
-                        className="bg-green-600 hover:bg-green-700 text-white"
+                        className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
                         onClick={handlePublish}
-                        disabled={isSaving}
+                        disabled={isSaving || isLoading}
                     >
                         Publish
                     </Button>
                 </div>
             </header>
 
-            {/* Builder Canvas */}
-            <main className="flex-1 overflow-hidden">
-                <AgentBuilder
-                    initialNodes={agent.graph_definition?.nodes || []}
-                    initialEdges={agent.graph_definition?.edges || []}
-                    onSave={handleGraphChange}
-                />
+            {/* Main Content */}
+            <main className="flex-1 overflow-hidden relative">
+                {isLoading ? (
+                    <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-50">
+                        <div className="flex flex-col items-center gap-2">
+                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                            <p className="text-muted-foreground">Loading agent builder...</p>
+                        </div>
+                    </div>
+                ) : error || !agent ? (
+                    <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+                        <AlertCircle className="h-12 w-12 text-destructive mb-4" />
+                        <h3 className="text-lg font-medium mb-2">Error</h3>
+                        <p className="text-muted-foreground max-w-sm mb-4">{error || "Agent not found"}</p>
+                        <Button variant="outline" onClick={() => router.push("/admin/agents")}>
+                            Back to Agents
+                        </Button>
+                    </div>
+                ) : (
+                    <AgentBuilder
+                        initialNodes={agent.graph_definition?.nodes || []}
+                        initialEdges={agent.graph_definition?.edges || []}
+                        onSave={handleGraphChange}
+                    />
+                )}
             </main>
         </div>
     )

@@ -1,4 +1,5 @@
 from datetime import datetime
+import time
 from typing import Any, Dict, Optional, List
 from uuid import UUID
 
@@ -20,6 +21,7 @@ async def get_chats(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    start_time = time.time()
     """Returns chats ordered by last update with optional cursor paging."""
     query = select(Chat).where(Chat.user_id == current_user.id).order_by(Chat.updated_at.desc()).limit(limit)
     
@@ -30,8 +32,11 @@ async def get_chats(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid cursor value")
     
+    query_start = time.time()
     result = await db.execute(query)
     chats = result.scalars().all()
+    query_duration = time.time() - query_start
+    print(f"DEBUG: get_chats query execution took {query_duration:.4f} seconds")
     
     items = []
     last_timestamp: Optional[datetime] = None
@@ -46,6 +51,9 @@ async def get_chats(
         last_timestamp = chat.updated_at
         
     next_cursor = last_timestamp.isoformat() if last_timestamp and len(items) == limit else None
+    
+    total_duration = time.time() - start_time
+    print(f"DEBUG: get_chats total execution took {total_duration:.4f} seconds")
     return {"items": items, "nextCursor": next_cursor}
 
 @router.get("/{chat_id}", response_model_by_alias=False)
