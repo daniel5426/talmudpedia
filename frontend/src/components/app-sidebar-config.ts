@@ -44,6 +44,10 @@ export const sidebarContent = {
           url: "/admin/rag/pipelines",
         },
         {
+          title: "Operators",
+          url: "/admin/rag/operators",
+        },
+        {
           title: "Ingestion Jobs",
           url: "/admin/rag/jobs",
         },

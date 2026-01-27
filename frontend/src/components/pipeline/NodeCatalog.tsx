@@ -1,22 +1,30 @@
 "use client"
 
-import { useMemo } from "react"
-import { FolderInput, Scissors, Sparkles, Database } from "lucide-react"
+import { useMemo, useState } from "react"
+import {
+  Search,
+  GripVertical,
+  FolderInput,
+  Scissors,
+  Sparkles,
+  Database,
+  Hash,
+  ShieldCheck,
+  Sparkle,
+  ArrowRightLeft,
+  SortAsc,
+  Code,
+  Plus
+} from "lucide-react"
 import { cn } from "@/lib/utils"
-import { 
-  OperatorCategory, 
-  OperatorSpec, 
-  CATEGORY_COLORS, 
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import {
+  OperatorCategory,
+  CATEGORY_COLORS,
   CATEGORY_LABELS,
-  DataType 
+  DataType
 } from "./types"
-
-interface OperatorCatalog {
-  source: OperatorCatalogItem[]
-  transform: OperatorCatalogItem[]
-  embedding: OperatorCatalogItem[]
-  storage: OperatorCatalogItem[]
-}
 
 interface OperatorCatalogItem {
   operator_id: string
@@ -26,73 +34,82 @@ interface OperatorCatalogItem {
   dimension?: number
 }
 
+type OperatorCatalog = Partial<Record<OperatorCategory, OperatorCatalogItem[]>>
+
 interface NodeCatalogProps {
   catalog: OperatorCatalog
   onDragStart: (event: React.DragEvent, operatorId: string, category: OperatorCategory) => void
+  onAddCustomOperator?: () => void
 }
 
-const CATEGORY_ICONS: Record<OperatorCategory, React.ElementType> = {
+const CATEGORY_ICONS: Record<string, React.ElementType> = {
   source: FolderInput,
-  transform: Scissors,
+  normalization: ShieldCheck,
+  enrichment: Sparkle,
+  chunking: Scissors,
+  transform: ArrowRightLeft,
   embedding: Sparkles,
   storage: Database,
+  retrieval: Search,
+  reranking: SortAsc,
+  custom: Code,
 }
 
-function CatalogItem({ 
-  item, 
+function CatalogItem({
+  item,
   category,
-  onDragStart 
-}: { 
+  onDragStart
+}: {
   item: OperatorCatalogItem
   category: OperatorCategory
-  onDragStart: (event: React.DragEvent) => void 
+  onDragStart: (event: React.DragEvent) => void
 }) {
-  const Icon = CATEGORY_ICONS[category]
+  const Icon = CATEGORY_ICONS[category] || Hash
   const color = CATEGORY_COLORS[category]
 
   return (
     <div
       className={cn(
-        "flex items-center gap-2 px-3 py-2 rounded-md cursor-grab",
-        "border border-transparent hover:border-border",
-        "bg-muted/50 hover:bg-muted transition-colors"
+        "group flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-grab active:cursor-grabbing",
+        "border border-transparent bg-muted/30 hover:bg-background hover:border-border",
+        "transition-all duration-200"
       )}
       draggable
       onDragStart={onDragStart}
     >
       <div
-        className="p-1 rounded"
-        style={{ backgroundColor: `${color}20` }}
+        className="shrink-0 p-1.5 rounded-md transition-transform group-hover:scale-105"
+        style={{ backgroundColor: color }}
       >
-        <Icon className="h-3.5 w-3.5" style={{ color }} />
+        <Icon className="h-3.5 w-3.5 text-foreground" />
       </div>
-      <span className="text-sm font-medium truncate">{item.display_name}</span>
+      <div className="flex-1 min-w-0">
+        <span className="text-[13px] font-medium text-foreground/80 truncate block">
+          {item.display_name}
+        </span>
+      </div>
+      <GripVertical className="h-3.5 w-3.5 text-muted-foreground/10 group-hover:text-muted-foreground/30 transition-colors" />
     </div>
   )
 }
 
-function CategorySection({ 
-  category, 
+function CategorySection({
+  category,
   items,
-  onDragStart 
-}: { 
+  onDragStart
+}: {
   category: OperatorCategory
   items: OperatorCatalogItem[]
   onDragStart: (event: React.DragEvent, operatorId: string, category: OperatorCategory) => void
 }) {
-  const color = CATEGORY_COLORS[category]
   const label = CATEGORY_LABELS[category]
 
-  if (items.length === 0) return null
+  if (!items || items.length === 0) return null
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 px-1">
-        <div
-          className="w-2 h-2 rounded-full"
-          style={{ backgroundColor: color }}
-        />
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground/50">
           {label}
         </span>
       </div>
@@ -110,26 +127,59 @@ function CategorySection({
   )
 }
 
-export function NodeCatalog({ catalog, onDragStart }: NodeCatalogProps) {
-  const categories: OperatorCategory[] = ["source", "transform", "embedding", "storage"]
+export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator }: NodeCatalogProps) {
+  const [search, setSearch] = useState("")
+
+  const categories: OperatorCategory[] = [
+    "source",
+    "normalization",
+    "enrichment",
+    "chunking",
+    "embedding",
+    "storage",
+    "retrieval",
+    "reranking",
+    "custom",
+    "transform"
+  ]
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b">
-        <h3 className="font-semibold text-sm">Operators</h3>
-        <p className="text-xs text-muted-foreground mt-1">
-          Drag operators onto the canvas
-        </p>
+      <div className="p-3.5 space-y-3 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold text-foreground/70 uppercase tracking-tight">Operators</h3>
+          {onAddCustomOperator && (
+            <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" onClick={onAddCustomOperator}>
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+          <Input
+            placeholder="Search..."
+            className="pl-8 h-8 bg-muted/40 border-none rounded-lg text-[11px] focus-visible:ring-1 focus-visible:ring-offset-0"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <div className="flex-1 overflow-y-auto px-3.5 pb-6 space-y-6 scrollbar-none">
         {categories.map((category) => (
           <CategorySection
             key={category}
             category={category}
-            items={catalog[category] || []}
+            items={(catalog[category] || []).filter(item =>
+              item.display_name.toLowerCase().includes(search.toLowerCase())
+            )}
             onDragStart={onDragStart}
           />
         ))}
+        {categories.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <p className="text-[11px] text-muted-foreground">No matches</p>
+          </div>
+        )}
       </div>
     </div>
   )

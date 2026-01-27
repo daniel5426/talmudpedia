@@ -12,10 +12,14 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.postgres.models.registry import ModelRegistry, ModelProviderType, ModelProviderBinding
+from app.db.postgres.models.registry import ModelRegistry, ModelProviderType, ModelProviderBinding, ModelCapabilityType
 from app.agent.core.interfaces import LLMProvider
 from app.agent.components.llm.openai import OpenAILLM
 from app.agent.components.llm.gemini import GeminiLLM
+from app.rag.interfaces.embedding import EmbeddingProvider
+from app.rag.providers.embedding.openai import OpenAIEmbeddingProvider
+from app.rag.providers.embedding.gemini import GeminiEmbeddingProvider
+from app.rag.providers.embedding.huggingface import HuggingFaceEmbeddingProvider
 
 
 logger = logging.getLogger(__name__)
@@ -203,3 +207,110 @@ class ModelResolver:
     def clear_cache(self):
         """Clear the provider cache."""
         self._provider_cache.clear()
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Embedding Model Resolution
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    async def resolve_embedding(
+        self,
+        model_id: str,
+        required_capability: ModelCapabilityType = ModelCapabilityType.EMBEDDING
+    ) -> EmbeddingProvider:
+        """
+        Resolve a logical model ID to an EmbeddingProvider instance.
+        
+        Args:
+            model_id: The model ID, name, or slug
+            required_capability: Expected capability type (for validation)
+            
+        Returns:
+            An EmbeddingProvider instance ready for use
+            
+        Raises:
+            ModelResolverError: If model not found, wrong capability, or no provider
+        """
+        logger.debug(f"Resolving embedding model {model_id} for tenant {self.tenant_id}")
+        model = await self._get_model(model_id)
+        
+        if not model:
+            raise ModelResolverError(f"Model not found: {model_id}")
+        
+        # Validate capability type
+        if model.capability_type != required_capability:
+            raise ModelResolverError(
+                f"Model '{model.name}' has capability '{model.capability_type.value}', "
+                f"expected '{required_capability.value}'"
+            )
+        
+        # Check model status
+        from app.db.postgres.models.registry import ModelStatus
+        if model.status == ModelStatus.DEPRECATED:
+            logger.warning(f"Model '{model.name}' is deprecated")
+        elif model.status == ModelStatus.DISABLED:
+            raise ModelResolverError(f"Model '{model.name}' is disabled")
+        
+        logger.info(f"Resolved embedding model: {model.name} ({model.id})")
+        
+        # Find active binding
+        active_bindings = [b for b in model.providers if b.is_enabled]
+        if not active_bindings:
+            raise ModelResolverError(f"No active provider bindings for model: {model.name}")
+        
+        binding = min(active_bindings, key=lambda x: x.priority)
+        logger.info(f"Using provider: {binding.provider} -> {binding.provider_model_id}")
+        
+        return self._create_embedding_provider_from_binding(binding, model)
+    
+    def _create_embedding_provider_from_binding(
+        self,
+        binding: ModelProviderBinding,
+        model: ModelRegistry
+    ) -> EmbeddingProvider:
+        """Create an EmbeddingProvider instance from a provider binding."""
+        config = binding.config or {}
+        api_key = config.get("api_key")
+        
+        # Get dimension from model metadata
+        metadata = model.metadata_ or {}
+        dimension = metadata.get("dimension")
+        
+        if binding.provider == ModelProviderType.OPENAI:
+            return OpenAIEmbeddingProvider(
+                api_key=api_key,
+                model=binding.provider_model_id,
+                dimensions=dimension,
+            )
+        elif binding.provider in (ModelProviderType.GOOGLE, ModelProviderType.GEMINI):
+            return GeminiEmbeddingProvider(
+                api_key=api_key,
+                model=binding.provider_model_id,
+            )
+        elif binding.provider == ModelProviderType.HUGGINGFACE:
+            return HuggingFaceEmbeddingProvider(
+                model=binding.provider_model_id,
+            )
+        else:
+            raise ModelResolverError(
+                f"Unsupported embedding provider: {binding.provider}"
+            )
+    
+    async def get_model_dimension(self, model_id: str) -> int:
+        """
+        Get the embedding dimension for a model.
+        Used by pipeline compiler for validation.
+        """
+        model = await self._get_model(model_id)
+        if not model:
+            raise ModelResolverError(f"Model not found: {model_id}")
+        
+        metadata = model.metadata_ or {}
+        dimension = metadata.get("dimension")
+        
+        if dimension is None:
+            raise ModelResolverError(
+                f"Model '{model.name}' does not have dimension configured in metadata"
+            )
+        
+        return dimension
+

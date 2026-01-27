@@ -132,6 +132,12 @@
   --gradient-from: var(--p-light-gradient-from, var(--background));
   --gradient-to: var(--p-light-gradient-to, color-mix(in oklch, var(--primary) 20%, var(--background)));
   --chat-background: var(--p-light-chat-background, var(--background));
+
+  /* Pipeline Category Colors */
+  --pipeline-source: #dcfce7;
+  --pipeline-transform: #dbeafe;
+  --pipeline-embedding: #f3e8ff;
+  --pipeline-storage: #ffedd5;
 }
 
 .dark {
@@ -170,6 +176,12 @@
   --gradient-from: var(--p-dark-gradient-from, var(--background));
   --gradient-to: var(--p-dark-gradient-to, color-mix(in oklch, var(--primary) 20%, var(--background)));
   --chat-background: var(--p-dark-chat-background, var(--background));
+
+  /* Pipeline Category Colors (Dark Mode) */
+  --pipeline-source: #064e3b;
+  --pipeline-transform: #1e3a8a;
+  --pipeline-embedding: #581c87;
+  --pipeline-storage: #7c2d12;
 }
 
 @layer base {

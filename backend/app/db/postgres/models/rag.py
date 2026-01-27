@@ -20,13 +20,20 @@ class IngestionStatus(str, enum.Enum):
 
 class OperatorCategory(str, enum.Enum):
     SOURCE = "source"
-    TRANSFORM = "transform"
+    NORMALIZATION = "normalization"
+    ENRICHMENT = "enrichment"
+    CHUNKING = "chunking"
+    EMBEDDING = "embedding"
+    STORAGE = "storage"
     RETRIEVAL = "retrieval"
+    RERANKING = "reranking"
+    CUSTOM = "custom"
+    # Legacy support
+    TRANSFORM = "transform"
     LLM = "llm"
     OUTPUT = "output"
     CONTROL = "control"
-    EMBEDDING = "embedding"
-    STORAGE = "storage"
+
 
 
 class PipelineJobStatus(str, enum.Enum):
@@ -35,6 +42,15 @@ class PipelineJobStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class PipelineStepStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
 
 
 # Models
@@ -177,3 +193,68 @@ class PipelineJob(Base):
     tenant = relationship("Tenant")
     executable_pipeline = relationship("ExecutablePipeline", back_populates="jobs")
     trigger_user = relationship("User")
+
+
+class CustomOperator(Base):
+    """User-defined custom operator."""
+    __tablename__ = "custom_operators"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    
+    name = Column(String, nullable=False)
+    display_name = Column(String, nullable=False)
+    category = Column(SQLEnum(OperatorCategory), nullable=False)
+    description = Column(String, nullable=True)
+    
+    # Python code for the operator
+    python_code = Column(Text, nullable=False)
+    
+    # JSON Schema definitions
+    input_type = Column(String, nullable=False) # DataType
+    output_type = Column(String, nullable=False) # DataType
+    config_schema = Column(JSONB, default=[], nullable=False) # List[ConfigFieldSpec]
+    
+    version = Column(String, default="1.0.0", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    # Relationships
+    tenant = relationship("Tenant")
+    creator = relationship("User")
+
+
+class PipelineStepExecution(Base):
+    """Detailed execution status for a single step in a pipeline job."""
+    __tablename__ = "pipeline_step_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_jobs.id"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    
+    step_id = Column(String, nullable=False) # Node ID from visual graph
+    operator_id = Column(String, nullable=False) # Operator Identifier
+    
+    operator_id = Column(String, nullable=False) # Operator Identifier
+    
+    status = Column(SQLEnum(PipelineStepStatus), default=PipelineStepStatus.PENDING, nullable=False)
+    
+    input_data = Column(JSONB, nullable=True) # Serialized input
+    output_data = Column(JSONB, nullable=True) # Serialized output
+    metadata_ = Column(JSONB, default={}, nullable=False, name="metadata") # Execution metadata (time, tokens, etc)
+    error_message = Column(Text, nullable=True)
+    
+    execution_order = Column(Integer, default=0) # Order in the execution sequence
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    job = relationship("PipelineJob", backref="steps")
+    tenant = relationship("Tenant")
+
+

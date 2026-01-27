@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play } from "lucide-react";
+import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play, Code2 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
 import { NavUser } from "@/components/nav-user";
@@ -99,6 +99,11 @@ const data = {
           url: "/admin/pipelines",
           icon: Workflow,
         },
+        {
+          title: "Operators",
+          url: "/admin/rag/operators",
+          icon: Code2,
+        },
       ],
     },
     {
@@ -163,7 +168,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       items: item.items?.map(sub => {
         const isPlayground = sub.title === "Playground";
         const isActive = isPlayground ? pathname?.includes("/admin/agents/playground") : pathname === sub.url;
-        
+
         return {
           ...sub,
           isActive: !!isActive

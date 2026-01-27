@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any
 from enum import Enum
+import warnings
 
 from pydantic import BaseModel
 
@@ -21,7 +22,10 @@ from app.rag.providers.loader.local_file import LocalFileLoader
 from app.rag.providers.loader.s3 import S3Loader
 
 
+# DEPRECATED: Use ModelRegistry with capability_type=EMBEDDING instead
+# Migration: Use ModelResolver.resolve_embedding(model_id) to get an EmbeddingProvider
 class EmbeddingProviderType(str, Enum):
+    """Deprecated: Use ModelRegistry for embedding model management."""
     GEMINI = "gemini"
     OPENAI = "openai"
     HUGGINGFACE = "huggingface"
@@ -43,7 +47,9 @@ class LoaderType(str, Enum):
     S3 = "s3"
 
 
+# DEPRECATED: Use ModelResolver.resolve_embedding() instead
 class EmbeddingConfig(BaseModel):
+    """Deprecated: Use ModelRegistry with model_id lookup."""
     provider: EmbeddingProviderType = EmbeddingProviderType.GEMINI
     api_key: Optional[str] = None
     model: Optional[str] = None
@@ -93,12 +99,26 @@ class RAGFactory:
     _embedding_cache: Dict[str, EmbeddingProvider] = {}
     _vector_store_cache: Dict[str, VectorStoreProvider] = {}
     
+    # DEPRECATED: Use ModelResolver.resolve_embedding() instead
     @classmethod
     def create_embedding_provider(
         cls,
         config: EmbeddingConfig,
         use_cache: bool = True
     ) -> EmbeddingProvider:
+        """
+        Deprecated: Use ModelResolver.resolve_embedding(model_id) instead.
+        
+        This method bypasses the centralized ModelRegistry and should not be
+        used in new code. Models should be registered in ModelRegistry with
+        capability_type=EMBEDDING and resolved at runtime via ModelResolver.
+        """
+        warnings.warn(
+            "RAGFactory.create_embedding_provider is deprecated. "
+            "Use ModelResolver.resolve_embedding(model_id) instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         cache_key = f"{config.provider}_{config.model or 'default'}"
         
         if use_cache and cache_key in cls._embedding_cache:

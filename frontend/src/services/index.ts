@@ -22,6 +22,8 @@ export type {
   OperatorCatalogItem,
   OperatorSpec,
   ConfigFieldSpec,
+  CustomOperator,
+  PipelineStepExecution,
 } from "./rag-admin";
 
 export { ttsService } from "./tts";

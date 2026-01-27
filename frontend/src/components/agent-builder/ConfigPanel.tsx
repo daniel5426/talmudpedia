@@ -14,6 +14,13 @@ import {
     CATEGORY_COLORS,
     getNodeSpec
 } from "./types"
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select"
 import { modelsService, toolsService, LogicalModel, ToolDefinition } from "@/services/agent-resources"
 
 interface ConfigPanelProps {
@@ -26,6 +33,7 @@ interface ConfigPanelProps {
 interface ResourceOption {
     value: string
     label: string
+    providerInfo?: string
 }
 
 function ConfigField({
@@ -72,41 +80,55 @@ function ConfigField({
 
         if (isModel) {
             return (
-                <select
-                    className={cn(
-                        "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
-                        "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                    )}
-                    value={(value as string) || ""}
-                    onChange={(e) => onChange(e.target.value)}
-                >
-                    <option value="">Select a model...</option>
-                    {models.map((model) => (
-                        <option key={model.value} value={model.value}>
-                            {model.label}
-                        </option>
-                    ))}
-                </select>
+                <Select value={(value as string) || ""} onValueChange={onChange}>
+                    <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select a model..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {models.length === 0 ? (
+                            <SelectItem value="none" disabled>No models found</SelectItem>
+                        ) : (
+                            models.map((model) => (
+                                <SelectItem key={model.value} value={model.value}>
+                                    <div className="flex flex-col text-left">
+                                        <span className="font-medium text-xs">{model.label}</span>
+                                        <span className="text-[10px] text-muted-foreground">
+                                            {model.providerInfo || "AI Model"}
+                                        </span>
+                                    </div>
+                                </SelectItem>
+                            ))
+                        )}
+                    </SelectContent>
+                </Select>
             )
         }
 
         if (isTool) {
             return (
-                <select
-                    className={cn(
-                        "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
-                        "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                    )}
-                    value={(value as string) || ""}
-                    onChange={(e) => onChange(e.target.value)}
-                >
-                    <option value="">Select a tool...</option>
-                    {tools.map((tool) => (
-                        <option key={tool.value} value={tool.value}>
-                            {tool.label}
-                        </option>
-                    ))}
-                </select>
+                <Select value={(value as string) || ""} onValueChange={onChange}>
+                    <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select a tool..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {tools.length === 0 ? (
+                            <SelectItem value="none" disabled>No tools found</SelectItem>
+                        ) : (
+                            tools.map((tool) => (
+                                <SelectItem key={tool.value} value={tool.value}>
+                                    <div className="flex flex-col text-left">
+                                        <span className="font-medium text-xs">{tool.label}</span>
+                                        {tool.providerInfo && (
+                                            <span className="text-[10px] text-muted-foreground">
+                                                {tool.providerInfo}
+                                            </span>
+                                        )}
+                                    </div>
+                                </SelectItem>
+                            ))
+                        )}
+                    </SelectContent>
+                </Select>
             )
         }
 
@@ -212,8 +234,16 @@ export function ConfigPanel({
                     toolsService.listTools(undefined, "published", 0, 100),
                 ])
 
-                setModels(modelsRes.models.map(m => ({ value: m.id, label: m.name })))
-                setTools(toolsRes.tools.map(t => ({ value: t.id, label: t.name })))
+                setModels(modelsRes.models.map(m => ({
+                    value: m.id,
+                    label: m.name,
+                    providerInfo: `${m.providers?.[0]?.provider} • ${m.providers?.[0]?.provider_model_id}`
+                })))
+                setTools(toolsRes.tools.map(t => ({
+                    value: t.id,
+                    label: t.name,
+                    providerInfo: t.implementation_type
+                })))
             } catch (error) {
                 console.error("Failed to load resources:", error)
             } finally {

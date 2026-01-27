@@ -1,26 +1,27 @@
 """
 Pipeline Compiler - Compiles visual pipelines to executable form.
 
-Uses Pydantic models for compilation artifacts instead of MongoDB models.
+Features:
+- Structural validation (DAG integrity, source/storage nodes)
+- Semantic validation (operator configs, model capabilities)
+- Type compatibility checking between operators
+- Topological sorting for execution order
+- Immutable execution plan generation with version locking
 """
-from typing import Dict, List, Optional, Any, Set, Tuple
+from typing import Dict, List, Optional, Any, Set
 from collections import defaultdict
 from pydantic import BaseModel
 from uuid import UUID
-import enum
+from datetime import datetime
+import hashlib
+import json
 
-
-# Pydantic models for pipeline compilation (replacing MongoDB models)
-
-class OperatorCategory(str, enum.Enum):
-    SOURCE = "source"
-    TRANSFORM = "transform"
-    RETRIEVAL = "retrieval"
-    LLM = "llm"
-    OUTPUT = "output"
-    CONTROL = "control"
-    EMBEDDING = "embedding"
-    STORAGE = "storage"
+from app.rag.pipeline.registry import (
+    OperatorRegistry, 
+    DataType, 
+    OperatorCategory,
+    OperatorSpec,
+)
 
 
 class PipelineNodePosition(BaseModel):
@@ -30,7 +31,7 @@ class PipelineNodePosition(BaseModel):
 
 class PipelineNode(BaseModel):
     id: str
-    category: OperatorCategory
+    category: str  # String to allow flexibility, validated against registry
     operator: str
     position: PipelineNodePosition
     config: Dict[str, Any] = {}
@@ -61,34 +62,56 @@ class VisualPipeline(BaseModel):
 
 
 class ExecutableStep(BaseModel):
+    """A single step in the executable DAG."""
     step_id: str
     operator: str
-    category: OperatorCategory
+    operator_version: str = "1.0.0"  # Locked operator version
+    category: str
     config: Dict[str, Any] = {}
     depends_on: List[str] = []
 
 
 class ExecutablePipeline(BaseModel):
-    """Compiled executable pipeline."""
+    """
+    Compiled executable pipeline.
+    
+    This is an immutable execution plan that captures:
+    - The exact operator versions used
+    - All configuration snapshots
+    - A hash for integrity verification
+    """
     visual_pipeline_id: Optional[UUID] = None
     version: int
     tenant_id: Optional[UUID] = None
     dag: List[ExecutableStep] = []
     config_snapshot: Dict[str, Any] = {}
-    is_valid: bool = True
+    
+    # Immutability fields
+    dag_hash: Optional[str] = None  # SHA-256 of serialized DAG
+    locked_operator_versions: Dict[str, str] = {}
+    compiled_at: Optional[datetime] = None
     compiled_by: Optional[str] = None
+    
+    is_valid: bool = True
 
     class Config:
         from_attributes = True
 
-
-from app.rag.pipeline.registry import OperatorRegistry, DataType
+    def compute_hash(self) -> str:
+        """Compute SHA-256 hash of the DAG for integrity verification."""
+        dag_json = json.dumps(
+            [step.model_dump() for step in self.dag],
+            sort_keys=True,
+            default=str
+        )
+        return hashlib.sha256(dag_json.encode()).hexdigest()
 
 
 class CompilationError(BaseModel):
     code: str
     message: str
     node_id: Optional[str] = None
+    severity: str = "error"  # "error" or "warning"
 
 
 class CompilationResult(BaseModel):
@@ -99,15 +122,32 @@ class CompilationResult(BaseModel):
 
 
 class PipelineCompiler:
+    """
+    Compiles visual pipelines into executable form.
+    
+    The compilation process:
+    1. Normalize the pipeline representation
+    2. Validate structure (DAG, source/storage nodes)
+    3. Validate semantics (operator configs)
+    4. Validate type compatibility
+    5. Topological sort for execution order
+    6. Build immutable execution plan
+    """
 
     def __init__(self, registry: Optional[OperatorRegistry] = None):
         self.registry = registry or OperatorRegistry.get_instance()
 
     def compile(
         self,
-        visual_pipeline: Any,  # Accept any object with the required attributes
-        compiled_by: Optional[str] = None
+        visual_pipeline: Any,
+        compiled_by: Optional[str] = None,
+        tenant_id: Optional[str] = None
     ) -> CompilationResult:
+        """
+        Compile a visual pipeline into an executable pipeline.
+        
+        This is the synchronous version that doesn't validate models.
+        """
         errors: List[CompilationError] = []
         warnings: List[CompilationError] = []
 
@@ -121,25 +161,29 @@ class PipelineCompiler:
             ))
             return CompilationResult(success=False, errors=errors)
 
+        # Structural validation
         structural_errors = self._validate_structure(pipeline)
         errors.extend(structural_errors)
 
         if errors:
             return CompilationResult(success=False, errors=errors)
 
-        semantic_result = self._validate_semantics(pipeline)
+        # Semantic validation
+        semantic_result = self._validate_semantics(pipeline, tenant_id)
         errors.extend(semantic_result["errors"])
         warnings.extend(semantic_result["warnings"])
 
         if errors:
             return CompilationResult(success=False, errors=errors, warnings=warnings)
 
-        compatibility_errors = self._validate_compatibility(pipeline)
+        # Compatibility validation
+        compatibility_errors = self._validate_compatibility(pipeline, tenant_id)
         errors.extend(compatibility_errors)
 
         if errors:
             return CompilationResult(success=False, errors=errors, warnings=warnings)
 
+        # Topological sort
         ordered_steps = self._topological_sort(pipeline)
         if ordered_steps is None:
             errors.append(CompilationError(
@@ -148,19 +192,27 @@ class PipelineCompiler:
             ))
             return CompilationResult(success=False, errors=errors, warnings=warnings)
 
-        dag = self._build_dag(pipeline, ordered_steps)
+        # Build DAG with locked versions
+        dag, locked_versions = self._build_dag(pipeline, ordered_steps, tenant_id)
 
+        # Build config snapshot
         config_snapshot = self._build_config_snapshot(pipeline)
 
+        # Create executable pipeline
         executable = ExecutablePipeline(
             visual_pipeline_id=pipeline.id,
             version=pipeline.version,
             tenant_id=pipeline.tenant_id,
             dag=dag,
             config_snapshot=config_snapshot,
-            is_valid=True,
+            locked_operator_versions=locked_versions,
+            compiled_at=datetime.utcnow(),
             compiled_by=compiled_by,
+            is_valid=True,
         )
+        
+        # Compute integrity hash
+        executable.dag_hash = executable.compute_hash()
 
         return CompilationResult(
             success=True,
@@ -168,6 +220,75 @@ class PipelineCompiler:
             warnings=warnings,
             executable_pipeline=executable,
         )
+
+    async def compile_async(
+        self,
+        visual_pipeline: Any,
+        model_resolver: Any,
+        compiled_by: Optional[str] = None,
+        tenant_id: Optional[str] = None
+    ) -> CompilationResult:
+        """
+        Async compilation with model validation.
+        
+        Validates operators with required_capability against the ModelRegistry:
+        - Model exists and is accessible to tenant
+        - Model has correct capability type
+        - Model is not disabled
+        - Resolves dimension from model metadata
+        """
+        # First run synchronous compilation
+        result = self.compile(visual_pipeline, compiled_by, tenant_id)
+        if not result.success:
+            return result
+        
+        # Validate models for operators with required_capability
+        pipeline = self._normalize_pipeline(visual_pipeline)
+        errors: List[CompilationError] = []
+        warnings: List[CompilationError] = list(result.warnings)
+        
+        # Track resolved dimensions for downstream validation
+        resolved_dimensions: Dict[str, int] = {}
+        
+        for node in pipeline.nodes:
+            spec = self.registry.get(node.operator, tenant_id)
+            if not spec or not spec.required_capability:
+                continue
+            
+            # Get model_id from config
+            model_id = node.config.get("model_id")
+            if not model_id:
+                errors.append(CompilationError(
+                    code="MISSING_MODEL_ID",
+                    message=f"Operator '{node.operator}' requires model_id",
+                    node_id=node.id,
+                ))
+                continue
+            
+            try:
+                # Validate model exists and has correct capability
+                dimension = await model_resolver.get_model_dimension(model_id)
+                resolved_dimensions[node.id] = dimension
+                
+            except Exception as e:
+                errors.append(CompilationError(
+                    code="MODEL_VALIDATION_ERROR",
+                    message=str(e),
+                    node_id=node.id,
+                ))
+        
+        if errors:
+            return CompilationResult(
+                success=False,
+                errors=errors,
+                warnings=warnings,
+            )
+        
+        # Add resolved dimensions to executable config
+        if result.executable_pipeline:
+            result.executable_pipeline.config_snapshot["resolved_dimensions"] = resolved_dimensions
+        
+        return result
 
     def _normalize_pipeline(self, visual_pipeline: Any) -> VisualPipeline:
         """Convert various pipeline representations to our internal model."""
@@ -179,13 +300,7 @@ class PipelineCompiler:
         raw_nodes = getattr(visual_pipeline, 'nodes', []) or []
         for node in raw_nodes:
             if isinstance(node, dict):
-                # Convert category to enum if needed
-                cat = node.get('category', 'transform')
-                if isinstance(cat, str):
-                    try:
-                        cat = OperatorCategory(cat.lower())
-                    except ValueError:
-                        cat = OperatorCategory.TRANSFORM
+                cat = node.get('category', 'chunking')
                 pos = node.get('position', {'x': 0, 'y': 0})
                 nodes.append(PipelineNode(
                     id=node.get('id', ''),
@@ -195,12 +310,9 @@ class PipelineCompiler:
                     config=node.get('config', {}),
                 ))
             elif hasattr(node, 'id'):
-                cat = getattr(node, 'category', OperatorCategory.TRANSFORM)
-                if isinstance(cat, str):
-                    try:
-                        cat = OperatorCategory(cat.lower())
-                    except ValueError:
-                        cat = OperatorCategory.TRANSFORM
+                cat = getattr(node, 'category', 'chunking')
+                if hasattr(cat, 'value'):
+                    cat = cat.value
                 pos = getattr(node, 'position', None)
                 if pos is None:
                     pos = PipelineNodePosition(x=0, y=0)
@@ -247,50 +359,52 @@ class PipelineCompiler:
         )
 
     def _validate_structure(self, pipeline: VisualPipeline) -> List[CompilationError]:
+        """Validate pipeline structure (DAG, required nodes)."""
         errors = []
 
         nodes_by_category: Dict[str, List[PipelineNode]] = defaultdict(list)
         for node in pipeline.nodes:
-            nodes_by_category[node.category.value].append(node)
+            nodes_by_category[node.category].append(node)
 
+        # Check for source nodes
         source_nodes = nodes_by_category.get("source", [])
         if len(source_nodes) == 0:
             errors.append(CompilationError(
                 code="NO_SOURCE",
-                message="Pipeline must have exactly one source node",
-            ))
-        elif len(source_nodes) > 1:
-            errors.append(CompilationError(
-                code="MULTIPLE_SOURCES",
-                message=f"Pipeline has {len(source_nodes)} source nodes, expected 1",
+                message="Pipeline must have at least one source node",
             ))
 
+        # Check for storage nodes (for ingestion pipelines)
         storage_nodes = nodes_by_category.get("storage", [])
-        if len(storage_nodes) == 0:
+        retrieval_nodes = nodes_by_category.get("retrieval", [])
+        
+        # Either storage OR retrieval is required
+        if len(storage_nodes) == 0 and len(retrieval_nodes) == 0:
             errors.append(CompilationError(
-                code="NO_STORAGE",
-                message="Pipeline must have exactly one storage node",
-            ))
-        elif len(storage_nodes) > 1:
-            errors.append(CompilationError(
-                code="MULTIPLE_STORAGE",
-                message=f"Pipeline has {len(storage_nodes)} storage nodes, expected 1",
+                code="NO_OUTPUT",
+                message="Pipeline must have either storage (ingestion) or retrieval (query) nodes",
             ))
 
+        # Check for chunking nodes in ingestion pipelines
+        chunking_nodes = nodes_by_category.get("chunking", [])
+        # Also check legacy "transform" category
         transform_nodes = nodes_by_category.get("transform", [])
-        if len(transform_nodes) == 0:
+        
+        if storage_nodes and len(chunking_nodes) == 0 and len(transform_nodes) == 0:
             errors.append(CompilationError(
-                code="NO_TRANSFORM",
-                message="Pipeline must have at least one transform (chunker) node",
+                code="NO_CHUNKING",
+                message="Ingestion pipeline must have at least one chunking node",
             ))
 
+        # Check for embedding nodes
         embedding_nodes = nodes_by_category.get("embedding", [])
-        if len(embedding_nodes) == 0:
+        if storage_nodes and len(embedding_nodes) == 0:
             errors.append(CompilationError(
                 code="NO_EMBEDDING",
-                message="Pipeline must have at least one embedding node",
+                message="Ingestion pipeline must have at least one embedding node",
             ))
 
+        # Validate edge references
         node_ids = {n.id for n in pipeline.nodes}
         for edge in pipeline.edges:
             if edge.source not in node_ids:
@@ -304,12 +418,14 @@ class PipelineCompiler:
                     message=f"Edge references unknown target node: {edge.target}",
                 ))
 
+        # Build adjacency for reachability check
         adjacency: Dict[str, Set[str]] = defaultdict(set)
         reverse_adjacency: Dict[str, Set[str]] = defaultdict(set)
         for edge in pipeline.edges:
             adjacency[edge.source].add(edge.target)
             reverse_adjacency[edge.target].add(edge.source)
 
+        # Source nodes should not have inputs
         for node in source_nodes:
             if node.id in reverse_adjacency and reverse_adjacency[node.id]:
                 errors.append(CompilationError(
@@ -318,6 +434,7 @@ class PipelineCompiler:
                     node_id=node.id,
                 ))
 
+        # Storage nodes should not have outputs
         for node in storage_nodes:
             if node.id in adjacency and adjacency[node.id]:
                 errors.append(CompilationError(
@@ -326,6 +443,7 @@ class PipelineCompiler:
                     node_id=node.id,
                 ))
 
+        # Check all nodes are reachable from source
         reachable = self._get_reachable_nodes(pipeline, source_nodes)
         for node in pipeline.nodes:
             if node.id not in reachable:
@@ -342,6 +460,7 @@ class PipelineCompiler:
         pipeline: VisualPipeline,
         start_nodes: List[PipelineNode]
     ) -> Set[str]:
+        """Get all nodes reachable from start nodes via BFS."""
         adjacency: Dict[str, Set[str]] = defaultdict(set)
         for edge in pipeline.edges:
             adjacency[edge.source].add(edge.target)
@@ -360,12 +479,17 @@ class PipelineCompiler:
 
         return visited
 
-    def _validate_semantics(self, pipeline: VisualPipeline) -> Dict[str, List[CompilationError]]:
+    def _validate_semantics(
+        self, 
+        pipeline: VisualPipeline,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, List[CompilationError]]:
+        """Validate operator configurations."""
         errors = []
         warnings = []
 
         for node in pipeline.nodes:
-            spec = self.registry.get(node.operator)
+            spec = self.registry.get(node.operator, tenant_id)
             if not spec:
                 errors.append(CompilationError(
                     code="UNKNOWN_OPERATOR",
@@ -374,6 +498,7 @@ class PipelineCompiler:
                 ))
                 continue
 
+            # Validate config against spec
             config_errors = spec.validate_config(node.config)
             for err in config_errors:
                 errors.append(CompilationError(
@@ -382,9 +507,23 @@ class PipelineCompiler:
                     node_id=node.id,
                 ))
 
+            # Check for deprecated operators
+            if spec.deprecated:
+                warnings.append(CompilationError(
+                    code="DEPRECATED_OPERATOR",
+                    message=spec.deprecation_message or f"Operator '{node.operator}' is deprecated",
+                    node_id=node.id,
+                    severity="warning",
+                ))
+
         return {"errors": errors, "warnings": warnings}
 
-    def _validate_compatibility(self, pipeline: VisualPipeline) -> List[CompilationError]:
+    def _validate_compatibility(
+        self, 
+        pipeline: VisualPipeline,
+        tenant_id: Optional[str] = None
+    ) -> List[CompilationError]:
+        """Validate type compatibility between connected operators."""
         errors = []
 
         node_map = {n.id: n for n in pipeline.nodes}
@@ -398,7 +537,8 @@ class PipelineCompiler:
 
             compatible, reason = self.registry.check_compatibility(
                 source_node.operator,
-                target_node.operator
+                target_node.operator,
+                tenant_id
             )
 
             if not compatible:
@@ -408,19 +548,10 @@ class PipelineCompiler:
                     node_id=edge.source,
                 ))
 
-        embedding_node = None
-        storage_node = None
-        for node in pipeline.nodes:
-            spec = self.registry.get(node.operator)
-            if spec:
-                if spec.category == "embedding" and spec.dimension:
-                    embedding_node = (node, spec)
-                elif spec.category == "storage":
-                    storage_node = (node, spec)
-
         return errors
 
     def _topological_sort(self, pipeline: VisualPipeline) -> Optional[List[str]]:
+        """Topological sort of pipeline nodes (Kahn's algorithm)."""
         adjacency: Dict[str, List[str]] = defaultdict(list)
         in_degree: Dict[str, int] = {n.id: 0 for n in pipeline.nodes}
 
@@ -441,16 +572,19 @@ class PipelineCompiler:
                     queue.append(neighbor)
 
         if len(result) != len(pipeline.nodes):
-            return None
+            return None  # Cycle detected
 
         return result
 
     def _build_dag(
         self,
         pipeline: VisualPipeline,
-        ordered_node_ids: List[str]
-    ) -> List[ExecutableStep]:
+        ordered_node_ids: List[str],
+        tenant_id: Optional[str] = None
+    ) -> tuple[List[ExecutableStep], Dict[str, str]]:
+        """Build the executable DAG with locked operator versions."""
         node_map = {n.id: n for n in pipeline.nodes}
+        locked_versions: Dict[str, str] = {}
 
         reverse_adjacency: Dict[str, List[str]] = defaultdict(list)
         for edge in pipeline.edges:
@@ -459,22 +593,31 @@ class PipelineCompiler:
         dag = []
         for node_id in ordered_node_ids:
             node = node_map[node_id]
+            
+            # Get operator version
+            spec = self.registry.get(node.operator, tenant_id)
+            version = spec.version if spec else "1.0.0"
+            locked_versions[node.operator] = version
+            
             step = ExecutableStep(
                 step_id=node_id,
                 operator=node.operator,
+                operator_version=version,
                 category=node.category,
                 config=node.config,
                 depends_on=reverse_adjacency.get(node_id, []),
             )
             dag.append(step)
 
-        return dag
+        return dag, locked_versions
 
     def _build_config_snapshot(self, pipeline: VisualPipeline) -> Dict[str, Any]:
+        """Build a configuration snapshot for audit purposes."""
         return {
             "name": pipeline.name,
             "description": pipeline.description,
             "node_count": len(pipeline.nodes),
             "edge_count": len(pipeline.edges),
             "operators": [n.operator for n in pipeline.nodes],
+            "categories": list(set(n.category for n in pipeline.nodes)),
         }

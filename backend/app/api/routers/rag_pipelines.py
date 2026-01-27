@@ -14,6 +14,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.session import get_db
+from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.identity import User, Tenant, OrgMembership
 from app.db.postgres.models.rag import (
     VisualPipeline,
@@ -21,20 +22,89 @@ from app.db.postgres.models.rag import (
     PipelineJob,
     PipelineJobStatus,
     OperatorCategory,
+    CustomOperator,
+    PipelineStepExecution,
+    PipelineStepStatus,
+)
+from app.rag.pipeline.registry import (
+    OperatorRegistry,
+    OperatorSpec,
+    ConfigFieldSpec,
+    ConfigFieldType,
+    DataType,
 )
 from app.db.postgres.models.rbac import Action, ResourceType, ActorType
 from app.api.routers.auth import get_current_user
 from app.core.rbac import check_permission
 from app.core.audit import log_simple_action
 from app.rag.pipeline import PipelineCompiler, OperatorRegistry
-
+from app.rag.pipeline.executor import PipelineExecutor
+from fastapi import BackgroundTasks
 
 router = APIRouter()
+
+
+async def run_pipeline_job_background(job_id: UUID):
+    """Execute pipeline job in background with its own DB session."""
+    async with sessionmaker() as session:
+        executor = PipelineExecutor(session)
+        await executor.execute_job(job_id)
+
 
 
 # =============================================================================
 # Helpers
 # =============================================================================
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+async def sync_custom_operators(db: AsyncSession, tenant_id: UUID):
+    """Fetch custom operators from DB and register them in the registry."""
+    query = select(CustomOperator).where(CustomOperator.tenant_id == tenant_id, CustomOperator.is_active == True)
+    result = await db.execute(query)
+    custom_ops = result.scalars().all()
+    
+    registry = OperatorRegistry.get_instance()
+    specs = []
+    for op in custom_ops:
+        required_config = []
+        optional_config = []
+        
+        if op.config_schema:
+            for field in op.config_schema:
+                try:
+                    spec = ConfigFieldSpec(**field)
+                    if spec.required:
+                        required_config.append(spec)
+                    else:
+                        optional_config.append(spec)
+                except Exception as e:
+                    print(f"Error parsing config field for {op.name}: {e}")
+                    continue
+
+        try:
+            op_spec = OperatorSpec(
+                operator_id=op.name,
+                display_name=op.display_name,
+                category=op.category, 
+                version=op.version,
+                description=op.description,
+                input_type=op.input_type,
+                output_type=op.output_type,
+                required_config=required_config,
+                optional_config=optional_config,
+                is_custom=True,
+                python_code=op.python_code,
+                author=str(op.created_by) if op.created_by else None,
+            )
+            specs.append(op_spec)
+        except Exception as e:
+             print(f"Error creating OperatorSpec for {op.name}: {e}")
+        
+    registry.load_custom_operators(specs, str(tenant_id))
+
 
 async def get_pipeline_context(
     tenant_slug: Optional[str] = None,
@@ -186,24 +256,67 @@ def job_to_dict(j: PipelineJob) -> Dict[str, Any]:
 
 @router.get("/catalog")
 async def get_operator_catalog(
+    tenant_slug: Optional[str] = None,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get operator catalog."""
     registry = OperatorRegistry.get_instance()
+    
+    if tenant_slug:
+        result = await db.execute(select(Tenant).where(Tenant.slug == tenant_slug))
+        tenant = result.scalar_one_or_none()
+        if tenant:
+             await sync_custom_operators(db, tenant.id)
+             return registry.get_catalog(str(tenant.id))
+            
     return registry.get_catalog()
+
 
 
 @router.get("/operators/{operator_id}")
 async def get_operator_spec(
     operator_id: str,
+    tenant_slug: Optional[str] = None,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get operator specification."""
     registry = OperatorRegistry.get_instance()
-    spec = registry.get(operator_id)
+    tenant_id = None
+    
+    if tenant_slug:
+        result = await db.execute(select(Tenant).where(Tenant.slug == tenant_slug))
+        tenant = result.scalar_one_or_none()
+        if tenant:
+             await sync_custom_operators(db, tenant.id)
+             tenant_id = str(tenant.id)
+    
+    spec = registry.get(operator_id, tenant_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Operator not found")
     return spec.model_dump()
+
+
+@router.get("/operators")
+async def list_operator_specs(
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all operator specifications."""
+    registry = OperatorRegistry.get_instance()
+    tenant_id = None
+    
+    if tenant_slug:
+        result = await db.execute(select(Tenant).where(Tenant.slug == tenant_slug))
+        tenant = result.scalar_one_or_none()
+        if tenant:
+             await sync_custom_operators(db, tenant.id)
+             tenant_id = str(tenant.id)
+    
+    specs = registry.list_all(tenant_id)
+    return {spec.operator_id: spec.model_dump() for spec in specs}
 
 
 @router.get("/visual-pipelines")
@@ -247,8 +360,8 @@ async def create_visual_pipeline(
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # Convert nodes and edges to JSONB
-    nodes = [n.model_dump() for n in request.nodes]
-    edges = [e.model_dump() for e in request.edges]
+    nodes = [n.model_dump(mode='json') for n in request.nodes]
+    edges = [e.model_dump(mode='json') for e in request.edges]
 
     org_unit_id = request.org_unit_id
 
@@ -345,9 +458,9 @@ async def update_visual_pipeline(
     if request.description is not None:
         pipeline.description = request.description
     if request.nodes is not None:
-        pipeline.nodes = [n.model_dump() for n in request.nodes]
+        pipeline.nodes = [n.model_dump(mode='json') for n in request.nodes]
     if request.edges is not None:
-        pipeline.edges = [e.model_dump() for e in request.edges]
+        pipeline.edges = [e.model_dump(mode='json') for e in request.edges]
 
     pipeline.updated_at = datetime.utcnow()
 
@@ -439,6 +552,9 @@ async def compile_pipeline(
     if not pipeline:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
+    # Sync custom operators
+    await sync_custom_operators(db, tenant.id)
+
     # Create a mock VisualPipeline object for the compiler
     # (The compiler expects the old MongoDB model format)
     class MockVisualPipeline:
@@ -456,7 +572,7 @@ async def compile_pipeline(
     
     try:
         compiler = PipelineCompiler()
-        compile_result = compiler.compile(mock_pipeline, compiled_by=str(user.id))
+        compile_result = compiler.compile(mock_pipeline, compiled_by=str(user.id), tenant_id=str(tenant.id))
     except Exception as e:
         return {
             "success": False,
@@ -476,7 +592,7 @@ async def compile_pipeline(
         visual_pipeline_id=pipeline.id,
         tenant_id=pipeline.tenant_id,
         version=pipeline.version,
-        compiled_graph=compile_result.executable_pipeline.model_dump() if hasattr(compile_result.executable_pipeline, 'model_dump') else {},
+        compiled_graph=compile_result.executable_pipeline.model_dump(mode='json') if hasattr(compile_result.executable_pipeline, 'model_dump') else {},
         is_valid=True,
         compiled_by=user.id,
     )
@@ -573,6 +689,7 @@ async def get_executable_pipeline(
 async def create_pipeline_job(
     request: CreateJobRequest,
     http_request: Request,
+    background_tasks: BackgroundTasks,
     tenant_slug: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -620,6 +737,9 @@ async def create_pipeline_job(
         resource_name=f"Pipeline Job (exec: {request.executable_pipeline_id})",
         request=http_request,
     )
+
+    # Trigger background execution
+    background_tasks.add_task(run_pipeline_job_background, job.id)
 
     return {
         "job_id": str(job.id),
@@ -694,3 +814,48 @@ async def get_pipeline_job(
         raise HTTPException(status_code=404, detail="Job not found")
 
     return job_to_dict(job)
+
+
+def step_to_dict(s: PipelineStepExecution) -> Dict[str, Any]:
+    """Convert PipelineStepExecution model to dict response."""
+    return {
+        "id": str(s.id),
+        "job_id": str(s.job_id),
+        "step_id": s.step_id,
+        "operator_id": s.operator_id,
+        "status": s.status,
+        "input_data": s.input_data,
+        "output_data": s.output_data,
+        "metadata": s.metadata_,
+        "error_message": s.error_message,
+        "execution_order": s.execution_order,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "started_at": s.started_at.isoformat() if s.started_at else None,
+        "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+    }
+
+
+@router.get("/jobs/{job_id}/steps")
+async def list_job_steps(
+    job_id: UUID,
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List execution steps for a job."""
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+    
+    # Check permissions (same as job read)
+    job = await db.get(PipelineJob, job_id)
+    if not job:
+         raise HTTPException(status_code=404, detail="Job not found")
+         
+    if tenant and job.tenant_id != tenant.id:
+         raise HTTPException(status_code=404, detail="Job not found")
+
+    # Fetch steps
+    query = select(PipelineStepExecution).where(PipelineStepExecution.job_id == job_id).order_by(PipelineStepExecution.execution_order)
+    result = await db.execute(query)
+    steps = result.scalars().all()
+    
+    return {"steps": [step_to_dict(s) for s in steps]}

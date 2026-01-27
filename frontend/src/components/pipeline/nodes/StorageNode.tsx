@@ -12,12 +12,6 @@ function StorageNodeComponent(props: NodeProps) {
     <BaseNode
       {...props}
       data={data}
-      icon={
-        <Database
-          className="h-4 w-4"
-          style={{ color: CATEGORY_COLORS.storage }}
-        />
-      }
     />
   )
 }

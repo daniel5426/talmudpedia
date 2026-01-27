@@ -12,7 +12,8 @@ import {
   RAGJob,
   JobProgress,
   VisualPipeline,
-  PipelineJob
+  PipelineJob,
+  OperatorCatalog
 } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -422,7 +423,7 @@ export default function RAGAdminPage() {
   const [jobs, setJobs] = useState<RAGJob[]>([])
   const [pipelines, setPipelines] = useState<VisualPipeline[]>([])
   const [pipelineJobs, setPipelineJobs] = useState<PipelineJob[]>([])
-  const [operatorCatalog, setOperatorCatalog] = useState<any>(null)
+  const [operatorCatalog, setOperatorCatalog] = useState<OperatorCatalog | null>(null)
   const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([])
   const [loading, setLoading] = useState(true)
   const [activeJobIds, setActiveJobIds] = useState<string[]>([])
@@ -444,6 +445,7 @@ export default function RAGAdminPage() {
       setOrgUnits(unitsData)
       setPipelines(pipelinesData.pipelines)
       setPipelineJobs(pipelineJobsData.jobs)
+
       setOperatorCatalog(catalogData)
     } catch (error) {
       console.error("Failed to fetch RAG data", error)
@@ -476,7 +478,6 @@ export default function RAGAdminPage() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <CustomBreadcrumb items={[
-              { label: "Dashboard", href: "/admin/dashboard" },
               { label: "RAG Management", href: "/admin/rag", active: true },
             ]} />
           </div>
@@ -844,7 +845,7 @@ export default function RAGAdminPage() {
                           </CardHeader>
                           <CardContent>
                             <div className="grid gap-2">
-                              {operatorCatalog.source.map((op: any) => (
+                              {(operatorCatalog.source || []).map((op: any) => (
                                 <div key={op.operator_id} className="p-3 border rounded-lg flex items-center justify-between">
                                   <div>
                                     <div className="font-medium">{op.display_name}</div>
@@ -861,19 +862,26 @@ export default function RAGAdminPage() {
                           <CardHeader>
                             <CardTitle className="text-base flex items-center gap-2">
                               <Scissors className="h-4 w-4" />
-                              Transform Operators
+                              Transform & Custom
                             </CardTitle>
-                            <CardDescription>Document chunking and processing strategies</CardDescription>
+                            <CardDescription>Processing, enrichment, and custom operators</CardDescription>
                           </CardHeader>
                           <CardContent>
                             <div className="grid gap-2">
-                              {operatorCatalog.transform.map((op: any) => (
+                              {[
+                                ...(operatorCatalog.transform || []),
+                                ...(operatorCatalog.normalization || []),
+                                ...(operatorCatalog.enrichment || []),
+                                ...(operatorCatalog.chunking || []),
+                                ...(operatorCatalog.reranking || []),
+                                ...(operatorCatalog.custom || [])
+                              ].map((op: any) => (
                                 <div key={op.operator_id} className="p-3 border rounded-lg flex items-center justify-between">
                                   <div>
                                     <div className="font-medium">{op.display_name}</div>
                                     <div className="text-xs text-muted-foreground">Input: {op.input_type} | Output: {op.output_type}</div>
                                   </div>
-                                  <Badge variant="outline">Transform</Badge>
+                                  <Badge variant="outline">{op.category || "Transform"}</Badge>
                                 </div>
                               ))}
                             </div>
@@ -890,7 +898,7 @@ export default function RAGAdminPage() {
                           </CardHeader>
                           <CardContent>
                             <div className="grid gap-2">
-                              {operatorCatalog.embedding.map((op: any) => (
+                              {(operatorCatalog.embedding || []).map((op: any) => (
                                 <div key={op.operator_id} className="p-3 border rounded-lg flex items-center justify-between">
                                   <div>
                                     <div className="font-medium">{op.display_name}</div>
@@ -913,7 +921,7 @@ export default function RAGAdminPage() {
                           </CardHeader>
                           <CardContent>
                             <div className="grid gap-2">
-                              {operatorCatalog.storage.map((op: any) => (
+                              {(operatorCatalog.storage || []).map((op: any) => (
                                 <div key={op.operator_id} className="p-3 border rounded-lg flex items-center justify-between">
                                   <div>
                                     <div className="font-medium">{op.display_name}</div>

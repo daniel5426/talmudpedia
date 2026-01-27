@@ -11,7 +11,13 @@ import { StorageNode } from "./StorageNode"
 
 export const nodeTypes = {
   source: SourceNode,
+  normalization: TransformNode,
+  enrichment: TransformNode,
+  chunking: TransformNode,
   transform: TransformNode,
   embedding: EmbeddingNode,
   storage: StorageNode,
+  retrieval: SourceNode,
+  reranking: TransformNode,
+  custom: EmbeddingNode,
 }

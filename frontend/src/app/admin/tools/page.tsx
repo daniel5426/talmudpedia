@@ -294,7 +294,6 @@ export default function ToolsPage() {
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
                         <CustomBreadcrumb items={[
-                            { label: "Dashboard", href: "/admin/dashboard" },
                             { label: "Tools Registry", href: "/admin/tools", active: true },
                         ]} />
                     </div>

@@ -12,12 +12,6 @@ function EmbeddingNodeComponent(props: NodeProps) {
     <BaseNode
       {...props}
       data={data}
-      icon={
-        <Sparkles
-          className="h-4 w-4"
-          style={{ color: CATEGORY_COLORS.embedding }}
-        />
-      }
     />
   )
 }

@@ -122,7 +122,6 @@ export default function AuditPage() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <CustomBreadcrumb items={[
-              { label: "Dashboard", href: "/admin/dashboard" },
               { label: "Audit Logs", active: true },
             ]} />
           </div>

@@ -13,12 +13,29 @@ import {
   Node,
   ReactFlowProvider,
   useReactFlow,
+  BackgroundVariant,
+  SelectionMode,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { nanoid } from "nanoid"
+import {
+  Trash2,
+  Undo2,
+  Redo2,
+  MousePointer2,
+  Hand,
+  ArrowLeft,
+  Save,
+  Zap,
+  Play,
+  Loader2
+} from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
 import { nodeTypes } from "./nodes"
 import { NodeCatalog } from "./NodeCatalog"
 import { ConfigPanel } from "./ConfigPanel"
+import { cn } from "@/lib/utils"
 import {
   PipelineNodeData,
   OperatorCategory,
@@ -27,43 +44,30 @@ import {
   canConnect,
 } from "./types"
 
-interface OperatorCatalog {
-  source: Array<{
-    operator_id: string
-    display_name: string
-    input_type: DataType
-    output_type: DataType
-    dimension?: number
-  }>
-  transform: Array<{
-    operator_id: string
-    display_name: string
-    input_type: DataType
-    output_type: DataType
-    dimension?: number
-  }>
-  embedding: Array<{
-    operator_id: string
-    display_name: string
-    input_type: DataType
-    output_type: DataType
-    dimension?: number
-  }>
-  storage: Array<{
-    operator_id: string
-    display_name: string
-    input_type: DataType
-    output_type: DataType
-    dimension?: number
-  }>
-}
+type OperatorCatalog = Record<string, Array<{
+  operator_id: string
+  display_name: string
+  input_type: DataType
+  output_type: DataType
+  dimension?: number
+}>>
+
+import { PipelineStepExecution } from "./types"
+import { ExecutionDetailsPanel } from "./ExecutionDetailsPanel"
 
 interface PipelineBuilderProps {
   catalog: OperatorCatalog
   operatorSpecs: Record<string, OperatorSpec>
   initialNodes?: Node<PipelineNodeData>[]
   initialEdges?: Edge[]
+  onChange?: (nodes: Node<PipelineNodeData>[], edges: Edge[]) => void
   onSave?: (nodes: Node<PipelineNodeData>[], edges: Edge[]) => void
+  onAddCustomOperator?: () => void
+  onCompile?: () => void
+  onRun?: () => void
+  isSaving?: boolean
+  isCompiling?: boolean
+  executionSteps?: Record<string, PipelineStepExecution>
 }
 
 function PipelineBuilderInner({
@@ -71,24 +75,100 @@ function PipelineBuilderInner({
   operatorSpecs,
   initialNodes = [],
   initialEdges = [],
+  onChange,
   onSave,
+  onAddCustomOperator,
+  onCompile,
+  onRun,
+  isSaving = false,
+  isCompiling = false,
+  executionSteps,
 }: PipelineBuilderProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, fitView } = useReactFlow()
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [interactionMode, setInteractionMode] = useState<'pan' | 'select'>('pan')
+
+  // History state
+  const [history, setHistory] = useState<{ nodes: Node<PipelineNodeData>[]; edges: Edge[] }[]>([
+    { nodes: initialNodes as Node<PipelineNodeData>[], edges: initialEdges }
+  ])
+  const [historyIndex, setHistoryIndex] = useState(0)
+
+  // Update nodes with execution status
+  useEffect(() => {
+    if (!executionSteps) return
+
+    setNodes((nds) =>
+      nds.map((node) => {
+        const step = executionSteps[node.id]
+        if (step && node.data.executionStatus !== step.status) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              executionStatus: step.status,
+            },
+          }
+        }
+        if (!step && node.data.executionStatus) {
+          const { executionStatus, ...rest } = node.data
+          return {
+            ...node,
+            data: rest
+          }
+        }
+        return node
+      })
+    )
+  }, [executionSteps, setNodes])
+
+  const takeSnapshot = useCallback(() => {
+    const nextState = { nodes: [...nodes] as Node<PipelineNodeData>[], edges: [...edges] }
+    setHistory(prev => {
+      const nextHistory = prev.slice(0, historyIndex + 1)
+      // Only add if different from last state
+      const last = nextHistory[nextHistory.length - 1]
+      if (last && JSON.stringify(last) === JSON.stringify(nextState)) {
+        return nextHistory
+      }
+      return [...nextHistory, nextState]
+    })
+    setHistoryIndex(prev => prev + 1)
+  }, [nodes, edges, historyIndex])
+
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      const prevState = history[historyIndex - 1]
+      setNodes(prevState.nodes)
+      setEdges(prevState.edges)
+      setHistoryIndex(historyIndex - 1)
+    }
+  }, [history, historyIndex, setNodes, setEdges])
+
+  const redo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      const nextState = history[historyIndex + 1]
+      setNodes(nextState.nodes)
+      setEdges(nextState.edges)
+      setHistoryIndex(historyIndex + 1)
+    }
+  }, [history, historyIndex, setNodes, setEdges])
 
   useEffect(() => {
-    if (onSave) {
-      onSave(nodes as Node<PipelineNodeData>[], edges)
+    if (onChange) {
+      onChange(nodes as Node<PipelineNodeData>[], edges)
     }
-  }, [nodes, edges, onSave])
+  }, [nodes, edges, onChange])
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) as
     | Node<PipelineNodeData>
     | undefined
+
+  const selectedStepExecution = selectedNodeId && executionSteps ? executionSteps[selectedNodeId] : null
 
   const isValidConnection = useCallback(
     (connection: Edge | Connection) => {
@@ -108,10 +188,14 @@ function PipelineBuilderInner({
   const onConnect = useCallback(
     (params: Connection) => {
       if (isValidConnection(params)) {
-        setEdges((eds) => addEdge({ ...params, id: `e-${nanoid(6)}` }, eds))
+        setEdges((eds) => {
+          const newEdges = addEdge({ ...params, id: `e-${nanoid(6)}`, animated: true }, eds)
+          return newEdges
+        })
+        setTimeout(takeSnapshot, 0)
       }
     },
-    [setEdges, isValidConnection]
+    [setEdges, isValidConnection, takeSnapshot]
   )
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -130,8 +214,11 @@ function PipelineBuilderInner({
 
       if (!operatorId || !category) return
 
-      const catalogItem = catalog[category]?.find(
-        (item) => item.operator_id === operatorId
+      const categoryItems = catalog[category]
+      if (!categoryItems) return
+
+      const catalogItem = categoryItems.find(
+        (item: any) => item.operator_id === operatorId
       )
 
       if (!catalogItem) return
@@ -158,8 +245,9 @@ function PipelineBuilderInner({
       }
 
       setNodes((nds) => [...nds, newNode])
+      setTimeout(takeSnapshot, 0)
     },
-    [catalog, screenToFlowPosition, setNodes]
+    [catalog, screenToFlowPosition, setNodes, takeSnapshot]
   )
 
   const handleDragStart = useCallback(
@@ -212,13 +300,24 @@ function PipelineBuilderInner({
     [setNodes, operatorSpecs]
   )
 
+  const clearCanvas = useCallback(() => {
+    if (confirm("Are you sure you want to clear the canvas?")) {
+      setNodes([])
+      setEdges([])
+      setTimeout(takeSnapshot, 0)
+    }
+  }, [setNodes, setEdges, takeSnapshot])
+
   return (
-    <div className="flex h-full w-full">
-      <div className="w-64 border-r bg-muted/30 shrink-0">
-        <NodeCatalog catalog={catalog} onDragStart={handleDragStart} />
+    <div className="relative flex h-full w-full overflow-hidden bg-background">
+      {/* Floating Operator Catalog Bubble */}
+      <div className="absolute left-3 top-3 bottom-3 w-64 z-40">
+        <div className="h-full rounded-2xl border bg-background/95 backdrop-blur-md flex flex-col overflow-hidden">
+          <NodeCatalog catalog={catalog} onDragStart={handleDragStart} onAddCustomOperator={onAddCustomOperator} />
+        </div>
       </div>
 
-      <div className="flex-1" ref={reactFlowWrapper}>
+      <div className="relative flex-1 bg-muted/40" ref={reactFlowWrapper}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -231,25 +330,149 @@ function PipelineBuilderInner({
           onPaneClick={handlePaneClick}
           isValidConnection={isValidConnection}
           nodeTypes={nodeTypes}
+          defaultEdgeOptions={{ animated: true }}
+          onInit={(instance) => {
+            // Trigger fitView after the flow is fully initialized to ensure edges render correctly
+            setTimeout(() => instance.fitView(), 50)
+          }}
+          panOnDrag={interactionMode === 'pan'}
+          selectionOnDrag={interactionMode === 'select'}
+          selectionMode={SelectionMode.Partial}
+          panOnScroll={interactionMode === 'select'}
+          onNodeDragStop={() => setTimeout(takeSnapshot, 0)}
           fitView
-          snapToGrid
-          snapGrid={[16, 16]}
-          className="bg-background"
+          className="bg-transparent"
         >
-          <Controls />
-          <Background gap={16} size={1} />
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1}
+            className="opacity-100"
+          />
+
+          {/* Custom Bottom Controls - Shadow Removed */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-1.5 bg-background/90 backdrop-blur-md border rounded-2xl">
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("rounded-xl h-10 w-10", interactionMode === 'pan' && "bg-muted")}
+              onClick={() => setInteractionMode('pan')}
+              title="Pan Tool"
+            >
+              <Hand className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("rounded-xl h-10 w-10", interactionMode === 'select' && "bg-muted")}
+              onClick={() => setInteractionMode('select')}
+              title="Selection Tool"
+            >
+              <MousePointer2 className="h-4 w-4" />
+            </Button>
+
+            <Separator orientation="vertical" className="h-6" />
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-xl h-10 w-10"
+              onClick={undo}
+              disabled={historyIndex <= 0}
+              title="Undo"
+            >
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-xl h-10 w-10"
+              onClick={redo}
+              disabled={historyIndex >= history.length - 1}
+              title="Redo"
+            >
+              <Redo2 className="h-4 w-4" />
+            </Button>
+
+            <Separator orientation="vertical" className="h-6" />
+
+            {onSave && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-xl h-10 w-10 text-blue-500 hover:text-blue-600 hover:bg-blue-500/10"
+                onClick={() => onSave(nodes as Node<PipelineNodeData>[], edges)}
+                disabled={isSaving}
+                title="Save Pipeline"
+              >
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              </Button>
+            )}
+
+            {onCompile && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-xl h-10 w-10 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
+                onClick={onCompile}
+                disabled={isCompiling}
+                title="Compile Pipeline"
+              >
+                {isCompiling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+              </Button>
+            )}
+
+            {onRun && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-xl h-10 w-10 text-green-500 hover:text-green-600 hover:bg-green-500/10"
+                onClick={onRun}
+                title="Run Pipeline"
+              >
+                <Play className="h-4 w-4" />
+              </Button>
+            )}
+
+            <Separator orientation="vertical" className="h-6" />
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-xl h-10 w-10 text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={clearCanvas}
+              title="Clear Canvas"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div className="absolute bottom-6 right-6">
+            <Controls className="!static !flex !flex-row !gap-1 !bg-transparent !border-none !shadow-none" />
+          </div>
         </ReactFlow>
       </div>
 
-      {selectedNode && (
-        <div className="w-80 shrink-0">
-          <ConfigPanel
-            nodeId={selectedNode.id}
-            data={selectedNode.data}
-            operatorSpec={operatorSpecs[selectedNode.data.operator]}
-            onConfigChange={handleConfigChange}
-            onClose={() => setSelectedNodeId(null)}
-          />
+      {/* Floating Configuration Bubble or Execution Details */}
+      {(selectedNode || selectedStepExecution) && (
+        <div className="absolute right-3 top-3 bottom-3 w-[400px] z-40 flex flex-col pointer-events-none">
+          <div className="h-fit max-h-full border rounded-2xl bg-background/95 backdrop-blur-md flex flex-col overflow-hidden pointer-events-auto">
+            {selectedStepExecution ? (
+              <ExecutionDetailsPanel
+                step={selectedStepExecution}
+                onClose={() => setSelectedNodeId(null)}
+              />
+            ) : selectedNode ? (
+              <ConfigPanel
+                nodeId={selectedNode.id}
+                data={selectedNode.data}
+                operatorSpec={operatorSpecs[selectedNode.data.operator]}
+                onConfigChange={handleConfigChange}
+                onClose={() => setSelectedNodeId(null)}
+              />
+            ) : null}
+          </div>
         </div>
       )}
     </div>

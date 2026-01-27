@@ -175,7 +175,6 @@ export default function SecurityPage() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <CustomBreadcrumb items={[
-              { label: "Dashboard", href: "/admin/dashboard" },
               { label: "Security & RBAC", active: true },
             ]} />
           </div>

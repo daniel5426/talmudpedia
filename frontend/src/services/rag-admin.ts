@@ -150,11 +150,33 @@ export interface PipelineJob {
   created_at: string;
 }
 
+export interface PipelineStepExecution {
+  id: string;
+  job_id: string;
+  step_id: string;
+  operator_id: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  input_data?: any;
+  output_data?: any;
+  metadata: Record<string, any>;
+  error_message?: string;
+  execution_order: number;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
 export interface OperatorCatalog {
   source: OperatorCatalogItem[];
-  transform: OperatorCatalogItem[];
+  normalization: OperatorCatalogItem[];
+  enrichment: OperatorCatalogItem[];
+  chunking: OperatorCatalogItem[];
   embedding: OperatorCatalogItem[];
   storage: OperatorCatalogItem[];
+  retrieval: OperatorCatalogItem[];
+  reranking: OperatorCatalogItem[];
+  custom: OperatorCatalogItem[];
+  transform: OperatorCatalogItem[];
 }
 
 export interface OperatorCatalogItem {
@@ -187,7 +209,47 @@ export interface OperatorSpec {
   dimension?: number;
 }
 
+export interface CustomOperator {
+  id: string;
+  tenant_id: string;
+  name: string;
+  display_name: string;
+  category: string;
+  description?: string;
+  python_code: string;
+  input_type: string;
+  output_type: string;
+  config_schema?: any[];
+  is_active: boolean;
+  version: string;
+  created_at: string;
+  updated_at: string;
+  created_by?: string;
+}
+
+export interface CustomOperatorTestRequest {
+  python_code: string;
+  input_data: any;
+  config: Record<string, any>;
+  input_type: string;
+  output_type: string;
+}
+
+export interface CustomOperatorTestResponse {
+  success: boolean;
+  data: any;
+  error_message?: string;
+  execution_time_ms: number;
+}
+
 class RAGAdminService {
+  async getJobSteps(jobId: string, tenantSlug?: string): Promise<{ steps: PipelineStepExecution[] }> {
+    const url = tenantSlug
+      ? `/admin/pipelines/jobs/${jobId}/steps?tenant_slug=${tenantSlug}`
+      : `/admin/pipelines/jobs/${jobId}/steps`;
+    return httpClient.get<{ steps: PipelineStepExecution[] }>(url);
+  }
+
   async getStats(tenantSlug?: string): Promise<RAGStats> {
     const url = tenantSlug ? `/admin/rag/stats?tenant_slug=${tenantSlug}` : "/admin/rag/stats";
     return httpClient.get<RAGStats>(url);
@@ -313,12 +375,25 @@ class RAGAdminService {
     return httpClient.post(url, data);
   }
 
-  async getOperatorCatalog(): Promise<OperatorCatalog> {
-    return httpClient.get<OperatorCatalog>("/admin/pipelines/catalog");
+  async getOperatorCatalog(tenantSlug?: string): Promise<OperatorCatalog> {
+    const url = tenantSlug 
+      ? `/admin/pipelines/catalog?tenant_slug=${tenantSlug}` 
+      : "/admin/pipelines/catalog";
+    return httpClient.get<OperatorCatalog>(url);
   }
 
-  async getOperatorSpec(operatorId: string): Promise<OperatorSpec> {
-    return httpClient.get<OperatorSpec>(`/admin/pipelines/operators/${operatorId}`);
+  async getOperatorSpec(operatorId: string, tenantSlug?: string): Promise<OperatorSpec> {
+    const url = tenantSlug
+      ? `/admin/pipelines/operators/${operatorId}?tenant_slug=${tenantSlug}`
+      : `/admin/pipelines/operators/${operatorId}`;
+    return httpClient.get<OperatorSpec>(url);
+  }
+
+  async listOperatorSpecs(tenantSlug?: string): Promise<Record<string, OperatorSpec>> {
+    const url = tenantSlug
+      ? `/admin/pipelines/operators?tenant_slug=${tenantSlug}`
+      : "/admin/pipelines/operators";
+    return httpClient.get<Record<string, OperatorSpec>>(url);
   }
 
   async listVisualPipelines(tenantSlug?: string): Promise<{ pipelines: VisualPipeline[] }> {
@@ -427,6 +502,67 @@ class RAGAdminService {
       ? `/admin/pipelines/jobs/${jobId}?tenant_slug=${tenantSlug}`
       : `/admin/pipelines/jobs/${jobId}`;
     return httpClient.get<PipelineJob>(url);
+  }
+
+  async createCustomOperator(
+    data: {
+      name?: string;
+      display_name: string;
+      category: string;
+      description?: string;
+      python_code: string;
+      input_type: string;
+      output_type: string;
+      config_schema?: any[];
+    },
+    tenantSlug?: string
+  ): Promise<CustomOperator> {
+    const url = tenantSlug
+      ? `/admin/rag/custom-operators?tenant_slug=${tenantSlug}`
+      : "/admin/rag/custom-operators";
+    return httpClient.post(url, data);
+  }
+
+  async listCustomOperators(tenantSlug?: string): Promise<CustomOperator[]> {
+    const url = tenantSlug
+      ? `/admin/rag/custom-operators?tenant_slug=${tenantSlug}`
+      : "/admin/rag/custom-operators";
+    return httpClient.get<CustomOperator[]>(url);
+  }
+
+  async getCustomOperator(id: string, tenantSlug?: string): Promise<CustomOperator> {
+    const url = tenantSlug
+      ? `/admin/rag/custom-operators/${id}?tenant_slug=${tenantSlug}`
+      : `/admin/rag/custom-operators/${id}`;
+    return httpClient.get<CustomOperator>(url);
+  }
+
+  async updateCustomOperator(
+    id: string,
+    data: Partial<Omit<CustomOperator, 'id' | 'tenant_id' | 'created_at' | 'updated_at' | 'created_by'>>,
+    tenantSlug?: string
+  ): Promise<CustomOperator> {
+    const url = tenantSlug
+      ? `/admin/rag/custom-operators/${id}?tenant_slug=${tenantSlug}`
+      : `/admin/rag/custom-operators/${id}`;
+    return httpClient.put(url, data);
+  }
+
+  async deleteCustomOperator(id: string, tenantSlug?: string): Promise<{ status: string }> {
+    const url = tenantSlug
+      ? `/admin/rag/custom-operators/${id}?tenant_slug=${tenantSlug}`
+      : `/admin/rag/custom-operators/${id}`;
+    return httpClient.delete(url);
+  }
+
+  async testCustomOperator(
+    data: CustomOperatorTestRequest,
+    tenantSlug?: string
+  ): Promise<CustomOperatorTestResponse> {
+    const url = tenantSlug
+      ? `/admin/rag/custom-operators/test?tenant_slug=${tenantSlug}`
+      : "/admin/rag/custom-operators/test";
+    return httpClient.post(url, data);
   }
 }
 

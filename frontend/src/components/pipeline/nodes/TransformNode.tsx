@@ -12,12 +12,6 @@ function TransformNodeComponent(props: NodeProps) {
     <BaseNode
       {...props}
       data={data}
-      icon={
-        <Scissors
-          className="h-4 w-4"
-          style={{ color: CATEGORY_COLORS.transform }}
-        />
-      }
     />
   )
 }
