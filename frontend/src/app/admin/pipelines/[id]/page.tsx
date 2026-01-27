@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
-import { useRouter, useParams } from "next/navigation"
+import { useEffect, useState, useCallback, useRef } from "react"
+import { useRouter, useParams, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
 import { ragAdminService, VisualPipeline, OperatorCatalog, OperatorSpec, CompileResult, PipelineStepExecution } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
@@ -45,7 +45,9 @@ export default function PipelineEditorPage() {
     const { currentTenant } = useTenant()
     const router = useRouter()
     const params = useParams()
+    const searchParams = useSearchParams()
     const pipelineId = params.id as string
+    const jobIdParam = searchParams.get("jobId")
     const isNew = pipelineId === "new"
 
     const [loading, setLoading] = useState(true)
@@ -65,26 +67,48 @@ export default function PipelineEditorPage() {
     const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
     const [showCompileDialog, setShowCompileDialog] = useState(false)
     const [isRunDialogOpen, setIsRunDialogOpen] = useState(false)
-    const [runningJobId, setRunningJobId] = useState<string | null>(null)
+    const [runningJobId, setRunningJobId] = useState<string | null>(jobIdParam)
     const [executionSteps, setExecutionSteps] = useState<Record<string, PipelineStepExecution> | undefined>(undefined)
+
+    // Sync runningJobId with URL param if it's missing (e.g. after hydration)
+    useEffect(() => {
+        if (jobIdParam) {
+            setRunningJobId(jobIdParam)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [jobIdParam])
 
     // Fetch all data needed for the editor
     useEffect(() => {
+        if (!currentTenant) return
+
         const fetchData = async () => {
             setLoading(true)
             try {
                 // Always fetch catalog and specs
                 const [catalogRes, specsRes] = await Promise.all([
-                    ragAdminService.getOperatorCatalog(currentTenant?.slug),
-                    ragAdminService.listOperatorSpecs(currentTenant?.slug),
+                    ragAdminService.getOperatorCatalog(currentTenant.slug),
+                    ragAdminService.listOperatorSpecs(currentTenant.slug),
                 ])
                 setCatalog(catalogRes)
                 setOperatorSpecs(specsRes)
 
                 // If editing existing pipeline, fetch it
                 if (!isNew) {
-                    const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant?.slug)
-                    const foundPipeline = pipelinesRes.pipelines.find(p => p.id === pipelineId)
+                    const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant.slug)
+                    let foundPipeline = pipelinesRes.pipelines.find(p => p.id === pipelineId)
+
+                    // If not found, it might be an executable_pipeline_id
+                    if (!foundPipeline) {
+                        try {
+                            const execPipeline = await ragAdminService.getExecutablePipeline(pipelineId, currentTenant.slug)
+                            if (execPipeline?.visual_pipeline_id) {
+                                foundPipeline = pipelinesRes.pipelines.find(p => p.id === execPipeline.visual_pipeline_id)
+                            }
+                        } catch (e) {
+                            console.error("Failed to fetch executable pipeline", e)
+                        }
+                    }
 
                     if (foundPipeline) {
                         setPipeline(foundPipeline)
@@ -93,9 +117,8 @@ export default function PipelineEditorPage() {
 
                         // Convert pipeline data to editor format
                         const nodes: Node<PipelineNodeData>[] = foundPipeline.nodes.map((n: any) => {
-                            const catalogItem = catalogRes?.[n.category as keyof OperatorCatalog]?.find(
-                                (item: any) => item.operator_id === n.operator
-                            )
+                            // Use specsRes for reliable input/output type resolution (handles custom operators)
+                            const spec = specsRes[n.operator]
                             return {
                                 id: n.id,
                                 type: n.category,
@@ -103,15 +126,16 @@ export default function PipelineEditorPage() {
                                 data: {
                                     operator: n.operator,
                                     category: n.category,
-                                    displayName: catalogItem?.display_name || n.operator,
+                                    displayName: spec?.display_name || n.operator,
                                     config: n.config,
-                                    inputType: catalogItem?.input_type || "none",
-                                    outputType: catalogItem?.output_type || "none",
+                                    inputType: spec?.input_type || "none",
+                                    outputType: spec?.output_type || "none",
                                     isConfigured: true,
                                     hasErrors: false,
                                 },
                             }
                         })
+
 
                         const edges: Edge[] = foundPipeline.edges.map((e: any) => ({
                             id: e.id,
@@ -151,10 +175,14 @@ export default function PipelineEditorPage() {
 
                 if (isMounted) {
                     const stepsMap = stepsRes.steps.reduce((acc, s) => ({ ...acc, [s.step_id]: s }), {} as Record<string, PipelineStepExecution>)
-                    setExecutionSteps(stepsMap)
+                    setExecutionSteps(prev => ({
+                        ...(prev || {}),
+                        ...stepsMap
+                    }))
 
                     if (["completed", "failed", "cancelled"].includes(jobRes.status)) {
-                        setRunningJobId(null) // Stop polling
+                        // Job finished, but we stay in execution mode to show results
+                        // Polling continues for now (could be optimized)
                     }
                 }
             } catch (error) {
@@ -178,9 +206,32 @@ export default function PipelineEditorPage() {
                 input_params: inputParams
             }, currentTenant?.slug)
 
+            // Update URL with jobId for persistence
+            const newUrl = `${window.location.pathname}?jobId=${res.job_id}`
+            window.history.pushState({}, "", newUrl)
+
             // Start polling
             setRunningJobId(res.job_id)
-            setExecutionSteps({})
+
+            // Optimistically set the source nodes to running so they start spinning immediately
+            const startNodeIds = editorNodes
+                .filter(node => !editorEdges.some(e => e.target === node.id))
+                .map(node => node.id)
+
+            const initialSteps = startNodeIds.reduce((acc, nodeId) => ({
+                ...acc,
+                [nodeId]: {
+                    status: 'running',
+                    step_id: nodeId,
+                    id: 'optimistic',
+                    job_id: res.job_id,
+                    operator_id: editorNodes.find(n => n.id === nodeId)?.data.operator || '',
+                    metadata: {},
+                    execution_order: 0,
+                    created_at: new Date().toISOString()
+                } as PipelineStepExecution
+            }), {})
+            setExecutionSteps(initialSteps)
 
             // alert("Pipeline job started!") // Remove alert to be less intrusive
         } catch (e) {
@@ -196,6 +247,13 @@ export default function PipelineEditorPage() {
         },
         []
     )
+
+    const handleExitExecutionMode = useCallback(() => {
+        setRunningJobId(null)
+        setExecutionSteps(undefined)
+        // Clear jobId from URL ensuring searchParams update
+        router.replace(window.location.pathname, { scroll: false })
+    }, [router])
 
     const handleSave = async () => {
         if (!pipelineName.trim()) {
@@ -366,6 +424,8 @@ export default function PipelineEditorPage() {
                     isSaving={saving}
                     isCompiling={compiling}
                     executionSteps={executionSteps}
+                    isExecutionMode={!!runningJobId}
+                    onExitExecutionMode={handleExitExecutionMode}
                 />
             </div>
 

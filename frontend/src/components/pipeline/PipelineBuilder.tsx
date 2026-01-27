@@ -28,7 +28,9 @@ import {
   Save,
   Zap,
   Play,
-  Loader2
+  Loader2,
+  LayoutPanelLeft,
+  ChevronRight
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -54,6 +56,7 @@ type OperatorCatalog = Record<string, Array<{
 
 import { PipelineStepExecution } from "./types"
 import { ExecutionDetailsPanel } from "./ExecutionDetailsPanel"
+import { ExecutionDetailsSkeleton } from "./ExecutionDetailsSkeleton"
 
 interface PipelineBuilderProps {
   catalog: OperatorCatalog
@@ -68,6 +71,8 @@ interface PipelineBuilderProps {
   isSaving?: boolean
   isCompiling?: boolean
   executionSteps?: Record<string, PipelineStepExecution>
+  isExecutionMode?: boolean
+  onExitExecutionMode?: () => void
 }
 
 function PipelineBuilderInner({
@@ -83,8 +88,21 @@ function PipelineBuilderInner({
   isSaving = false,
   isCompiling = false,
   executionSteps,
+  isExecutionMode = false,
+  onExitExecutionMode,
 }: PipelineBuilderProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
+  const [isCatalogVisible, setIsCatalogVisible] = useState(!isExecutionMode)
+  const prevExecutionMode = useRef(isExecutionMode)
+
+  // Sync catalog visibility when execution mode changes
+  useEffect(() => {
+    if (prevExecutionMode.current !== isExecutionMode) {
+      setIsCatalogVisible(!isExecutionMode)
+      prevExecutionMode.current = isExecutionMode
+    }
+  }, [isExecutionMode])
+
   const { screenToFlowPosition, fitView } = useReactFlow()
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
@@ -98,8 +116,23 @@ function PipelineBuilderInner({
   ])
   const [historyIndex, setHistoryIndex] = useState(0)
 
-  // Update nodes with execution status
+
+  // Update nodes with execution status (or clear when exiting execution mode)
   useEffect(() => {
+    // Clear execution status when not in execution mode
+    if (!isExecutionMode) {
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.data.executionStatus) {
+            const { executionStatus, ...rest } = node.data
+            return { ...node, data: rest }
+          }
+          return node
+        })
+      )
+      return
+    }
+
     if (!executionSteps) return
 
     setNodes((nds) =>
@@ -114,17 +147,10 @@ function PipelineBuilderInner({
             },
           }
         }
-        if (!step && node.data.executionStatus) {
-          const { executionStatus, ...rest } = node.data
-          return {
-            ...node,
-            data: rest
-          }
-        }
         return node
       })
     )
-  }, [executionSteps, setNodes])
+  }, [isExecutionMode, executionSteps, setNodes])
 
   const takeSnapshot = useCallback(() => {
     const nextState = { nodes: [...nodes] as Node<PipelineNodeData>[], edges: [...edges] }
@@ -310,12 +336,42 @@ function PipelineBuilderInner({
 
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
-      {/* Floating Operator Catalog Bubble */}
-      <div className="absolute left-3 top-3 bottom-3 w-64 z-40">
-        <div className="h-full rounded-2xl border bg-background/95 backdrop-blur-md flex flex-col overflow-hidden">
-          <NodeCatalog catalog={catalog} onDragStart={handleDragStart} onAddCustomOperator={onAddCustomOperator} />
+      {/* Floating Operator Catalog Bubble - with sliding animation */}
+      <div
+        className={cn(
+          "absolute left-3 top-3 bottom-3 w-64 z-40 transition-all duration-500 ease-in-out",
+          !isCatalogVisible ? "-translate-x-[calc(100%+24px)]" : "translate-x-0"
+        )}
+      >
+        <div className="relative h-full rounded-2xl border bg-background/95 backdrop-blur-md flex flex-col overflow-hidden">
+          <NodeCatalog
+            catalog={catalog}
+            onDragStart={handleDragStart}
+            onAddCustomOperator={onAddCustomOperator}
+            onClose={() => setIsCatalogVisible(false)}
+          />
         </div>
       </div>
+
+      {/* Toggle Button when catalog is hidden */}
+      {!isCatalogVisible && (
+        <div className="absolute left-3 top-3 z-50">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 rounded-xl shadow-none backdrop-blur-md border border-1 hover:bg-muted"
+            onClick={() => {
+              if (isExecutionMode && onExitExecutionMode) {
+                onExitExecutionMode()
+              }
+              setIsCatalogVisible(true)
+            }}
+            title={isExecutionMode ? "Exit Execution Mode" : "Show Catalog"}
+          >
+            <LayoutPanelLeft className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       <div className="relative flex-1 bg-muted/40" ref={reactFlowWrapper}>
         <ReactFlow
@@ -457,12 +513,14 @@ function PipelineBuilderInner({
       {/* Floating Configuration Bubble or Execution Details */}
       {(selectedNode || selectedStepExecution) && (
         <div className="absolute right-3 top-3 bottom-3 w-[400px] z-40 flex flex-col pointer-events-none">
-          <div className="h-fit max-h-full border rounded-2xl bg-background/95 backdrop-blur-md flex flex-col overflow-hidden pointer-events-auto">
+          <div className="h-full border rounded-2xl bg-background/95 backdrop-blur-md flex flex-col overflow-hidden pointer-events-auto">
             {selectedStepExecution ? (
               <ExecutionDetailsPanel
                 step={selectedStepExecution}
                 onClose={() => setSelectedNodeId(null)}
               />
+            ) : isExecutionMode && selectedNode ? (
+              <ExecutionDetailsSkeleton onClose={() => setSelectedNodeId(null)} />
             ) : selectedNode ? (
               <ConfigPanel
                 nodeId={selectedNode.id}

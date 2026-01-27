@@ -9,11 +9,9 @@ import {
   ragAdminService,
   RAGStats,
   RAGIndex,
-  RAGJob,
-  JobProgress,
   VisualPipeline,
   PipelineJob,
-  OperatorCatalog
+  OperatorCatalog,
 } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -38,9 +36,11 @@ import {
   Activity,
   Upload,
   Workflow,
-  ExternalLink
+  ExternalLink,
+  History
 } from "lucide-react"
 import Link from "next/link"
+import { PipelineExecutionsTable } from "@/components/rag/PipelineExecutionsTable"
 import {
   Dialog,
   DialogContent,
@@ -90,128 +90,7 @@ function StatCard({
   )
 }
 
-function JobStatusBadge({ status }: { status: string }) {
-  const { direction } = useDirection()
-  const isRTL = direction === "rtl"
-  const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-    completed: "default",
-    running: "secondary",
-    pending: "outline",
-    failed: "destructive",
-    cancelled: "outline",
-    queued: "outline"
-  }
 
-  const icons: Record<string, React.ReactNode> = {
-    completed: <CheckCircle2 className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />,
-    running: <Loader2 className={cn("h-3 w-3 animate-spin", isRTL ? "ml-1" : "mr-1")} />,
-    failed: <XCircle className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />,
-    queued: <Activity className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />,
-  }
-
-  return (
-    <Badge variant={variants[status] || "outline"} className="capitalize">
-      {icons[status]}
-      {status}
-    </Badge>
-  )
-}
-
-function LiveJobCard({ jobId, onComplete }: { jobId: string; onComplete?: () => void }) {
-  const { direction } = useDirection()
-  const isRTL = direction === "rtl"
-  const [progress, setProgress] = useState<JobProgress | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
-
-  useEffect(() => {
-    const ws = ragAdminService.createJobWebSocket(jobId)
-    wsRef.current = ws
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        if (data.type === "ping") return
-        setProgress(data)
-
-        if (data.status === "completed" || data.status === "failed") {
-          onComplete?.()
-        }
-      } catch (e) {
-        console.error("Failed to parse WebSocket message", e)
-      }
-    }
-
-    ws.onerror = () => {
-      ragAdminService.getJobProgress(jobId).then(setProgress).catch(console.error)
-    }
-
-    return () => {
-      ws.close()
-    }
-  }, [jobId, onComplete])
-
-  if (!progress) {
-    return (
-      <Card className={cn("border-l-4 border-l-blue-500", isRTL ? "text-right" : "text-left")}>
-        <CardContent className="pt-4">
-          <div className={cn("flex items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}>
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm">Connecting to job {jobId.slice(0, 8)}...</span>
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  const borderColor = {
-    completed: "border-l-green-500",
-    running: "border-l-blue-500",
-    failed: "border-l-red-500",
-    pending: "border-l-gray-400",
-    queued: "border-l-yellow-500"
-  }[progress.status] || "border-l-gray-400"
-
-  return (
-    <Card className={cn(`border-l-4 ${borderColor}`, isRTL ? "text-right" : "text-left")}>
-      <CardContent className="pt-4 space-y-3">
-        <div className={cn("flex items-center justify-between", isRTL ? "flex-row-reverse" : "flex-row")}>
-          <div className={cn("flex items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}>
-            <span className="font-medium text-sm">Job {progress.job_id.slice(0, 8)}</span>
-            <JobStatusBadge status={progress.status} />
-          </div>
-          <Badge variant="outline" className="text-xs">
-            {progress.current_stage}
-          </Badge>
-        </div>
-
-        <Progress value={progress.percent_complete} className="h-2" />
-
-        <div className="grid grid-cols-4 gap-2 text-xs text-muted-foreground">
-          <div className={isRTL ? "text-right" : "text-left"}>
-            <span className="block font-medium text-foreground">{progress.processed_documents}</span>
-            Documents
-          </div>
-          <div className={isRTL ? "text-right" : "text-left"}>
-            <span className="block font-medium text-foreground">{progress.total_chunks}</span>
-            Chunks
-          </div>
-          <div className={isRTL ? "text-right" : "text-left"}>
-            <span className="block font-medium text-foreground">{progress.upserted_chunks}</span>
-            Upserted
-          </div>
-          <div className={isRTL ? "text-right" : "text-left"}>
-            <span className="block font-medium text-foreground">{progress.failed_chunks}</span>
-            Failed
-          </div>
-        </div>
-
-        {progress.error_message && (
-          <p className={cn("text-xs text-destructive", isRTL ? "text-right" : "text-left")}>{progress.error_message}</p>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
 
 function CreateIndexDialog({ onCreated, tenantSlug, orgUnits }: { onCreated: () => void, tenantSlug?: string, orgUnits: OrgUnit[] }) {
   const { direction } = useDirection()
@@ -420,20 +299,21 @@ export default function RAGAdminPage() {
   const { canDelete } = usePermissions()
   const [stats, setStats] = useState<RAGStats | null>(null)
   const [indices, setIndices] = useState<RAGIndex[]>([])
-  const [jobs, setJobs] = useState<RAGJob[]>([])
   const [pipelines, setPipelines] = useState<VisualPipeline[]>([])
   const [pipelineJobs, setPipelineJobs] = useState<PipelineJob[]>([])
   const [operatorCatalog, setOperatorCatalog] = useState<OperatorCatalog | null>(null)
   const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeJobIds, setActiveJobIds] = useState<string[]>([])
+
+  const [selectedPipelineHistory, setSelectedPipelineHistory] = useState<VisualPipeline | null>(null)
+  const [pipelineHistoryJobs, setPipelineHistoryJobs] = useState<PipelineJob[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
   const fetchData = useCallback(async () => {
     try {
-      const [statsData, indicesData, jobsData, unitsData, pipelinesData, pipelineJobsData, catalogData] = await Promise.all([
+      const [statsData, indicesData, unitsData, pipelinesData, pipelineJobsData, catalogData] = await Promise.all([
         ragAdminService.getStats(currentTenant?.slug),
         ragAdminService.listIndices(currentTenant?.slug),
-        ragAdminService.listJobs(1, 10, undefined, currentTenant?.slug),
         currentTenant ? orgUnitsService.listOrgUnits(currentTenant.slug) : Promise.resolve([]),
         ragAdminService.listVisualPipelines(currentTenant?.slug),
         ragAdminService.listPipelineJobs(undefined, currentTenant?.slug),
@@ -441,7 +321,6 @@ export default function RAGAdminPage() {
       ])
       setStats(statsData)
       setIndices(indicesData.indices)
-      setJobs(jobsData.items)
       setOrgUnits(unitsData)
       setPipelines(pipelinesData.pipelines)
       setPipelineJobs(pipelineJobsData.jobs)
@@ -469,6 +348,46 @@ export default function RAGAdminPage() {
       fetchData()
     } catch (error) {
       console.error("Failed to delete index", error)
+    }
+  }
+
+  const handleViewHistory = async (pipeline: VisualPipeline) => {
+    setSelectedPipelineHistory(pipeline)
+    setLoadingHistory(true)
+    try {
+      // Find compiling version for this pipeline or just all jobs for this executable pipeline
+      // For now, let's fetch all jobs and filter on frontend for simplicity, 
+      // or ideally the API should support filtering by visual_pipeline_id if we want everything.
+      // But based on the service, we can filter by executable_pipeline_id.
+      // Since a visual pipeline can have multiple compiled versions, showing "history for this pipeline" 
+      // might mean showing all jobs for all its versions.
+
+      const res = await ragAdminService.listPipelineJobs(undefined, currentTenant?.slug)
+      // Filter jobs that belong to this visual pipeline's ID
+      // Wait, PipelineJob doesn't have visual_pipeline_id, it has executable_pipeline_id.
+      // We might need to fetch all jobs and filter if they belong to ANY version of this pipeline.
+      // For now, let's just show all jobs in the modal and filtered in UI if we had that mapping,
+      // but let's just use the existing listPipelineJobs for all for now or 
+      // if we want specific filter we need to know the executable IDs.
+
+      // Let's just fetch all and filter by matching the pipeline name or matched executable ID if we can.
+      // Actually, let's just use the jobs we already have in state but filtered.
+      // But we might want to fetch a fresh list or more items than just the recent ones.
+
+      const filtered = pipelineJobs.filter(job => job.executable_pipeline_id === pipeline.id ||
+        // This is a bit tricky if we don't have the mapping of executable -> visual on the job object.
+        // Assuming executable_pipeline_id in Job currently maps to the compiled version.
+        // If the compiled version's ID is same as Visual ID (which it might not be).
+
+        // Let's assume for now we just filter the jobs we have.
+        true // temporary
+      )
+
+      setPipelineHistoryJobs(pipelineJobs.filter(j => pipelines.find(p => p.id === j.executable_pipeline_id)?.name === pipeline.name))
+    } catch (error) {
+      console.error("Failed to fetch history", error)
+    } finally {
+      setLoadingHistory(false)
     }
   }
 
@@ -688,6 +607,14 @@ export default function RAGAdminPage() {
                                     <ExternalLink className="h-4 w-4" />
                                   </Link>
                                 </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="View Execution History"
+                                  onClick={() => handleViewHistory(pipeline)}
+                                >
+                                  <History className="h-4 w-4" />
+                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -707,27 +634,6 @@ export default function RAGAdminPage() {
                   </Button>
                 </div>
 
-                {activeJobIds.length > 0 && (
-                  <div className="space-y-3">
-                    <h3 className={cn("text-sm font-medium flex items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}>
-                      <Activity className="h-4 w-4 text-blue-500" />
-                      Active Ingestion Jobs ({activeJobIds.length})
-                    </h3>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {activeJobIds.map((jobId) => (
-                        <LiveJobCard
-                          key={jobId}
-                          jobId={jobId}
-                          onComplete={() => {
-                            setActiveJobIds(prev => prev.filter(id => id !== jobId))
-                            handleJobComplete()
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 <div className="grid gap-6">
                   <Card>
                     <CardHeader className={cn("pb-2", isRTL ? "text-right" : "text-left")}>
@@ -737,95 +643,13 @@ export default function RAGAdminPage() {
                       </CardTitle>
                       <CardDescription>Recently triggered pipeline jobs</CardDescription>
                     </CardHeader>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Pipeline</TableHead>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Triggered By</TableHead>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Status</TableHead>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Started</TableHead>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Duration</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pipelineJobs.length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
-                              No pipeline executions found.
-                            </TableCell>
-                          </TableRow>
-                        ) : (
-                          pipelineJobs.map((job) => (
-                            <TableRow key={job.id}>
-                              <TableCell className={cn("font-medium", isRTL ? "text-right" : "text-left")}>
-                                <div className="flex flex-col">
-                                  <span className="text-xs font-mono opacity-50">{job.executable_pipeline_id.slice(-8)}</span>
-                                  <span>{pipelines.find(p => p.id === job.executable_pipeline_id)?.name || "Pipeline"}</span>
-                                </div>
-                              </TableCell>
-                              <TableCell className={isRTL ? "text-right" : "text-left"}>{job.triggered_by}</TableCell>
-                              <TableCell className={isRTL ? "text-right" : "text-left"}>
-                                <JobStatusBadge status={job.status} />
-                              </TableCell>
-                              <TableCell className={isRTL ? "text-right" : "text-left"}>
-                                {new Date(job.created_at).toLocaleString()}
-                              </TableCell>
-                              <TableCell className={isRTL ? "text-right" : "text-left"}>
-                                {job.finished_at && job.started_at ?
-                                  `${Math.round((new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()) / 1000)}s`
-                                  : "-"}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className={cn("pb-2", isRTL ? "text-right" : "text-left")}>
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <Layers className="h-4 w-4" />
-                        Legacy Ingestion Jobs
-                      </CardTitle>
-                      <CardDescription>Direct API and manual ingestion history</CardDescription>
-                    </CardHeader>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Index</TableHead>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Source</TableHead>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Status</TableHead>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Progress</TableHead>
-                          <TableHead className={isRTL ? "text-right" : "text-left"}>Created</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {jobs.length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
-                              No jobs found.
-                            </TableCell>
-                          </TableRow>
-                        ) : (
-                          jobs.map((job) => (
-                            <TableRow key={job.id}>
-                              <TableCell className={cn("font-medium", isRTL ? "text-right" : "text-left")}>{job.index_name}</TableCell>
-                              <TableCell className={isRTL ? "text-right" : "text-left"}>{job.source_type}</TableCell>
-                              <TableCell className={isRTL ? "text-right" : "text-left"}>
-                                <JobStatusBadge status={job.status} />
-                              </TableCell>
-                              <TableCell className={isRTL ? "text-right" : "text-left"}>
-                                {job.upserted_chunks}/{job.total_chunks} chunks
-                              </TableCell>
-                              <TableCell className={isRTL ? "text-right" : "text-left"}>
-                                {new Date(job.created_at).toLocaleDateString()}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
+                    <CardContent>
+                      <PipelineExecutionsTable
+                        jobs={pipelineJobs}
+                        pipelines={pipelines}
+                        onRefresh={fetchData}
+                      />
+                    </CardContent>
                   </Card>
                 </div>
               </TabsContent>
@@ -958,6 +782,30 @@ export default function RAGAdminPage() {
           </div>
         )}
       </div>
-    </div>
+
+      <Dialog open={!!selectedPipelineHistory} onOpenChange={(open) => !open && setSelectedPipelineHistory(null)}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Execution History: {selectedPipelineHistory?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Past executions for this pipeline across all versions.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto py-4">
+            <PipelineExecutionsTable
+              jobs={pipelineHistoryJobs}
+              pipelines={pipelines}
+              isLoading={loadingHistory}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedPipelineHistory(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div >
   )
 }

@@ -30,39 +30,6 @@ export interface RAGIndex {
   owner_id?: string;
 }
 
-export interface RAGJob {
-  id: string;
-  index_name: string;
-  source_type: string;
-  source_path: string;
-  namespace?: string;
-  status: string;
-  total_documents: number;
-  processed_documents: number;
-  total_chunks: number;
-  upserted_chunks: number;
-  failed_chunks: number;
-  current_stage: string;
-  error_message?: string;
-  created_at: string;
-  started_at?: string;
-  completed_at?: string;
-}
-
-export interface JobProgress {
-  job_id: string;
-  status: string;
-  current_stage: string;
-  total_documents: number;
-  processed_documents: number;
-  total_chunks: number;
-  upserted_chunks: number;
-  failed_chunks: number;
-  error_message?: string;
-  started_at?: string;
-  completed_at?: string;
-  percent_complete: number;
-}
 
 export interface ChunkPreview {
   id: string;
@@ -242,12 +209,38 @@ export interface CustomOperatorTestResponse {
   execution_time_ms: number;
 }
 
+export interface PipelineStepData {
+  data: any;
+  total: number;
+  page: number;
+  pages: number;
+  is_list: boolean;
+}
+
 class RAGAdminService {
-  async getJobSteps(jobId: string, tenantSlug?: string): Promise<{ steps: PipelineStepExecution[] }> {
-    const url = tenantSlug
-      ? `/admin/pipelines/jobs/${jobId}/steps?tenant_slug=${tenantSlug}`
-      : `/admin/pipelines/jobs/${jobId}/steps`;
-    return httpClient.get<{ steps: PipelineStepExecution[] }>(url);
+  async getJobSteps(jobId: string, tenantSlug?: string, lite: boolean = true): Promise<{ steps: PipelineStepExecution[] }> {
+    const params = new URLSearchParams()
+    if (tenantSlug) params.set("tenant_slug", tenantSlug)
+    params.set("lite", String(lite))
+    
+    return httpClient.get<{ steps: PipelineStepExecution[] }>(`/admin/pipelines/jobs/${jobId}/steps?${params.toString()}`);
+  }
+
+  async getStepData(
+    jobId: string,
+    stepId: string,
+    type: "input" | "output",
+    page: number = 1,
+    limit: number = 20,
+    tenantSlug?: string
+  ): Promise<PipelineStepData> {
+    const params = new URLSearchParams();
+    params.set("type", type);
+    params.set("page", String(page));
+    params.set("limit", String(limit));
+    if (tenantSlug) params.set("tenant_slug", tenantSlug);
+    
+    return httpClient.get<PipelineStepData>(`/admin/pipelines/jobs/${jobId}/steps/${stepId}/data?${params.toString()}`);
   }
 
   async getStats(tenantSlug?: string): Promise<RAGStats> {
@@ -289,71 +282,6 @@ class RAGAdminService {
     return httpClient.post("/admin/rag/chunk-preview", data);
   }
 
-  async ingestDocuments(data: {
-    index_name: string;
-    documents: Array<{ id?: string; text?: string; content?: string; metadata?: Record<string, any> }>;
-    namespace?: string;
-    embedding_provider?: string;
-    vector_store_provider?: string;
-    chunker_strategy?: string;
-    chunk_size?: number;
-    chunk_overlap?: number;
-    use_celery?: boolean;
-  }, tenantSlug?: string): Promise<{ job_id: string; db_job_id?: string; status: string; message: string; websocket_url?: string }> {
-    const url = tenantSlug ? `/admin/rag/ingest?tenant_slug=${tenantSlug}` : "/admin/rag/ingest";
-    return httpClient.post(url, { use_celery: true, ...data });
-  }
-
-  async ingestFromLoader(data: {
-    index_name: string;
-    loader_type: string;
-    source_path: string;
-    namespace?: string;
-    embedding_provider?: string;
-    vector_store_provider?: string;
-    chunker_strategy?: string;
-    chunk_size?: number;
-    chunk_overlap?: number;
-    loader_config?: Record<string, any>;
-  }, tenantSlug?: string): Promise<{ job_id: string; status: string; message: string; websocket_url?: string }> {
-    const url = tenantSlug ? `/admin/rag/ingest-from-loader?tenant_slug=${tenantSlug}` : "/admin/rag/ingest-from-loader";
-    return httpClient.post(url, data);
-  }
-
-  async getJobProgress(jobId: string): Promise<JobProgress> {
-    return httpClient.get<JobProgress>(`/admin/rag/jobs/${jobId}/progress`);
-  }
-
-  createJobWebSocket(jobId: string): WebSocket {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
-    const wsUrl = backendUrl.replace(/^https?:/, protocol);
-    return new WebSocket(`${wsUrl}/admin/rag/ws/jobs/${jobId}`);
-  }
-
-  createAllJobsWebSocket(): WebSocket {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
-    const wsUrl = backendUrl.replace(/^https?:/, protocol);
-    return new WebSocket(`${wsUrl}/admin/rag/ws/jobs`);
-  }
-
-  async listJobs(
-    page = 1,
-    limit = 20,
-    status?: string,
-    tenantSlug?: string
-  ): Promise<{ items: RAGJob[]; total: number; page: number; pages: number }> {
-    const skip = (page - 1) * limit;
-    const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
-    if (status) params.set("status", status);
-    if (tenantSlug) params.set("tenant_slug", tenantSlug);
-    return httpClient.get(`/admin/rag/jobs?${params.toString()}`);
-  }
-
-  async getJob(jobId: string): Promise<RAGJob> {
-    return httpClient.get<RAGJob>(`/admin/rag/jobs/${jobId}`);
-  }
 
   async listPipelines(tenantSlug?: string): Promise<{ pipelines: RAGPipeline[] }> {
     const url = tenantSlug ? `/admin/rag/pipelines?tenant_slug=${tenantSlug}` : "/admin/rag/pipelines";
@@ -464,6 +392,16 @@ class RAGAdminService {
       ? `/admin/pipelines/visual-pipelines/${pipelineId}/versions?tenant_slug=${tenantSlug}`
       : `/admin/pipelines/visual-pipelines/${pipelineId}/versions`;
     return httpClient.get<{ versions: ExecutablePipelineVersion[] }>(url);
+  }
+
+  async getExecutablePipeline(
+    execId: string,
+    tenantSlug?: string
+  ): Promise<any> {
+    const url = tenantSlug
+      ? `/admin/pipelines/executable-pipelines/${execId}?tenant_slug=${tenantSlug}`
+      : `/admin/pipelines/executable-pipelines/${execId}`;
+    return httpClient.get<any>(url);
   }
 
   async createPipelineJob(

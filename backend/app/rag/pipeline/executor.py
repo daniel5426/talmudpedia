@@ -163,13 +163,13 @@ class PipelineExecutor:
 
                     executor = ExecutorRegistry.create_executor(spec, spec.python_code)
                     
-                    # Context
                     context = ExecutionContext(
                         tenant_id=str(job.tenant_id),
                         pipeline_id=str(job.executable_pipeline_id),
                         job_id=str(job.id),
                         step_id=step_id,
-                        config=config
+                        config=config,
+                        db=self.db
                     )
 
                     # Execute

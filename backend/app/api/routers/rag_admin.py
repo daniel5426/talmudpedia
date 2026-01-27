@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, delete, func
 
 from app.db.postgres.models.identity import User, Tenant
-from app.db.postgres.models.rag import RAGPipeline, IngestionJob, IngestionStatus
+from app.db.postgres.models.rag import RAGPipeline
 from app.db.postgres.session import get_db
 from app.api.routers.auth import get_current_user
 from app.core.rbac import get_tenant_context, check_permission, Permission, Action, ResourceType, parse_id
@@ -16,8 +16,7 @@ from app.api.schemas.rag import (
     RAGIndex, 
     RAGStats, 
     CreateIndexRequest, 
-    ChunkPreviewRequest, 
-    IngestionRequest
+    ChunkPreviewRequest
 )
 from app.services.rag_admin_service import RAGAdminService
 from app.rag.factory import RAGFactory
@@ -177,60 +176,3 @@ async def create_pipeline(
     
     return {"id": str(new_pipeline.id), "status": "created"}
 
-@router.get("/jobs")
-async def list_jobs(
-    tenant_slug: Optional[str] = None,
-    status: Optional[IngestionStatus] = None,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    tenant = None
-    if tenant_slug:
-        ctx = await get_tenant_context(tenant_slug, current_user, db)
-        tenant, _ = ctx
-        
-    stmt = select(IngestionJob)
-    if tenant:
-        stmt = stmt.where(IngestionJob.tenant_id == tenant.id)
-    elif current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Unauthorized")
-
-    if status:
-        stmt = stmt.where(IngestionJob.status == status)
-        
-    res = await db.execute(stmt.order_by(IngestionJob.created_at.desc()))
-    jobs = res.scalars().all()
-    
-    return {"items": [
-        {
-            "id": str(j.id),
-            "pipeline_id": str(j.pipeline_id),
-            "status": j.status.value,
-            "document_count": j.document_count,
-            "chunk_count": j.chunk_count,
-            "error_message": j.error_message,
-            "created_at": j.created_at,
-            "completed_at": j.completed_at
-        } for j in jobs
-    ]}
-
-@router.delete("/jobs/{job_id}")
-async def delete_job(
-    job_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    jid = parse_id(job_id)
-    stmt = select(IngestionJob).where(IngestionJob.id == jid)
-    res = await db.execute(stmt)
-    job = res.scalar_one_or_none()
-    
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    if current_user.role != "admin" and job.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="Unauthorized")
-        
-    await db.delete(job)
-    await db.commit()
-    return {"status": "deleted"}

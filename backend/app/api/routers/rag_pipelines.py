@@ -816,16 +816,14 @@ async def get_pipeline_job(
     return job_to_dict(job)
 
 
-def step_to_dict(s: PipelineStepExecution) -> Dict[str, Any]:
+def step_to_dict(s: PipelineStepExecution, lite: bool = False) -> Dict[str, Any]:
     """Convert PipelineStepExecution model to dict response."""
-    return {
+    data = {
         "id": str(s.id),
         "job_id": str(s.job_id),
         "step_id": s.step_id,
         "operator_id": s.operator_id,
         "status": s.status,
-        "input_data": s.input_data,
-        "output_data": s.output_data,
         "metadata": s.metadata_,
         "error_message": s.error_message,
         "execution_order": s.execution_order,
@@ -833,11 +831,18 @@ def step_to_dict(s: PipelineStepExecution) -> Dict[str, Any]:
         "started_at": s.started_at.isoformat() if s.started_at else None,
         "completed_at": s.completed_at.isoformat() if s.completed_at else None,
     }
+    
+    if not lite:
+        data["input_data"] = s.input_data
+        data["output_data"] = s.output_data
+        
+    return data
 
 
 @router.get("/jobs/{job_id}/steps")
 async def list_job_steps(
     job_id: UUID,
+    lite: bool = True,
     tenant_slug: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -858,4 +863,70 @@ async def list_job_steps(
     result = await db.execute(query)
     steps = result.scalars().all()
     
-    return {"steps": [step_to_dict(s) for s in steps]}
+    return {"steps": [step_to_dict(s, lite=lite) for s in steps]}
+
+
+@router.get("/jobs/{job_id}/steps/{step_id}/data")
+async def get_step_data(
+    job_id: UUID,
+    step_id: str,
+    type: str, # input | output
+    page: int = 1,
+    limit: int = 20,
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get paginated input or output data for a specific step."""
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+    
+    # Find the step execution
+    query = select(PipelineStepExecution).where(
+        PipelineStepExecution.job_id == job_id,
+        PipelineStepExecution.step_id == step_id
+    )
+    result = await db.execute(query)
+    step = result.scalar_one_or_none()
+    
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+        
+    if tenant and step.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Step not found")
+        
+    if type == "input":
+        data = step.input_data
+    elif type == "output":
+         data = step.output_data
+    else:
+        raise HTTPException(status_code=400, detail="Invalid data type. Must be 'input' or 'output'")
+        
+    # Handle data types
+    if data is None:
+        return {"data": None, "total": 0, "page": 1, "pages": 0}
+        
+    # If it's a list, we paginate it
+    if isinstance(data, list):
+        total = len(data)
+        start = (page - 1) * limit
+        end = start + limit
+        sliced_data = data[start:end]
+        pages = (total + limit - 1) // limit if total > 0 else 0
+        
+        return {
+            "data": sliced_data,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "is_list": True
+        }
+    else:
+        # If it's not a list (e.g. dict or primitive), we just return it whole
+        # We consider it as a single "page"
+        return {
+            "data": data,
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "is_list": False
+        }

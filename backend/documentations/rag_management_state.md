@@ -56,13 +56,15 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 | Custom Python Operators | ✅ Completed | Fully integrated editor, storage, and execution engine. |
 | Background Pipeline Executor | ✅ Completed | Asynchronous execution of compiled DAGs. |
 | Run/Test UI | ✅ Completed | Modal for triggering pipeline runs with custom parameters. |
+| Live Execution Tracking | ✅ Completed | Step-by-step progress visualization with input/output inspection. |
 | Connection Validation | ✅ Completed | Comprehensive logic supporting all new intermediate data types. |
 | Multi-tenancy | ✅ Active | Tenant-specific pipeline namespace and custom operator scoping. |
 | PGVector Storage | ✅ Active | Integrated with the main system database via pgvector extension. |
 
 ## Next Implementation Priorities
 1. **Model-Driven Dimensioning**: Fully automate the passing of resolved dimensions from embedding models to vector stores during execution.
-2. **Detailed Execution Logs**: Granular, step-by-step logs for pipeline jobs visible in the Admin UI.
-3. **Reranker Implementation**: Implement the `reranking` operator logic in the executor.
-4. **Metadata Filtering Engine**: Advanced UI for mapping extracted metadata to vector store fields.
-5. **JSON Schema Editor**: Integrate a structured JSON editor for custom operator `config_schema` definitions.
+2. **Reranker Implementation**: Implement the `reranking` operator logic in the executor.
+3. **Metadata Filtering Engine**: Advanced UI for mapping extracted metadata to vector store fields.
+4. **JSON Schema Editor**: Integrate a structured JSON editor for custom operator `config_schema` definitions.
+5. **Real-time Metrics**: Visualizing execution time and token usage per operator node.
+

@@ -7,10 +7,8 @@ export { ragAdminService } from "./rag-admin";
 export type { 
   RAGStats, 
   RAGIndex, 
-  RAGJob, 
   RAGPipeline, 
   ChunkPreview, 
-  JobProgress,
   VisualPipeline,
   VisualPipelineNode,
   VisualPipelineEdge,
@@ -24,6 +22,7 @@ export type {
   ConfigFieldSpec,
   CustomOperator,
   PipelineStepExecution,
+  PipelineStepData,
 } from "./rag-admin";
 
 export { ttsService } from "./tts";

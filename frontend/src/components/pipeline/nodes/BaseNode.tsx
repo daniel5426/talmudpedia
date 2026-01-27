@@ -72,7 +72,7 @@ function BaseNodeComponent({ data, selected, icon }: BaseNodeProps) {
     <div
       className={cn(
         "relative min-w-[200px] p-0 rounded-2xl bg-background backdrop-blur-sm transition-all duration-300 border-[0.5px]",
-        selected ? "border-primary ring-1 ring-primary/20 selected" : "border-border/70",
+        selected ? "border-primary ring-2 ring-primary/20 selected border-1" : "border-border/70 border-1",
         data.executionStatus && statusBorder[data.executionStatus as keyof typeof statusBorder]
       )}
     >

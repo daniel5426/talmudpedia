@@ -14,7 +14,8 @@ import {
   ArrowRightLeft,
   SortAsc,
   Code,
-  Plus
+  Plus,
+  PanelLeftClose
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -40,6 +41,7 @@ interface NodeCatalogProps {
   catalog: OperatorCatalog
   onDragStart: (event: React.DragEvent, operatorId: string, category: OperatorCategory) => void
   onAddCustomOperator?: () => void
+  onClose?: () => void
 }
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -127,7 +129,7 @@ function CategorySection({
   )
 }
 
-export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator }: NodeCatalogProps) {
+export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator, onClose }: NodeCatalogProps) {
   const [search, setSearch] = useState("")
 
   const categories: OperatorCategory[] = [
@@ -147,7 +149,20 @@ export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator }: NodeC
     <div className="h-full flex flex-col">
       <div className="p-3.5 space-y-3 flex-shrink-0">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold text-foreground/70 uppercase tracking-tight">Operators</h3>
+          <div className="flex items-center gap-2">
+            {onClose && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-md -ml-1 text-muted-foreground hover:text-foreground"
+                onClick={onClose}
+                title="Close Catalog"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
+            )}
+            <h3 className="text-xs font-bold text-foreground/70 uppercase tracking-tight">Operators</h3>
+          </div>
           {onAddCustomOperator && (
             <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" onClick={onAddCustomOperator}>
               <Plus className="h-3.5 w-3.5" />

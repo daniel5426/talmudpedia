@@ -26,16 +26,6 @@ class ChunkPreviewRequest(BaseModel):
     chunk_size: int = 650
     chunk_overlap: int = 50
 
-class IngestionRequest(BaseModel):
-    index_name: str
-    documents: List[Dict[str, Any]]
-    namespace: Optional[str] = None
-    embedding_provider: str = "gemini"
-    vector_store_provider: str = "pinecone"
-    chunker_strategy: str = "token_based"
-    chunk_size: int = 650
-    chunk_overlap: int = 50
-    use_celery: bool = True
 
 class RAGStats(BaseModel):
     total_indices: int

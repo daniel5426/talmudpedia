@@ -12,8 +12,10 @@ from pydantic import BaseModel
 from datetime import datetime
 import asyncio
 import traceback
+import uuid
 
 from app.rag.pipeline.registry import OperatorSpec, DataType
+from app.rag.factory import RAGFactory
 
 
 class OperatorInput(BaseModel):
@@ -529,6 +531,236 @@ class MetadataExtractorExecutor(OperatorExecutor):
         )
 
 
+class LoaderExecutor(OperatorExecutor):
+    """Execute document loading."""
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        from app.rag.factory import LoaderConfig
+        
+        # Merge input params with node config
+        config_dict = {**context.config}
+        if isinstance(input_data.data, dict) and input_data.source_operator_id is None:
+            # Only merge if it's the first node and data is dict-like (input params)
+            config_dict.update(input_data.data)
+            
+        # Determine loader type from operator_id if not in config
+        loader_type = config_dict.get("loader_type")
+        if not loader_type:
+            if self.operator_id == "local_loader":
+                loader_type = "local"
+            elif self.operator_id == "s3_loader":
+                loader_type = "s3"
+        
+        loader_config = LoaderConfig(
+            loader_type=loader_type,
+            **{k: v for k, v in config_dict.items() if k != "loader_type"}
+        )
+        
+        loader = RAGFactory.create_loader(loader_config)
+        documents = await loader.load()
+        
+        # Documents usually are [Document(text=..., metadata=...)]
+        # We need to return them in a serializable format if possible, 
+        # but the Chunker expects Document objects or dicts.
+        
+        doc_list = []
+        for doc in documents:
+            if hasattr(doc, "model_dump"):
+                doc_list.append(doc.model_dump())
+            else:
+                doc_list.append(doc)
+                
+        return OperatorOutput(
+            data=doc_list,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
+class ChunkerExecutor(OperatorExecutor):
+    """Execute text chunking."""
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        from app.rag.factory import ChunkerConfig
+        
+        # Merge config
+        config_dict = {**context.config}
+        
+        # Determine strategy from operator_id
+        strategy = config_dict.get("strategy")
+        if not strategy:
+            if self.operator_id == "recursive_chunker":
+                strategy = "recursive"
+            elif self.operator_id == "token_based_chunker":
+                strategy = "token_based"
+        
+        chunker_config = ChunkerConfig(
+            strategy=strategy,
+            **{k: v for k, v in config_dict.items() if k != "strategy"}
+        )
+        
+        chunker = RAGFactory.create_chunker(chunker_config)
+        
+        all_chunks = []
+        documents = input_data.data
+        if not isinstance(documents, list):
+            documents = [documents]
+            
+        for doc in documents:
+            if isinstance(doc, dict):
+                text = doc.get("text") or doc.get("content", "")
+                doc_id = str(doc.get("id", "unknown"))
+                metadata = doc.get("metadata", {})
+            else:
+                text = str(doc)
+                doc_id = "unknown"
+                metadata = {}
+                
+            chunks = chunker.chunk(text, doc_id=doc_id, metadata=metadata)
+            all_chunks.extend([c.model_dump() for c in chunks])
+            
+        return OperatorOutput(
+            data=all_chunks,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
+class EmbedderExecutor(OperatorExecutor):
+    """Generate embeddings using Model Registry."""
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        from app.services.model_resolver import ModelResolver
+        from uuid import UUID
+        
+        model_id = context.config.get("model_id")
+        if not model_id:
+            raise ValueError("model_id is required for embedding generation")
+            
+        # Get DB from context (passed by PipelineExecutor)
+        db = getattr(context, "db", None)
+        tenant_id = context.tenant_id
+        
+        if not db:
+            raise ValueError("Database session is required in execution context for model resolution")
+            
+        resolver = ModelResolver(db, UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id)
+        embedder = await resolver.resolve_embedding(model_id)
+        
+        all_embeddings = []
+        chunks = input_data.data
+        if not isinstance(chunks, list):
+            chunks = [chunks]
+            
+        # Extract texts for batch embedding
+        texts = []
+        for chunk in chunks:
+            if isinstance(chunk, dict):
+                texts.append(chunk.get("text", ""))
+            else:
+                texts.append(str(chunk))
+                
+        results = await embedder.embed_batch(texts)
+        
+        for i, chunk in enumerate(chunks):
+            if isinstance(chunk, dict):
+                chunk["values"] = results[i].values
+                all_embeddings.append(chunk)
+            else:
+                all_embeddings.append({
+                    "text": chunk,
+                    "values": results[i].values
+                })
+                
+        return OperatorOutput(
+            data=all_embeddings,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
+class StorageExecutor(OperatorExecutor):
+    """Execute vector storage."""
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        from app.rag.factory import VectorStoreConfig
+        from app.rag.interfaces.vector_store import VectorDocument
+        
+        config_dict = {**context.config}
+        
+        # Determine provider from operator_id
+        provider = config_dict.get("provider")
+        if not provider:
+            if self.operator_id == "pinecone_store":
+                provider = "pinecone"
+            elif self.operator_id == "pgvector_store":
+                provider = "pgvector"
+            elif self.operator_id == "qdrant_store":
+                provider = "qdrant"
+                
+        # Get index_name from config
+        index_name = config_dict.get("index_name")
+        if not index_name:
+            raise ValueError("index_name is required for storage")
+            
+        vs_config = VectorStoreConfig(
+            provider=provider,
+            **{k: v for k, v in config_dict.items() if k not in ["provider", "index_name"]}
+        )
+        
+        vector_store = RAGFactory.create_vector_store(vs_config)
+        
+        documents = input_data.data
+        if not isinstance(documents, list):
+            documents = [documents]
+            
+        vector_docs = []
+        for doc in documents:
+            if isinstance(doc, dict):
+                # Ensure we have an ID
+                doc_id = str(doc.get("id")) if doc.get("id") else str(uuid.uuid4())
+                vector_docs.append(VectorDocument(
+                    id=doc_id,
+                    values=doc.get("values", []),
+                    metadata=doc.get("metadata", {})
+                ))
+            else:
+                # Should not happen if coming from embedder
+                pass
+                
+        count = await vector_store.upsert(
+            index_name=index_name,
+            documents=vector_docs,
+            namespace=config_dict.get("namespace")
+        )
+        
+        return OperatorOutput(
+            data={"upsert_count": count},
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
 # =============================================================================
 # EXECUTOR REGISTRY
 # =============================================================================
@@ -540,6 +772,15 @@ class ExecutorRegistry:
         "html_cleaner": HTMLCleanerExecutor,
         "pii_redactor": PIIRedactorExecutor,
         "metadata_extractor": MetadataExtractorExecutor,
+        "local_loader": LoaderExecutor,
+        "s3_loader": LoaderExecutor,
+        "recursive_chunker": ChunkerExecutor,
+        "token_based_chunker": ChunkerExecutor,
+        "model_embedder": EmbedderExecutor,
+        "pinecone_store": StorageExecutor,
+        "pgvector_store": StorageExecutor,
+        "qdrant_store": StorageExecutor,
+        "passthrough": PassthroughExecutor,
     }
     
     @classmethod
@@ -566,5 +807,5 @@ class ExecutorRegistry:
         if executor_class:
             return executor_class(spec)
         
-        # Default to passthrough if no executor found
-        return PassthroughExecutor(spec)
+        # Raise error if no executor found (Fail-Fast)
+        raise ValueError(f"No executor implementation found for operator: {spec.operator_id}")

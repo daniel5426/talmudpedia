@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 
 from app.rag.factory import RAGFactory, VectorStoreConfig
 from app.api.schemas.rag import RAGIndex, RAGStats
-from app.db.postgres.models.rag import RAGPipeline, IngestionJob, IngestionStatus
+from app.db.postgres.models.rag import RAGPipeline, PipelineJob, PipelineJobStatus
 
 class RAGAdminService:
     def __init__(self, db: AsyncSession):
@@ -58,19 +58,19 @@ class RAGAdminService:
         """Get aggregated RAG statistics."""
         # DB Stats
         pipe_stmt = select(func.count(RAGPipeline.id))
-        job_stmt = select(func.count(IngestionJob.id))
+        job_stmt = select(func.count(PipelineJob.id))
         
         if tenant_id:
             pipe_stmt = pipe_stmt.where(RAGPipeline.tenant_id == tenant_id)
-            job_stmt = job_stmt.where(IngestionJob.tenant_id == tenant_id)
+            job_stmt = job_stmt.where(PipelineJob.tenant_id == tenant_id)
             
-        total_pipelines = (await self.db.execute(pipe_stmt)).scalar()
-        total_jobs = (await self.db.execute(job_stmt)).scalar()
+        total_pipelines = (await self.db.execute(pipe_stmt)).scalar() or 0
+        total_jobs = (await self.db.execute(job_stmt)).scalar() or 0
         
         # Job counts by status
-        completed_stmt = job_stmt.where(IngestionJob.status == IngestionStatus.COMPLETED)
-        failed_stmt = job_stmt.where(IngestionJob.status == IngestionStatus.FAILED)
-        processing_stmt = job_stmt.where(IngestionJob.status == IngestionStatus.PROCESSING)
+        completed_stmt = job_stmt.where(PipelineJob.status == PipelineJobStatus.COMPLETED)
+        failed_stmt = job_stmt.where(PipelineJob.status == PipelineJobStatus.FAILED)
+        processing_stmt = job_stmt.where(PipelineJob.status == PipelineJobStatus.RUNNING)
         
         completed_jobs = (await self.db.execute(completed_stmt)).scalar() or 0
         failed_jobs = (await self.db.execute(failed_stmt)).scalar() or 0
