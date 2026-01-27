@@ -1,5 +1,4 @@
 import { PipelineStepExecution } from "./types"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { X, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react"
@@ -44,69 +43,67 @@ export function ExecutionDetailsPanel({ step, onClose }: ExecutionDetailsPanelPr
                 </Button>
             </div>
 
-            <div className="flex-1 min-h-0">
-                <ScrollArea className="h-full w-full">
-                    <div className="space-y-6 min-w-0 p-4 pb-10">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+                <div className="space-y-4 p-3 pb-10 w-full max-w-full">
 
-                        <div className="space-y-2">
-                            <h4 className="text-sm font-medium">Details</h4>
-                            <div className="grid grid-cols-2 gap-2 text-sm">
-                                <div className="text-muted-foreground">Step ID</div>
-                                <div className="font-mono text-xs">{step.step_id}</div>
-
-                                <div className="text-muted-foreground">Operator</div>
-                                <div className="font-mono text-xs">{step.operator_id}</div>
-
-                                <div className="text-muted-foreground">Job ID</div>
-                                <div className="font-mono text-xs" title={step.job_id}>{step.job_id.slice(0, 8)}...</div>
-
-                                <div className="text-muted-foreground">Started</div>
-                                <div>{step.started_at ? new Date(step.started_at).toLocaleTimeString() : "-"}</div>
-
-                                <div className="text-muted-foreground">Duration</div>
-                                <div>{duration !== null ? `${duration}s` : "-"}</div>
-                            </div>
+                    <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Details</h4>
                         </div>
+                        <div className="grid grid-cols-[max-content_2fr_max-content_1fr] gap-x-4 gap-y-1 text-xs items-baseline">
+                            <span className="text-muted-foreground">Operator</span>
+                            <span className="font-mono text-[11px] truncate">{step.operator_id}</span>
+                            <span className="text-muted-foreground">Duration</span>
+                            <span className="text-right font-medium">{duration !== null ? `${duration}s` : "-"}</span>
 
-                        <Separator />
+                            <span className="text-muted-foreground">Step ID</span>
+                            <span className="font-mono text-[11px] text-muted-foreground/70 truncate" title={step.step_id}>{step.step_id}</span>
+                            <span className="text-muted-foreground">Started</span>
+                            <span className="text-right">{step.started_at ? new Date(step.started_at).toLocaleTimeString() : "-"}</span>
 
-                        {step.error_message && (
-                            <div className="space-y-2">
-                                <h4 className="text-sm font-medium text-destructive flex items-center gap-2">
-                                    <XCircle className="h-4 w-4" />
-                                    Error
-                                </h4>
-                                <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md whitespace-pre-wrap">
-                                    {step.error_message}
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="space-y-2">
-                            <PaginatedJsonView
-                                jobId={step.job_id}
-                                stepId={step.step_id}
-                                type="input"
-                                initialData={step.input_data}
-                            />
+                            <span className="text-muted-foreground">Job ID</span>
+                            <span className="font-mono text-[11px] text-muted-foreground/70 truncate col-span-3" title={step.job_id}>{step.job_id}</span>
                         </div>
-
-                        <div className="space-y-2">
-                            <PaginatedJsonView
-                                jobId={step.job_id}
-                                stepId={step.step_id}
-                                type="output"
-                                initialData={step.output_data}
-                            />
-                        </div>
-
-                        <div className="space-y-2">
-                            <h4 className="text-sm font-medium">Metadata</h4>
-                            <JsonView data={step.metadata} />
-                        </div>
-
                     </div>
-                </ScrollArea>
+
+                    <Separator />
+
+                    {step.error_message && (
+                        <div className="space-y-2">
+                            <h4 className="text-sm font-medium text-destructive flex items-center gap-2">
+                                <XCircle className="h-4 w-4" />
+                                Error
+                            </h4>
+                            <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md whitespace-pre-wrap">
+                                {step.error_message}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="space-y-2 overflow-hidden">
+                        <PaginatedJsonView
+                            jobId={step.job_id}
+                            stepId={step.step_id}
+                            type="input"
+                            initialData={step.input_data}
+                        />
+                    </div>
+
+                    <div className="space-y-2 overflow-hidden">
+                        <PaginatedJsonView
+                            jobId={step.job_id}
+                            stepId={step.step_id}
+                            type="output"
+                            initialData={step.output_data}
+                        />
+                    </div>
+
+                    <div className="space-y-2">
+                        <h4 className="text-sm font-medium">Metadata</h4>
+                        <JsonView data={step.metadata} />
+                    </div>
+
+                </div>
             </div>
         </div>
     )

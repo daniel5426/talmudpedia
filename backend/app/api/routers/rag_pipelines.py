@@ -5,7 +5,7 @@ Manages visual pipelines, compilation, and pipeline job execution.
 Now uses PostgreSQL instead of MongoDB.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel
@@ -44,12 +44,69 @@ from fastapi import BackgroundTasks
 router = APIRouter()
 
 
+
 async def run_pipeline_job_background(job_id: UUID):
     """Execute pipeline job in background with its own DB session."""
     async with sessionmaker() as session:
         executor = PipelineExecutor(session)
         await executor.execute_job(job_id)
 
+
+# =============================================================================
+# Large Data Support Helpers
+# =============================================================================
+
+def resolve_json_path(data: Any, path: str) -> Any:
+    """Simple JSON path resolver (e.g. 'results[0].text')."""
+    import re
+    parts = re.split(r'\.|\[|\]', path)
+    parts = [p for p in parts if p]
+    
+    current = data
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit():
+            idx = int(part)
+            if 0 <= idx < len(current):
+                current = current[idx]
+            else:
+                return None
+        else:
+            return None
+    return current
+
+
+def truncate_large_strings(data: Any, limit: int = 50000, path: str = "") -> Tuple[Any, Dict[str, Any]]:
+    """Recursively truncate strings longer than limit and record their paths."""
+    truncated_fields = {}
+    
+    if isinstance(data, dict):
+        new_dict = {}
+        for k, v in data.items():
+            new_v, sub_truncated = truncate_large_strings(v, limit, f"{path}.{k}" if path else k)
+            new_dict[k] = new_v
+            truncated_fields.update(sub_truncated)
+        return new_dict, truncated_fields
+    
+    elif isinstance(data, list):
+        new_list = []
+        for i, v in enumerate(data):
+            new_v, sub_truncated = truncate_large_strings(v, limit, f"{path}[{i}]")
+            new_list.append(new_v)
+            truncated_fields.update(sub_truncated)
+        return new_list, truncated_fields
+    
+    elif isinstance(data, str) and len(data) > limit:
+        truncated_fields[path] = {
+            "full_size": len(data),
+            "current_size": limit,
+            "path": path,
+            "is_truncated": True
+        }
+        return data[:limit] + "... [TRUNCATED]", truncated_fields
+    
+    return data, truncated_fields
 
 
 # =============================================================================
@@ -905,6 +962,9 @@ async def get_step_data(
     if data is None:
         return {"data": None, "total": 0, "page": 1, "pages": 0}
         
+    # Limit for individual string fields (50KB)
+    STRING_LIMIT = 50000
+    
     # If it's a list, we paginate it
     if isinstance(data, list):
         total = len(data)
@@ -913,8 +973,12 @@ async def get_step_data(
         sliced_data = data[start:end]
         pages = (total + limit - 1) // limit if total > 0 else 0
         
+        # Further truncate large strings within the page
+        truncated_data, truncated_fields = truncate_large_strings(sliced_data, limit=STRING_LIMIT)
+        
         return {
-            "data": sliced_data,
+            "data": truncated_data,
+            "truncated_fields": truncated_fields,
             "total": total,
             "page": page,
             "pages": pages,
@@ -923,10 +987,74 @@ async def get_step_data(
     else:
         # If it's not a list (e.g. dict or primitive), we just return it whole
         # We consider it as a single "page"
+        truncated_data, truncated_fields = truncate_large_strings(data, limit=STRING_LIMIT)
+        
         return {
-            "data": data,
+            "data": truncated_data,
+            "truncated_fields": truncated_fields,
             "total": 1,
             "page": 1,
             "pages": 1,
             "is_list": False
         }
+
+
+@router.get("/jobs/{job_id}/steps/{step_id}/field")
+async def get_step_field_content(
+    job_id: UUID,
+    step_id: str,
+    type: str, # input | output
+    path: str,
+    offset: int = 0,
+    limit: int = 100000,
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a slice of a large string field within the step data."""
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+    
+    # Find the step execution
+    query = select(PipelineStepExecution).where(
+        PipelineStepExecution.job_id == job_id,
+        PipelineStepExecution.step_id == step_id
+    )
+    result = await db.execute(query)
+    step = result.scalar_one_or_none()
+    
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+        
+    if tenant and step.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Step not found")
+        
+    if type == "input":
+        data = step.input_data
+    elif type == "output":
+         data = step.output_data
+    else:
+        raise HTTPException(status_code=400, detail="Invalid data type. Must be 'input' or 'output'")
+
+    # Resolve path
+    field_value = resolve_json_path(data, path)
+    
+    if field_value is None:
+        raise HTTPException(status_code=404, detail=f"Field at path '{path}' not found")
+        
+    if not isinstance(field_value, str):
+         # If it's not a string, return it as JSON but it's not really the intended use of this endpoint
+         return {"data": field_value, "is_string": False}
+         
+    # Slice the string
+    total_size = len(field_value)
+    end = offset + limit
+    sliced_content = field_value[offset:end]
+    
+    return {
+        "content": sliced_content,
+        "offset": offset,
+        "limit": limit,
+        "total_size": total_size,
+        "has_more": end < total_size,
+        "is_string": True
+    }

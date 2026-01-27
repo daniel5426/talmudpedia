@@ -211,10 +211,25 @@ export interface CustomOperatorTestResponse {
 
 export interface PipelineStepData {
   data: any;
+  truncated_fields?: Record<string, {
+    full_size: number;
+    current_size: number;
+    path: string;
+    is_truncated: boolean;
+  }>;
   total: number;
   page: number;
   pages: number;
   is_list: boolean;
+}
+
+export interface StepFieldContent {
+  content: string;
+  offset: number;
+  limit: number;
+  total_size: number;
+  has_more: boolean;
+  is_string: boolean;
 }
 
 class RAGAdminService {
@@ -241,6 +256,25 @@ class RAGAdminService {
     if (tenantSlug) params.set("tenant_slug", tenantSlug);
     
     return httpClient.get<PipelineStepData>(`/admin/pipelines/jobs/${jobId}/steps/${stepId}/data?${params.toString()}`);
+  }
+
+  async getStepFieldContent(
+    jobId: string,
+    stepId: string,
+    type: "input" | "output",
+    path: string,
+    offset: number = 0,
+    limit: number = 100000,
+    tenantSlug?: string
+  ): Promise<StepFieldContent> {
+    const params = new URLSearchParams();
+    params.set("type", type);
+    params.set("path", path);
+    params.set("offset", String(offset));
+    params.set("limit", String(limit));
+    if (tenantSlug) params.set("tenant_slug", tenantSlug);
+
+    return httpClient.get<StepFieldContent>(`/admin/pipelines/jobs/${jobId}/steps/${stepId}/field?${params.toString()}`);
   }
 
   async getStats(tenantSlug?: string): Promise<RAGStats> {

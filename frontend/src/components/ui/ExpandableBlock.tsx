@@ -46,13 +46,13 @@ export function ExpandableBlock({
                         <Maximize2 className="h-3.5 w-3.5" />
                     </Button>
                 </div>
-                <div className={cn("p-0 overflow-auto", contentClassName)}>
+                <div className={cn("p-0 overflow-hidden", contentClassName)}>
                     {children}
                 </div>
             </div>
 
             <Dialog open={isExpanded} onOpenChange={setIsExpanded}>
-                <DialogContent className="max-w-[95vw] w-full h-[90vh] flex flex-col p-0 gap-0">
+                <DialogContent className="!max-w-[95vw] !w-[95vw] h-[90vh] flex flex-col p-0 gap-0">
                     <DialogHeader className="px-6 py-2 border-b flex flex-row items-center justify-between space-y-0">
                         <DialogTitle className="text-md font-semibold">{title}</DialogTitle>
                         {/* Built-in close button of Dialog handles closing, but we can add actions here if needed */}
