@@ -59,6 +59,7 @@ class ConfigFieldSpec(BaseModel):
     name: str
     field_type: ConfigFieldType
     required: bool = False
+    runtime: bool = True
     default: Optional[Any] = None
     description: Optional[str] = None
     options: Optional[List[str]] = None
@@ -127,7 +128,7 @@ class OperatorSpec(BaseModel):
     def validate_config(self, config: Dict[str, Any]) -> List[str]:
         """Validate a configuration against this operator's spec."""
         errors = []
-        required_names = self.get_required_field_names()
+        required_names = {f.name for f in self.required_config if not f.runtime}
         provided_names = set(config.keys())
 
         missing = required_names - provided_names
@@ -147,20 +148,34 @@ class OperatorSpec(BaseModel):
                         errors.append(
                             f"Field '{field.name}' must be one of: {field.options}"
                         )
+                elif field.field_type in {
+                    ConfigFieldType.STRING,
+                    ConfigFieldType.MODEL_SELECT,
+                    ConfigFieldType.FILE_PATH,
+                    ConfigFieldType.CODE,
+                }:
+                    if not isinstance(value, str):
+                        errors.append(f"Field '{field.name}' must be a string")
                 elif field.field_type == ConfigFieldType.INTEGER:
-                    if not isinstance(value, int):
+                    if not isinstance(value, int) or isinstance(value, bool):
                         errors.append(f"Field '{field.name}' must be an integer")
                     elif field.min_value is not None and value < field.min_value:
                         errors.append(f"Field '{field.name}' must be >= {field.min_value}")
                     elif field.max_value is not None and value > field.max_value:
                         errors.append(f"Field '{field.name}' must be <= {field.max_value}")
                 elif field.field_type == ConfigFieldType.FLOAT:
-                    if not isinstance(value, (int, float)):
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
                         errors.append(f"Field '{field.name}' must be a number")
                     elif field.min_value is not None and value < field.min_value:
                         errors.append(f"Field '{field.name}' must be >= {field.min_value}")
                     elif field.max_value is not None and value > field.max_value:
                         errors.append(f"Field '{field.name}' must be <= {field.max_value}")
+                elif field.field_type == ConfigFieldType.BOOLEAN:
+                    if not isinstance(value, bool):
+                        errors.append(f"Field '{field.name}' must be a boolean")
+                elif field.field_type == ConfigFieldType.JSON:
+                    if not isinstance(value, (dict, list)):
+                        errors.append(f"Field '{field.name}' must be an object or list")
         return errors
 
     def to_catalog_entry(self) -> Dict[str, Any]:
@@ -197,7 +212,7 @@ SOURCE_OPERATORS: Dict[str, OperatorSpec] = {
             ConfigFieldSpec(
                 name="base_path",
                 field_type=ConfigFieldType.FILE_PATH,
-                required=True,
+                runtime=True,
                 description="Path to local directory or file",
                 placeholder="/path/to/documents",
             ),
@@ -206,12 +221,14 @@ SOURCE_OPERATORS: Dict[str, OperatorSpec] = {
             ConfigFieldSpec(
                 name="file_extensions",
                 field_type=ConfigFieldType.STRING,
+                runtime=True,
                 description="Comma-separated list of extensions (e.g., .txt,.md,.pdf)",
                 default=".txt,.md,.pdf",
             ),
             ConfigFieldSpec(
                 name="recursive",
                 field_type=ConfigFieldType.BOOLEAN,
+                runtime=True,
                 description="Recursively scan subdirectories",
                 default=True,
             ),

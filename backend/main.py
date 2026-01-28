@@ -98,6 +98,8 @@ app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=
 app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom-operators", tags=["rag-custom-operators"])
 app.include_router(models_router.router, tags=["models"])
 app.include_router(tools_router.router, tags=["tools"])
+from app.api.routers import agent_operators
+app.include_router(agent_operators.router)
 app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
 app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
 app.include_router(audit_router.router, prefix="/api", tags=["audit"])

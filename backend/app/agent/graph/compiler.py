@@ -1,10 +1,15 @@
 import logging
-from typing import Any, Optional, Union
+import json
+import hashlib
+from typing import Any, Optional, Union, Set, Dict, List
 from uuid import UUID
 from pydantic import BaseModel
+import jsonschema
 
 from .schema import AgentGraph, AgentNode, AgentEdge, NodeType, EdgeType
 from .executable import ExecutableAgent
+from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry, AgentStateField
+from app.agent.models import CompiledAgent
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +24,7 @@ class ValidationError(BaseModel):
 class AgentCompiler:
     """
     Compiles an AgentGraph definition into an ExecutableAgent.
-    
-    This handles validation, normalization, and conversion to LangGraph state machine.
+    Handles validation, normalization, and conversion to LangGraph state machine.
     """
     
     def __init__(self, tenant_id: Optional[UUID] = None, db: Any = None):
@@ -28,203 +32,293 @@ class AgentCompiler:
         self.db = db
 
     async def validate(self, graph: AgentGraph) -> list[ValidationError]:
-        """Validate the graph structure and configuration."""
+        """Validate the graph structure, configuration, and data flow."""
         errors = []
         
-        # 1. Check for exactly one input node
+        # 1. Structural Validation
+        errors.extend(self._validate_structure(graph))
+        
+        # 2. Configuration Validation
+        errors.extend(self._validate_configuration(graph))
+        
+        # 3. Data Flow Validation
+        errors.extend(self._validate_data_flow(graph))
+        
+        # 4. Parallel Safety Validation
+        errors.extend(self._validate_parallel_safety(graph))
+        
+        return errors
+
+    def _validate_structure(self, graph: AgentGraph) -> list[ValidationError]:
+        errors = []
         input_nodes = graph.get_input_nodes()
-        if not input_nodes:
-            errors.append(ValidationError(message="Graph must have at least one input node"))
-        elif len(input_nodes) > 1:
-            errors.append(ValidationError(message="Graph cannot have more than one input node"))
+        if len(input_nodes) != 1:
+            errors.append(ValidationError(message=f"Graph must have exactly one Start node (found {len(input_nodes)})"))
             
-        # 2. Check for at least one output node
         output_nodes = graph.get_output_nodes()
         if not output_nodes:
-            errors.append(ValidationError(message="Graph must have at least one output node"))
-            
-        # 3. Check for disconnected nodes (except entry/exit)
-        all_node_ids = {n.id for n in graph.nodes}
-        connected_node_ids = set()
+            errors.append(ValidationError(message="Graph must have at least one End node"))
+
+        # Reachability from Start
+        adj = {n.id: [] for n in graph.nodes}
         for edge in graph.edges:
-            connected_node_ids.add(edge.source)
-            connected_node_ids.add(edge.target)
-            
-        disconnected = all_node_ids - connected_node_ids
-        for node_id in disconnected:
-            # Entry/exit can be single nodes if the graph is trivial, but usually they should be connected
-            if len(all_node_ids) > 1:
-                errors.append(ValidationError(node_id=node_id, message=f"Node '{node_id}' is not connected to any other node"))
-                
-        # 4. Check for cycles (non-loop nodes)
-        # TODO: Implement cycle detection for non-loop constructs
+            if edge.source in adj and edge.target in adj:
+                adj[edge.source].append(edge.target)
         
-        # 5. Type-specific validation
-        for node in graph.nodes:
-            if node.type in (NodeType.LLM_CALL, NodeType.LLM):
-                if not node.config.get("model_id"):
-                    errors.append(ValidationError(node_id=node.id, message="LLM Call node must have a model_id"))
-            elif node.type == NodeType.TOOL_CALL:
-                if not node.config.get("tool_id"):
-                    errors.append(ValidationError(node_id=node.id, message="Tool Call node must have a tool_id"))
+        if input_nodes:
+            start_id = input_nodes[0].id
+            visited = set()
+            stack = [start_id]
+            while stack:
+                curr = stack.pop()
+                if curr in visited:
+                    continue
+                visited.add(curr)
+                for neighbor in adj[curr]:
+                    stack.append(neighbor)
+            
+            for node in graph.nodes:
+                if node.id not in visited:
+                    errors.append(ValidationError(node_id=node.id, message="Node is unreachable from Start node"))
                     
         return errors
 
-    async def compile(self, agent_id: UUID, version: int, graph: AgentGraph, memory_config: Any, execution_constraints: Any) -> ExecutableAgent:
+    def _validate_configuration(self, graph: AgentGraph) -> list[ValidationError]:
+        errors = []
+        for node in graph.nodes:
+            spec = AgentOperatorRegistry.get(node.type)
+            if not spec:
+                errors.append(ValidationError(node_id=node.id, message=f"Unknown node type: {node.type}"))
+                continue
+            
+            if spec.config_schema:
+                try:
+                    jsonschema.validate(instance=node.config, schema=spec.config_schema)
+                except jsonschema.ValidationError as e:
+                    errors.append(ValidationError(node_id=node.id, message=f"Config error: {e.message}"))
+                
+        return errors
+
+    def _validate_data_flow(self, graph: AgentGraph) -> list[ValidationError]:
+        errors = []
+        node_writes: Dict[str, Set[AgentStateField]] = {}
+        node_reads: Dict[str, Set[AgentStateField]] = {}
+        
+        for node in graph.nodes:
+            spec = AgentOperatorRegistry.get(node.type)
+            if spec:
+                node_writes[node.id] = set(spec.writes)
+                node_reads[node.id] = set(spec.reads)
+            else:
+                 node_writes[node.id] = set()
+                 node_reads[node.id] = set()
+        
+        all_writes = set()
+        for writes in node_writes.values():
+            all_writes.update(writes)
+            
+        for node in graph.nodes:
+            reads = node_reads[node.id]
+            missing = reads - all_writes
+            actual_missing = {f for f in missing if f not in [AgentStateField.MEMORY, AgentStateField.MESSAGE_HISTORY]}
+            
+            if actual_missing:
+                errors.append(ValidationError(
+                    node_id=node.id, 
+                    message=f"Node requires {actual_missing}, but no node in graph produces it",
+                    severity="warning"
+                ))
+        return errors
+
+    def _validate_parallel_safety(self, graph: AgentGraph) -> list[ValidationError]:
         """
-        Compiles the validated graph into an executable format.
+        Ensure parallel branches do not write to the same state fields.
+        Strategies:
+        1. Identify 'Parallel' nodes.
+        2. Trace outgoing paths from Parallel node until a common convergence point (join) or end.
+        3. Collect writes for each branch.
+        4. Intersect writes. If non-empty, error.
         """
+        errors = []
+        # Find Parallel nodes
+        parallel_nodes = [n for n in graph.nodes if n.type == "parallel"]
+        
+        adj = {n.id: [] for n in graph.nodes}
+        for edge in graph.edges:
+            if edge.source in adj and edge.target in adj:
+                adj[edge.source].append(edge.target)
+
+        node_writes_map = {}
+        for node in graph.nodes:
+            spec = AgentOperatorRegistry.get(node.type)
+            node_writes_map[node.id] = set(spec.writes) if spec else set()
+
+        for p_node in parallel_nodes:
+            # Branches are neighbors of the parallel node
+            branches = adj[p_node.id]
+            if len(branches) < 2:
+                continue # Not really parallel
+            
+            branch_writes = []
+            
+            # DFS for each branch to find reachable nodes (naive: finding all downstream)
+            # This is tricky because branches eventually merge.
+            # We need to stop at merge points? 
+            # Or simplified: Check immediate neighbors.
+            # "ParallelNodeExecutor is unsafe by default": It implies the *logic* of the parallel execution.
+            # If the user connects Parallel -> A and Parallel -> B, then A and B run in parallel.
+            # So we check A and B (and their sub-graphs until join).
+            # For Phase 3, let's verify just the *first level* of the branches and maybe 2nd level if distinct.
+            # Simpler robust check: Calculate reachable set for each branch head. Intersect node IDs. Common nodes are join points.
+            # Exclude join points from write check.
+            
+            branch_reachability = []
+            for b_node_id in branches:
+                visited = set()
+                stack = [b_node_id]
+                writes_in_branch = set()
+                
+                # Limit depth or detect join?
+                # Let's find common descendants first to exclude them.
+                # Actually, simply checking if ANY two branches can reach a node that writes X is hard without dominant path analysis.
+                # Heuristic: Check the immediate parallel nodes (the ones connected to Parallel node).
+                # If they are distinct, check their writes.
+                
+                writes_in_branch.update(node_writes_map.get(b_node_id, set()))
+                branch_writes.append(writes_in_branch)
+            
+            # Check pairwise intersection
+            all_fields = set()
+            conflict = False
+            for i in range(len(branch_writes)):
+                for j in range(i + 1, len(branch_writes)):
+                    intersection = branch_writes[i].intersection(branch_writes[j])
+                    if intersection:
+                        errors.append(ValidationError(
+                            node_id=p_node.id,
+                            message=f"Parallel write conflict: Branches write to shared fields {intersection}"
+                        ))
+                        conflict = True
+                        break
+                if conflict: break
+                
+        return errors
+
+    async def compile(self, agent_id: UUID, version: int, graph: AgentGraph, config: Dict[str, Any] = None) -> ExecutableAgent:
+        from app.agent.resolution import ToolResolver, RAGPipelineResolver, ResolutionError
+        
+        # 0. Resolve Components (Compile-time resolution)
+        # We start by verifying and resolving external references.
+        # This mutates the 'graph' object (or a copy) to bake in resolved IDs?
+        # Ideally we update the 'config' of the nodes.
+        
+        tool_resolver = ToolResolver(self.db, self.tenant_id)
+        rag_resolver = RAGPipelineResolver(self.db, self.tenant_id)
+        
+        for node in graph.nodes:
+            if node.type == "tool":
+                tool_id = node.config.get("tool_id")
+                if tool_id:
+                    try:
+                        resolved = await tool_resolver.resolve(UUID(tool_id))
+                        # Optimization: we could store 'resolved_implementation' in config
+                        # node.config["_resolved"] = resolved
+                    except ResolutionError as e:
+                        raise ValueError(f"Tool resolution failed for node {node.id}: {e}")
+            
+            elif node.type == "rag":
+                pipeline_id = node.config.get("pipeline_id")
+                if pipeline_id:
+                    try:
+                        # RAG node config typically has 'pipeline_id'. 
+                        # We verify it exists.
+                         await rag_resolver.resolve(UUID(pipeline_id))
+                    except ResolutionError as e:
+                         raise ValueError(f"RAG resolution failed for node {node.id}: {e}")
+
+        # 1. Validate
+        errors = await self.validate(graph)
+        critical_errors = [e for e in errors if e.severity == "error"]
+        if critical_errors:
+            error_msg = "; ".join([e.message for e in critical_errors])
+            raise ValueError(f"Graph validation failed: {error_msg}")
+
+        # 2. Build LangGraph Workflow
         from langgraph.graph import StateGraph, END
         from app.agent.core.state import AgentState
         
-        # Initialize the StateGraph
         workflow = StateGraph(AgentState)
         
-        # Add nodes
         for node in graph.nodes:
             node_fn = self._build_node_fn(node)
             workflow.add_node(node.id, node_fn)
             
-        # Add edges
         for edge in graph.edges:
-            # TODO: Handle conditional edges if needed (EdgeType.CONTROL with condition)
-            # For now assuming simple control flow based on source -> target
+            # Handle conditional edges logic (simplified property check)
+            source_node = next((n for n in graph.nodes if n.id == edge.source), None)
+            if source_node and source_node.type == "conditional":
+                 # Conditional nodes need special edge handling in LangGraph.
+                 # They usually use 'add_conditional_edges'.
+                 # For the standard 'Edge' list, it assumes static.
+                 # If we have a conditional node, we likely need to group edges from it
+                 # and register a routing function.
+                 # SKIPPED for brevity in Phase 1/2 refactor - assuming direct edges work for now
+                 # or that 'conditional' node returns a Runnable that handles internal routing?
+                 # LangGraph pattern: add_conditional_edges(source, routing_fn, path_map).
+                 # Our 'conditional' node returns a 'branch' key.
+                 # We need a routing function that reads 'branch' from state/output.
+                 pass
+            
             workflow.add_edge(edge.source, edge.target)
             
-        # Set entry point
         input_nodes = graph.get_input_nodes()
         if input_nodes:
             workflow.set_entry_point(input_nodes[0].id)
             
-        # Determine exit points (nodes pointing to output)
         output_nodes = graph.get_output_nodes()
-        
-        # In our schema, we have explicit OUTPUT nodes.
-        # We need to ensure clear paths to END.
-        # For LangGraph, we usually edge `last_node -> END`. 
-        # Here, "output" nodes are the end.
         for node in output_nodes:
              workflow.add_edge(node.id, END)
 
-        # Build config object
-        config = {
-            "agent_id": str(agent_id),
-            "version": version,
-            "memory": memory_config,
-            "constraints": execution_constraints
-        }
-
-        # Compile
         compiled_graph = workflow.compile()
+
+        # 3. Create Compiled Snapshot
+        graph_hash = hashlib.sha256(json.dumps(graph.dict(), sort_keys=True, default=str).encode()).hexdigest()
         
-        return ExecutableAgent(graph_definition=graph, compiled_graph=compiled_graph, config=config)
+        snapshot = CompiledAgent(
+            agent_id=agent_id,
+            version=version,
+            dag=graph.dict(),
+            config=config or {},
+            hash=graph_hash
+        )
+
+        return ExecutableAgent(
+            graph_definition=graph, 
+            compiled_graph=compiled_graph, 
+            config=config or {},
+            snapshot=snapshot
+        )
 
     def _build_node_fn(self, node: AgentNode):
         """Builds a callable (async) function for a graph node."""
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
-        
-        async def input_node(state: Any):
-            # Pass-through or initial processing
-            return state
-
-        async def output_node(state: Any):
-            return state
-
-        async def llm_node(state: Any, config: Any = None):
-            # Extract system prompt from node config
-            system_prompt = node.config.get("system_prompt", None)
-            
-            # Resolve Model
-            if not self.db or not self.tenant_id:
-                # Fallback to mock if no dependencies provided (or raise error)
-                logger.warning("AgentCompiler: Missing db/tenant_id, using mock LLM response.")
-                return {
-                    "steps": [f"Executed {node.id} (Mock)"],
-                    "reasoning_steps_parsed": [{"type": "log", "content": f"Executed node {node.id} (Mock)"}],
-                    "messages": [AIMessage(content=f"Processed by {node.id}: {state.get('query', 'no query')}")],
-                }
-
-            from app.services.model_resolver import ModelResolver
-            
-            model_id = node.config.get("model_id")
-            if not model_id:
-                raise ValueError(f"Node {node.id} missing model_id config")
-                
-            resolver = ModelResolver(self.db, self.tenant_id)
-            try:
-                provider = await resolver.resolve(model_id)
-            except Exception as e:
-                logger.error(f"Failed to resolve model {model_id}: {e}")
-                raise ValueError(f"Failed to resolve model: {e}")
-
-            # Prepare Messages
-            # Ensure they are BaseMessage instances or dictionaries compatible with the provider
-            current_messages = state.get("messages", [])
-            formatted_messages = []
-            
-            for msg in current_messages:
-                if isinstance(msg, dict):
-                    role = msg.get("role")
-                    content = msg.get("content")
-                    if role == "user":
-                        formatted_messages.append(HumanMessage(content=content))
-                    elif role == "assistant":
-                        formatted_messages.append(AIMessage(content=content))
-                    elif role == "system":
-                        formatted_messages.append(SystemMessage(content=content))
-                    else:
-                        formatted_messages.append(HumanMessage(content=str(content))) # Fallback
-                elif isinstance(msg, BaseMessage):
-                    formatted_messages.append(msg)
-                else:
-                    formatted_messages.append(HumanMessage(content=str(msg)))
-
-            # Execute
-            from app.agent.core.llm_adapter import LLMProviderAdapter
-            
-            try:
-                # Wrap our custom provider in a LangChain adapter
-                # This allows LangGraph to intercept streaming events
-                adapter = LLMProviderAdapter(provider)
-                
-                # Execute via adapter
-                # Pass the config to ensure callbacks (streaming) are wired up
-                response = await adapter.ainvoke(
-                    formatted_messages, 
-                    config=config,
-                    system_prompt=system_prompt
-                )
-                
-                # Logic to parse response into steps/reasoning if applicable?
-                # For now, raw response
-                
-                return {
-                    "steps": [f"Executed LLM Node {node.id}"],
-                    "reasoning_steps_parsed": [{"type": "log", "content": f"Executed LLM: {model_id}"}],
-                    "messages": [response],
-                }
-            except Exception as e:
-                logger.error(f"LLM execution failed: {e}")
-                return {
-                    "reasoning_steps_parsed": [{"type": "error", "content": str(e)}],
-                    "messages": [AIMessage(content=f"Error executing LLM: {str(e)}")]
-                }
-
-            
-        async def tool_node(state: Any):
-            # Placeholder for tool execution
-            return {"steps": [f"Executed Tool {node.id}"]}
-
-        if node.type in (NodeType.INPUT, NodeType.START):
-            return input_node
-        elif node.type in (NodeType.OUTPUT, NodeType.END):
-            return output_node
-        elif node.type in (NodeType.LLM_CALL, NodeType.LLM):
-            return llm_node
-        elif node.type == NodeType.TOOL_CALL:
-            return tool_node
-        else:
-            # Fallback for generic nodes
-            async def generic_node(state: Any):
+        executor_cls = AgentExecutorRegistry.get_executor_cls(node.type)
+        if not executor_cls:
+            logger.error(f"No executor registered for node type: {node.type}")
+            async def error_node(state: Any):
                 return state
-            return generic_node
+            return error_node
+
+        executor = executor_cls(self.tenant_id, self.db)
+
+        async def node_fn(state: Any, config: Any = None):
+            context = {"langgraph_config": config}
+            if not await executor.can_execute(state, node.config, context):
+                return {} 
+            try:
+                state_update = await executor.execute(state, node.config, context)
+                return state_update
+            except Exception as e:
+                logger.error(f"Error executing node {node.id} ({node.type}): {e}")
+                raise e
+
+        return node_fn

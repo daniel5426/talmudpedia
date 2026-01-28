@@ -24,13 +24,11 @@ import {
   Redo2,
   MousePointer2,
   Hand,
-  ArrowLeft,
   Save,
   Zap,
   Play,
   Loader2,
   LayoutPanelLeft,
-  ChevronRight
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -93,17 +91,14 @@ function PipelineBuilderInner({
 }: PipelineBuilderProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const [isCatalogVisible, setIsCatalogVisible] = useState(!isExecutionMode)
-  const prevExecutionMode = useRef(isExecutionMode)
+  const [prevExecutionMode, setPrevExecutionMode] = useState(isExecutionMode)
 
-  // Sync catalog visibility when execution mode changes
-  useEffect(() => {
-    if (prevExecutionMode.current !== isExecutionMode) {
-      setIsCatalogVisible(!isExecutionMode)
-      prevExecutionMode.current = isExecutionMode
-    }
-  }, [isExecutionMode])
+  if (prevExecutionMode !== isExecutionMode) {
+    setPrevExecutionMode(isExecutionMode)
+    setIsCatalogVisible(!isExecutionMode)
+  }
 
-  const { screenToFlowPosition, fitView } = useReactFlow()
+  const { screenToFlowPosition } = useReactFlow()
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
@@ -124,7 +119,8 @@ function PipelineBuilderInner({
       setNodes((nds) =>
         nds.map((node) => {
           if (node.data.executionStatus) {
-            const { executionStatus, ...rest } = node.data
+            const rest = { ...node.data }
+            delete rest.executionStatus
             return { ...node, data: rest }
           }
           return node
@@ -359,7 +355,7 @@ function PipelineBuilderInner({
           <Button
             variant="outline"
             size="icon"
-            className="h-10 w-10 rounded-xl shadow-none backdrop-blur-md border border-1 hover:bg-muted"
+            className="h-10 w-10 rounded-xl shadow-none backdrop-blur-md border hover:bg-muted"
             onClick={() => {
               if (isExecutionMode && onExitExecutionMode) {
                 onExitExecutionMode()
@@ -505,7 +501,7 @@ function PipelineBuilderInner({
           </div>
 
           <div className="absolute bottom-6 right-6">
-            <Controls className="!static !flex !flex-row !gap-1 !bg-transparent !border-none !shadow-none" />
+            <Controls className="static! flex! flex-row! gap-1! bg-transparent! border-none! shadow-none!" />
           </div>
         </ReactFlow>
       </div>
@@ -523,6 +519,7 @@ function PipelineBuilderInner({
               <ExecutionDetailsSkeleton onClose={() => setSelectedNodeId(null)} />
             ) : selectedNode ? (
               <ConfigPanel
+                key={selectedNode.id}
                 nodeId={selectedNode.id}
                 data={selectedNode.data}
                 operatorSpec={operatorSpecs[selectedNode.data.operator]}

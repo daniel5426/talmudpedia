@@ -546,6 +546,9 @@ class LoaderExecutor(OperatorExecutor):
         if isinstance(input_data.data, dict) and input_data.source_operator_id is None:
             # Only merge if it's the first node and data is dict-like (input params)
             config_dict.update(input_data.data)
+        source = config_dict.get("base_path") or config_dict.get("source")
+        if source is None:
+            raise ValueError("Missing loader source path")
             
         # Determine loader type from operator_id if not in config
         loader_type = config_dict.get("loader_type")
@@ -561,7 +564,7 @@ class LoaderExecutor(OperatorExecutor):
         )
         
         loader = RAGFactory.create_loader(loader_config)
-        documents = await loader.load()
+        documents = await loader.load(source)
         
         # Documents usually are [Document(text=..., metadata=...)]
         # We need to return them in a serializable format if possible, 

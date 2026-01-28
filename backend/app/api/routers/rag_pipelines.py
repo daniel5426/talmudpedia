@@ -4,7 +4,7 @@ RAG Pipelines Router - PostgreSQL implementation.
 Manages visual pipelines, compilation, and pipeline job execution.
 Now uses PostgreSQL instead of MongoDB.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from uuid import UUID
@@ -39,6 +39,7 @@ from app.core.rbac import check_permission
 from app.core.audit import log_simple_action
 from app.rag.pipeline import PipelineCompiler, OperatorRegistry
 from app.rag.pipeline.executor import PipelineExecutor
+from app.rag.pipeline.input_storage import PipelineInputStorage
 from fastapi import BackgroundTasks
 
 router = APIRouter()
@@ -251,6 +252,37 @@ class UpdatePipelineRequest(BaseModel):
 class CreateJobRequest(BaseModel):
     executable_pipeline_id: UUID
     input_params: Dict[str, Any] = {}
+
+
+class InputSchemaField(BaseModel):
+    name: str
+    field_type: str
+    required: bool
+    runtime: bool = True
+    default: Optional[Any] = None
+    description: Optional[str] = None
+    options: Optional[List[str]] = None
+    placeholder: Optional[str] = None
+    required_capability: Optional[str] = None
+    operator_id: str
+    operator_display_name: Optional[str] = None
+    step_id: str
+    json_schema: Optional[Dict[str, Any]] = None
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+
+
+class InputSchemaStep(BaseModel):
+    step_id: str
+    operator_id: str
+    operator_display_name: Optional[str] = None
+    category: Optional[str] = None
+    config: Dict[str, Any] = {}
+    fields: List[InputSchemaField] = []
+
+
+class ExecutablePipelineInputSchema(BaseModel):
+    steps: List[InputSchemaStep] = []
 
 
 # =============================================================================
@@ -742,6 +774,295 @@ async def get_executable_pipeline(
     return exec_pipeline_to_dict(exec_pipeline)
 
 
+class PipelineInputSchemaBuilder:
+    def __init__(
+        self,
+        dag: List[Dict[str, Any]],
+        registry: OperatorRegistry,
+        tenant_id: Optional[str],
+    ):
+        self._dag = dag
+        self._registry = registry
+        self._tenant_id = tenant_id
+
+    def build(self) -> ExecutablePipelineInputSchema:
+        steps: List[InputSchemaStep] = []
+
+        for step in self._dag:
+            depends_on = step.get("depends_on") or []
+            if depends_on:
+                continue
+
+            operator_id = step.get("operator")
+            if not operator_id:
+                continue
+
+            spec = self._registry.get(operator_id, self._tenant_id)
+            if not spec:
+                continue
+
+            step_id = step.get("step_id") or operator_id
+            config = step.get("config") or {}
+            fields = self._build_fields(spec, config, step_id)
+            steps.append(InputSchemaStep(
+                step_id=step_id,
+                operator_id=operator_id,
+                operator_display_name=spec.display_name,
+                category=spec.category.value if spec.category else None,
+                config=config,
+                fields=fields,
+            ))
+
+        return ExecutablePipelineInputSchema(steps=steps)
+
+    def _build_fields(
+        self,
+        spec: OperatorSpec,
+        config: Dict[str, Any],
+        step_id: str,
+    ) -> List[InputSchemaField]:
+        fields: List[InputSchemaField] = []
+        required_names = spec.get_required_field_names()
+        for field in spec.required_config + spec.optional_config:
+            if field.name in config:
+                continue
+            if not field.runtime:
+                continue
+            fields.append(InputSchemaField(
+                name=field.name,
+                field_type=field.field_type.value,
+                required=field.required or field.name in required_names,
+                runtime=field.runtime,
+                default=field.default,
+                description=field.description,
+                options=field.options,
+                placeholder=field.placeholder,
+                required_capability=field.required_capability,
+                operator_id=spec.operator_id,
+                operator_display_name=spec.display_name,
+                step_id=step_id,
+                json_schema=field.json_schema,
+                min_value=field.min_value,
+                max_value=field.max_value,
+            ))
+        return fields
+
+
+class PipelineInputValidator:
+    def __init__(
+        self,
+        dag: List[Dict[str, Any]],
+        registry: OperatorRegistry,
+        tenant_id: Optional[str],
+        storage: PipelineInputStorage,
+    ):
+        self._builder = PipelineInputSchemaBuilder(dag, registry, tenant_id)
+        self._storage = storage
+
+    def validate(self, input_params: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, str]]]:
+        schema = self._builder.build()
+        step_ids = [step.step_id for step in schema.steps]
+        normalized, errors = self._normalize_input_params(input_params, step_ids)
+        if errors:
+            return {}, errors
+
+        for step in schema.steps:
+            step_params = normalized.get(step.step_id, {})
+            allowed_fields = {field.name: field for field in step.fields}
+
+            for key in step_params.keys():
+                if key not in allowed_fields:
+                    errors.append({
+                        "step_id": step.step_id,
+                        "field": key,
+                        "message": "Unexpected runtime field",
+                    })
+
+            for field in step.fields:
+                value_provided = field.name in step_params
+                if field.required and not value_provided and field.default is None:
+                    errors.append({
+                        "step_id": step.step_id,
+                        "field": field.name,
+                        "message": "Missing required field",
+                    })
+                    continue
+                if value_provided:
+                    value = step_params.get(field.name)
+                    if value is None and field.required and field.default is None:
+                        errors.append({
+                            "step_id": step.step_id,
+                            "field": field.name,
+                            "message": "Missing required field",
+                        })
+                        continue
+                    errors.extend(self._validate_field_value(step.step_id, field, value))
+
+        return normalized, errors
+
+    def _normalize_input_params(
+        self,
+        input_params: Dict[str, Any],
+        step_ids: List[str],
+    ) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, str]]]:
+        if input_params is None:
+            return {step_id: {} for step_id in step_ids}, []
+        if not isinstance(input_params, dict):
+            return {}, [{
+                "step_id": "__root__",
+                "field": "__root__",
+                "message": "input_params must be an object",
+            }]
+
+        if len(step_ids) == 1 and step_ids[0] not in input_params:
+            step_params = input_params if isinstance(input_params, dict) else {}
+            return {step_ids[0]: step_params}, []
+
+        normalized: Dict[str, Dict[str, Any]] = {}
+        errors: List[Dict[str, str]] = []
+        for step_id in step_ids:
+            value = input_params.get(step_id, {})
+            if value is None:
+                normalized[step_id] = {}
+                continue
+            if not isinstance(value, dict):
+                errors.append({
+                    "step_id": step_id,
+                    "field": "__root__",
+                    "message": "Step input must be an object",
+                })
+                continue
+            normalized[step_id] = value
+
+        extra_keys = [key for key in input_params.keys() if key not in step_ids]
+        if extra_keys:
+            for key in extra_keys:
+                errors.append({
+                    "step_id": "__root__",
+                    "field": key,
+                    "message": "Unknown step id",
+                })
+
+        return normalized, errors
+
+    def _validate_field_value(
+        self,
+        step_id: str,
+        field: InputSchemaField,
+        value: Any,
+    ) -> List[Dict[str, str]]:
+        errors: List[Dict[str, str]] = []
+        field_type = field.field_type
+
+        if field_type == ConfigFieldType.STRING.value:
+            if not isinstance(value, str):
+                errors.append(self._error(step_id, field.name, "Must be a string"))
+        elif field_type == ConfigFieldType.SECRET.value:
+            if not isinstance(value, str) or not value.startswith("$secret:"):
+                errors.append(self._error(step_id, field.name, "Must be a secret reference"))
+        elif field_type == ConfigFieldType.SELECT.value:
+            if not isinstance(value, str):
+                errors.append(self._error(step_id, field.name, "Must be a string"))
+            elif field.options and value not in field.options:
+                errors.append(self._error(step_id, field.name, f"Must be one of: {field.options}"))
+        elif field_type == ConfigFieldType.INTEGER.value:
+            if not isinstance(value, int) or isinstance(value, bool):
+                errors.append(self._error(step_id, field.name, "Must be an integer"))
+            else:
+                errors.extend(self._validate_numeric_bounds(step_id, field, float(value)))
+        elif field_type == ConfigFieldType.FLOAT.value:
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                errors.append(self._error(step_id, field.name, "Must be a number"))
+            else:
+                errors.extend(self._validate_numeric_bounds(step_id, field, float(value)))
+        elif field_type == ConfigFieldType.BOOLEAN.value:
+            if not isinstance(value, bool):
+                errors.append(self._error(step_id, field.name, "Must be a boolean"))
+        elif field_type == ConfigFieldType.JSON.value:
+            if not isinstance(value, (dict, list)):
+                errors.append(self._error(step_id, field.name, "Must be an object or list"))
+        elif field_type in {
+            ConfigFieldType.MODEL_SELECT.value,
+            ConfigFieldType.CODE.value,
+            ConfigFieldType.FILE_PATH.value,
+        }:
+            if not isinstance(value, str):
+                errors.append(self._error(step_id, field.name, "Must be a string"))
+            elif field_type == ConfigFieldType.FILE_PATH.value:
+                if self._storage.is_managed_path(value) and not self._storage.path_exists(value):
+                    errors.append(self._error(step_id, field.name, "Uploaded file not found"))
+
+        return errors
+
+    def _validate_numeric_bounds(
+        self,
+        step_id: str,
+        field: InputSchemaField,
+        value: float,
+    ) -> List[Dict[str, str]]:
+        errors: List[Dict[str, str]] = []
+        if field.min_value is not None and value < field.min_value:
+            errors.append(self._error(step_id, field.name, f"Must be >= {field.min_value}"))
+        if field.max_value is not None and value > field.max_value:
+            errors.append(self._error(step_id, field.name, f"Must be <= {field.max_value}"))
+        return errors
+
+    def _error(self, step_id: str, field_name: str, message: str) -> Dict[str, str]:
+        return {"step_id": step_id, "field": field_name, "message": message}
+
+
+@router.get("/executable-pipelines/{exec_id}/input-schema")
+async def get_executable_pipeline_input_schema(
+    exec_id: UUID,
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+
+    if not await require_pipeline_permission(tenant, user, Action.READ, db=db):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    query = select(ExecutablePipeline).where(ExecutablePipeline.id == exec_id)
+    if tenant:
+        query = query.where(ExecutablePipeline.tenant_id == tenant.id)
+
+    result = await db.execute(query)
+    exec_pipeline = result.scalar_one_or_none()
+    if not exec_pipeline:
+        raise HTTPException(status_code=404, detail="Executable pipeline not found")
+
+    if tenant:
+        await sync_custom_operators(db, tenant.id)
+
+    compiled_graph = exec_pipeline.compiled_graph or {}
+    dag = compiled_graph.get("dag") or []
+    registry = OperatorRegistry.get_instance()
+    tenant_id = str(tenant.id) if tenant else None
+    return PipelineInputSchemaBuilder(dag, registry, tenant_id).build().model_dump()
+
+
+@router.post("/pipeline-inputs/upload")
+async def upload_pipeline_input_file(
+    file: UploadFile = File(...),
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+
+    if not await require_pipeline_permission(tenant, user, Action.WRITE, db=db):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    storage = PipelineInputStorage()
+    storage.cleanup_expired(24 * 60 * 60)
+    metadata = await storage.save_upload(tenant.id, file)
+    return {"path": metadata["path"], "filename": metadata["filename"], "upload_id": metadata["upload_id"]}
+
+
 @router.post("/jobs")
 async def create_pipeline_job(
     request: CreateJobRequest,
@@ -770,11 +1091,21 @@ async def create_pipeline_job(
     if not exec_pipeline:
         raise HTTPException(status_code=404, detail="Executable pipeline not found")
 
+    await sync_custom_operators(db, tenant.id)
+
+    compiled_graph = exec_pipeline.compiled_graph or {}
+    dag = compiled_graph.get("dag") or []
+    registry = OperatorRegistry.get_instance()
+    validator = PipelineInputValidator(dag, registry, str(tenant.id), PipelineInputStorage())
+    normalized_params, validation_errors = validator.validate(request.input_params)
+    if validation_errors:
+        raise HTTPException(status_code=422, detail={"errors": validation_errors})
+
     job = PipelineJob(
         tenant_id=tenant.id,
         executable_pipeline_id=exec_id,
         status=PipelineJobStatus.QUEUED,
-        input_params=request.input_params,
+        input_params=normalized_params,
         triggered_by=user.id,
     )
 
@@ -808,6 +1139,7 @@ async def create_pipeline_job(
 @router.get("/jobs")
 async def list_pipeline_jobs(
     executable_pipeline_id: Optional[UUID] = None,
+    visual_pipeline_id: Optional[UUID] = None,
     status: Optional[str] = None,
     skip: int = 0,
     limit: int = 20,
@@ -825,6 +1157,9 @@ async def list_pipeline_jobs(
     
     if executable_pipeline_id:
         query = query.where(PipelineJob.executable_pipeline_id == executable_pipeline_id)
+    
+    if visual_pipeline_id:
+        query = query.join(ExecutablePipeline).where(ExecutablePipeline.visual_pipeline_id == visual_pipeline_id)
     
     if status:
         try:

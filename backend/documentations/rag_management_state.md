@@ -29,11 +29,26 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 - **Capability-Based Selection**: The builder dynamically filters available models by `embedding` or `completion` capabilities for specific nodes (e.g., Summarizer nodes fetch completion models).
 - **Dimension Resolution**: Automatically extracts embedding dimensions from model metadata, resolving them at compile-time to ensure vector store compatibility.
 
-### 4. Direct Execution Engine (NEW)
+### 4. Direct Execution Engine
 - **Topological DAG Execution**: A custom `PipelineExecutor` service can run compiled pipelines step-by-step in accurate order.
-- **One-Click Testing**: The "Run Pipeline" feature allows administrators to trigger a pipeline execution with custom JSON input directly from the builder UI.
+- **Schema-Driven Runtime Forms**: Replaced raw JSON inputs with dynamic, operator-aware forms. The system automatically discovers required parameters from "source" nodes and generates type-safe UI components.
+- **Namespaced Runtime Payload**: Runtime inputs are grouped by step ID to avoid collisions and ensure unambiguous execution parameters.
+- **Backend Validation**: Every job creation re-validates runtime inputs against operator contracts (required fields, types, enum constraints) with structured, field-addressable errors.
+- **One-Click Testing**: The "Run Pipeline" feature allows administrators to trigger a pipeline execution directly from the builder UI or the pipelines table.
+- **Live Execution Tracking**: Step-by-step progress visualization with input/output inspection and real-time status updates.
 - **Background Orchestration**: Pipeline jobs are triggered via `BackgroundTasks` to ensure high availability and responsiveness of the main API.
 - **Immutable Compilation**: Every save/run creates a versioned `ExecutablePipeline` snapshot with locked operator versions and configuration state.
+
+### 5. File Lifecycle & Storage (NEW)
+- **Tenant-Isolated Uploads**: Dedicated endpoint for temporary file storage during pipeline runs, using a secure, tenant-scoped directory structure.
+- **Hybrid File Inputs**: Integrated `FileUploadInput` component that handles background uploads and maps server paths to operator configuration automatically.
+- **Metadata-Tracked Lifecycle**: Uploads are tracked with metadata (tenant, filename, creation time) and linked to specific jobs.
+- **TTL-Based Cleanup**: Automatic cleanup policy for orphaned uploads to prevent storage leaks in multi-tenant environments.
+
+### 6. Operational UX (NEW)
+- **Table-Side Execution**: Pipelines can be compiled and triggered directly from the main Pipelines Table without entering the builder.
+- **Real-Time Progress Visualization**: Small, non-intrusive progress bars in the table view provide immediate feedback on active pipeline runs.
+- **Context-Aware Navigation**: Clicking a running pipeline automatically opens the builder in "Execution Mode" for the specific active job, allowing deep inspection of live data flow.
 
 ## System Architecture
 
@@ -55,7 +70,11 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 | Decomposed Operator Categories | ✅ Completed | Normalization, Enrichment, and Chunking are split for cleaner pipelines. |
 | Custom Python Operators | ✅ Completed | Fully integrated editor, storage, and execution engine. |
 | Background Pipeline Executor | ✅ Completed | Asynchronous execution of compiled DAGs. |
-| Run/Test UI | ✅ Completed | Modal for triggering pipeline runs with custom parameters. |
+| Schema-Driven Run Forms | ✅ Completed | Dynamic forms replacing raw JSON for runtime parameters. |
+| Namespaced Runtime Inputs | ✅ Completed | Step-scoped input payloads for unambiguous execution. |
+| Backend Runtime Validation | ✅ Completed | Strict enforcement of operator contracts at job creation. |
+| File Upload Lifecycle | ✅ Completed | Metadata-tracked temporary storage with TTL cleanup. |
+| Table-Side Execution | ✅ Completed | Triggering and tracking runs directly from the list view. |
 | Live Execution Tracking | ✅ Completed | Step-by-step progress visualization with input/output inspection. |
 | Connection Validation | ✅ Completed | Comprehensive logic supporting all new intermediate data types. |
 | Multi-tenancy | ✅ Active | Tenant-specific pipeline namespace and custom operator scoping. |

@@ -127,9 +127,26 @@ export interface ToolsListResponse {
 // Services
 // ============================================================================
 
+// Operator Types
+export interface AgentOperatorSpec {
+  type: string;
+  category: string;
+  display_name: string;
+  description: string;
+  reads: string[];
+  writes: string[];
+  config_schema: Record<string, any>;
+  ui: Record<string, any>;
+}
+
 export const agentService = {
+  async listOperators(): Promise<AgentOperatorSpec[]> {
+    return httpClient.get<AgentOperatorSpec[]>("/agents/operators");
+  },
+
   async listAgents(params?: { status?: string, skip?: number, limit?: number }) {
     const query = new URLSearchParams();
+
     if (params?.status) query.set("status", params.status);
     if (params?.skip) query.set("skip", String(params.skip));
     if (params?.limit) query.set("limit", String(params.limit));

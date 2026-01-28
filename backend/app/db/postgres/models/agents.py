@@ -101,6 +101,7 @@ class RunStatus(str, enum.Enum):
     completed = "completed"
     failed = "failed"
     cancelled = "cancelled"
+    paused = "paused"
 
 
 class AgentRun(Base):
@@ -115,6 +116,7 @@ class AgentRun(Base):
     
     input_params = Column(JSONB, default={})
     output_result = Column(JSONB, nullable=True)
+    checkpoint = Column(JSONB, nullable=True)  # Store suspended state for resuming
     error_message = Column(String, nullable=True)
     
     usage_tokens = Column(Integer, default=0)

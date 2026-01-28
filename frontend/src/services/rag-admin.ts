@@ -1,4 +1,13 @@
 import { httpClient } from "./http";
+import {
+  ExecutablePipelineInputField,
+  ExecutablePipelineInputSchema,
+  ExecutablePipelineInputStep,
+  OperatorCatalog,
+  OperatorCatalogItem,
+  OperatorSpec,
+  PipelineStepExecution,
+} from "@/components/pipeline/types";
 
 export interface RAGStats {
   total_indices: number;
@@ -115,65 +124,6 @@ export interface PipelineJob {
   finished_at?: string;
   error_message?: string;
   created_at: string;
-}
-
-export interface PipelineStepExecution {
-  id: string;
-  job_id: string;
-  step_id: string;
-  operator_id: string;
-  status: "pending" | "running" | "completed" | "failed" | "skipped";
-  input_data?: any;
-  output_data?: any;
-  metadata: Record<string, any>;
-  error_message?: string;
-  execution_order: number;
-  created_at: string;
-  started_at?: string;
-  completed_at?: string;
-}
-
-export interface OperatorCatalog {
-  source: OperatorCatalogItem[];
-  normalization: OperatorCatalogItem[];
-  enrichment: OperatorCatalogItem[];
-  chunking: OperatorCatalogItem[];
-  embedding: OperatorCatalogItem[];
-  storage: OperatorCatalogItem[];
-  retrieval: OperatorCatalogItem[];
-  reranking: OperatorCatalogItem[];
-  custom: OperatorCatalogItem[];
-  transform: OperatorCatalogItem[];
-}
-
-export interface OperatorCatalogItem {
-  operator_id: string;
-  display_name: string;
-  input_type: string;
-  output_type: string;
-  dimension?: number;
-}
-
-export interface ConfigFieldSpec {
-  name: string;
-  field_type: string;
-  required: boolean;
-  default?: unknown;
-  description?: string;
-  options?: string[];
-}
-
-export interface OperatorSpec {
-  operator_id: string;
-  display_name: string;
-  category: string;
-  input_type: string;
-  output_type: string;
-  required_config: ConfigFieldSpec[];
-  optional_config: ConfigFieldSpec[];
-  supports_parallelism: boolean;
-  supports_streaming: boolean;
-  dimension?: number;
 }
 
 export interface CustomOperator {
@@ -438,10 +388,32 @@ class RAGAdminService {
     return httpClient.get<any>(url);
   }
 
+  async getExecutablePipelineInputSchema(
+    execId: string,
+    tenantSlug?: string
+  ): Promise<ExecutablePipelineInputSchema> {
+    const url = tenantSlug
+      ? `/admin/pipelines/executable-pipelines/${execId}/input-schema?tenant_slug=${tenantSlug}`
+      : `/admin/pipelines/executable-pipelines/${execId}/input-schema`;
+    return httpClient.get<ExecutablePipelineInputSchema>(url);
+  }
+
+  async uploadPipelineInput(
+    file: File,
+    tenantSlug?: string
+  ): Promise<{ path: string; filename?: string; upload_id?: string }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const url = tenantSlug
+      ? `/admin/pipelines/pipeline-inputs/upload?tenant_slug=${tenantSlug}`
+      : "/admin/pipelines/pipeline-inputs/upload";
+    return httpClient.post(url, formData);
+  }
+
   async createPipelineJob(
     data: {
       executable_pipeline_id: string;
-      input_params?: Record<string, unknown>;
+      input_params?: Record<string, Record<string, unknown>>;
     },
     tenantSlug?: string
   ): Promise<{ job_id: string; status: string; executable_pipeline_id: string }> {
@@ -454,6 +426,7 @@ class RAGAdminService {
   async listPipelineJobs(
     options?: {
       executable_pipeline_id?: string;
+      visual_pipeline_id?: string;
       status?: string;
       page?: number;
       limit?: number;
@@ -462,6 +435,7 @@ class RAGAdminService {
   ): Promise<{ jobs: PipelineJob[]; total: number; page: number; pages: number }> {
     const params = new URLSearchParams();
     if (options?.executable_pipeline_id) params.set("executable_pipeline_id", options.executable_pipeline_id);
+    if (options?.visual_pipeline_id) params.set("visual_pipeline_id", options.visual_pipeline_id);
     if (options?.status) params.set("status", options.status);
     if (options?.page) params.set("skip", String((options.page - 1) * (options?.limit || 20)));
     if (options?.limit) params.set("limit", String(options.limit));

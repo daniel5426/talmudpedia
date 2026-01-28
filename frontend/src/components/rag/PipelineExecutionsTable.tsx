@@ -66,6 +66,18 @@ export function PipelineExecutionsTable({
     const { direction } = useDirection()
     const isRTL = direction === "rtl"
 
+    if (isLoading) {
+        return (
+            <div className="space-y-3">
+                {[...Array(5)].map((_, i) => (
+                    <div key={i} className="flex items-center space-y-2">
+                        <div className="h-12 w-full bg-muted animate-pulse rounded-md" />
+                    </div>
+                ))}
+            </div>
+        )
+    }
+
     if (jobs.length === 0) {
         return (
             <div className="text-center text-muted-foreground py-8">

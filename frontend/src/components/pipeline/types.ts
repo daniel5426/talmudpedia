@@ -51,10 +51,15 @@ export interface ConfigFieldSpec {
   name: string
   field_type: ConfigFieldType
   required: boolean
+  runtime?: boolean
   default?: unknown
   description?: string
   options?: string[]
   required_capability?: string
+  json_schema?: Record<string, unknown>
+  min_value?: number
+  max_value?: number
+  placeholder?: string
 }
 
 // =============================================================================
@@ -188,7 +193,7 @@ export type OperatorCatalog = Record<OperatorCategory, OperatorCatalogItem[]>
 
 
 // =============================================================================
-// EXECUTION TYPES
+// EXECUTION & INPUT SCHEMA TYPES
 // =============================================================================
 
 export type PipelineStepStatus = 
@@ -212,4 +217,23 @@ export interface PipelineStepExecution {
   created_at: string
   started_at?: string
   completed_at?: string
+}
+
+export interface ExecutablePipelineInputField extends ConfigFieldSpec {
+  operator_id: string
+  operator_display_name?: string
+  step_id: string
+}
+
+export interface ExecutablePipelineInputStep {
+  step_id: string
+  operator_id: string
+  operator_display_name?: string
+  category?: string
+  config: Record<string, unknown>
+  fields: ExecutablePipelineInputField[]
+}
+
+export interface ExecutablePipelineInputSchema {
+  steps: ExecutablePipelineInputStep[]
 }

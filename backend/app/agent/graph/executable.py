@@ -14,10 +14,11 @@ class ExecutableAgent:
     for running and streaming agent executions.
     """
     
-    def __init__(self, graph_definition: AgentGraph, compiled_graph: Any, config: dict[str, Any]):
+    def __init__(self, graph_definition: AgentGraph, compiled_graph: Any, config: dict[str, Any], snapshot: Any = None):
         self.graph_definition = graph_definition
         self.compiled_graph = compiled_graph
         self.config = config
+        self.snapshot = snapshot
 
     async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Executes the agent and returns the final result."""

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter, useParams, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
 import { ragAdminService, VisualPipeline, OperatorCatalog, OperatorSpec, CompileResult, PipelineStepExecution } from "@/services"
@@ -27,7 +27,6 @@ import {
 import { PipelineBuilder } from "@/components/pipeline"
 import { RunPipelineDialog } from "@/components/pipeline/RunPipelineDialog"
 import { Node, Edge } from "@xyflow/react"
-import { Badge } from "@/components/ui/badge"
 
 interface PipelineNodeData {
     operator: string
@@ -75,8 +74,8 @@ export default function PipelineEditorPage() {
         if (jobIdParam) {
             setRunningJobId(jobIdParam)
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [jobIdParam])
+
 
     // Fetch all data needed for the editor
     useEffect(() => {
@@ -159,7 +158,7 @@ export default function PipelineEditorPage() {
         }
 
         fetchData()
-    }, [currentTenant?.slug, pipelineId, isNew, router])
+    }, [currentTenant, currentTenant?.slug, pipelineId, isNew, router])
 
     // Polling for execution steps
     useEffect(() => {
@@ -198,7 +197,7 @@ export default function PipelineEditorPage() {
         }
     }, [runningJobId, currentTenant?.slug])
 
-    const handleRunPipeline = async (inputParams: Record<string, unknown>) => {
+    const handleRunPipeline = async (inputParams: Record<string, Record<string, unknown>>) => {
         if (!compileResult?.executable_pipeline_id) return
         try {
             const res = await ragAdminService.createPipelineJob({

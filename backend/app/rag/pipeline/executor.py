@@ -20,6 +20,15 @@ class PipelineExecutor:
         self.db = db
         self.registry = OperatorRegistry.get_instance()
 
+    def _get_runtime_input(self, input_params: Any, step_id: str) -> Any:
+        """Resolve runtime input for a specific step."""
+        if not isinstance(input_params, dict):
+            return input_params
+        step_params = input_params.get(step_id)
+        if isinstance(step_params, dict):
+            return step_params
+        return input_params
+
     async def _sync_custom_operators(self, tenant_id: UUID):
         stmt = select(CustomOperator).where(CustomOperator.tenant_id == tenant_id)
         result = await self.db.execute(stmt)
@@ -121,7 +130,7 @@ class PipelineExecutor:
                     
                     if not depends_on:
                         # Source node - use job input params
-                        input_data = job.input_params
+                        input_data = self._get_runtime_input(job.input_params, step_id)
                     else:
                         # Gather inputs from dependencies
                         collected_data = []

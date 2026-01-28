@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useDirection } from "@/components/direction-provider"
 import { useTenant } from "@/contexts/TenantContext"
 import { usePermissions } from "@/hooks/usePermission"
@@ -21,10 +21,8 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Progress } from "@/components/ui/progress"
 import {
   Database,
-  Edit,
   Layers,
   CheckCircle2,
   XCircle,
@@ -33,14 +31,13 @@ import {
   RefreshCw,
   Trash2,
   Scissors,
-  Activity,
   Upload,
   Workflow,
-  ExternalLink,
   History
 } from "lucide-react"
 import Link from "next/link"
-import { PipelineExecutionsTable } from "@/components/rag/PipelineExecutionsTable"
+import { PipelinesTable } from "@/components/rag/PipelinesTable"
+import { PipelineHistoryDialog } from "@/components/rag/PipelineHistoryDialog"
 import {
   Dialog,
   DialogContent,
@@ -65,6 +62,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
+import { PipelineExecutionsTable } from "@/components/rag/PipelineExecutionsTable"
 function StatCard({
   title,
   value,
@@ -337,10 +335,6 @@ export default function RAGAdminPage() {
     fetchData()
   }, [fetchData])
 
-  const handleJobComplete = useCallback(() => {
-    fetchData()
-  }, [fetchData])
-
   const handleDeleteIndex = async (name: string) => {
     if (!confirm(`Are you sure you want to delete index "${name}"? This cannot be undone.`)) return
     try {
@@ -353,37 +347,14 @@ export default function RAGAdminPage() {
 
   const handleViewHistory = async (pipeline: VisualPipeline) => {
     setSelectedPipelineHistory(pipeline)
+    setPipelineHistoryJobs([]) // Clear previous jobs to avoid showing stale state
     setLoadingHistory(true)
     try {
-      // Find compiling version for this pipeline or just all jobs for this executable pipeline
-      // For now, let's fetch all jobs and filter on frontend for simplicity, 
-      // or ideally the API should support filtering by visual_pipeline_id if we want everything.
-      // But based on the service, we can filter by executable_pipeline_id.
-      // Since a visual pipeline can have multiple compiled versions, showing "history for this pipeline" 
-      // might mean showing all jobs for all its versions.
-
-      const res = await ragAdminService.listPipelineJobs(undefined, currentTenant?.slug)
-      // Filter jobs that belong to this visual pipeline's ID
-      // Wait, PipelineJob doesn't have visual_pipeline_id, it has executable_pipeline_id.
-      // We might need to fetch all jobs and filter if they belong to ANY version of this pipeline.
-      // For now, let's just show all jobs in the modal and filtered in UI if we had that mapping,
-      // but let's just use the existing listPipelineJobs for all for now or 
-      // if we want specific filter we need to know the executable IDs.
-
-      // Let's just fetch all and filter by matching the pipeline name or matched executable ID if we can.
-      // Actually, let's just use the jobs we already have in state but filtered.
-      // But we might want to fetch a fresh list or more items than just the recent ones.
-
-      const filtered = pipelineJobs.filter(job => job.executable_pipeline_id === pipeline.id ||
-        // This is a bit tricky if we don't have the mapping of executable -> visual on the job object.
-        // Assuming executable_pipeline_id in Job currently maps to the compiled version.
-        // If the compiled version's ID is same as Visual ID (which it might not be).
-
-        // Let's assume for now we just filter the jobs we have.
-        true // temporary
-      )
-
-      setPipelineHistoryJobs(pipelineJobs.filter(j => pipelines.find(p => p.id === j.executable_pipeline_id)?.name === pipeline.name))
+      const res = await ragAdminService.listPipelineJobs({
+        visual_pipeline_id: pipeline.id,
+        limit: 50
+      }, currentTenant?.slug)
+      setPipelineHistoryJobs(res.jobs)
     } catch (error) {
       console.error("Failed to fetch history", error)
     } finally {
@@ -556,72 +527,11 @@ export default function RAGAdminPage() {
                   </div>
                 </div>
                 <Card>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className={isRTL ? "text-right" : "text-left"}>Name</TableHead>
-                        <TableHead className={isRTL ? "text-right" : "text-left"}>Version</TableHead>
-                        <TableHead className={isRTL ? "text-right" : "text-left"}>Status</TableHead>
-                        <TableHead className={isRTL ? "text-right" : "text-left"}>Updated</TableHead>
-                        <TableHead className={isRTL ? "text-left" : "text-right"}>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pipelines.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground">
-                            No pipelines found. Create one in the Pipeline Builder.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        pipelines.map((pipeline) => (
-                          <TableRow key={pipeline.id}>
-                            <TableCell className={cn("font-medium", isRTL ? "text-right" : "text-left")}>
-                              <div className="flex flex-col">
-                                <span>{pipeline.name}</span>
-                                {pipeline.description && <span className="text-xs text-muted-foreground font-normal">{pipeline.description}</span>}
-                              </div>
-                            </TableCell>
-                            <TableCell className={isRTL ? "text-right" : "text-left"}>
-                              <Badge variant="outline">v{pipeline.version}</Badge>
-                            </TableCell>
-                            <TableCell className={isRTL ? "text-right" : "text-left"}>
-                              {pipeline.is_published ? (
-                                <Badge className="bg-green-500/10 text-green-600 border-green-500/20">Published</Badge>
-                              ) : (
-                                <Badge variant="secondary">Draft</Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className={isRTL ? "text-right" : "text-left"}>
-                              {new Date(pipeline.updated_at).toLocaleDateString()}
-                            </TableCell>
-                            <TableCell className={isRTL ? "text-left" : "text-right"}>
-                              <div className="flex justify-end gap-2">
-                                <Button variant="ghost" size="sm" asChild title="Edit Pipeline">
-                                  <Link href={`/admin/pipelines?mode=edit&id=${pipeline.id}`}>
-                                    <Edit className="h-4 w-4" />
-                                  </Link>
-                                </Button>
-                                <Button variant="ghost" size="sm" asChild title="Open in Builder">
-                                  <Link href={`/admin/pipelines?id=${pipeline.id}`}>
-                                    <ExternalLink className="h-4 w-4" />
-                                  </Link>
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  title="View Execution History"
-                                  onClick={() => handleViewHistory(pipeline)}
-                                >
-                                  <History className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
+                  <PipelinesTable
+                    pipelines={pipelines}
+                    onViewHistory={handleViewHistory}
+                    showDescription={false}
+                  />
                 </Card>
               </TabsContent>
 
@@ -783,29 +693,13 @@ export default function RAGAdminPage() {
         )}
       </div>
 
-      <Dialog open={!!selectedPipelineHistory} onOpenChange={(open) => !open && setSelectedPipelineHistory(null)}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <History className="h-5 w-5" />
-              Execution History: {selectedPipelineHistory?.name}
-            </DialogTitle>
-            <DialogDescription>
-              Past executions for this pipeline across all versions.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex-1 overflow-auto py-4">
-            <PipelineExecutionsTable
-              jobs={pipelineHistoryJobs}
-              pipelines={pipelines}
-              isLoading={loadingHistory}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSelectedPipelineHistory(null)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <PipelineHistoryDialog
+        pipeline={selectedPipelineHistory}
+        jobs={pipelineHistoryJobs}
+        isLoading={loadingHistory}
+        allPipelines={pipelines}
+        onClose={() => setSelectedPipelineHistory(null)}
+      />
     </div >
   )
 }

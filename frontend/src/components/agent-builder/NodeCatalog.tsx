@@ -1,16 +1,16 @@
 "use client"
 
-import { useMemo } from "react"
-import { Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck } from "lucide-react"
+import { useMemo, useEffect, useState } from "react"
+import { Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
     AgentNodeCategory,
     AgentNodeType,
-    AGENT_NODE_SPECS,
     CATEGORY_COLORS,
     CATEGORY_LABELS,
     AgentNodeSpec
 } from "./types"
+import { agentService, AgentOperatorSpec } from "@/services/agent-resources"
 
 const CATEGORY_ICONS: Record<AgentNodeCategory, React.ElementType> = {
     control: Play,
@@ -20,7 +20,7 @@ const CATEGORY_ICONS: Record<AgentNodeCategory, React.ElementType> = {
     interaction: UserCheck,
 }
 
-const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
+const NODE_ICONS: Record<string, React.ElementType> = {
     start: Play,
     end: Square,
     llm: Brain,
@@ -29,6 +29,17 @@ const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     conditional: GitBranch,
     parallel: GitFork,
     human_input: UserCheck,
+}
+
+// Helper to get icon component safely
+const getIcon = (iconName: string) => {
+    // Check our mapping first
+    const mapped = Object.entries(NODE_ICONS).find(([k]) => k.toLowerCase() === iconName.toLowerCase())
+    if (mapped) return mapped[1]
+
+    // Fallback to generic based on name matching Lucide exports? 
+    // For now, return Circle if unknown
+    return Circle
 }
 
 interface NodeCatalogProps {
@@ -42,7 +53,8 @@ function CatalogItem({
     spec: AgentNodeSpec
     onDragStart: (event: React.DragEvent) => void
 }) {
-    const Icon = NODE_ICONS[spec.nodeType]
+    // Dynamic icon lookup
+    const Icon = getIcon(spec.icon) || Circle
     const color = CATEGORY_COLORS[spec.category]
 
     return (
@@ -108,6 +120,29 @@ function CategorySection({
 }
 
 export function NodeCatalog({ onDragStart }: NodeCatalogProps) {
+    const [operators, setOperators] = useState<AgentOperatorSpec[]>([])
+    const [isLoading, setIsLoading] = useState(true)
+
+    useEffect(() => {
+        agentService.listOperators()
+            .then(setOperators)
+            .catch(err => console.error("Failed to fetch operators:", err))
+            .finally(() => setIsLoading(false))
+    }, [])
+
+    const nodeSpecs: AgentNodeSpec[] = useMemo(() => {
+        return operators.map(op => ({
+            nodeType: op.type as AgentNodeType,
+            displayName: op.display_name,
+            description: op.description,
+            category: op.category as AgentNodeCategory,
+            inputType: op.ui.inputType || "any",
+            outputType: op.ui.outputType || "any",
+            icon: op.ui.icon || "Circle",
+            configFields: op.ui.configFields || []
+        }))
+    }, [operators])
+
     const groupedSpecs = useMemo(() => {
         const groups: Record<AgentNodeCategory, AgentNodeSpec[]> = {
             control: [],
@@ -117,14 +152,20 @@ export function NodeCatalog({ onDragStart }: NodeCatalogProps) {
             interaction: [],
         }
 
-        AGENT_NODE_SPECS.forEach(spec => {
-            groups[spec.category].push(spec)
+        nodeSpecs.forEach(spec => {
+            if (groups[spec.category]) {
+                groups[spec.category].push(spec)
+            }
         })
 
         return groups
-    }, [])
+    }, [nodeSpecs])
 
     const categories: AgentNodeCategory[] = ["control", "reasoning", "action", "logic", "interaction"]
+
+    if (isLoading) {
+        return <div className="p-4 text-xs text-muted-foreground">Loading catalog...</div>
+    }
 
     return (
         <div className="h-full flex flex-col">
