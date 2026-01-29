@@ -116,6 +116,7 @@ export interface ChatController {
   disliked: Record<string, boolean>;
   copiedMessageId: string | null;
   lastThinkingDurationMs: number | null;
+  activeStreamingId: string | null;
   handleSubmit: (message: { text: string; files: FileUIPart[] }) => Promise<void>;
   handleStop: () => void;
   handleCopy: (content: string, messageId: string) => void;
@@ -154,6 +155,7 @@ export function useChatController(): ChatController {
   const [lastThinkingDurationMs, setLastThinkingDurationMs] = useState<
     number | null
   >(null);
+  const [activeStreamingId, setActiveStreamingId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -258,6 +260,7 @@ export function useChatController(): ChatController {
     thinkingStartRef.current = null;
     thinkingDurationRef.current = null;
     isActivelyStreamingRef.current = false;
+    setActiveStreamingId(null);
   }, []);
 
   useEffect(() => {
@@ -470,6 +473,8 @@ export function useChatController(): ChatController {
     setStreamingContent("");
     setCurrentReasoning([]);
     setLastThinkingDurationMs(null);
+    const newStreamingId = nanoid();
+    setActiveStreamingId(newStreamingId);
 
     citationsRef.current = [];
     reasoningRef.current = [];
@@ -576,7 +581,7 @@ export function useChatController(): ChatController {
         }
 
         const aiMessage: ChatMessage = {
-          id: nanoid(),
+          id: activeStreamingId || nanoid(),
           role: "assistant",
           content: aiContent,
           createdAt: new Date(),
@@ -593,6 +598,8 @@ export function useChatController(): ChatController {
         setMessages((prev) => [...prev, aiMessage]);
         setStreamingContent("");
         setCurrentReasoning([]);
+        setIsLoading(false);
+        setActiveStreamingId(null);
       } catch (error: any) {
         if (isIgnorableError(error)) {
           return;
@@ -600,7 +607,10 @@ export function useChatController(): ChatController {
         console.error("Chat error:", error);
       } finally {
         if (!abortManager.current.isAborted()) {
-          clearStreamingState();
+          // Note: isLoading and activeStreamingId are already handled atomicly above for the success case
+          // but we still need to ensure they are reset on error or abort.
+          if (isLoading) setIsLoading(false);
+          if (activeStreamingId) setActiveStreamingId(null);
           abortManager.current.clear();
         }
       }
@@ -710,6 +720,7 @@ export function useChatController(): ChatController {
     disliked,
     copiedMessageId,
     lastThinkingDurationMs,
+    activeStreamingId,
     handleSubmit,
     handleStop,
     handleCopy,

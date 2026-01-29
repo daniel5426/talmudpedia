@@ -138,6 +138,13 @@
   --pipeline-transform: #dbeafe;
   --pipeline-embedding: #f3e8ff;
   --pipeline-storage: #ffedd5;
+
+  /* Agent Category Colors */
+  --agent-control: #f3f4f6;
+  --agent-reasoning: #ede9fe;
+  --agent-action: #dbeafe;
+  --agent-logic: #fef3c7;
+  --agent-interaction: #d1fae5;
 }
 
 .dark {
@@ -182,6 +189,13 @@
   --pipeline-transform: #1e3a8a;
   --pipeline-embedding: #581c87;
   --pipeline-storage: #7c2d12;
+
+  /* Agent Category Colors (Dark Mode) */
+  --agent-control: #374151;
+  --agent-reasoning: #4c1d95;
+  --agent-action: #1e3a8a;
+  --agent-logic: #78350f;
+  --agent-interaction: #064e3b;
 }
 
 @layer base {

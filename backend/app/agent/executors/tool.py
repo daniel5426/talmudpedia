@@ -53,6 +53,16 @@ class ToolNodeExecutor(BaseNodeExecutor):
                  # Minimal fallback
                  input_data = {"text": getattr(last_msg, "content", str(last_msg))}
 
+        # Extract emitter from ContextVar (global implicit context)
+        from app.agent.execution.emitter import active_emitter
+        emitter = active_emitter.get()
+        
+        node_id = context.get("node_id", "tool_node") if context else "tool_node"
+        
+        # Emit Tool Start
+        if emitter:
+            emitter.emit_tool_start(tool.name, input_data, node_id)
+
         # 3. Execute
         impl_type = getattr(tool, "implementation_type", "internal") # Field might be in schema or separate column? 
         # In the `tools.py` router `ToolRegistry` model was used. Let's assume `implementation_type` is part of `schema` or `config_schema`.
@@ -69,26 +79,36 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         output_data = {}
 
-        if impl_type == "http":
-            url = implementation_config.get("url")
-            method = implementation_config.get("method", "POST")
-            headers = implementation_config.get("headers", {})
+        try:
+            if impl_type == "http":
+                url = implementation_config.get("url")
+                method = implementation_config.get("method", "POST")
+                headers = implementation_config.get("headers", {})
+                
+                async with httpx.AsyncClient() as client:
+                    response = await client.request(method, url, json=input_data, headers=headers)
+                    response.raise_for_status()
+                    output_data = response.json()
             
-            async with httpx.AsyncClient() as client:
-                response = await client.request(method, url, json=input_data, headers=headers)
-                response.raise_for_status()
-                output_data = response.json()
-        
-        elif impl_type == "function":
-             # TODO: Registry of internal functions
-             output_data = {"error": "Function execution not fully implemented"}
-        
-        else:
-            # Stub for now
-            output_data = {"status": "executed", "tool": tool.name, "input": input_data}
+            elif impl_type == "function":
+                 # TODO: Registry of internal functions
+                 output_data = {"error": "Function execution not fully implemented"}
             
-        return {
-            "tool_outputs": [output_data],
-            # Optionally update context
-            "context": output_data
-        }
+            else:
+                # Stub for now
+                output_data = {"status": "executed", "tool": tool.name, "input": input_data}
+            
+            # Emit Tool End
+            if emitter:
+                emitter.emit_tool_end(tool.name, output_data, node_id)
+            
+            return {
+                "tool_outputs": [output_data],
+                # Optionally update context
+                "context": output_data
+            }
+        except Exception as e:
+            logger.error(f"Tool execution failed: {e}")
+            if emitter:
+                emitter.emit_error(str(e), node_id)
+            raise e

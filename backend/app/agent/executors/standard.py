@@ -41,12 +41,22 @@ class LLMNodeExecutor(BaseNodeExecutor):
         system_prompt = config.get("system_prompt", None)
         model_id = config.get("model_id")
         
+        
+        # Extract emitter from ContextVar (global implicit context)
+        from app.agent.execution.emitter import active_emitter
+        emitter = active_emitter.get()
+        
+        node_id = context.get("node_id", "llm_node") if context else "llm_node"
+        node_name = context.get("node_name", "LLM") if context else "LLM"
+        
         # 1. Resolve Model
         resolver = ModelResolver(self.db, self.tenant_id)
         try:
             provider = await resolver.resolve(model_id)
         except Exception as e:
             logger.error(f"Failed to resolve model {model_id}: {e}")
+            if emitter:
+                emitter.emit_error(str(e), node_id)
             raise ValueError(f"Failed to resolve model: {e}")
 
         # 2. Prepare Messages
@@ -69,27 +79,67 @@ class LLMNodeExecutor(BaseNodeExecutor):
                 formatted_messages.append(msg)
             else:
                 formatted_messages.append(HumanMessage(content=str(msg)))
+        
+        logger.debug(f"LLM Exec Input Messages: {len(formatted_messages)}")
 
-        # 3. Execute via Adapter
+        # 3. Execute via Adapter with explicit token emission
         try:
             adapter = LLMProviderAdapter(provider)
+            full_content = ""
             
-            # Pass execution config to adapter to enable streaming callbacks
-            # The 'config' arg here comes from LangGraph's runtime config which contains callbacks
-            runtime_config = context.get("langgraph_config", {}) if context else {}
+            # Emit node start
+            if emitter:
+                emitter.emit_node_start(node_id, node_name, "llm", {"message_count": len(formatted_messages)})
             
-            response = await adapter.ainvoke(
-                formatted_messages, 
-                config=runtime_config,
-                system_prompt=system_prompt
-            )
+                # Stream tokens explicitly
+            try:
+                reasoning_buffer = ""
+                async for chunk in adapter._astream(formatted_messages, system_prompt=system_prompt):
+                    token_content = chunk.message.content if hasattr(chunk, 'message') else ""
+                    
+                    # Handle reasoning content if supported by adapter/model
+                    r_content = chunk.message.additional_kwargs.get("reasoning_content", "") if hasattr(chunk, 'message') else ""
+                    if r_content:
+                        reasoning_buffer += r_content
+                        # Emit reasoning update as a tool start event with specific name
+                        if emitter:
+                            # Use a stable node_id for the reasoning step so it merges correctly in frontend
+                            reasoning_node_id = f"{node_id}_reasoning"
+                            emitter.emit_tool_start("Reasoning Process", {"message": reasoning_buffer}, reasoning_node_id)
+
+                    if token_content:
+                        full_content += token_content
+                        # Explicitly emit token event
+                        if emitter:
+                            emitter.emit_token(token_content, node_id)
+            except NotImplementedError:
+                # Non-streaming fallback
+                logger.warning(f"Streaming not supported for model {model_id}, using non-streaming fallback")
+                response = await adapter.ainvoke(formatted_messages, system_prompt=system_prompt)
+                full_content = response.content
+                # Emit entire content as single token batch
+                if emitter:
+                    emitter.emit_token(full_content, node_id)
+            except Exception as stream_error:
+                # If streaming fails, fallback to ainvoke
+                logger.warning(f"Streaming failed: {stream_error}, using non-streaming fallback")
+                response = await adapter.ainvoke(formatted_messages, system_prompt=system_prompt)
+                full_content = response.content
+                if emitter:
+                    emitter.emit_token(full_content, node_id)
+            
+            # Emit node end
+            if emitter:
+                emitter.emit_node_end(node_id, node_name, "llm", {"content_length": len(full_content)})
             
             return {
-                "messages": [response]
-                # In the future, we might parse reasoning steps here and return "observations" or "routing_key"
+                "messages": [AIMessage(content=full_content)]
             }
+
         except Exception as e:
             logger.error(f"LLM execution failed: {e}")
+            if emitter:
+                emitter.emit_error(str(e), node_id)
             raise e
 
 # =============================================================================

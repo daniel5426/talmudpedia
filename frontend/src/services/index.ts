@@ -16,14 +16,17 @@ export type {
   CompilationError,
   CompileResult,
   PipelineJob,
+  CustomOperator,
+  PipelineStepData,
+} from "./rag-admin";
+
+export type {
   OperatorCatalog,
   OperatorCatalogItem,
   OperatorSpec,
   ConfigFieldSpec,
-  CustomOperator,
   PipelineStepExecution,
-  PipelineStepData,
-} from "./rag-admin";
+} from "@/components/pipeline/types";
 
 export { ttsService } from "./tts";
 export { sourceService } from "./source";
@@ -43,17 +46,29 @@ export type { Permission, Role, RoleAssignment, UserPermissions } from "./rbac";
 export { auditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";
 
-// Agent Resources (Models & Tools Registry)
-export { modelsService, toolsService, agentService } from "./agent-resources";
+// Agent & Resource Services
+export { agentService } from "./agent";
+export { modelsService } from "./models";
+export { toolsService } from "./tools";
+
 export type {
+  Agent,
+  AgentRunStatus,
+  AgentOperatorSpec,
   LogicalModel,
   ModelCapabilityType,
   ModelProviderType,
   ModelStatus,
   ModelProviderSummary,
+  CreateModelRequest,
+  UpdateModelRequest,
+  CreateProviderRequest,
+  ModelsListResponse,
   ToolDefinition,
   ToolImplementationType,
   ToolStatus,
-  Agent,
-} from "./agent-resources";
+  CreateToolRequest,
+  UpdateToolRequest,
+  ToolsListResponse,
+} from "./agent";
 

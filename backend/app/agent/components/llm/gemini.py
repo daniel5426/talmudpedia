@@ -62,12 +62,18 @@ class GeminiLLM(LLMProvider):
         if system_prompt:
              self.model = genai.GenerativeModel(self.model_name, system_instruction=system_prompt)
 
-        chat = self.model.start_chat(history=history)
-        response = await chat.send_message_async(last_msg, stream=True)
+        # Combine history and last message for stateless generation
+        full_gemini_messages = self._convert_messages(messages)
         
-        async for chunk in response:
-            # We need to wrap this in a way that the agent expects.
-            # The agent expects OpenAI-like chunks.
-            # But wait, AdvancedRAGWorkflow uses self.model.ainvoke which uses ChatOpenAI.
-            # If we want to replace it, we should probably use a LangChain Gemini wrapper.
-            yield chunk
+        print(f"[DEBUG] Gemini generate_content_async with {len(full_gemini_messages)} messages")
+        try:
+            # Note: generate_content_async expects list of dicts/contents
+            response = await self.model.generate_content_async(full_gemini_messages, stream=True)
+            print(f"[DEBUG] Gemini generate_content_async returned response object: {type(response)}")
+            
+            async for chunk in response:
+                # print(f"[DEBUG] Gemini chunk received: {type(chunk)}")
+                yield chunk
+        except Exception as e:
+            print(f"[DEBUG] Gemini Error: {e}")
+            raise e

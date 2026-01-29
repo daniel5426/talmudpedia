@@ -86,10 +86,21 @@ async def test_engine():
 @pytest_asyncio.fixture
 async def db_session(test_engine):
     """Create a new database session for a test."""
+    from app.db.postgres.engine import sessionmaker as global_sessionmaker
+    import app.db.postgres.engine
+    
     session_factory = async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
+    
+    # Patch the global sessionmaker so background tasks in AgentExecutorService use the test DB
+    original_factory = app.db.postgres.engine.sessionmaker
+    app.db.postgres.engine.sessionmaker = session_factory
+    
     async with session_factory() as session:
         yield session
         await session.rollback()
+    
+    # Restore (though usually not necessary for in-memory tests, good practice)
+    app.db.postgres.engine.sessionmaker = original_factory
 
 @pytest_asyncio.fixture
 async def client(db_session):
@@ -99,6 +110,5 @@ async def client(db_session):
 
     app.dependency_overrides[get_db] = override_get_db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        # Mock authentication for admin tests if needed
         yield ac
     app.dependency_overrides.clear()

@@ -123,11 +123,14 @@ export interface ToolsListResponse {
   total: number;
 }
 
-// ============================================================================
-// Services
-// ============================================================================
+export interface AgentRunStatus {
+  id: string
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "paused"
+  result?: any
+  error?: string
+  checkpoint?: any
+}
 
-// Operator Types
 export interface AgentOperatorSpec {
   type: string;
   category: string;
@@ -139,14 +142,18 @@ export interface AgentOperatorSpec {
   ui: Record<string, any>;
 }
 
+// ============================================================================
+// Services
+// ============================================================================
+
 export const agentService = {
+  // Catalog / Metadata
   async listOperators(): Promise<AgentOperatorSpec[]> {
     return httpClient.get<AgentOperatorSpec[]>("/agents/operators");
   },
 
   async listAgents(params?: { status?: string, skip?: number, limit?: number }) {
     const query = new URLSearchParams();
-
     if (params?.status) query.set("status", params.status);
     if (params?.skip) query.set("skip", String(params.skip));
     if (params?.limit) query.set("limit", String(params.limit));
@@ -171,104 +178,56 @@ export const agentService = {
     return httpClient.post<Agent>(`/agents/${id}/publish`, {});
   },
 
+  // Execution
+  async startRun(agentId: string, input: string) {
+    return httpClient.post<{ run_id: string }>(`/agents/${agentId}/run`, {
+      input,
+      messages: [] 
+    });
+  },
+
+  async resumeRun(runId: string, payload: any) {
+    return httpClient.post<{ status: string }>(`/agents/runs/${runId}/resume`, payload);
+  },
+
+  async getRunStatus(runId: string) {
+    return httpClient.get<AgentRunStatus>(`/agents/runs/${runId}`);
+  },
+
   async executeAgent(id: string, input: Record<string, any>) {
     return httpClient.post(`/agents/${id}/execute`, { input_params: input });
   },
 
-  async streamAgent(id: string, input: Record<string, any>) {
-    return httpClient.requestRaw(`/agents/${id}/stream`, {
+  async streamAgent(id: string, input: { text?: string, messages?: any[], runId?: string }, mode: 'debug' | 'production' = 'production') {
+    // CRITICAL: Bypass Next.js dev proxy for SSE streaming.
+    // The Next.js rewrite proxy buffers responses, causing all tokens to appear at once.
+    // We call the backend directly for streaming endpoints only.
+    const directBackendUrl = process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || 'http://127.0.0.1:8000';
+    const url = new URL(`${directBackendUrl}/agents/${id}/stream`);
+    if (mode) {
+        url.searchParams.append("mode", mode);
+    }
+
+    // Get auth token for direct request
+    const { useAuthStore } = await import('@/lib/store/useAuthStore');
+    const token = useAuthStore.getState().token;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    return fetch(url.toString(), {
       method: "POST",
-      body: JSON.stringify({ input: input.text, messages: [], context: {} }),
+      headers,
+      body: JSON.stringify({ 
+        input: input.text, 
+        messages: input.messages || [], 
+        context: {},
+        run_id: input.runId 
+      }),
     });
   }
 };
-
-export const modelsService = {
-  async listModels(
-    capabilityType?: ModelCapabilityType,
-    status?: ModelStatus,
-    skip = 0,
-    limit = 50
-  ): Promise<ModelsListResponse> {
-    const query = new URLSearchParams();
-    if (capabilityType) query.set("capability_type", capabilityType);
-    if (status) query.set("status", status);
-    query.set("skip", String(skip));
-    query.set("limit", String(limit));
-    const queryString = query.toString();
-    
-    return httpClient.get<ModelsListResponse>(`/models?${queryString}`);
-  },
-
-  async getModel(id: string): Promise<LogicalModel> {
-    return httpClient.get<LogicalModel>(`/models/${id}`);
-  },
-
-  async createModel(data: CreateModelRequest): Promise<LogicalModel> {
-    return httpClient.post<LogicalModel>('/models', data);
-  },
-
-  async updateModel(id: string, data: UpdateModelRequest): Promise<LogicalModel> {
-    return httpClient.put<LogicalModel>(`/models/${id}`, data);
-  },
-
-  async deleteModel(id: string): Promise<void> {
-    await httpClient.delete(`/models/${id}`);
-  },
-
-  async addProvider(modelId: string, data: CreateProviderRequest): Promise<ModelProviderSummary> {
-    return httpClient.post<ModelProviderSummary>(`/models/${modelId}/providers`, data);
-  },
-
-  async removeProvider(modelId: string, providerId: string): Promise<void> {
-    await httpClient.delete(`/models/${modelId}/providers/${providerId}`);
-  },
-};
-
-export const toolsService = {
-  async listTools(
-    implementationType?: ToolImplementationType,
-    status?: ToolStatus,
-    skip = 0,
-    limit = 50
-  ): Promise<ToolsListResponse> {
-    const query = new URLSearchParams();
-    if (implementationType) query.set("implementation_type", implementationType);
-    if (status) query.set("status", status);
-    query.set("skip", String(skip));
-    query.set("limit", String(limit));
-    const queryString = query.toString();
-    
-    return httpClient.get<ToolsListResponse>(`/tools?${queryString}`);
-  },
-
-  async getTool(id: string): Promise<ToolDefinition> {
-    return httpClient.get<ToolDefinition>(`/tools/${id}`);
-  },
-
-  async createTool(data: CreateToolRequest): Promise<ToolDefinition> {
-    return httpClient.post<ToolDefinition>('/tools', data);
-  },
-
-  async updateTool(id: string, data: UpdateToolRequest): Promise<ToolDefinition> {
-    return httpClient.put<ToolDefinition>(`/tools/${id}`, data);
-  },
-
-  async publishTool(id: string): Promise<ToolDefinition> {
-    return httpClient.post<ToolDefinition>(`/tools/${id}/publish`, {});
-  },
-
-  async createVersion(id: string, newVersion: string): Promise<ToolDefinition> {
-    return httpClient.post<ToolDefinition>(`/tools/${id}/version?new_version=${encodeURIComponent(newVersion)}`, {});
-  },
-
-  async deleteTool(id: string): Promise<void> {
-    await httpClient.delete(`/tools/${id}`);
-  },
-
-  async testTool(id: string, input: Record<string, unknown>): Promise<unknown> {
-    return httpClient.post(`/tools/${id}/test`, { input });
-  },
-};
-
-

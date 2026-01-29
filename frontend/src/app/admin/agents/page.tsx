@@ -32,7 +32,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { agentService, Agent } from "@/services/agent-resources"
+import { agentService, Agent } from "@/services"
 
 export default function AgentsPage() {
     const router = useRouter()

@@ -70,6 +70,7 @@ class ExecuteAgentRequest(BaseModel):
     input: Optional[str] = None
     messages: list[dict[str, Any]] = []
     context: Optional[dict[str, Any]] = None
+    run_id: Optional[UUID] = None
 
 
 class ExecuteAgentResponse(BaseModel):

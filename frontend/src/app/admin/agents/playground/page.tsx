@@ -13,9 +13,9 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { agentService, Agent } from "@/services/agent-resources"
+import { agentService, Agent } from "@/services"
 import { ChatWorkspace } from "@/components/layout/ChatPane"
-import { useAgentRunController } from "./useAgentRunController"
+import { useAgentRunController } from "@/hooks/useAgentRunController"
 import { ExecutionSidebar } from "./ExecutionSidebar"
 import { Conversation } from "@/components/ai-elements/conversation"
 import { useDirection } from "@/components/direction-provider"
@@ -184,7 +184,11 @@ function PlaygroundContent() {
                 ) : (
                     <div className="flex h-full overflow-hidden">
                         {/* Chat Area */}
-                        <Conversation dir={direction} className="flex-1 relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)">
+                        <Conversation
+                            dir={direction}
+                            className="flex-1 relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)"
+                            targetScrollTop={controller.isLoading ? (_target: number, { scrollElement }: any) => scrollElement?.scrollTop ?? 0 : undefined}
+                        >
                             <ChatWorkspace
                                 noBackground={true}
                                 controller={controller}

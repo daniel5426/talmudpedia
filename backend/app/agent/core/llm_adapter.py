@@ -77,15 +77,19 @@ class LLMProviderAdapter(BaseChatModel):
         try:
             async for chunk in self.provider.stream(messages, system_prompt=system_prompt, **kwargs):
                 content = ""
-                # logger.debug(f"[ADAPTER] Raw chunk type: {type(chunk)}")
                 
+                reasoning_content = ""
+
                 # 1. Handle OpenAI "responses" API chunks (delta based)
                 if hasattr(chunk, "type"):
                     if chunk.type == "response.output_text.delta":
                         content = getattr(chunk, "delta", "")
                     elif chunk.type == "response.reasoning_text.delta":
-                        continue
+                        reasoning_content = getattr(chunk, "delta", "")
                     elif chunk.type == "response.output_text.done":
+                        continue
+                    # Handle reasoning summary events (skip them)
+                    elif "reasoning" in chunk.type and "delta" not in chunk.type:
                         continue
                         
                 # 2. Handle Gemini chunks
@@ -99,17 +103,26 @@ class LLMProviderAdapter(BaseChatModel):
                 elif isinstance(chunk, str):
                     content = chunk
                 
-                # 4. Handle standard OpenAI ChatCompletionChunk (just in case)
-                elif hasattr(chunk, "choices") and hasattr(chunk.choices[0], "delta") and hasattr(chunk.choices[0].delta, "content"):
-                     c = chunk.choices[0].delta.content
-                     if c: content = c
+                # 4. Handle standard OpenAI ChatCompletionChunk
+                elif hasattr(chunk, "choices") and hasattr(chunk.choices[0], "delta"):
+                     delta = chunk.choices[0].delta
+                     if hasattr(delta, "content") and delta.content:
+                         content = delta.content
+                     # Check for deepseek/refined-openai reasoning field
+                     if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                         reasoning_content = delta.reasoning_content
 
-                if content:
-                    logger.info(f"[ADAPTER] Yielding content: {content[:20]}")
-                    lc_chunk = ChatGenerationChunk(message=AIMessageChunk(content=content))
+                if content or reasoning_content:
+                    msg_chunk = AIMessageChunk(content=content)
+                    if reasoning_content:
+                        msg_chunk.additional_kwargs["reasoning_content"] = reasoning_content
+                        
+                    lc_chunk = ChatGenerationChunk(message=msg_chunk)
                     # Trigger the callback that LangGraph's astream_events monitors
                     if run_manager:
-                        await run_manager.on_llm_new_token(content, chunk=lc_chunk)
+                        # We only stream content tokens to run_manager to avoid confusing it
+                        if content:
+                            await run_manager.on_llm_new_token(content, chunk=lc_chunk)
                     else:
                         logger.warning("[ADAPTER] run_manager is None, skipping on_llm_new_token")
                     yield lc_chunk

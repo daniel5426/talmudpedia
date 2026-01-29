@@ -28,12 +28,14 @@ class AgentOperatorSpec(BaseModel):
     Definition of an Agent Operator (Node).
     Describes its contract, configuration, and UI representation.
     """
+    model_config = {"use_enum_values": True}
+    
     type: str = Field(..., description="Unique identifier for the node type (e.g., 'llm', 'tool')")
     category: str = Field(..., description="Visual category for the builder palette")
     display_name: str = Field(..., description="Human-readable name")
     description: str = Field(..., description="Brief description of what the node does")
     
-    # Contract
+    # Contract - serializes enum values as strings
     reads: List[AgentStateField] = Field(default_factory=list, description="State fields this node reads")
     writes: List[AgentStateField] = Field(default_factory=list, description="State fields this node mutates")
     

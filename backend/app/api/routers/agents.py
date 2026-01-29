@@ -39,6 +39,7 @@ from app.api.schemas.agents import (
     ExecuteAgentResponse,
 )
 from sqlalchemy import select
+from typing import Optional
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -356,94 +357,188 @@ async def execute_agent(
 async def stream_agent(
     agent_id: UUID,
     request: ExecuteAgentRequest,
+    mode: Optional[str] = None, # "debug" or "production"
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    """Stream agent execution (SSE)."""
-    from app.agent.graph.schema import AgentGraph, MemoryConfig, ExecutionConstraints
-    from app.agent.graph.compiler import AgentCompiler
-    from langchain_core.messages import BaseMessage
+    """
+    Stream agent execution (SSE).
+    Supports 'debug' (Playground) and 'production' (End-User) modes.
+    """
+    from app.agent.execution.service import AgentExecutorService
+    from app.agent.execution.types import ExecutionMode
+    from app.agent.execution.adapter import StreamAdapter
     
-    def serialize_event(obj):
-        """Custom serializer for LangGraph events."""
-        if isinstance(obj, BaseMessage):
-            return {"type": obj.__class__.__name__, "content": obj.content}
-        if hasattr(obj, "model_dump"):
-            return obj.model_dump()
-        if hasattr(obj, "dict"):
-            return obj.dict()
-        if hasattr(obj, "__dict__"):
-            return obj.__dict__
-        return str(obj)
+    # 1. Determine Mode
+    # Default to PRODUCTION for safety
+    execution_mode = ExecutionMode.PRODUCTION
     
-    class LangChainEncoder(json.JSONEncoder):
-        def default(self, obj):
-            return serialize_event(obj)
+    # Allow override if internal user (authenticated via standard auth)
+    # TODO: Check specifically for "service account" or "public key" vs "user session"
+    # For now, get_agent_context implies internal user/admin. 
+    # Real public users would use a different specific auth dependency (e.g. get_public_agent_context).
+    # Assuming get_agent_context ensures an internal user/member:
+    if mode and mode.lower() == "debug":
+        execution_mode = ExecutionMode.DEBUG
+
+    executor = AgentExecutorService(db=db)
     
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
+    # 2. Identify or Create Run
+    run_id = request.run_id
+    resume_payload = None
     
-    try:
-        agent = await service.get_agent(agent_id)
-    except AgentServiceError as e:
-        handle_service_error(e)
-    
+    if run_id:
+        # Resume existing run
+        try:
+            # For playground, user message is the resume payload
+            resume_payload = {"input": request.input} if request.input else {}
+            await executor.resume_run(run_id, resume_payload, background=False)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {e}")
+    else:
+        # Start new run
+        current_messages = [msg.model_dump() if hasattr(msg, "model_dump") else msg for msg in request.messages]
+        
+        if request.input:
+            current_messages.append({"role": "user", "content": request.input})
+            
+        input_params = {
+            "messages": current_messages,
+            "input": request.input
+        }
+        # Start run with explicit mode metadata
+        run_id = await executor.start_run(agent_id, input_params, user_id=context["user"].id, background=False, mode=execution_mode)
+
     async def event_generator():
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"[STREAM] Starting event generator for agent {agent_id}")
+        import time
+        # raw stream from engine (full firehose)
+        raw_stream = executor.run_and_stream(run_id, db, resume_payload, mode=execution_mode)
+        
+        # filtered stream via adapter
+        filtered_stream = StreamAdapter.filter_stream(raw_stream, execution_mode)
+        
+        # Initial Event: Run ID + Padding to force proxy flush (4KB of comments)
+        yield ": " + (" " * 4096) + "\n\n"
+        yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
         
         try:
-            graph = AgentGraph(**agent.graph_definition)
-            memory_config = MemoryConfig(**agent.memory_config)
-            execution_constraints = ExecutionConstraints(**agent.execution_constraints)
+            async for event_dict in filtered_stream:
+                # event_dict is already a dict from the adapter
+                print(f"[DEBUG] {time.time()} Agents Router: Yielding SSE event: {event_dict.get('event')}")
+                yield f"data: {json.dumps(event_dict)}\n\n"
             
-            logger.info(f"[STREAM] Graph nodes: {[n.id for n in graph.nodes]}")
-            logger.info(f"[STREAM] Graph node types: {[n.type for n in graph.nodes]}")
-            
-            compiler = AgentCompiler(tenant_id=tenant_id, db=db)
-            executable = await compiler.compile(
-                agent_id=agent.id,
-                version=agent.version,
-                graph=graph,
-                memory_config=memory_config,
-                execution_constraints=execution_constraints,
-            )
-            
-            initial_messages = request.messages.copy()
-            if request.input:
-                initial_messages.append({"role": "user", "content": request.input})
-            
-            logger.info(f"[STREAM] Input messages: {initial_messages}")
-            
-            event_count = 0
-            chat_model_events = 0
-            
-            async for event in executable.stream({"messages": initial_messages, "steps": []}):
-                event_count += 1
-                event_type = event.get("event", "unknown")
-                event_name = event.get("name", "")
-                
-                if event_type == "on_chat_model_stream":
-                    chat_model_events += 1
-                    chunk = event.get("data", {}).get("chunk", {})
-                    content = chunk.get("content", "") if isinstance(chunk, dict) else getattr(chunk, "content", "")
-                    logger.info(f"[STREAM] Chat model stream #{chat_model_events}: '{content[:50] if content else ''}...'")
-                elif event_type in ("on_chain_start", "on_chain_end"):
-                    logger.debug(f"[STREAM] Event: {event_type} - {event_name}")
-                
-                yield f"data: {json.dumps(event, cls=LangChainEncoder)}\n\n"
-            
-            logger.info(f"[STREAM] Completed. Total events: {event_count}, Chat model events: {chat_model_events}")
+            print(f"[DEBUG] {time.time()} Agents Router: Yielding DONE")
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
-            logger.error(f"[STREAM] Error: {type(e).__name__}: {e}")
-            import traceback
-            logger.error(f"[STREAM] Traceback: {traceback.format_exc()}")
+            logger = logging.getLogger(__name__)
+            logger.error(f"[STREAM] Error during stream: {e}")
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-    
+
     return StreamingResponse(
-        event_generator(),
+        event_generator(), 
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Content-Encoding": "identity", # Disable compression
+        }
     )
+    
+@router.post("/{agent_id}/run", response_model=Dict[str, Any])
+async def start_run_v2(
+    agent_id: UUID,
+    request: ExecuteAgentRequest,
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Start an agent execution using the new AgentExecutorService (Phase 4 engine).
+    Returns the Run ID immediately.
+    """
+    print(f"[DEBUG] start_run_v2 called for agent_id: {agent_id}")
+    print(f"[DEBUG] Request data: {request.model_dump()}")
+    
+    from app.agent.execution.service import AgentExecutorService
+    
+    tenant_id = context["tenant_id"]
+    # Ensure user has access
+    service = AgentService(db=db, tenant_id=tenant_id)
+    try:
+        agent = await service.get_agent(agent_id) # Validates existence and checks ownership implicitly
+        print(f"[DEBUG] Agent found: {agent.name}")
+    except Exception as e:
+        print(f"[DEBUG] Error finding/checking agent: {e}")
+        raise
+    
+    executor = AgentExecutorService(db=db)
+    
+    # Construct input params
+    # Convert Pydantic messages to dicts
+    current_messages = [msg.model_dump() if hasattr(msg, "model_dump") else msg for msg in request.messages]
+    
+    # Append input as user message if provided
+    if request.input:
+        current_messages.append({"role": "user", "content": request.input})
+        
+    input_params = {
+        "messages": current_messages,
+        "input": request.input
+    }
+    
+    try:
+        run_id = await executor.start_run(agent_id, input_params, user_id=context["user"].id)
+        print(f"[DEBUG] Run started successfully. Run ID: {run_id}")
+        return {"run_id": str(run_id)}
+    except Exception as e:
+        print(f"[DEBUG] Error starting run in executor: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{run_id}/resume", response_model=Dict[str, Any])
+async def resume_run_v2(
+    run_id: UUID,
+    request: Dict[str, Any], # Payload depends on what the node waits for
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Resume a paused agent run.
+    """
+    from app.agent.execution.service import AgentExecutorService
+    
+    executor = AgentExecutorService(db=db)
+    # TODO: Verify run belongs to tenant/user
+    
+    await executor.resume_run(run_id, request)
+    return {"status": "resumed"}
+
+
+@router.get("/runs/{run_id}", response_model=Dict[str, Any])
+async def get_run_status(
+    run_id: UUID,
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the status and result of a run.
+    """
+    from app.db.postgres.models.agents import AgentRun, AgentTrace
+    
+    result = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+    run = result.scalars().first()
+    
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+        
+    # TODO: Check tenant
+    
+    return {
+        "id": str(run.id),
+        "status": run.status.value if hasattr(run.status, "value") else run.status,
+        "result": run.output_result,
+        "error": run.error_message,
+        "checkpoint": run.checkpoint # Debugging
+    }

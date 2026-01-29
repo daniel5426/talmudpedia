@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
     Save,
-    Play,
     Settings,
     ChevronLeft,
     Loader2,
@@ -17,7 +16,7 @@ import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { agentService } from "@/services/agent-resources"
+import { agentService } from "@/services"
 import { AgentBuilder, AgentNodeData } from "@/components/agent-builder"
 
 interface AgentWithGraph {
@@ -171,16 +170,6 @@ export default function AgentBuilderPage() {
                         Save Draft
                     </Button>
                     <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-xs"
-                        onClick={() => router.push(`/admin/agents/${id}/run`)}
-                        disabled={isLoading}
-                    >
-                        <Play className="mr-2 h-3 w-3" />
-                        Try
-                    </Button>
-                    <Button
                         size="sm"
                         variant="default"
                         className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
@@ -212,6 +201,7 @@ export default function AgentBuilderPage() {
                     </div>
                 ) : (
                     <AgentBuilder
+                        agentId={id as string}
                         initialNodes={agent.graph_definition?.nodes || []}
                         initialEdges={agent.graph_definition?.edges || []}
                         onSave={handleGraphChange}

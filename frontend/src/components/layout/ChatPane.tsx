@@ -39,7 +39,7 @@ import {
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
 
-import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic } from "lucide-react";
+import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic, AlertCircle } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotImputArea } from "@/components/BotImputArea";
 import { useChatController, type ChatController, type ChatMessage, type Citation } from "./useChatController";
@@ -55,6 +55,7 @@ import { useAuthStore } from "@/lib/store/useAuthStore";
 // import "@livekit/components-styles";
 import { LibrarySearchModal } from "./LibrarySearchModal";
 import { ChatPaneHeader } from "./ChatPaneHeader";
+import { useSmoothStream } from "@/hooks/useSmoothStream";
 
 const formatThinkingDuration = (durationMs?: number | null) => {
   if (!durationMs || durationMs <= 0) {
@@ -308,7 +309,7 @@ export function ChatWorkspace({
   handleToggleVoiceMode: () => void;
   analyser?: AnalyserNode | null;
   noBackground?: boolean;
-  }) {
+}) {
   // Auto (Agent Router) - Extract controller methods and state
   const {
     messages,
@@ -320,6 +321,7 @@ export function ChatWorkspace({
     disliked,
     copiedMessageId,
     lastThinkingDurationMs,
+    activeStreamingId,
     handleSubmit,
     handleStop,
     handleCopy,
@@ -328,19 +330,49 @@ export function ChatWorkspace({
     handleRetry,
     handleSourceClick,
     textareaRef,
-  } = controller;
+  } = controller as any;
+
+  const isPaused = (controller as any).isPaused || false;
   // Auto (Agent Router) - Get direction for RTL/LTR layout
   const { direction } = useDirection();
-  // Auto (Agent Router) - Refs for container and scroll management
+  // Auto (Agent Router) - Refs for container management
   const containerRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   // Auto (Agent Router) - Container width state for responsive layout
   const [containerWidth, setContainerWidth] = useState<number>(1000);
   // Auto (Agent Router) - Scroll to bottom context for auto-scrolling
   const { scrollToBottom } = useStickToBottomContext();
-  // Auto (Agent Router) - Determine if chat is in empty state
+
+  // Smoothing the streaming content for a better UX (typewriter effect)
+  const smoothedStreamingContent = useSmoothStream(streamingContent, isLoading);
+
+  // Unify history and streaming messages for stable rendering
+  const displayMessages = React.useMemo(() => {
+    const list = [...messages];
+    const isStreamingInHistory = activeStreamingId && messages.some((m: ChatMessage) => m.id === activeStreamingId);
+
+    if (activeStreamingId && !isStreamingInHistory && (streamingContent || currentReasoning.length > 0 || isLoading)) {
+      list.push({
+        id: activeStreamingId,
+        role: "assistant",
+        content: smoothedStreamingContent,
+        createdAt: new Date(),
+        reasoningSteps: currentReasoning,
+        thinkingDurationMs: lastThinkingDurationMs,
+        _isStreaming: true, // Internal flag for conditional logic
+      } as any);
+    }
+    return list;
+  }, [messages, activeStreamingId, smoothedStreamingContent, currentReasoning, lastThinkingDurationMs, isLoading]);
+
+  // Auto (Agent Router) - Determine if chat is in empty state.
+  // We use a "hasStarted" check to prevent flickering back to empty state during completion.
+  const [hasStarted, setHasStarted] = useState(false);
+  useEffect(() => {
+    if (displayMessages.length > 0) setHasStarted(true);
+  }, [displayMessages.length]);
+
   const isEmptyState =
-    messages.length === 0 && !isLoading && streamingContent === "" && !isLoadingHistory && !isVoiceModeActive;
+    !hasStarted && displayMessages.length === 0 && !isLoading && !isLoadingHistory && !isVoiceModeActive;
 
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [loadingSpeakId, setLoadingSpeakId] = useState<string | null>(null);
@@ -421,21 +453,11 @@ export function ChatWorkspace({
   const pendingPrefillHandledRef = useRef(false);
   const setActiveChatId = useLayoutStore((state) => state.setActiveChatId);
   const prevPropChatIdRef = useRef<string | undefined>(undefined);
-  
+
   // Auto (Agent Router) - Get chatId from URL if not provided as prop (for useEffect tracking)
   const searchParams = useSearchParams();
   const urlChatId = searchParams.get('chatId');
   const effectiveChatId = chatId || urlChatId;
-
-  // Auto (Agent Router) - Auto-scroll to bottom when content changes
-  useEffect(() => {
-    if (messages.length > 0 || streamingContent || isLoading) {
-      const timeoutId = setTimeout(() => {
-        scrollToBottom();
-      }, 100);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [messages, streamingContent, currentReasoning, isLoading, scrollToBottom]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -493,26 +515,26 @@ export function ChatWorkspace({
       {isEmptyState && containerWidth >= 650 && !noBackground && (
         <BackgroundLogos />
       )}
-      <ConversationContent className={cn("flex-1 p-0 pt-13", isEmptyState && "h-full justify-center relative z-10")}>
+      <ConversationContent className={cn("flex-1 p-0 pt-13", !isEmptyState && "pb-30", isEmptyState && "h-full justify-center relative z-10")}>
         {isEmptyState ? (
           <div className="flex w-full flex-col items-center text-center pb-34 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <p className="text-3xl font-semibold pb-6">
-            גלה מה מחפש לבך בתורה.</p>
-            
-                <BotImputArea 
-                  textareaRef={controller.textareaRef}
-                  handleSubmit={controller.handleSubmit}
-                  isLoading={controller.isLoading}
-                  isVoiceModeActive={isVoiceModeActive}
-                  onToggleVoiceMode={handleToggleVoiceMode}
-                  analyser={analyser}
-                  animate={false}
-                />
+              גלה מה מחפש לבך בתורה.</p>
+
+            <BotImputArea
+              textareaRef={controller.textareaRef}
+              handleSubmit={controller.handleSubmit}
+              isLoading={controller.isLoading}
+              isVoiceModeActive={isVoiceModeActive}
+              onToggleVoiceMode={handleToggleVoiceMode}
+              analyser={analyser}
+              animate={false}
+            />
           </div>
         ) : (
           <>
-            {messages.length > 0 &&
-              messages.map((msg) => (
+            {displayMessages.length > 0 &&
+              displayMessages.map((msg: any) => (
                 <div key={msg.id} className="flex w-full">
                   {msg.role === "assistant" && containerWidth >= 550 && (
                     <div
@@ -529,7 +551,7 @@ export function ChatWorkspace({
                       msg.attachments &&
                       msg.attachments.length > 0 && (
                         <MessageAttachments dir={direction} className="mb-2">
-                          {msg.attachments.map((attachment) => (
+                          {msg.attachments.map((attachment: any) => (
                             <MessageAttachment
                               data={attachment}
                               key={attachment.url || nanoid()}
@@ -541,7 +563,7 @@ export function ChatWorkspace({
                     <MessageContent dir={direction}>
                       {msg.role === "assistant" ? (
                         <>
-                          {msg.reasoningSteps && msg.reasoningSteps.length > 0 && (
+                          {((msg.reasoningSteps && msg.reasoningSteps.length > 0) || (msg.thinkingDurationMs && msg.thinkingDurationMs > 0) || (msg.id === activeStreamingId && isLoading)) && (
                             <div className="space-y-2">
                               <ChainOfThought
                                 dir={direction}
@@ -552,20 +574,35 @@ export function ChatWorkspace({
                               >
                                 <ChainOfThoughtHeader
                                   dir={direction}
-                                  renderLabel={() => {
-                                    const thinkingLabel = buildThinkingLabel(
-                                      msg.thinkingDurationMs
-                                    );
-                                    if (thinkingLabel) {
-                                      return thinkingLabel;
+                                  renderLabel={({ isOpen }) => {
+                                    if (isOpen && msg.id === activeStreamingId && isLoading) {
+                                      return (
+                                        <span className="animate-pulse text-sm text-muted-foreground">
+                                          חושב
+                                        </span>
+                                      );
                                     }
-                                    const latestStep =
-                                      msg.reasoningSteps?.[
-                                        msg.reasoningSteps.length - 1
-                                      ];
-                                    const latestLabel =
-                                      formatReasoningStepLabel(latestStep);
-                                    return latestLabel ?? "חושב...";
+                                    const thinkingLabel = buildThinkingLabel(
+                                      msg.id === activeStreamingId ? lastThinkingDurationMs : msg.thinkingDurationMs
+                                    );
+                                    if (thinkingLabel) return thinkingLabel;
+
+                                    const steps = msg.reasoningSteps || [];
+                                    const latestStep = steps[steps.length - 1];
+                                    const latestLabel = formatReasoningStepLabel(latestStep);
+
+                                    if (latestLabel) {
+                                      if (msg.id === activeStreamingId && isLoading && typeof latestLabel === "string") {
+                                        return (
+                                          <span className="animate-pulse text-muted-foreground text-sm">
+                                            {latestLabel}
+                                          </span>
+                                        );
+                                      }
+                                      return latestLabel;
+                                    }
+
+                                    return (msg.id === activeStreamingId && isLoading) ? "חושב..." : "תהליך חשיבה";
                                   }}
                                 />
                                 <ChainOfThoughtContent dir={direction}>
@@ -633,145 +670,86 @@ export function ChatWorkspace({
                     </MessageContent>
 
                     {msg.role === "assistant" && (
-                      <MessageActions>
-                        <MessageAction
-                          label="Retry"
-                          onClick={() => handleRetry(msg)}
-                          tooltip="Regenerate response"
-                        >
-                          <RefreshCcwIcon className="size-4" />
-                        </MessageAction>
-                        <MessageAction
-                          label="Like"
-                          onClick={() => handleLike(msg)}
-                          tooltip="Like this response"
-                        >
-                          <ThumbsUpIcon
-                            className="size-4"
-                            fill={liked[msg.id] ? "currentColor" : "none"}
-                          />
-                        </MessageAction>
-                        <MessageAction
-                          label="Dislike"
-                          onClick={() => handleDislike(msg)}
-                          tooltip="Dislike this response"
-                        >
-                          <ThumbsDownIcon
-                            className="size-4"
-                            fill={disliked[msg.id] ? "currentColor" : "none"}
-                          />
-                        </MessageAction>
-                        <MessageAction
-                          label={playingId === msg.id ? "Stop" : "Read"}
-                          onClick={() => handleSpeak(msg)}
-                          tooltip={
-                            playingId === msg.id
-                              ? "Stop playback"
-                              : loadingSpeakId === msg.id
-                              ? "Loading..."
-                              : "Read aloud"
-                          }
-                          disabled={loadingSpeakId === msg.id || !msg.content}
-                        >
-                          {playingId === msg.id ? (
-                            <Square className="size-4" />
-                          ) : (
-                            <Volume2 className="size-4" />
-                          )}
-                        </MessageAction>
-                        <MessageAction
-                          label="Copy"
-                          onClick={() => handleCopy(msg.content || "", msg.id)}
-                          tooltip={
-                            copiedMessageId === msg.id ? "Copied!" : "Copy to clipboard"
-                          }
-                        >
-                          <CopyIcon
-                            className={cn(
-                              "size-4 transition-all",
-                              copiedMessageId === msg.id && "scale-125 text-green-500"
-                            )}
-                          />
-                        </MessageAction>
-                      </MessageActions>
+                      <div className="h-9 w-full mt-1">
+                        {(msg.id !== activeStreamingId || !isLoading) && (
+                          <MessageActions>
+                            <MessageAction
+                              label="Retry"
+                              onClick={() => handleRetry(msg)}
+                              tooltip="Regenerate response"
+                            >
+                              <RefreshCcwIcon className="size-4" />
+                            </MessageAction>
+                            <MessageAction
+                              label="Like"
+                              onClick={() => handleLike(msg)}
+                              tooltip="Like this response"
+                            >
+                              <ThumbsUpIcon
+                                className="size-4"
+                                fill={liked[msg.id] ? "currentColor" : "none"}
+                              />
+                            </MessageAction>
+                            <MessageAction
+                              label="Dislike"
+                              onClick={() => handleDislike(msg)}
+                              tooltip="Dislike this response"
+                            >
+                              <ThumbsDownIcon
+                                className="size-4"
+                                fill={disliked[msg.id] ? "currentColor" : "none"}
+                              />
+                            </MessageAction>
+                            <MessageAction
+                              label={playingId === msg.id ? "Stop" : "Read"}
+                              onClick={() => handleSpeak(msg)}
+                              tooltip={
+                                playingId === msg.id
+                                  ? "Stop playback"
+                                  : loadingSpeakId === msg.id
+                                    ? "Loading..."
+                                    : "Read aloud"
+                              }
+                              disabled={loadingSpeakId === msg.id || !msg.content}
+                            >
+                              {playingId === msg.id ? (
+                                <Square className="size-4" />
+                              ) : (
+                                <Volume2 className="size-4" />
+                              )}
+                            </MessageAction>
+                            <MessageAction
+                              label="Copy"
+                              onClick={() => handleCopy(msg.content || "", msg.id)}
+                              tooltip={
+                                copiedMessageId === msg.id ? "Copied!" : "Copy to clipboard"
+                              }
+                            >
+                              <CopyIcon
+                                className={cn(
+                                  "size-4 transition-all",
+                                  copiedMessageId === msg.id && "scale-125 text-green-500"
+                                )}
+                              />
+                            </MessageAction>
+                          </MessageActions>
+                        )}
+                      </div>
                     )}
                   </Message>
                 </div>
               ))}
 
-            {isLoading && (
-              <div className="flex w-full" dir={direction}>
-                {containerWidth >= 550 && (
-                  <div
-                    className={cn(
-                      "shrink-0",
-                      direction === "rtl" ? "ml-2" : "mr-2"
-                    )}
-                  >
-                    <KesherLogo variant="avatar" />
-                  </div>
-                )}
-                <Message from="assistant" className="max-w-3xl" dir={direction}>
-                  <MessageContent dir={direction}>
-                    {currentReasoning && currentReasoning.length > 0 && (
-                      <div className="mb-1 space-y-4">
-                        <ChainOfThought defaultOpen={false} dir={direction}>
-                          <ChainOfThoughtHeader
-                            renderLabel={({ isOpen }) => {
-                              if (isOpen) {
-                                return (
-                                  <span className="animate-pulse text-muted-foreground text-sm">
-                                    חושב
-                                  </span>
-                                );
-                              }
-                              const thinkingLabel = buildThinkingLabel(
-                                lastThinkingDurationMs
-                              );
-                              if (thinkingLabel) {
-                                return thinkingLabel;
-                              }
-                              if (currentReasoning.length > 0) {
-                                const latestStep =
-                                  currentReasoning[currentReasoning.length - 1];
-                                const formattedLabel =
-                                  formatReasoningStepLabel(latestStep);
-                                if (formattedLabel) {
-                                  if (typeof formattedLabel === "string") {
-                                    return (
-                                      <span className="animate-pulse text-muted-foreground text-sm">
-                                        {formattedLabel}
-                                      </span>
-                                    );
-                                  }
-                                  return formattedLabel;
-                                }
-                              }
-                              return "חושב...";
-                            }}
-                          />
-                          <ChainOfThoughtContent>
-                            <ReasoningStepsList
-                              key="streaming"
-                              steps={currentReasoning}
-                              cacheKey="streaming"
-                              onSourceClick={handleSourceClick}
-                              direction={direction}
-                            />
-                          </ChainOfThoughtContent>
-                        </ChainOfThought>
-                      </div>
-                    )}
 
-                    <div dir={direction}>
-                      <MessageResponse  >{streamingContent}</MessageResponse>
-                    </div>
-                  </MessageContent>
-                </Message>
+
+            {isPaused && (
+              <div className="flex w-full justify-center p-4 animate-in fade-in slide-in-from-bottom-2">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-yellow-100/50 border border-yellow-200 text-yellow-800 text-xs font-medium">
+                  <AlertCircle className="size-3.5" />
+                  הסוכן ממתין לקלט שלך להמשך...
+                </div>
               </div>
             )}
-
-            <div ref={messagesEndRef} />
           </>
         )}
       </ConversationContent>
@@ -779,15 +757,15 @@ export function ChatWorkspace({
       {!isEmptyState && (
         <>
           <ConversationScrollButton />
-              <BotImputArea
-                textareaRef={textareaRef}
-                handleSubmit={handleSubmit}
-                isLoading={isLoading}
-                onStop={handleStop}
-                isVoiceModeActive={isVoiceModeActive}
-                onToggleVoiceMode={handleToggleVoiceMode}
-                analyser={analyser}
-              />
+          <BotImputArea
+            textareaRef={textareaRef}
+            handleSubmit={handleSubmit}
+            isLoading={isLoading}
+            onStop={handleStop}
+            isVoiceModeActive={isVoiceModeActive}
+            onToggleVoiceMode={handleToggleVoiceMode}
+            analyser={analyser}
+          />
         </>
       )}
     </div>
@@ -798,17 +776,17 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   // Auto (Agent Router) - Get chatId from URL search params if not provided as prop
   const searchParams = useSearchParams();
   const effectiveChatId = chatId || searchParams.get('chatId');
-  
+
   // Auto (Agent Router) - Get layout store for active chat management
   const setActiveChatId = useLayoutStore((state) => state.setActiveChatId);
   const [searchOpen, setSearchOpen] = React.useState(false);
-  
+
   const router = useRouter();
 
   const onChatCreated = React.useCallback((newChatId: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("chatId", newChatId);
-      router.replace(`?${params.toString()}`);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("chatId", newChatId);
+    router.replace(`?${params.toString()}`);
   }, [router, searchParams]);
 
   // Auto (Agent Router) - Share chat handler - copies chat URL to clipboard
@@ -845,9 +823,9 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
 
   const defaultController = useChatController();
   const chatController = controller ?? defaultController;
-  
+
   const [isVoiceModeActive, setIsVoiceModeActive] = useState(false);
-  
+
   const isEmptyState =
     chatController.messages.length === 0 && !chatController.isLoading && !chatController.streamingContent && !chatController.isLoadingHistory && !isVoiceModeActive;
 
@@ -860,7 +838,7 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   // And in voice_ws.py: @router.websocket("/session")
   // So the full path is /api/voice/session
   const voiceUrl = `${wsBackendUrl}/api/voice/session?chat_id=${effectiveChatId || ''}${token ? `&token=${encodeURIComponent(token)}` : ""}`;
-  
+
   const { upsertLiveVoiceMessage } = chatController;
 
   const handleLiveText = React.useCallback(
@@ -906,17 +884,17 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   );
 
   useEffect(() => {
-      if (isVoiceModeActive) {
-          connect();
-      } else {
-          disconnect();
-      }
+    if (isVoiceModeActive) {
+      connect();
+    } else {
+      disconnect();
+    }
   }, [isVoiceModeActive, connect, disconnect]);
 
   useEffect(() => {
-      if (isConnected && isVoiceModeActive) {
-          startRecording();
-      }
+    if (isConnected && isVoiceModeActive) {
+      startRecording();
+    }
   }, [isConnected, isVoiceModeActive, startRecording]);
 
   const { direction } = useDirection();
@@ -924,20 +902,20 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   const handleToggleVoiceMode = async () => {
     if (isVoiceModeActive) {
       setIsVoiceModeActive(false);
-      
+
       if (effectiveChatId) {
         await chatController.refresh();
       } else {
         await new Promise(resolve => setTimeout(resolve, 500));
         try {
-            window.location.reload();
+          window.location.reload();
         } catch (error) {
           console.error("Failed to refresh:", error);
         }
       }
     } else {
-        ensureAudioContext();
-        setIsVoiceModeActive(true);
+      ensureAudioContext();
+      setIsVoiceModeActive(true);
     }
   };
 
@@ -954,7 +932,11 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   const roomContent = (
     <>
       <LibrarySearchModal open={searchOpen} onOpenChange={setSearchOpen} />
-      <Conversation dir={direction} className="relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)">
+      <Conversation
+        dir={direction}
+        className="relative border-none flex-1 overflow-hidden bg-(--chat-background)"
+        targetScrollTop={chatController.isLoading ? (_target: number, { scrollElement }: any) => scrollElement?.scrollTop ?? 0 : undefined}
+      >
         <div
           aria-hidden="true"
           className={cn(

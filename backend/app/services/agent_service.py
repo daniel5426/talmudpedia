@@ -153,6 +153,13 @@ class AgentService:
         await self.db.commit()
         await self.db.refresh(agent)
         return agent
+    async def update_graph(self, agent_id: UUID, graph_definition: Dict[str, Any]) -> Agent:
+        """Update only the agent graph."""
+        agent = await self.get_agent(agent_id)
+        agent.graph_definition = graph_definition
+        await self.db.commit()
+        await self.db.refresh(agent)
+        return agent
 
     async def delete_agent(self, agent_id: UUID) -> bool:
         """Delete an agent."""

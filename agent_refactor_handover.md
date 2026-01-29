@@ -26,29 +26,24 @@ The primary goal is to upgrade the current Agent system from a basic pipeline-li
 - **HumanInputNode**: Designed to **PAUSE** execution rather than block threads.
 - **ParallelNode**: Placeholder logic integrated with compiler validation.
 
-### 3. Graph Validation & Compilation (`Phase 3`)
-- **AgentCompiler**:
-    - **Structural Checks**: Connectivity, single start/end, reachability.
-    - **Schema Validation**: Nodes validated against JSON schemas at compile-time.
-    - **Data Flow Contracts**: Compiler verifies that all `reads` are satisfied by upstream `writes`.
-    - **Parallel Safety**: Detects if parallel branches write to the same `AgentStateField`.
-- **Component Resolvers**: `ToolResolver` and `RAGPipelineResolver` implemented for strict ID verification.
 - **Models**: Created `CompiledAgent` (immutable snapshot) and updated `ExecutableAgent`.
+
+### 4. Execution Engine & Persistence (`Phase 4`)
+- **AgentExecutor Service**: Implemented robust background job runner.
+    - **Session Isolation**: Refactored to use independent database sessions per execution run to prevent `IllegalStateChangeError`.
+    - **Checkpointer**: Integrated LangGraph `MemorySaver` (pluggable for Postgres) for state persistence.
+- **Human-in-the-Loop**: Fully implemented pausing and resumption logic.
+- **Unified Tracing**: Comprehensive `AgentTrace` capture including inputs, outputs, and timestamps.
+- **API Lifecycle**: 100% coverage of agent management (CRUD), versioning, and execution endpoints.
 
 ---
 
 ## 🚀 Next Phases
 
-### 📦 Phase 4: Execution Engine Upgrade (High Priority)
-- **AgentExecutor Service**: Implement the background job runner for Agents (similar to RAG PipelineExecutor).
-- **Persistence & Checkpointing**: Save execution state to the database to allow resuming "Paused" (Human Input) runs.
-- **Advanced Tracing**: Enhance `AgentTrace` to capture per-node I/O, performance metrics, and logic branches.
-- **Streaming**: Unify `astream_events` to provide real-time feedback to the UI.
-
-### 🎨 Phase 5: Visual Builder Enhancement
+### 📦 Phase 5: Advanced Visual Builder (High Priority)
 - **Schema-Driven Config**: Update the `ConfigPanel` to automatically generate UI inputs based on the node's `config_schema`.
 - **Connection Validation**: Real-time feedback in ReactFlow when `reads`/`writes` are incompatible.
-- **Execution Mode**: A new builder view to step through an active execution.
+- **Execution Mode**: A new builder view to step through an active execution and visualize tokens/reasoning.
 
 ### 🐍 Phase 6: Custom Agent Operators
 - **Python Sandbox**: Allow users to write custom Python logic for agent nodes.
@@ -74,4 +69,9 @@ The primary goal is to upgrade the current Agent system from a basic pipeline-li
 5.  **State**: `backend/app/agent/core/state.py`.
 6.  **Models**: `backend/app/agent/models.py` (CompiledAgent).
 
-**Immediate Next Step**: Implementation of the `AgentExecutor` service in Phase 4 to bridge the gap between "Compiled" and "Running".
+7.  **API**: `backend/app/api/routers/agents.py`.
+8.  **Service**: `backend/app/agent/execution/service.py`.
+
+**Critical Note on Sessions**: Background execution must use `_execute_with_new_session()` to avoid sharing sessions with the API request thread, which causes threading errors in SQLAlchemy.
+
+**Immediate Next Step**: Implementing the **Execution Mode** UI in the `AgentBuilder` to visualize the backend state machine.

@@ -1,7 +1,7 @@
 import { useAuthStore } from "@/lib/store/useAuthStore";
 
 class HttpClient {
-  constructor(private baseUrl: string) {}
+  constructor(public readonly baseUrl: string) {}
 
   buildHeaders(headers?: HeadersInit, body?: BodyInit | null): HeadersInit {
     const token = useAuthStore.getState().token;
@@ -28,27 +28,44 @@ class HttpClient {
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = this.buildHeaders(init.headers, init.body ?? null);
     const url = `${this.baseUrl}${path}`;
-    const response = await fetch(url, { ...init, headers });
+    
+    console.log(`[HttpClient] Request: ${init.method || 'GET'} ${url}`, {
+      headers,
+      body: init.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : 'FormData/Binary') : null
+    });
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        useAuthStore.getState().logout();
+    try {
+      const response = await fetch(url, { ...init, headers });
+      
+      console.log(`[HttpClient] Response: ${response.status} ${response.statusText} for ${url}`);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          useAuthStore.getState().logout();
+        }
+        let message: any = "Request failed";
+        try {
+          const data = await response.json();
+          console.error(`[HttpClient] Error Data for ${url}:`, data);
+          message = data.detail || data.message || message;
+        } catch {
+          message = response.statusText || message;
+        }
+        const errorMsg = typeof message === 'object' ? JSON.stringify(message) : String(message);
+        throw new Error(errorMsg);
       }
-      let message = "Request failed";
-      try {
-        const data = await response.json();
-        message = data.detail || data.message || message;
-      } catch {
-        message = response.statusText || message;
+
+      if (response.status === 204) {
+        return undefined as T;
       }
-      throw new Error(message);
-    }
 
-    if (response.status === 204) {
-      return undefined as T;
+      const result = await response.json();
+      console.log(`[HttpClient] Result for ${url}:`, result);
+      return result;
+    } catch (error) {
+      console.error(`[HttpClient] Fetch Error for ${url}:`, error);
+      throw error;
     }
-
-    return response.json();
   }
 
   get<T>(path: string, init?: RequestInit) {

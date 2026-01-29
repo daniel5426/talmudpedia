@@ -20,6 +20,7 @@ class NodeType(str, Enum):
     PARALLEL = "parallel"
     TRANSFORM = "transform"
     RAG_RETRIEVAL = "rag_retrieval"
+    HUMAN_INPUT = "human_input"
 
 
 class EdgeType(str, Enum):

@@ -21,7 +21,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card"
-import { agentService } from "@/services/agent-resources"
+import { agentService } from "@/services"
 
 export default function NewAgentPage() {
     const router = useRouter()

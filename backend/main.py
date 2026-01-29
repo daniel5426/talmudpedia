@@ -67,7 +67,15 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 # app.add_middleware(GZipMiddleware, minimum_size=500)
 
-cors_origins = ['http://localhost:3000', 'https://www.rishta.co.il', 'http://10.0.0.10:3000', 'https://reshet-self.vercel.app']
+cors_origins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    'https://www.rishta.co.il',
+    'http://10.0.0.10:3000',
+    'https://reshet-self.vercel.app'
+]
 
 # If credentials are true, Starlette prohibits ["*"] origins.
 # We handle this by ensuring specific origins are used if credentials are required.
@@ -91,6 +99,8 @@ from app.api.routers import models as models_router
 from app.api.routers import tools as tools_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+from app.api.routers import agent_operators
+app.include_router(agent_operators.router)
 app.include_router(agents_router)
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
@@ -98,8 +108,6 @@ app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=
 app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom-operators", tags=["rag-custom-operators"])
 app.include_router(models_router.router, tags=["models"])
 app.include_router(tools_router.router, tags=["tools"])
-from app.api.routers import agent_operators
-app.include_router(agent_operators.router)
 app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
 app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
 app.include_router(audit_router.router, prefix="/api", tags=["audit"])

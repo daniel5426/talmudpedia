@@ -69,11 +69,11 @@ export type AgentEdge = Edge
 
 // Category styling
 export const CATEGORY_COLORS: Record<AgentNodeCategory, string> = {
-  control: "#6b7280",     // Gray
-  reasoning: "#8b5cf6",   // Purple
-  action: "#3b82f6",      // Blue
-  logic: "#f59e0b",       // Amber
-  interaction: "#10b981", // Emerald
+  control: "var(--agent-control)",
+  reasoning: "var(--agent-reasoning)",
+  action: "var(--agent-action)",
+  logic: "var(--agent-logic)",
+  interaction: "var(--agent-interaction)",
 }
 
 export const CATEGORY_LABELS: Record<AgentNodeCategory, string> = {
@@ -85,11 +85,11 @@ export const CATEGORY_LABELS: Record<AgentNodeCategory, string> = {
 }
 
 export const DATA_TYPE_COLORS: Record<AgentDataType, string> = {
-  any: "#6b7280",
-  message: "#8b5cf6",
-  context: "#3b82f6",
-  decision: "#f59e0b",
-  result: "#10b981",
+  any: "var(--agent-control)",
+  message: "var(--agent-reasoning)",
+  context: "var(--agent-action)",
+  decision: "var(--agent-logic)",
+  result: "var(--agent-interaction)",
 }
 
 // Node specifications for the catalog

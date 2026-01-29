@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { modelsService, LogicalModel } from "@/services/agent-resources"
+import { modelsService, LogicalModel } from "@/services"
 import { ConfigFieldSpec } from "./types"
 
 export function ModelSelectField({

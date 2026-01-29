@@ -1,0 +1,401 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.8, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/danielbenassaya/Code/personal/talmudpedia/backend
+plugins: mock-3.15.1, anyio-4.12.0, asyncio-1.3.0, langsmith-0.4.56
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 2 items
+
+tests/test_agent_full_system.py FF                                       [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_full_execution_flow ___________________________
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/runner.py", line 344, in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/runner.py", line 246, in <lambda>
+    lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 167, in _multicall
+    raise exception
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/logging.py", line 850, in pytest_runtest_call
+    yield
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/capture.py", line 900, in pytest_runtest_call
+    return (yield)
+            ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 53, in run_old_style_hookwrapper
+    return result.get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_result.py", line 103, in get_result
+    raise exc.with_traceback(tb)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 38, in run_old_style_hookwrapper
+    res = yield
+          ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/skipping.py", line 263, in pytest_runtest_call
+    return (yield)
+            ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/runner.py", line 178, in pytest_runtest_call
+    item.runtest()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 469, in runtest
+    super().runtest()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/python.py", line 1671, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 167, in _multicall
+    raise exception
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 53, in run_old_style_hookwrapper
+    return result.get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_result.py", line 103, in get_result
+    raise exc.with_traceback(tb)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 38, in run_old_style_hookwrapper
+    res = yield
+          ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/python.py", line 157, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 716, in inner
+    runner.run(coro, context=context)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/asyncio/base_events.py", line 686, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/test_agent_full_system.py", line 122, in test_full_execution_flow
+    result = await db_session.execute(select(AgentRun).where(AgentRun.id == run_id))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 455, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 179, in greenlet_spawn
+    result = context.switch(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2308, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2180, in _execute_internal
+    conn = self._connection_for_bind(bind)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2047, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 103, in _go
+    self._raise_for_prerequisite_state(fn.__name__, current_state)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 929, in _raise_for_prerequisite_state
+    raise sa_exc.PendingRollbackError(
+sqlalchemy.exc.PendingRollbackError: This Session's transaction has been rolled back due to a previous exception during flush. To begin a new transaction with this Session, first issue Session.rollback(). Original exception was: (builtins.TypeError) Object of type HumanMessage is not JSON serializable
+[SQL: UPDATE agent_traces SET outputs=?, end_time=? WHERE agent_traces.id = ?]
+[parameters: [{'end_time': datetime.datetime(2026, 1, 28, 20, 4, 24, 240926), 'outputs': {'messages': [HumanMessage(content='Hello', additional_kwargs={}, response_ ... (164 characters truncated) ... f-1442ac31bd84')], 'reasoning_items': [], 'reasoning_steps_parsed': [], 'steps': []}, 'agent_traces_id': UUID('019c0635-062b-7bd2-9ff2-a61fc612598e')}]] (Background on this error at: https://sqlalche.me/e/20/7s2a)
+----------------------------- Captured stderr call -----------------------------
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    context = constructor(
+              ^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 1456, in _init_compiled
+    flattened_processors[key](compiled_params[key])
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/sql/sqltypes.py", line 2717, in process
+    return json_serializer(value)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/__init__.py", line 231, in dumps
+    return _default_encoder.encode(obj)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/encoder.py", line 180, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+TypeError: Object of type HumanMessage is not JSON serializable
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/agent/execution/service.py", line 190, in _execute
+    await self._save_trace_event(run_id, event)
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/agent/execution/service.py", line 270, in _save_trace_event
+    await self.db.commit()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 1011, in commit
+    await greenlet_spawn(self.sync_session.commit)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 192, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1969, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1256, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1231, in _prepare_impl
+    self.session.flush()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4312, in flush
+    self._flush(objects)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4447, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 146, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4408, in _flush
+    flush_context.execute()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 909, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1416, in execute
+    return meth(
+           ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 516, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1639, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1820, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2343, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    context = constructor(
+              ^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 1456, in _init_compiled
+    flattened_processors[key](compiled_params[key])
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/sqlalchemy/sql/sqltypes.py", line 2717, in process
+    return json_serializer(value)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/__init__.py", line 231, in dumps
+    return _default_encoder.encode(obj)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/encoder.py", line 180, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+sqlalchemy.exc.StatementError: (builtins.TypeError) Object of type HumanMessage is not JSON serializable
+[SQL: UPDATE agent_traces SET outputs=?, end_time=? WHERE agent_traces.id = ?]
+[parameters: [{'end_time': datetime.datetime(2026, 1, 28, 20, 4, 24, 240926), 'outputs': {'messages': [HumanMessage(content='Hello', additional_kwargs={}, response_ ... (164 characters truncated) ... f-1442ac31bd84')], 'reasoning_items': [], 'reasoning_steps_parsed': [], 'steps': []}, 'agent_traces_id': UUID('019c0635-062b-7bd2-9ff2-a61fc612598e')}]]
+------------------------------ Captured log call -------------------------------
+ERROR    app.agent.execution.service:service.py:215 Execution failed: (builtins.TypeError) Object of type HumanMessage is not JSON serializable
+[SQL: UPDATE agent_traces SET outputs=?, end_time=? WHERE agent_traces.id = ?]
+[parameters: [{'end_time': datetime.datetime(2026, 1, 28, 20, 4, 24, 240926), 'outputs': {'messages': [HumanMessage(content='Hello', additional_kwargs={}, response_ ... (164 characters truncated) ... f-1442ac31bd84')], 'reasoning_items': [], 'reasoning_steps_parsed': [], 'steps': []}, 'agent_traces_id': UUID('019c0635-062b-7bd2-9ff2-a61fc612598e')}]]
+ERROR    app.agent.execution.service:service.py:226 Failed to update run status: This Session's transaction has been rolled back due to a previous exception during flush. To begin a new transaction with this Session, first issue Session.rollback(). Original exception was: (builtins.TypeError) Object of type HumanMessage is not JSON serializable
+[SQL: UPDATE agent_traces SET outputs=?, end_time=? WHERE agent_traces.id = ?]
+[parameters: [{'end_time': datetime.datetime(2026, 1, 28, 20, 4, 24, 240926), 'outputs': {'messages': [HumanMessage(content='Hello', additional_kwargs={}, response_ ... (164 characters truncated) ... f-1442ac31bd84')], 'reasoning_items': [], 'reasoning_steps_parsed': [], 'steps': []}, 'agent_traces_id': UUID('019c0635-062b-7bd2-9ff2-a61fc612598e')}]] (Background on this error at: https://sqlalche.me/e/20/7s2a)
+______________________ test_human_interruption_and_resume ______________________
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/runner.py", line 344, in from_call
+    result: TResult | None = func()
+                             ^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/runner.py", line 246, in <lambda>
+    lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 167, in _multicall
+    raise exception
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/logging.py", line 850, in pytest_runtest_call
+    yield
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/capture.py", line 900, in pytest_runtest_call
+    return (yield)
+            ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 53, in run_old_style_hookwrapper
+    return result.get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_result.py", line 103, in get_result
+    raise exc.with_traceback(tb)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 38, in run_old_style_hookwrapper
+    res = yield
+          ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/skipping.py", line 263, in pytest_runtest_call
+    return (yield)
+            ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/runner.py", line 178, in pytest_runtest_call
+    item.runtest()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 469, in runtest
+    super().runtest()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/python.py", line 1671, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 167, in _multicall
+    raise exception
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 53, in run_old_style_hookwrapper
+    return result.get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_result.py", line 103, in get_result
+    raise exc.with_traceback(tb)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 38, in run_old_style_hookwrapper
+    res = yield
+          ^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/_pytest/python.py", line 157, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 716, in inner
+    runner.run(coro, context=context)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/asyncio/base_events.py", line 686, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/test_agent_full_system.py", line 201, in test_human_interruption_and_resume
+    assert run.status == RunStatus.completed
+AssertionError: assert 'paused' == <RunStatus.co...: 'completed'>
+  
+  - completed
+  + paused
+=============================== warnings summary ===============================
+app/db/postgres/base.py:3
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/db/postgres/base.py:3: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    Base = declarative_base()
+
+app/rag/pipeline/compiler.py:48
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/rag/pipeline/compiler.py:48: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VisualPipeline(BaseModel):
+
+app/rag/pipeline/compiler.py:74
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/rag/pipeline/compiler.py:74: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ExecutablePipeline(BaseModel):
+
+app/rag/pipeline/operator_executor.py:38
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/rag/pipeline/operator_executor.py:38: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ExecutionContext(BaseModel):
+
+app/api/dependencies.py:13
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/dependencies.py:13: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class AuthContext(BaseModel):
+
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_full_execution_flow
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/test_agent_full_system.py:99: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    graph_definition={"nodes": [n.dict() for n in nodes], "edges": [e.dict() for e in edges]},
+
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/agent/execution/service.py:94: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    run.started_at = datetime.utcnow()
+
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/agent/graph/compiler.py:254: UserWarning: The 'config' parameter should be typed as 'RunnableConfig' or 'RunnableConfig | None', not 'typing.Any'. 
+    workflow.add_node(node.id, node_fn)
+
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/agent/graph/compiler.py:285: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    graph_hash = hashlib.sha256(json.dumps(graph.dict(), sort_keys=True, default=str).encode()).hexdigest()
+
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/agent/graph/compiler.py:290: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    dag=graph.dict(),
+
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+  /Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/pydantic/main.py:250: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/agent/execution/service.py:253: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    start_time=datetime.utcnow(),
+
+tests/test_agent_full_system.py::test_full_execution_flow
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/agent/execution/service.py:268: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    trace.end_time = datetime.utcnow()
+
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+tests/test_agent_full_system.py::test_human_interruption_and_resume
+  /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/test_agent_full_system.py:160: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    graph_definition={"nodes": [n.dict() for n in nodes], "edges": [e.dict() for e in edges]},
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_agent_full_system.py::test_full_execution_flow - sqlalchemy...
+FAILED tests/test_agent_full_system.py::test_human_interruption_and_resume - ...
+======================== 2 failed, 40 warnings in 2.39s ========================

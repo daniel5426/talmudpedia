@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { nanoid } from "nanoid";
 import { SearchIcon, DotIcon, Terminal } from "lucide-react";
-import { agentService } from "@/services/agent-resources";
+import { agentService } from "@/services";
 import { ChatController, ChatMessage, Citation, mergeReasoningSteps } from "@/components/layout/useChatController";
 
 export interface ExecutionStep {
@@ -16,7 +17,11 @@ export interface ExecutionStep {
   timestamp: Date;
 }
 
-export function useAgentRunController(agentId: string | undefined): ChatController & { executionSteps: ExecutionStep[] } {
+export function useAgentRunController(agentId: string | undefined): ChatController & { 
+  executionSteps: ExecutionStep[];
+  currentRunId: string | null;
+  isPaused: boolean;
+} {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
@@ -26,10 +31,17 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [disliked, setDisliked] = useState<Record<string, boolean>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [lastThinkingDurationMs, setLastThinkingDurationMs] = useState<number | null>(null);
+  const [activeStreamingId, setActiveStreamingId] = useState<string | null>(null);
+  const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const thinkingStartRef = useRef<number | null>(null);
+  // Use refs to capture current state for final message (avoids stale closure bug)
+  const reasoningRef = useRef<ChatMessage["reasoningSteps"]>([]);
+  const lastReasoningRef = useRef<ChatMessage["reasoningSteps"]>([]);
+  const thinkingDurationRef = useRef<number | null>(null);
 
   // Reset state when agentId changes
   useEffect(() => {
@@ -39,6 +51,11 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setCurrentReasoning([]);
     setExecutionSteps([]);
     setLastThinkingDurationMs(null);
+    setActiveStreamingId(null);
+    setCurrentRunId(null);
+    setIsPaused(false);
+    reasoningRef.current = [];
+    thinkingDurationRef.current = null;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -72,10 +89,17 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setStreamingContent("");
     setCurrentReasoning([]);
     setExecutionSteps([]);
+    setLastThinkingDurationMs(null);
+    const newStreamingId = nanoid();
+    setActiveStreamingId(newStreamingId);
     thinkingStartRef.current = Date.now();
 
     try {
-      const response = await agentService.streamAgent(agentId, { text: message.text });
+      const response = await agentService.streamAgent(agentId, { 
+        text: message.text,
+        runId: isPaused ? currentRunId || undefined : undefined
+      }, 'debug');
+      setIsPaused(false); // Reset pause state when starting/resuming
       const reader = response.body?.getReader();
       if (!reader) return;
 
@@ -86,6 +110,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        console.log(`[useAgentRunController] RAW CHUNK: Received ${value?.length} bytes at ${new Date().toLocaleTimeString()}`);
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -94,6 +119,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const dataStr = line.slice(6).trim();
+          console.log("[useAgentRunController] Received event:", dataStr.slice(0, 50));
           if (dataStr === "[DONE]") break;
 
           try {
@@ -101,21 +127,66 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
             
             if (event.type === "done") break;
 
+            // Handle unified reasoning events (Phase 3)
+            if (event.type === "reasoning") {
+              const stepData = event.data;
+              const step = {
+                label: stepData.step,
+                status: stepData.status,
+                icon: stepData.step.toLowerCase().includes("retrieval") ? SearchIcon : DotIcon,
+                description: stepData.message,
+                citations: stepData.citations,
+                query: stepData.query,
+                sources: stepData.sources,
+              };
+              
+              setCurrentReasoning(prev => {
+                const merged = mergeReasoningSteps([...(prev || []), step]);
+                reasoningRef.current = merged;
+                lastReasoningRef.current = merged;
+                return merged;
+              });
+              continue; 
+            }
+
             // Handle LangGraph Events
             if (event.event === "on_chat_model_stream") {
+              // Legacy path (callback-based tokens)
               const content = event.data?.chunk?.content;
               if (content) {
                 fullAiContent += content;
-                setStreamingContent(fullAiContent);
+                flushSync(() => setStreamingContent(fullAiContent));
                 
                 if (thinkingStartRef.current) {
                   const duration = Date.now() - thinkingStartRef.current;
+                  thinkingDurationRef.current = duration;
                   setLastThinkingDurationMs(duration);
                   thinkingStartRef.current = null;
                 }
               }
+            } else if (event.event === "token") {
+              // New explicit token event
+              const content = event.data?.content;
+              if (content) {
+                fullAiContent += content;
+                flushSync(() => setStreamingContent(fullAiContent));
+                
+                if (thinkingStartRef.current) {
+                  const duration = Date.now() - thinkingStartRef.current;
+                  thinkingDurationRef.current = duration;
+                  setLastThinkingDurationMs(duration);
+                  thinkingStartRef.current = null;
+                }
+              }
+            }
+ else if (event.event === "run_id") {
+              setCurrentRunId(event.run_id);
+            } else if (event.event === "run_status") {
+              if (event.status === "paused") {
+                setIsPaused(true);
+              }
             } else if (event.event === "on_tool_start") {
-              const stepId = event.run_id || nanoid();
+              const stepId = event.span_id || event.run_id || nanoid();
               setExecutionSteps(prev => [...prev, {
                 id: stepId,
                 name: event.name || "Tool",
@@ -124,27 +195,21 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
                 input: event.data?.input,
                 timestamp: new Date(),
               }]);
-              
-              const reasoningStep = {
-                label: event.name || "Tool",
-                status: "active" as const,
-                icon: SearchIcon,
-              };
-              setCurrentReasoning(prev => mergeReasoningSteps([...(prev || []), reasoningStep]));
+              // Reasoning update handled by 'reasoning' event now
             } else if (event.event === "on_tool_end") {
-              const stepId = event.run_id;
+              const stepId = event.span_id || event.run_id;
               setExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
                 status: "completed",
                 output: event.data?.output,
               } : s));
-              
-              setCurrentReasoning(prev => prev?.map(s => s.label === event.name ? { ...s, status: "complete" as const } : s));
+              // Reasoning update handled by 'reasoning' event now
             } else if (event.event === "on_chain_start") {
               // Node execution in LangGraph
               if (event.name !== "LangGraph") {
+                const stepId = event.span_id || event.run_id || nanoid();
                 setExecutionSteps(prev => [...prev, {
-                  id: event.run_id || nanoid(),
+                  id: stepId,
                   name: event.name,
                   type: "node",
                   status: "running",
@@ -154,7 +219,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               }
             } else if (event.event === "on_chain_end") {
               if (event.name !== "LangGraph") {
-                setExecutionSteps(prev => prev.map(s => s.id === event.run_id ? {
+                const stepId = event.span_id || event.run_id;
+                setExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                   ...s,
                   status: "completed",
                   output: event.data?.output,
@@ -167,17 +233,23 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
         }
       }
 
+      // Use the local newStreamingId to ensure it matches exactly what was used during the stream
       const assistantMsg: ChatMessage = {
-        id: nanoid(),
+        id: newStreamingId,
         role: "assistant",
         content: fullAiContent,
         createdAt: new Date(),
-        reasoningSteps: currentReasoning,
-        thinkingDurationMs: lastThinkingDurationMs || undefined,
+        reasoningSteps: lastReasoningRef.current && lastReasoningRef.current.length > 0 ? lastReasoningRef.current : undefined,
+        thinkingDurationMs: thinkingDurationRef.current || undefined,
       };
       setMessages(prev => [...prev, assistantMsg]);
       setStreamingContent("");
       setCurrentReasoning([]);
+      setActiveStreamingId(null);
+      setIsLoading(false);
+      reasoningRef.current = [];
+      lastReasoningRef.current = [];
+      thinkingDurationRef.current = null;
     } catch (e) {
       console.error("Agent execution failed:", e);
     } finally {
@@ -229,6 +301,9 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     disliked,
     copiedMessageId,
     lastThinkingDurationMs,
+    activeStreamingId,
+    currentRunId,
+    isPaused,
     handleSubmit,
     handleStop,
     handleCopy,

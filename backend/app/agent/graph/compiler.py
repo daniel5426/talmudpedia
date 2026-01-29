@@ -296,7 +296,8 @@ class AgentCompiler:
             graph_definition=graph, 
             compiled_graph=compiled_graph, 
             config=config or {},
-            snapshot=snapshot
+            snapshot=snapshot,
+            workflow=workflow
         )
 
     def _build_node_fn(self, node: AgentNode):
@@ -311,7 +312,18 @@ class AgentCompiler:
         executor = executor_cls(self.tenant_id, self.db)
 
         async def node_fn(state: Any, config: Any = None):
-            context = {"langgraph_config": config}
+            # Extract emitter from LangGraph configurable (passed by run_and_stream)
+            configurable = config.get("configurable", {}) if config else {}
+            emitter = configurable.get("emitter")
+            
+            context = {
+                "langgraph_config": config,
+                "emitter": emitter,
+                "node_id": node.id,
+                "node_type": node.type.value if hasattr(node.type, 'value') else str(node.type),
+                "node_name": node.config.get("label", node.id)
+            }
+            
             if not await executor.can_execute(state, node.config, context):
                 return {} 
             try:

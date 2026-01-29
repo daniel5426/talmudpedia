@@ -9,7 +9,7 @@ import {
     ToolImplementationType,
     ToolStatus,
     CreateToolRequest,
-} from "@/services/agent-resources"
+} from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"

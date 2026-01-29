@@ -18,30 +18,26 @@ import {
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { nanoid } from "nanoid"
-import {
-  Trash2,
-  Undo2,
-  Redo2,
-  MousePointer2,
-  Hand,
-  Save,
-  Zap,
-  Play,
-  Loader2,
-  LayoutPanelLeft,
-} from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
+
 import { nodeTypes } from "./nodes"
 import { NodeCatalog } from "./NodeCatalog"
 import { ConfigPanel } from "./ConfigPanel"
-import { cn } from "@/lib/utils"
+import { ExecutionDetailsPanel } from "./ExecutionDetailsPanel"
+import { ExecutionDetailsSkeleton } from "./ExecutionDetailsSkeleton"
+import {
+  FloatingPanel,
+  BuilderToolbar,
+  CatalogToggleButton,
+  useBuilderHistory,
+  InteractionMode,
+} from "@/components/builder"
 import {
   PipelineNodeData,
   OperatorCategory,
   OperatorSpec,
   DataType,
   canConnect,
+  PipelineStepExecution,
 } from "./types"
 
 type OperatorCatalog = Record<string, Array<{
@@ -51,10 +47,6 @@ type OperatorCatalog = Record<string, Array<{
   output_type: DataType
   dimension?: number
 }>>
-
-import { PipelineStepExecution } from "./types"
-import { ExecutionDetailsPanel } from "./ExecutionDetailsPanel"
-import { ExecutionDetailsSkeleton } from "./ExecutionDetailsSkeleton"
 
 interface PipelineBuilderProps {
   catalog: OperatorCatalog
@@ -103,18 +95,35 @@ function PipelineBuilderInner({
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  const [interactionMode, setInteractionMode] = useState<'pan' | 'select'>('pan')
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>('pan')
 
-  // History state
-  const [history, setHistory] = useState<{ nodes: Node<PipelineNodeData>[]; edges: Edge[] }[]>([
-    { nodes: initialNodes as Node<PipelineNodeData>[], edges: initialEdges }
-  ])
-  const [historyIndex, setHistoryIndex] = useState(0)
+  // Use shared history hook
+  const {
+    canUndo,
+    canRedo,
+    takeSnapshot,
+    undo,
+    redo,
+  } = useBuilderHistory({ initialNodes, initialEdges })
 
+  const handleUndo = useCallback(() => {
+    const state = undo()
+    if (state) {
+      setNodes(state.nodes as Node<PipelineNodeData>[])
+      setEdges(state.edges)
+    }
+  }, [undo, setNodes, setEdges])
+
+  const handleRedo = useCallback(() => {
+    const state = redo()
+    if (state) {
+      setNodes(state.nodes as Node<PipelineNodeData>[])
+      setEdges(state.edges)
+    }
+  }, [redo, setNodes, setEdges])
 
   // Update nodes with execution status (or clear when exiting execution mode)
   useEffect(() => {
-    // Clear execution status when not in execution mode
     if (!isExecutionMode) {
       setNodes((nds) =>
         nds.map((node) => {
@@ -147,38 +156,6 @@ function PipelineBuilderInner({
       })
     )
   }, [isExecutionMode, executionSteps, setNodes])
-
-  const takeSnapshot = useCallback(() => {
-    const nextState = { nodes: [...nodes] as Node<PipelineNodeData>[], edges: [...edges] }
-    setHistory(prev => {
-      const nextHistory = prev.slice(0, historyIndex + 1)
-      // Only add if different from last state
-      const last = nextHistory[nextHistory.length - 1]
-      if (last && JSON.stringify(last) === JSON.stringify(nextState)) {
-        return nextHistory
-      }
-      return [...nextHistory, nextState]
-    })
-    setHistoryIndex(prev => prev + 1)
-  }, [nodes, edges, historyIndex])
-
-  const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      const prevState = history[historyIndex - 1]
-      setNodes(prevState.nodes)
-      setEdges(prevState.edges)
-      setHistoryIndex(historyIndex - 1)
-    }
-  }, [history, historyIndex, setNodes, setEdges])
-
-  const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      const nextState = history[historyIndex + 1]
-      setNodes(nextState.nodes)
-      setEdges(nextState.edges)
-      setHistoryIndex(historyIndex + 1)
-    }
-  }, [history, historyIndex, setNodes, setEdges])
 
   useEffect(() => {
     if (onChange) {
@@ -214,10 +191,10 @@ function PipelineBuilderInner({
           const newEdges = addEdge({ ...params, id: `e-${nanoid(6)}`, animated: true }, eds)
           return newEdges
         })
-        setTimeout(takeSnapshot, 0)
+        setTimeout(() => takeSnapshot(nodes as Node<PipelineNodeData>[], edges), 0)
       }
     },
-    [setEdges, isValidConnection, takeSnapshot]
+    [setEdges, isValidConnection, takeSnapshot, nodes, edges]
   )
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -267,9 +244,9 @@ function PipelineBuilderInner({
       }
 
       setNodes((nds) => [...nds, newNode])
-      setTimeout(takeSnapshot, 0)
+      setTimeout(() => takeSnapshot([...nodes, newNode] as Node<PipelineNodeData>[], edges), 0)
     },
-    [catalog, screenToFlowPosition, setNodes, takeSnapshot]
+    [catalog, screenToFlowPosition, setNodes, takeSnapshot, nodes, edges]
   )
 
   const handleDragStart = useCallback(
@@ -322,52 +299,39 @@ function PipelineBuilderInner({
     [setNodes, operatorSpecs]
   )
 
-  const clearCanvas = useCallback(() => {
+  const handleClearCanvas = useCallback(() => {
     if (confirm("Are you sure you want to clear the canvas?")) {
       setNodes([])
       setEdges([])
-      setTimeout(takeSnapshot, 0)
+      setTimeout(() => takeSnapshot([], []), 0)
     }
   }, [setNodes, setEdges, takeSnapshot])
 
+  const handleCatalogToggle = useCallback(() => {
+    if (isExecutionMode && onExitExecutionMode) {
+      onExitExecutionMode()
+    }
+    setIsCatalogVisible(true)
+  }, [isExecutionMode, onExitExecutionMode])
+
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
-      {/* Floating Operator Catalog Bubble - with sliding animation */}
-      <div
-        className={cn(
-          "absolute left-3 top-3 bottom-3 w-64 z-40 transition-all duration-500 ease-in-out",
-          !isCatalogVisible ? "-translate-x-[calc(100%+24px)]" : "translate-x-0"
-        )}
-      >
-        <div className="relative h-full rounded-2xl border bg-background/95 backdrop-blur-md flex flex-col overflow-hidden">
-          <NodeCatalog
-            catalog={catalog}
-            onDragStart={handleDragStart}
-            onAddCustomOperator={onAddCustomOperator}
-            onClose={() => setIsCatalogVisible(false)}
-          />
-        </div>
-      </div>
+      {/* Floating Operator Catalog using shared component */}
+      <FloatingPanel position="left" visible={isCatalogVisible} className="w-64">
+        <NodeCatalog
+          catalog={catalog}
+          onDragStart={handleDragStart}
+          onAddCustomOperator={onAddCustomOperator}
+          onClose={() => setIsCatalogVisible(false)}
+        />
+      </FloatingPanel>
 
-      {/* Toggle Button when catalog is hidden */}
-      {!isCatalogVisible && (
-        <div className="absolute left-3 top-3 z-50">
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-10 w-10 rounded-xl shadow-none backdrop-blur-md border hover:bg-muted"
-            onClick={() => {
-              if (isExecutionMode && onExitExecutionMode) {
-                onExitExecutionMode()
-              }
-              setIsCatalogVisible(true)
-            }}
-            title={isExecutionMode ? "Exit Execution Mode" : "Show Catalog"}
-          >
-            <LayoutPanelLeft className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+      {/* Catalog Toggle Button */}
+      <CatalogToggleButton
+        visible={isCatalogVisible}
+        onClick={handleCatalogToggle}
+        isExecutionMode={isExecutionMode}
+      />
 
       <div className="relative flex-1 bg-muted/40" ref={reactFlowWrapper}>
         <ReactFlow
@@ -384,14 +348,13 @@ function PipelineBuilderInner({
           nodeTypes={nodeTypes}
           defaultEdgeOptions={{ animated: true }}
           onInit={(instance) => {
-            // Trigger fitView after the flow is fully initialized to ensure edges render correctly
             setTimeout(() => instance.fitView(), 50)
           }}
           panOnDrag={interactionMode === 'pan'}
           selectionOnDrag={interactionMode === 'select'}
           selectionMode={SelectionMode.Partial}
           panOnScroll={interactionMode === 'select'}
-          onNodeDragStop={() => setTimeout(takeSnapshot, 0)}
+          onNodeDragStop={() => setTimeout(() => takeSnapshot(nodes as Node<PipelineNodeData>[], edges), 0)}
           fitView
           className="bg-transparent"
         >
@@ -402,103 +365,21 @@ function PipelineBuilderInner({
             className="opacity-100"
           />
 
-          {/* Custom Bottom Controls - Shadow Removed */}
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-1.5 bg-background/90 backdrop-blur-md border rounded-2xl">
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn("rounded-xl h-10 w-10", interactionMode === 'pan' && "bg-muted")}
-              onClick={() => setInteractionMode('pan')}
-              title="Pan Tool"
-            >
-              <Hand className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn("rounded-xl h-10 w-10", interactionMode === 'select' && "bg-muted")}
-              onClick={() => setInteractionMode('select')}
-              title="Selection Tool"
-            >
-              <MousePointer2 className="h-4 w-4" />
-            </Button>
-
-            <Separator orientation="vertical" className="h-6" />
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-xl h-10 w-10"
-              onClick={undo}
-              disabled={historyIndex <= 0}
-              title="Undo"
-            >
-              <Undo2 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-xl h-10 w-10"
-              onClick={redo}
-              disabled={historyIndex >= history.length - 1}
-              title="Redo"
-            >
-              <Redo2 className="h-4 w-4" />
-            </Button>
-
-            <Separator orientation="vertical" className="h-6" />
-
-            {onSave && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-xl h-10 w-10 text-blue-500 hover:text-blue-600 hover:bg-blue-500/10"
-                onClick={() => onSave(nodes as Node<PipelineNodeData>[], edges)}
-                disabled={isSaving}
-                title="Save Pipeline"
-              >
-                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              </Button>
-            )}
-
-            {onCompile && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-xl h-10 w-10 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
-                onClick={onCompile}
-                disabled={isCompiling}
-                title="Compile Pipeline"
-              >
-                {isCompiling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-              </Button>
-            )}
-
-            {onRun && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-xl h-10 w-10 text-green-500 hover:text-green-600 hover:bg-green-500/10"
-                onClick={onRun}
-                title="Run Pipeline"
-              >
-                <Play className="h-4 w-4" />
-              </Button>
-            )}
-
-            <Separator orientation="vertical" className="h-6" />
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-xl h-10 w-10 text-destructive hover:text-destructive hover:bg-destructive/10"
-              onClick={clearCanvas}
-              title="Clear Canvas"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
+          {/* Shared Toolbar Component */}
+          <BuilderToolbar
+            interactionMode={interactionMode}
+            onModeChange={setInteractionMode}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            onSave={onSave ? () => onSave(nodes as Node<PipelineNodeData>[], edges) : undefined}
+            onCompile={onCompile}
+            onRun={onRun}
+            onClear={handleClearCanvas}
+            isSaving={isSaving}
+            isCompiling={isCompiling}
+          />
 
           <div className="absolute bottom-6 right-6">
             <Controls className="static! flex! flex-row! gap-1! bg-transparent! border-none! shadow-none!" />
@@ -506,29 +387,27 @@ function PipelineBuilderInner({
         </ReactFlow>
       </div>
 
-      {/* Floating Configuration Bubble or Execution Details */}
+      {/* Floating Configuration/Execution Panel using shared component */}
       {(selectedNode || selectedStepExecution) && (
-        <div className="absolute right-3 top-3 bottom-3 w-[400px] z-40 flex flex-col pointer-events-none">
-          <div className="h-full border rounded-2xl bg-background/95 backdrop-blur-md flex flex-col overflow-hidden pointer-events-auto">
-            {selectedStepExecution ? (
-              <ExecutionDetailsPanel
-                step={selectedStepExecution}
-                onClose={() => setSelectedNodeId(null)}
-              />
-            ) : isExecutionMode && selectedNode ? (
-              <ExecutionDetailsSkeleton onClose={() => setSelectedNodeId(null)} />
-            ) : selectedNode ? (
-              <ConfigPanel
-                key={selectedNode.id}
-                nodeId={selectedNode.id}
-                data={selectedNode.data}
-                operatorSpec={operatorSpecs[selectedNode.data.operator]}
-                onConfigChange={handleConfigChange}
-                onClose={() => setSelectedNodeId(null)}
-              />
-            ) : null}
-          </div>
-        </div>
+        <FloatingPanel position="right" visible={true} className="w-[400px]">
+          {selectedStepExecution ? (
+            <ExecutionDetailsPanel
+              step={selectedStepExecution}
+              onClose={() => setSelectedNodeId(null)}
+            />
+          ) : isExecutionMode && selectedNode ? (
+            <ExecutionDetailsSkeleton onClose={() => setSelectedNodeId(null)} />
+          ) : selectedNode ? (
+            <ConfigPanel
+              key={selectedNode.id}
+              nodeId={selectedNode.id}
+              data={selectedNode.data}
+              operatorSpec={operatorSpecs[selectedNode.data.operator]}
+              onConfigChange={handleConfigChange}
+              onClose={() => setSelectedNodeId(null)}
+            />
+          ) : null}
+        </FloatingPanel>
       )}
     </div>
   )
