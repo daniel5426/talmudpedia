@@ -117,6 +117,8 @@ interface ArtifactFormData {
     output_type: string
     python_code: string
     config_schema: string
+    reads: string[]
+    writes: string[]
 }
 
 const initialFormData: ArtifactFormData = {
@@ -129,6 +131,8 @@ const initialFormData: ArtifactFormData = {
     output_type: "raw_documents",
     python_code: DEFAULT_PYTHON_CODE,
     config_schema: "[]",
+    reads: [],
+    writes: [],
 }
 
 export default function ArtifactsPage() {
@@ -235,6 +239,8 @@ export default function ArtifactsPage() {
             output_type: fullArtifact.output_type,
             python_code: fullArtifact.python_code || DEFAULT_PYTHON_CODE,
             config_schema: JSON.stringify(fullArtifact.config_schema || [], null, 2),
+            reads: (fullArtifact as any).reads || [],
+            writes: (fullArtifact as any).writes || [],
         })
         setConfigExpanded(true)
         setIsSlugManuallyEdited(true)
@@ -338,6 +344,13 @@ export default function ArtifactsPage() {
         try {
             const result = await artifactsService.promote(artifact.id, "custom", "1.0.0", currentTenant?.slug)
             alert(`Successfully promoted to artifact: ${result.artifact_id}`)
+
+            // If we are currently editing this artifact, go back to list
+            if (selectedArtifact?.id === artifact.id) {
+                setViewModeWithUrl("list")
+                setSelectedArtifact(null)
+            }
+
             fetchArtifacts()
         } catch (error) {
             console.error("Failed to promote artifact", error)
@@ -347,7 +360,7 @@ export default function ArtifactsPage() {
         }
     }
 
-    const updateFormData = (field: keyof ArtifactFormData, value: string) => {
+    const updateFormData = (field: keyof ArtifactFormData, value: any) => {
         setFormData((prev) => {
             const updated = { ...prev, [field]: value }
             if (field === "display_name" && !isSlugManuallyEdited) {
@@ -656,6 +669,26 @@ export default function ArtifactsPage() {
                                             </SelectContent>
                                         </Select>
                                     </div>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label className="text-[10px] font-bold uppercase text-foreground/50">Reads (Agent State Fields)</Label>
+                                    <Input
+                                        placeholder="messages, transform_output, etc. (comma-separated)"
+                                        value={formData.reads.join(", ")}
+                                        onChange={(e) => updateFormData("reads", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                                        className="h-8 text-xs font-mono"
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label className="text-[10px] font-bold uppercase text-foreground/50">Writes (Agent State Fields)</Label>
+                                    <Input
+                                        placeholder="transform_output, etc. (comma-separated)"
+                                        value={formData.writes.join(", ")}
+                                        onChange={(e) => updateFormData("writes", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                                        className="h-8 text-xs font-mono"
+                                    />
                                 </div>
                             </TabsContent>
 

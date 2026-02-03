@@ -519,7 +519,7 @@ export function ChatWorkspace({
         {isEmptyState ? (
           <div className="flex w-full flex-col items-center text-center pb-34 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <p className="text-3xl font-semibold pb-6">
-              גלה מה מחפש לבך בתורה.</p>
+              Ready when you are.</p>
 
             <BotImputArea
               textareaRef={controller.textareaRef}

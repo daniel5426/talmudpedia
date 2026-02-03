@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.session import get_db
 from app.db.postgres.models.identity import User, Tenant, OrgMembership
-from app.db.postgres.models.rag import CustomOperator, OperatorCategory
+from app.db.postgres.models.operators import CustomOperator, OperatorCategory
 from app.db.postgres.models.rbac import Action, ResourceType, ActorType
 from app.api.routers.auth import get_current_user
 from app.core.rbac import check_permission

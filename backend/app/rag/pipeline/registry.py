@@ -201,6 +201,69 @@ class OperatorSpec(BaseModel):
             "tags": self.tags,
         }
 
+    def to_agent_operator_spec(self):
+        """Convert this RAG operator spec to an Agent operator spec."""
+        from app.agent.registry import AgentOperatorSpec, AgentStateField
+        
+        # Map RAG categories to agent categories roughly
+        category_map = {
+            OperatorCategory.SOURCE: "action",
+            OperatorCategory.NORMALIZATION: "data",
+            OperatorCategory.ENRICHMENT: "action",
+            OperatorCategory.CHUNKING: "data",
+            OperatorCategory.EMBEDDING: "action",
+            OperatorCategory.STORAGE: "action",
+            OperatorCategory.RETRIEVAL: "action",
+            OperatorCategory.RERANKING: "action",
+            OperatorCategory.INPUT: "control",
+            OperatorCategory.OUTPUT: "control",
+        }
+        
+        # Determine reads/writes based on IO types (simplified mapping)
+        reads = []
+        writes = []
+        
+        if self.input_type != DataType.NONE:
+            reads.append(AgentStateField.TRANSFORM_OUTPUT) # Default input source
+            
+        if self.output_type != DataType.NONE:
+            writes.append(AgentStateField.TRANSFORM_OUTPUT)
+            
+        # UI metadata
+        ui = {
+            "icon": "Box", # Generic icon
+            "color": "#3b82f6",
+            "inputType": self.input_type.value,
+            "outputType": self.output_type.value,
+            "configFields": []
+        }
+        
+        # Add config fields
+        for cfg in self.required_config + self.optional_config:
+            ui["configFields"].append({
+                "name": cfg.name,
+                "label": cfg.name.replace("_", " ").title(),
+                "fieldType": cfg.field_type.value,
+                "required": cfg.required,
+                "default": cfg.default,
+                "description": cfg.description,
+                "options": [{"value": o, "label": o} for o in (cfg.options or [])] if cfg.field_type == ConfigFieldType.SELECT else cfg.options
+            })
+            
+        # Ensure ID has correct prefix for execution routing if needed
+        # But here we use the full operator_id
+        
+        return AgentOperatorSpec(
+            type=self.operator_id,
+            category=category_map.get(self.category, "action"),
+            display_name=self.display_name,
+            description=self.description or "",
+            reads=reads,
+            writes=writes,
+            config_schema={}, # Flexible
+            ui=ui
+        )
+
 
 # =============================================================================
 # SOURCE OPERATORS

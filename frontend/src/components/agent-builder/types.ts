@@ -58,6 +58,9 @@ export interface AgentNodeData {
   dynamicHandles?: boolean
   // Static handles that are always present (While: loop/exit, User Approval: approve/reject)
   staticHandles?: string[]
+  // Field mappings for artifact nodes: maps input field names to expressions
+  // Example: { "documents": "{{ upstream.ingest_node.output }}", "query": "{{ messages[-1].content }}" }
+  inputMappings?: Record<string, string>
   // Index signature for ReactFlow compatibility
   [key: string]: unknown
 }
@@ -75,6 +78,29 @@ export interface AgentNodeSpec {
   // UI hints
   dynamicHandles?: boolean
   staticHandles?: string[]
+  // Artifact-specific: explicit input/output field definitions for field mapping
+  inputs?: ArtifactInputField[]
+  outputs?: ArtifactOutputField[]
+  // Artifact metadata (populated for artifact nodes)
+  isArtifact?: boolean
+  artifactId?: string
+  artifactVersion?: string
+}
+
+// Artifact input field definition
+export interface ArtifactInputField {
+  name: string
+  type: string
+  required?: boolean
+  default?: unknown
+  description?: string
+}
+
+// Artifact output field definition
+export interface ArtifactOutputField {
+  name: string
+  type: string
+  description?: string
 }
 
 // Extended field types for new operators
@@ -103,6 +129,7 @@ export interface ConfigFieldSpec {
     | "assignment_list"    // Variable assignments for Set State
     | "tool_list"          // Multi-select for tools
     | "category_list"      // Categories for Classify
+    | "field_mapping"      // Field mapping editor for artifacts
   required: boolean
   default?: unknown
   description?: string

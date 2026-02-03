@@ -21,6 +21,8 @@ export interface Artifact {
   updated_at: string;
   python_code?: string;
   path?: string;
+  reads: string[];
+  writes: string[];
 }
 
 export interface ArtifactCreateRequest {
@@ -33,6 +35,8 @@ export interface ArtifactCreateRequest {
   scope?: ArtifactScope;
   python_code: string;
   config_schema?: any[];
+  reads?: string[];
+  writes?: string[];
 }
 
 export interface ArtifactUpdateRequest {
@@ -44,6 +48,8 @@ export interface ArtifactUpdateRequest {
   scope?: ArtifactScope;
   python_code?: string;
   config_schema?: any[];
+  reads?: string[];
+  writes?: string[];
 }
 
 export interface ArtifactTestRequest {

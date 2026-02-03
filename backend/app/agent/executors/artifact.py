@@ -107,16 +107,40 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
             # Filter out internal config keys before passing to handler
             handler_config = {k: v for k, v in config.items() if not k.startswith("_")}
             
-            # Prepare execution context
+            # NEW: Resolve input fields using field mappings
+            from app.agent.execution.field_resolver import resolve_artifact_inputs
+            
+            # Get artifact's declared inputs from the YAML manifest
+            artifact_path = registry.get_artifact_path(artifact_id, artifact_version)
+            artifact_inputs = None
+            if artifact_path:
+                import yaml
+                manifest_path = artifact_path / "artifact.yaml"
+                if manifest_path.exists():
+                    with open(manifest_path) as f:
+                        manifest = yaml.safe_load(f)
+                    artifact_inputs = manifest.get("inputs", [])
+            
+            # Resolve inputs from state using mappings
+            resolved_inputs = resolve_artifact_inputs(
+                state=state,
+                config=config,
+                artifact_inputs=artifact_inputs,
+                strict=config.get("_strict_validation", False)
+            )
+            
+            # Prepare execution context with both resolved inputs and full state
             exec_context = {
                 **(context or {}),
                 "artifact_id": artifact_id,
                 "artifact_version": spec.version,
                 "emitter": emitter,
                 "tenant_id": self.tenant_id,
+                "inputs": resolved_inputs,  # Structured resolved inputs
             }
             
             # Execute handler (support both sync and async)
+            # Pass resolved_inputs as first arg if handler supports it, else fall back to state
             if asyncio.iscoroutinefunction(execute_fn):
                 result = await execute_fn(state, handler_config, exec_context)
             else:

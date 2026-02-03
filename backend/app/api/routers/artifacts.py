@@ -7,7 +7,7 @@ from sqlalchemy import select, and_
 
 from app.db.postgres.session import get_db
 from app.db.postgres.models.identity import User, Tenant
-from app.db.postgres.models.rag import CustomOperator, OperatorCategory
+from app.db.postgres.models.operators import CustomOperator, OperatorCategory
 from app.api.routers.auth import get_current_user
 from app.api.routers.rag_custom_operators import get_tenant_context
 from app.services.artifact_registry import get_artifact_registry
@@ -38,7 +38,7 @@ def spec_to_schema(spec: OperatorSpec, atype: ArtifactType, path: Optional[str] 
     for cfg in (spec.required_config + spec.optional_config):
         config_schema.append({
             "name": cfg.name,
-            "type": cfg.field_type.value,
+            "type": cfg.field_type.value if hasattr(cfg.field_type, 'value') else str(cfg.field_type),
             "required": cfg.required,
             "default": cfg.default,
             "description": cfg.description,
@@ -59,9 +59,11 @@ def spec_to_schema(spec: OperatorSpec, atype: ArtifactType, path: Optional[str] 
         author=spec.author,
         tags=spec.tags or [],
         config_schema=config_schema,
-        updated_at=datetime.utcnow(), # TODO: get from file stat
         python_code=code,
-        path=path
+        path=path,
+        reads=getattr(spec, "reads", []),
+        writes=getattr(spec, "writes", []),
+        updated_at=datetime.utcnow()
     )
 
 def draft_to_schema(op: CustomOperator) -> ArtifactSchema:
@@ -76,7 +78,9 @@ def draft_to_schema(op: CustomOperator) -> ArtifactSchema:
         output_type=op.output_type,
         version=op.version,
         type=ArtifactType.DRAFT,
-        scope=ArtifactScope.RAG, # Drafts default to RAG for now
+        scope=ArtifactScope(op.scope) if hasattr(op, "scope") and op.scope else ArtifactScope.RAG,
+        reads=getattr(op, "reads", []),
+        writes=getattr(op, "writes", []),
         author=None,
         tags=["draft"],
         config_schema=op.config_schema if isinstance(op.config_schema, list) else [],
@@ -115,7 +119,7 @@ async def list_artifacts(
         
     return results
 
-@router.get("/{artifact_id}", response_model=ArtifactSchema)
+@router.get("/{artifact_id:path}", response_model=ArtifactSchema)
 async def get_artifact(
     artifact_id: str,
     tenant_slug: Optional[str] = None,
@@ -170,6 +174,9 @@ async def create_artifact_draft(
         input_type=request.input_type,
         output_type=request.output_type,
         config_schema=request.config_schema,
+        scope=request.scope.value if request.scope else "rag",
+        reads=request.reads or [],
+        writes=request.writes or [],
         created_by=user.id
     )
     
@@ -179,7 +186,7 @@ async def create_artifact_draft(
     
     return draft_to_schema(operator)
 
-@router.put("/{artifact_id}", response_model=ArtifactSchema)
+@router.put("/{artifact_id:path}", response_model=ArtifactSchema)
 async def update_artifact(
     artifact_id: str,
     update_data: ArtifactUpdate,
@@ -201,8 +208,10 @@ async def update_artifact(
         if draft:
             data = update_data.dict(exclude_unset=True)
             for field, value in data.items():
-                if field == 'category':
+                if field == 'category' and value:
                     value = OperatorCategory(value)
+                if field == 'scope' and value:
+                    value = value.value if hasattr(value, 'value') else value
                 setattr(draft, field, value)
             
             draft.updated_at = datetime.utcnow()
@@ -228,11 +237,17 @@ async def update_artifact(
             "description": update_data.description or spec.description,
             "input_type": update_data.input_type or spec.input_type.value,
             "output_type": update_data.output_type or spec.output_type.value,
-            "config": update_data.config_schema if update_data.config_schema is not None else spec.optional_config, # Simplified
+            "config": update_data.config_schema if update_data.config_schema is not None else (spec.required_config + spec.optional_config),
             "author": spec.author,
             "tags": spec.tags,
-            "scope": update_data.scope.value if update_data.scope else "rag"
+            "scope": update_data.scope.value if update_data.scope else (spec.scope if hasattr(spec, "scope") else "rag"),
+            "reads": update_data.reads if update_data.reads is not None else getattr(spec, "reads", []),
+            "writes": update_data.writes if update_data.writes is not None else getattr(spec, "writes", []),
         }
+        
+        # Ensure config is serializable (not Pydantic objects)
+        if isinstance(manifest["config"], list):
+            manifest["config"] = [c.dict(by_alias=True) if hasattr(c, "dict") else c for c in manifest["config"]]
         
         success = registry.update_artifact(artifact_id, manifest, update_data.python_code)
         if success:
@@ -240,7 +255,7 @@ async def update_artifact(
             
     raise HTTPException(status_code=404, detail="Artifact not found or update failed")
 
-@router.delete("/{artifact_id}")
+@router.delete("/{artifact_id:path}")
 async def delete_artifact(
     artifact_id: str,
     tenant_slug: Optional[str] = None,
@@ -277,7 +292,7 @@ async def delete_artifact(
             
     raise HTTPException(status_code=404, detail="Artifact not found")
 
-@router.post("/{artifact_id}/promote")
+@router.post("/{artifact_id:path}/promote")
 async def promote_artifact(
     artifact_id: str,
     request: ArtifactPromoteRequest,
@@ -315,13 +330,17 @@ async def promote_artifact(
             "output_type": draft.output_type,
             "config": draft.config_schema if isinstance(draft.config_schema, list) else [],
             "author": f"{user.full_name} ({user.email})" if hasattr(user, "full_name") and user.full_name else user.email,
+            "scope": draft.scope or "rag",
+            "reads": draft.reads or [],
+            "writes": draft.writes or [],
             "tags": ["promoted", "custom"]
         }
         
         path = registry.promote_to_artifact(namespace, artifact_name, manifest, draft.python_code)
         
-        # We might want to keep the draft or delete it. For now, let's keep it but mark it?
-        # Standard behavior in old UI was to keep it.
+        # Delete the draft after successful promotion to avoid duplicates
+        await db.delete(draft)
+        await db.commit()
         
         return {
             "status": "promoted",

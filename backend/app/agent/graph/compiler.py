@@ -326,11 +326,26 @@ class AgentCompiler:
             
             if not await executor.can_execute(state, node.config, context):
                 return {} 
+            
+            # Merge input_mappings into config for field resolver
+            node_config = dict(node.config)
+            if node.input_mappings:
+                node_config["input_mappings"] = node.input_mappings
+            
             try:
-                state_update = await executor.execute(state, node.config, context)
+                state_update = await executor.execute(state, node_config, context)
+                
+                # Store node output for upstream reference by downstream nodes
+                # This enables {{ upstream.node_id.field }} expressions
+                if state_update and isinstance(state_update, dict):
+                    node_outputs = state.get("_node_outputs", {})
+                    node_outputs[node.id] = state_update
+                    state_update["_node_outputs"] = node_outputs
+                
                 return state_update
             except Exception as e:
                 logger.error(f"Error executing node {node.id} ({node.type}): {e}")
                 raise e
 
         return node_fn
+

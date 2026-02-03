@@ -44,6 +44,11 @@ class AgentNode(BaseModel):
     label: Optional[str] = None
     config: dict[str, Any] = Field(default_factory=dict)
     data: Optional[dict[str, Any]] = None # React Flow data support
+    
+    # Field mapping for artifacts: maps input field names to expressions
+    # Example: {"documents": "{{ upstream.ingest_node.output }}", "query": "{{ state.messages[-1].content }}"}
+    input_mappings: Optional[dict[str, str]] = None
+    
     model_config = ConfigDict(extra="ignore")
 
     @model_validator(mode='before')

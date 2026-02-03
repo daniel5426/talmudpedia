@@ -267,6 +267,8 @@ class ArtifactRegistryService:
                     output_type=manifest.get("output_type", "any"),
                     reads=manifest.get("reads", []),
                     writes=manifest.get("writes", []),
+                    inputs=manifest.get("inputs", []),
+                    outputs=manifest.get("outputs", []),
                     config_schema=self._build_config_schema(manifest.get("config", [])),
                     ui=manifest.get("ui", {}),
                     author=manifest.get("author"),

@@ -6,8 +6,9 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.db.postgres.models.rag import PipelineJob, PipelineJobStatus, ExecutablePipeline, CustomOperator, PipelineStepExecution, PipelineStepStatus
-from app.rag.pipeline.registry import OperatorRegistry, OperatorSpec, OperatorCategory, DataType, ConfigFieldSpec
+from app.db.postgres.models.rag import PipelineJob, PipelineJobStatus, ExecutablePipeline, PipelineStepExecution, PipelineStepStatus
+from app.db.postgres.models.operators import CustomOperator, OperatorCategory
+from app.rag.pipeline.registry import OperatorRegistry, OperatorSpec, DataType, ConfigFieldSpec
 from app.rag.pipeline.operator_executor import (
     ExecutorRegistry, 
     OperatorInput, 

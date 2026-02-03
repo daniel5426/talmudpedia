@@ -40,6 +40,10 @@ class AgentArtifactSpec(BaseModel):
     reads: List[str] = Field(default_factory=list, description="AgentStateField values this artifact reads")
     writes: List[str] = Field(default_factory=list, description="AgentStateField values this artifact writes")
     
+    # Explicit input/output field definitions for field mapping
+    inputs: List[Dict[str, Any]] = Field(default_factory=list, description="List of expected input fields with name, type, required, default")
+    outputs: List[Dict[str, Any]] = Field(default_factory=list, description="List of output fields with name, type, description")
+    
     # Configuration
     config_schema: Dict[str, Any] = Field(default_factory=dict, description="JSON Schema for config")
     
@@ -82,6 +86,9 @@ class AgentArtifactSpec(BaseModel):
             "artifactVersion": self.version,
             "inputType": self.input_type,
             "outputType": self.output_type,
+            # Field mapping support
+            "inputs": self.inputs,
+            "outputs": self.outputs,
         }
         
         # Build config fields from schema

@@ -21,12 +21,11 @@ from app.db.postgres.models.rag import (
     ExecutablePipeline,
     PipelineJob,
     PipelineJobStatus,
-    OperatorCategory,
-    CustomOperator,
     PipelineStepExecution,
     PipelineStepStatus,
     PipelineType,
 )
+from app.db.postgres.models.operators import CustomOperator, OperatorCategory
 from app.rag.pipeline.registry import (
     OperatorRegistry,
     OperatorSpec,

@@ -719,6 +719,46 @@ function ConfigField({
             )
         }
 
+        // Field mapping editor for artifacts
+        if (field.fieldType === "field_mapping") {
+            const mappings = (value as Record<string, string>) || {}
+            const artifactInputs = (field as any).artifactInputs || []
+
+            return (
+                <div className="space-y-2 bg-muted/30 rounded-lg p-2">
+                    {artifactInputs.length === 0 ? (
+                        <div className="text-[11px] text-muted-foreground text-center py-2">
+                            No input fields defined for this artifact
+                        </div>
+                    ) : (
+                        artifactInputs.map((input: { name: string; type: string; required?: boolean; description?: string }) => (
+                            <div key={input.name} className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-bold uppercase tracking-tight text-foreground/60">
+                                        {input.name}
+                                    </span>
+                                    <span className="text-[9px] text-muted-foreground font-mono">
+                                        {input.type}{input.required ? " *" : ""}
+                                    </span>
+                                </div>
+                                <SmartInput
+                                    value={mappings[input.name] || ""}
+                                    onChange={(val) => {
+                                        const newMappings = { ...mappings, [input.name]: val }
+                                        onChange(newMappings)
+                                    }}
+                                    placeholder={input.description || `{{ state.field }} or {{ upstream.node.field }}`}
+                                    className="h-8 px-2 text-[11px] bg-background/50 font-mono text-blue-600"
+                                    availableVariables={availableVariables}
+                                    multiline={false}
+                                />
+                            </div>
+                        ))
+                    )}
+                </div>
+            )
+        }
+
         return (
             <Input
                 type={isNumber ? "number" : "text"}

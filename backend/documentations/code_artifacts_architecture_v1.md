@@ -26,9 +26,15 @@ Created a complete suite for local development:
 ### 4. Browser-to-Artifact Workflow ("Promoted" Operators)
 Bridged the gap between the UI and the filesystem:
 - **Promotion API**: Added a backend endpoint to convert DB-stored drafts into persistent artifacts.
-- **UI Integration**: Added a "Promote to Artifact" button (⚡️) in the Custom Operators dashboard.
 
-### 5. Agent Artifact Integration (Phases 3 & 4)
+### 5. Unified Artifact Management UI
+Refactored the administrative interface to provide a single entry point for all code logic across the platform.
+- **Unified Explorer**: Consolidated Drafts (DB), Promoted (Files), and Built-in artifacts into a single "Code Artifacts" dashboard with differentiated status indicators.
+- **Integrated IDE Experience**: A full-bleed code editor with a floating "Artifact Config" manifest bubble for editing metadata and JSON configuration schemas.
+- **Live Test Runtime**: A dedicated "Test Console" providing real-time execution tracing, status badges, and performance metrics (ms).
+- **Modern Navigation**: Promoted Artifacts to a top-level sidebar item, reflecting its role as a shared utility for RAG, Agents, and Tools.
+
+### 6. Agent Artifact Integration (Phases 3 & 4)
 Expanded the artifact system to support Agent nodes and Tools, making artifacts first-class citizens in the Agent Builder.
 - **Scope & Categorization**: Extended `artifact.yaml` schema with `scope` (`rag` vs `agent`) and `category`, enabling distinct handling for different usage contexts.
 - **Dynamic Node Registration**: Agents now dynamically discover and register artifact-based nodes at startup via the `AgentOperatorRegistry`.
@@ -38,6 +44,8 @@ Expanded the artifact system to support Agent nodes and Tools, making artifacts 
 ## Technical Components Modified
 
 ### Backend
+- `app/db/postgres/models/operators.py`: **[NEW]** Centralized model definition for `CustomOperator` and `OperatorCategory`, decoupled from `rag.py` to support multi-domain usage (Agents, Tools, RAG).
+- `app/db/postgres/models/rag.py`: Removed direct definition of `CustomOperator` in favor of the shared model.
 - `app/services/artifact_registry.py`: Core discovery logic updated to support scoping (`agent`/`rag`).
 - `app/rag/pipeline/operator_executor.py`: RAG-specific execution handling.
 - `app/agent/executors/artifact.py`: **[NEW]** specialized executor for Agent nodes with full observability.
@@ -47,6 +55,9 @@ Expanded the artifact system to support Agent nodes and Tools, making artifacts 
 - `app/api/routers/tools.py`: Updated schemas for artifact-backed tools.
 
 ### Frontend
+- `app/admin/artifacts/page.tsx`: **[NEW]** Unified dashboard and editor for all artifact types.
+- `services/artifacts.ts`: **[NEW]** Centralized service for CRUD, testing, and promotion logic.
+- `components/app-sidebar.tsx`: Integrated top-level "Code Artifacts" navigation.
 - `components/agent-builder/NodeCatalog.tsx`: Fetches and displays dynamic artifact nodes.
 - `components/agent-builder/AgentBuilder.tsx`: Logic for handling dynamic node types and props.
 - `app/admin/tools/page.tsx`: UI for creating tools backed by artifacts.

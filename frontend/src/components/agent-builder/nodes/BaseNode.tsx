@@ -14,6 +14,7 @@ const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     agent: Bot,
     tool: Wrench,
     rag: Search,
+    vector_search: Database,
     conditional: GitBranch,
     if_else: GitBranch,
     while: RefreshCw,
