@@ -57,7 +57,7 @@ export default function OrganizationPage() {
   const [tree, setTree] = useState<OrgUnitTree[]>([])
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
   const [members, setMembers] = useState<OrgMember[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [isTreeLoading, setIsTreeLoading] = useState(true)
   const [isMembersLoading, setIsMembersLoading] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
@@ -71,7 +71,7 @@ export default function OrganizationPage() {
 
   const fetchTree = useCallback(async () => {
     if (!currentTenant) return
-    setIsLoading(true)
+    setIsTreeLoading(true)
     try {
       const data = await orgUnitsService.getOrgUnitTree(currentTenant.slug)
       setTree(data)
@@ -82,7 +82,7 @@ export default function OrganizationPage() {
     } catch (error) {
       console.error("Failed to fetch tree", error)
     } finally {
-      setIsLoading(false)
+      setIsTreeLoading(false)
     }
   }, [currentTenant, selectedUnitId])
 
@@ -151,14 +151,13 @@ export default function OrganizationPage() {
   }
 
   const handleAddMember = async () => {
-    // This requires a user ID, we'd typically have a search or input by email
-    // For now, let's assume we search for user by email first
-    // Since we don't have that service yet, we'll just log it
+    // Placeholder: would search user by email, then add by user_id
     console.log("Add member by email:", newMemberEmail, "to", selectedUnitId)
-    // Placeholder implementation
     setIsMemberDialogOpen(false)
     setNewMemberEmail("")
   }
+
+  const selectedUnit = tree.find(u => u.id === selectedUnitId)
 
   const TreeNode = ({ unit, depth = 0, isLast = false, parentExpanded = true }: { unit: OrgUnitTree; depth?: number; isLast?: boolean; parentExpanded?: boolean }) => {
     const isExpanded = expandedIds.has(unit.id)
@@ -167,7 +166,6 @@ export default function OrganizationPage() {
 
     return (
       <div className="flex flex-col relative">
-        {/* Hierarchy line for depth > 0 */}
         {depth > 0 && parentExpanded && (
           <div
             className={cn(
@@ -188,13 +186,13 @@ export default function OrganizationPage() {
 
         <div
           className={cn(
-            "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer group transition-all duration-200 relative",
-            isSelected ? 'bg-primary/10 text-primary font-medium shadow-sm' : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
+            "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer group transition-all duration-150 relative",
+            isSelected ? "bg-muted/60 text-foreground font-semibold" : "hover:bg-muted/40 text-muted-foreground hover:text-foreground"
           )}
           style={{
-            marginLeft: isRTL ? '0' : `${depth > 0 ? 12 : 0}px`,
-            marginRight: isRTL ? `${depth > 0 ? 12 : 0}px` : '0',
-            marginTop: depth === 0 ? '4px' : '2px'
+            marginLeft: isRTL ? "0" : `${depth > 0 ? 12 : 0}px`,
+            marginRight: isRTL ? `${depth > 0 ? 12 : 0}px` : "0",
+            marginTop: depth === 0 ? "4px" : "2px"
           }}
           onClick={() => {
             setSelectedUnitId(unit.id)
@@ -203,7 +201,7 @@ export default function OrganizationPage() {
         >
           {isSelected && (
             <div className={cn(
-              "absolute top-1.5 bottom-1.5 w-1 bg-primary rounded-full",
+              "absolute top-1.5 bottom-1.5 w-0.5 bg-foreground/70 rounded-full",
               isRTL ? "-right-1" : "-left-1"
             )} />
           )}
@@ -218,12 +216,7 @@ export default function OrganizationPage() {
             )}
           </div>
 
-          <div className={cn(
-            "p-1 rounded-md shrink-0",
-            unit.type === "org" ? "bg-blue-100/50 text-blue-600 dark:bg-blue-900/30" :
-              unit.type === "dept" ? "bg-green-100/50 text-green-600 dark:bg-green-900/30" :
-                "bg-purple-100/50 text-purple-600 dark:bg-purple-900/30"
-          )}>
+          <div className="p-1 rounded-md shrink-0 bg-muted/50 text-foreground/70">
             {unit.type === "org" && <Landmark className="size-3.5" />}
             {unit.type === "dept" && <Building2 className="size-3.5" />}
             {unit.type === "team" && <Users className="size-3.5" />}
@@ -285,14 +278,13 @@ export default function OrganizationPage() {
   }
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
+    <div className="flex flex-col h-full w-full bg-muted/30" dir={direction}>
       <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <CustomBreadcrumb items={[
-              { label: "Organization Units", active: true },
-            ]} />
-          </div>
+          <CustomBreadcrumb items={[
+            { label: "Security & Org", href: "/admin/organization" },
+            { label: "Organization", active: true }
+          ]} />
         </div>
         <Button size="sm" className="h-9" onClick={() => {
           setNewUnitData({ name: "", slug: "", type: "dept", parent_id: "" })
@@ -302,16 +294,20 @@ export default function OrganizationPage() {
         </Button>
       </header>
 
-      <div className="flex-1 overflow-auto p-6 space-y-6">
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1">
-          {/* Hierarchy Tree */}
-          <Card className="md:col-span-1 flex flex-col overflow-hidden">
-            <CardHeader className="py-4">
-              <CardTitle className={cn("text-base", isRTL ? "text-right" : "text-left")}>Hierarchy</CardTitle>
+      <div className="flex-1 min-h-0 overflow-auto p-6 space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-0 h-full">
+          <Card className="lg:col-span-1 flex flex-col overflow-hidden shadow-sm h-full">
+            <CardHeader className="py-4 border-b">
+              <div className="flex items-center justify-between">
+                <CardTitle className={cn("text-base", isRTL ? "text-right" : "text-left")}>Hierarchy</CardTitle>
+                {isTreeLoading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+              </div>
+              <CardDescription className={cn("text-xs", isRTL ? "text-right" : "text-left")}>
+                Nested org units drive scope-aware access.
+              </CardDescription>
             </CardHeader>
             <CardContent className="flex-1 overflow-auto px-2 py-0 pb-4">
-              {isLoading ? (
+              {isTreeLoading && tree.length === 0 ? (
                 <div className="space-y-2 p-2">
                   <Skeleton className="h-8 w-full" />
                   <Skeleton className="h-8 w-full" />
@@ -320,6 +316,11 @@ export default function OrganizationPage() {
               ) : tree.length === 0 ? (
                 <div className={cn("p-4 text-center text-sm text-muted-foreground", isRTL ? "text-right" : "text-left")}>
                   No units created yet.
+                  <div className="mt-3">
+                    <Button size="sm" variant="outline" onClick={() => setIsCreateDialogOpen(true)}>
+                      <Plus className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> Create your first unit
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 tree.map(unit => <TreeNode key={unit.id} unit={unit} />)
@@ -327,23 +328,22 @@ export default function OrganizationPage() {
             </CardContent>
           </Card>
 
-          {/* Selected Unit Details */}
-          <Card className="md:col-span-2 flex flex-col">
+          <Card className="lg:col-span-2 flex flex-col shadow-sm h-full">
             <Tabs defaultValue="members" className="flex-1 flex flex-col" dir={direction}>
               <CardHeader className="py-4 border-b">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-primary/10 rounded-lg">
-                      {tree.find(u => u.id === selectedUnitId)?.type === "org" && <Landmark className="size-5 text-primary" />}
-                      {tree.find(u => u.id === selectedUnitId)?.type === "dept" && <Building2 className="size-5 text-primary" />}
-                      {tree.find(u => u.id === selectedUnitId)?.type === "team" && <Users className="size-5 text-primary" />}
+                      {selectedUnit?.type === "org" && <Landmark className="size-5 text-primary" />}
+                      {selectedUnit?.type === "dept" && <Building2 className="size-5 text-primary" />}
+                      {selectedUnit?.type === "team" && <Users className="size-5 text-primary" />}
                     </div>
                     <div>
                       <CardTitle className={cn("text-lg", isRTL ? "text-right" : "text-left")}>
-                        {tree.find(u => u.id === selectedUnitId)?.name || "Select a unit"}
+                        {selectedUnit?.name || "Select a unit"}
                       </CardTitle>
                       <CardDescription className={isRTL ? "text-right" : "text-left"}>
-                        {tree.find(u => u.id === selectedUnitId)?.slug || "No description"}
+                        {selectedUnit?.slug || "Pick a unit from the tree to manage members and settings."}
                       </CardDescription>
                     </div>
                   </div>
@@ -356,8 +356,11 @@ export default function OrganizationPage() {
               <CardContent className="flex-1 overflow-hidden p-0">
                 <TabsContent value="members" className="h-full m-0 p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className={cn("text-sm font-medium", isRTL ? "text-right" : "text-left")}>Unit Members</h3>
-                    <Button variant="outline" size="sm" onClick={() => setIsMemberDialogOpen(true)}>
+                    <div>
+                      <h3 className={cn("text-sm font-medium", isRTL ? "text-right" : "text-left")}>Unit Members</h3>
+                      <p className="text-xs text-muted-foreground">Members inherit permissions based on unit scope.</p>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => setIsMemberDialogOpen(true)} disabled={!selectedUnitId}>
                       <UserPlus className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> Add Member
                     </Button>
                   </div>
@@ -411,20 +414,33 @@ export default function OrganizationPage() {
                 </TabsContent>
                 <TabsContent value="settings" className="h-full m-0 p-6" dir={direction}>
                   <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label className={isRTL ? "text-right block" : "text-left block"}>Unit ID</Label>
-                      <Input value={selectedUnitId || ""} disabled className={isRTL ? "text-right" : "text-left"} />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className={isRTL ? "text-right block" : "text-left block"}>Unit ID</Label>
+                        <Input value={selectedUnitId || ""} disabled className={isRTL ? "text-right" : "text-left"} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className={isRTL ? "text-right block" : "text-left block"}>Slug (Namespace)</Label>
+                        <Input value={selectedUnit?.slug || ""} disabled className={isRTL ? "text-right" : "text-left"} />
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label className={isRTL ? "text-right block" : "text-left block"}>Slug (Namespace)</Label>
-                      <Input value={tree.find(u => u.id === selectedUnitId)?.slug || ""} disabled className={isRTL ? "text-right" : "text-left"} />
+                    <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                      <div className="flex items-center gap-2 font-medium">
+                        Scope-aware permissions
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Roles assigned to this unit apply to child units unless overridden.
+                      </p>
                     </div>
-                    <div className={cn("pt-4 flex gap-2", isRTL ? "justify-start" : "justify-end")}>
+                    <div className={cn("pt-2 flex gap-2", isRTL ? "justify-start" : "justify-end")}>
                       <Button variant="outline" onClick={() => {
-                        setEditUnit(tree.find(u => u.id === selectedUnitId) || null)
+                        if (!selectedUnitId) return
+                        const unit = tree.find(u => u.id === selectedUnitId) || null
+                        if (!unit) return
+                        setEditUnit(unit)
                         setIsEditDialogOpen(true)
-                      }}>Edit Basic Details</Button>
-                      <Button variant="destructive" onClick={() => handleDeleteUnit(selectedUnitId!)}>Delete Unit</Button>
+                      }} disabled={!selectedUnitId}>Edit Basic Details</Button>
+                      <Button variant="destructive" onClick={() => handleDeleteUnit(selectedUnitId!)} disabled={!selectedUnitId}>Delete Unit</Button>
                     </div>
                   </div>
                 </TabsContent>
@@ -433,7 +449,6 @@ export default function OrganizationPage() {
           </Card>
         </div>
 
-        {/* Create Dialog */}
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogContent>
             <DialogHeader>
@@ -481,13 +496,12 @@ export default function OrganizationPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Edit Dialog */}
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Edit Organization Unit</DialogTitle>
             </DialogHeader>
-            {editUnit && (
+            {editUnit ? (
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-name">Unit Name</Label>
@@ -506,15 +520,18 @@ export default function OrganizationPage() {
                   />
                 </div>
               </div>
+            ) : (
+              <div className="py-6 text-sm text-muted-foreground">
+                Select an organization unit to edit.
+              </div>
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleUpdateUnit}>Save Changes</Button>
+              <Button onClick={handleUpdateUnit} disabled={!editUnit}>Save Changes</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
-        {/* Add Member Dialog */}
         <Dialog open={isMemberDialogOpen} onOpenChange={setIsMemberDialogOpen}>
           <DialogContent>
             <DialogHeader>

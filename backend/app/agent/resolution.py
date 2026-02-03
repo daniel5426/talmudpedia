@@ -1,7 +1,8 @@
 import logging
 from uuid import UUID
 from typing import Optional, Dict, Any
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.registry import ToolRegistry
@@ -18,15 +19,62 @@ class ComponentResolver:
         self.tenant_id = tenant_id
 
 class ToolResolver(ComponentResolver):
+    async def _has_artifact_columns(self) -> bool:
+        try:
+            result = await self.db.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'tool_registry'
+                      AND column_name IN ('artifact_id', 'artifact_version')
+                    """
+                )
+            )
+            cols = {row[0] for row in result.all()}
+            return "artifact_id" in cols and "artifact_version" in cols
+        except Exception:
+            return False
+
     async def resolve(self, tool_id: UUID) -> Dict[str, Any]:
         """
         Verify tool exists and return minimal execution metadata.
         """
-        stmt = select(ToolRegistry).where(ToolRegistry.id == tool_id)
-        # Note: We should assume tenant check is needed, or allow system tools (tenant_id=None)
-        # The existing query in standard executors didn't check tenant carefully enough
-        result = await self.db.execute(stmt)
-        tool = result.scalar_one_or_none()
+        tool = None
+        try:
+            if await self._has_artifact_columns():
+                stmt = select(ToolRegistry).where(ToolRegistry.id == tool_id)
+                # Note: We should assume tenant check is needed, or allow system tools (tenant_id=None)
+                # The existing query in standard executors didn't check tenant carefully enough
+                result = await self.db.execute(stmt)
+                tool = result.scalar_one_or_none()
+            else:
+                raise ProgrammingError("tool_registry missing artifact columns", None, None)
+        except ProgrammingError as e:
+            # Fallback for older schemas missing artifact columns
+            logger.warning(f"ToolResolver falling back to raw query due to schema mismatch: {e}")
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            raw = await self.db.execute(
+                text(
+                    """
+                    SELECT id, name, is_active
+                    FROM tool_registry
+                    WHERE id = :tool_id
+                    """
+                ),
+                {"tool_id": str(tool_id)},
+            )
+            row = raw.first()
+            if row:
+                class _Tool:
+                    def __init__(self, id, name, is_active):
+                        self.id = id
+                        self.name = name
+                        self.is_active = is_active
+                tool = _Tool(row[0], row[1], row[2])
         
         if not tool:
             raise ResolutionError(f"Tool {tool_id} not found")

@@ -17,6 +17,9 @@ The Agent subsystem is a sophisticated, graph-based orchestration engine designe
     - **Actions (Tool/RAG)**: Integration points for external capabilities.
 - **Dynamic Configuration**: Each node type has a specific configuration schema (e.g., `model_id`, `temperature`, `system_prompt` for LLM nodes).
 - **Subdued Aesthetic**: Operator colors utilize a softened, pastel palette harmonized with the RAG Pipeline Builder to reduce visual noise.
+- **Decoupled Data Flow (Field Mapping)**: Artifact nodes utilize an explicit input/output mapping system, decoupling logic from global state.
+    - **Expression-Based Mapping**: Users map artifact inputs to `{{ state.var }}` or `{{ upstream.node.field }}`.
+    - **Contract Enforcement**: Artifacts declare their schema in `artifact.yaml`, which the builder uses to generate configuration UIs.
 
 ### 2. LangGraph & Logic Engine
 - **State vs Context**: Clear architectural distinction between persistent `state` (checkpointed) and ephemeral `context` (erased between major steps).
@@ -75,6 +78,7 @@ The Agent subsystem is a sophisticated, graph-based orchestration engine designe
 | Human-in-the-loop | ✅ Completed | Specialized User Approval UI with Approve/Reject branching. |
 | Unified Node UI | ✅ Completed | Consistent shell and handle positioning shared with Pipeline Builder. |
 | Conditional Routing | ✅ Completed | Multi-branch If/Else support with dynamic rows and labels. |
+| Field Mapping | ✅ Completed | Decoupled data flow for artifacts with `{{ expr }}` resolution. |
 | Memory Management | 🚧 In Progress | Short-term memory active; long-term/vector memory in development. |
 
 ## Next Implementation Priorities

@@ -66,20 +66,20 @@ const formatThinkingDuration = (durationMs?: number | null) => {
     const value =
       seconds < 10 ? seconds.toFixed(1) : Math.round(seconds).toString();
     const normalized = value.endsWith(".0") ? value.slice(0, -2) : value;
-    return `${normalized} שניות`;
+    return `${normalized} seconds`;
   }
   const minutes = Math.floor(seconds / 60);
-  const minuteUnit = minutes === 1 ? "דקה" : "דקות";
+  const minuteUnit = minutes === 1 ? "minute" : "minutes";
   const remainingSeconds = Math.round(seconds % 60);
   if (remainingSeconds === 0) {
     return `${minutes} ${minuteUnit}`;
   }
-  return `${minutes} ${minuteUnit} ${remainingSeconds} שניות`;
+  return `${minutes} ${minuteUnit} ${remainingSeconds} seconds`;
 };
 
 const buildThinkingLabel = (durationMs?: number | null) => {
   const formatted = formatThinkingDuration(durationMs);
-  return formatted ? `חשב במשך ${formatted}` : null;
+  return formatted ? `Thought for ${formatted}` : null;
 };
 
 const CITATION_NUMERIC_PATTERN = /((\d+)(?::(\d+))?|(\d+)([ab])(?::(\d+))?)$/i;
@@ -165,21 +165,21 @@ const formatReasoningStepLabel = (step?: ReasoningStep): ReactNode => {
     const stepData = step as any;
     if (stepData.query !== undefined) {
       if (step.status === "pending") {
-        return `מחפש "${stepData.query}"`;
+        return `Searching for "${stepData.query}"`;
       }
       if (step.status === "complete" && stepData.sources) {
-        return `מצא ${stepData.sources.length} מקורות`;
+        return `Found ${stepData.sources.length} sources`;
       }
     }
     if (step.status === "complete") {
       const citationCount = step.citations?.length ?? 0;
-      return `מצא ${citationCount} מקורות`;
+      return `Found ${citationCount} citations`;
     }
-    return "מחפש מקורות";
+    return "Searching for citations";
   }
 
   if (typeof step.label === "string" && step.label === "Analysis") {
-    return "מפענח את השאלה";
+    return "Analyzing the question";
   }
 
   return step.label;
@@ -578,7 +578,7 @@ export function ChatWorkspace({
                                     if (isOpen && msg.id === activeStreamingId && isLoading) {
                                       return (
                                         <span className="animate-pulse text-sm text-muted-foreground">
-                                          חושב
+                                          Thinking
                                         </span>
                                       );
                                     }
@@ -602,7 +602,7 @@ export function ChatWorkspace({
                                       return latestLabel;
                                     }
 
-                                    return (msg.id === activeStreamingId && isLoading) ? "חושב..." : "תהליך חשיבה";
+                                    return (msg.id === activeStreamingId && isLoading) ? "Thinking..." : "Thinking process";
                                   }}
                                 />
                                 <ChainOfThoughtContent dir={direction}>

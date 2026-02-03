@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback, useMemo } from "react"
 import { useTenant } from "@/contexts/TenantContext"
 import { useDirection } from "@/components/direction-provider"
 import { cn } from "@/lib/utils"
@@ -11,6 +11,7 @@ import {
   UserPlus,
   Plus,
   Trash2,
+  Edit2,
   Lock,
   Globe,
   User,
@@ -61,11 +62,20 @@ export default function SecurityPage() {
   const [assignments, setAssignments] = useState<RoleAssignment[]>([])
   const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [searchRoles, setSearchRoles] = useState("")
+  const [searchAssignments, setSearchAssignments] = useState("")
+  const [activeTab, setActiveTab] = useState<"assignments" | "roles">("assignments")
 
-  // Dialog states
   const [isRoleDialogOpen, setIsRoleDialogOpen] = useState(false)
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [newRoleData, setNewRoleData] = useState<{ name: string; description: string; permissions: Permission[] }>({
+    name: "",
+    description: "",
+    permissions: []
+  })
+  const [editRoleData, setEditRoleData] = useState<{ id: string; name: string; description: string; permissions: Permission[] }>({
+    id: "",
     name: "",
     description: "",
     permissions: []
@@ -124,6 +134,22 @@ export default function SecurityPage() {
     }
   }
 
+  const handleEditRole = async () => {
+    if (!currentTenant || !editRoleData.id) return
+    try {
+      await rbacService.updateRole(currentTenant.slug, editRoleData.id, {
+        name: editRoleData.name,
+        description: editRoleData.description,
+        permissions: editRoleData.permissions
+      })
+      setIsEditDialogOpen(false)
+      setEditRoleData({ id: "", name: "", description: "", permissions: [] })
+      fetchData()
+    } catch (error) {
+      console.error("Failed to update role", error)
+    }
+  }
+
   const handleDeleteRole = async (roleId: string) => {
     if (!currentTenant || !confirm("Are you sure? Roles with active assignments cannot be deleted.")) return
     try {
@@ -161,6 +187,42 @@ export default function SecurityPage() {
     })
   }
 
+  const toggleEditPermission = (res: string, action: string) => {
+    setEditRoleData(prev => {
+      const exists = prev.permissions.some(p => p.resource_type === res && p.action === action)
+      if (exists) {
+        return {
+          ...prev,
+          permissions: prev.permissions.filter(p => !(p.resource_type === res && p.action === action))
+        }
+      } else {
+        return {
+          ...prev,
+          permissions: [...prev.permissions, { resource_type: res, action: action }]
+        }
+      }
+    })
+  }
+
+  const filteredRoles = useMemo(() => {
+    const query = searchRoles.toLowerCase()
+    if (!query) return roles
+    return roles.filter(role =>
+      role.name.toLowerCase().includes(query) ||
+      (role.description || "").toLowerCase().includes(query)
+    )
+  }, [roles, searchRoles])
+
+  const filteredAssignments = useMemo(() => {
+    const query = searchAssignments.toLowerCase()
+    if (!query) return assignments
+    return assignments.filter(a =>
+      a.user_id.toLowerCase().includes(query) ||
+      a.role_name.toLowerCase().includes(query) ||
+      (a.scope_type || "").toLowerCase().includes(query)
+    )
+  }, [assignments, searchAssignments])
+
   if (!currentTenant) {
     return (
       <div className="p-8 text-center text-muted-foreground">
@@ -170,14 +232,13 @@ export default function SecurityPage() {
   }
 
   return (
-    <div className="flex flex-col h-full w-full" dir={direction}>
+    <div className="flex flex-col h-full w-full bg-muted/30" dir={direction}>
       <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <CustomBreadcrumb items={[
-              { label: "Security & RBAC", active: true },
-            ]} />
-          </div>
+          <CustomBreadcrumb items={[
+            { label: "Security & Org", href: "/admin/organization" },
+            { label: "Security & Roles", active: true }
+          ]} />
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" className="h-9" onClick={() => setIsRoleDialogOpen(true)}>
@@ -189,29 +250,42 @@ export default function SecurityPage() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto p-6">
-
-        <Tabs defaultValue="assignments" dir={direction}>
-          <div className="flex items-center justify-between mb-4">
+      <div className="flex-1 min-h-0 overflow-auto p-6 space-y-6">
+        <Tabs
+          defaultValue="assignments"
+          dir={direction}
+          className="min-h-0 h-full flex flex-col"
+          onValueChange={(value) => setActiveTab(value as "assignments" | "roles")}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <TabsList>
               <TabsTrigger value="assignments">Role Assignments</TabsTrigger>
               <TabsTrigger value="roles">Roles & Permissions</TabsTrigger>
             </TabsList>
+            <Input
+              placeholder={activeTab === "assignments" ? "Search user, role, or scope..." : "Search roles..."}
+              value={activeTab === "assignments" ? searchAssignments : searchRoles}
+              onChange={(e) => {
+                const value = e.target.value
+                if (activeTab === "assignments") setSearchAssignments(value)
+                else setSearchRoles(value)
+              }}
+              className="max-w-xs bg-background"
+            />
           </div>
 
-          <TabsContent value="assignments">
-            <Card>
-              <CardHeader className={isRTL ? "text-right" : "text-left"}>
-                <CardTitle className="text-lg">Active Assignments</CardTitle>
-                <CardDescription>Users bound to roles at specific scopes.</CardDescription>
-              </CardHeader>
-              <CardContent>
+          <TabsContent value="assignments" className="h-full flex-1 min-h-0 flex flex-col">
+            <Card className="shadow-sm h-full flex flex-col">
+              <CardContent className="flex-1">
+                <div className="flex items-center justify-between mb-3">
+                  <Badge variant="outline" className="text-xs">{filteredAssignments.length} results</Badge>
+                </div>
                 {isLoading ? (
                   <div className="space-y-2">
                     <Skeleton className="h-10 w-full" />
                     <Skeleton className="h-10 w-full" />
                   </div>
-                ) : assignments.length === 0 ? (
+                ) : filteredAssignments.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
                     No role assignments found.
                   </div>
@@ -226,22 +300,23 @@ export default function SecurityPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {assignments.map(a => (
+                      {filteredAssignments.map(a => (
                         <TableRow key={a.id}>
                           <TableCell className={cn("font-medium", isRTL ? "text-right" : "text-left")}>
                             <div className="flex items-center gap-2">
-                              <User className="size-4 text-muted-foreground" />
-                              <span>{a.user_id}</span> {/* In real app show email/name */}
+                              <div className="size-7 rounded-full bg-muted flex items-center justify-center">
+                                <User className="size-3.5 text-muted-foreground" />
+                              </div>
+                              <span className="truncate max-w-[200px]">{a.user_id}</span>
                             </div>
                           </TableCell>
                           <TableCell className={isRTL ? "text-right" : "text-left"}>
-                            <Badge variant="outline">{a.role_name}</Badge>
+                            <Badge variant="outline" className="text-xs">{a.role_name}</Badge>
                           </TableCell>
                           <TableCell className={isRTL ? "text-right" : "text-left"}>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 text-xs">
                               {a.scope_type === "tenant" ? <Globe className="size-3" /> : <Lock className="size-3" />}
-                              <span className="text-xs uppercase opacity-70">{a.scope_type}</span>
-                              <span className="text-xs">{a.scope_id}</span>
+                              <span className="uppercase tracking-wide text-muted-foreground">{a.scope_type}</span>
                             </div>
                           </TableCell>
                           <TableCell className={isRTL ? "text-left" : "text-right"}>
@@ -258,201 +333,264 @@ export default function SecurityPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="roles">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {isLoading ? (
-                [1, 2, 3].map(i => <Skeleton key={i} className="h-48 w-full" />)
-              ) : roles.map(role => (
-                <Card key={role.id} className="relative overflow-hidden">
-                  {role.is_system && (
-                    <div className={cn(
-                      "absolute top-0 p-1 bg-primary text-[8px] text-primary-foreground uppercase font-bold px-2",
-                      isRTL ? "left-0 rounded-br-lg" : "right-0 rounded-bl-lg"
-                    )}>
-                      System
+          <TabsContent value="roles" className="h-full flex-1 min-h-0 flex flex-col">
+            <div className="grid grid-cols-1 gap-6 min-h-0 h-full flex-1">
+              <Card className="shadow-sm h-full flex flex-col">
+                <CardContent className="flex-1">
+                  <div className="flex items-center justify-between mb-3">
+                    <Badge variant="outline" className="text-xs">{filteredRoles.length} roles</Badge>
+                  </div>
+                  {isLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-24 w-full" />
+                      <Skeleton className="h-24 w-full" />
+                    </div>
+                  ) : filteredRoles.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
+                      No roles found.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {filteredRoles.map(role => (
+                        <Card key={role.id} className="relative overflow-hidden">
+                          {role.is_system && (
+                            <div className="absolute top-3 right-3">
+                              <Badge variant="secondary" className="gap-1"><Key className="size-3" /> System</Badge>
+                            </div>
+                          )}
+                          <CardHeader>
+                            <CardTitle className="text-base flex items-center gap-2">
+                              <ShieldCheck className="size-4 text-primary" />
+                              {role.name}
+                            </CardTitle>
+                            <CardDescription>
+                              {role.description || "No description provided."}
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-3">
+                            <div className="flex flex-wrap gap-2">
+                              {role.permissions.slice(0, 6).map((p, i) => (
+                                <Badge key={i} variant="outline" className="text-xs">
+                                  {p.action}:{p.resource_type}
+                                </Badge>
+                              ))}
+                              {role.permissions.length > 6 && (
+                                <Badge variant="secondary" className="text-xs">+{role.permissions.length - 6} more</Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-muted-foreground">{role.permissions.length} permissions</span>
+                              {!role.is_system && (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon">
+                                      <MoreVertical className="size-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => {
+                                      setEditRoleData({
+                                        id: role.id,
+                                        name: role.name,
+                                        description: role.description || "",
+                                        permissions: role.permissions || []
+                                      })
+                                      setIsEditDialogOpen(true)
+                                    }}>
+                                      <Edit2 className="size-4 mr-2" /> Edit
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteRole(role.id)}>
+                                      <Trash2 className="size-4 mr-2" /> Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
                     </div>
                   )}
-                  <CardHeader className={cn("pb-2", isRTL ? "text-right" : "text-left")}>
-                    <CardTitle className="text-base flex items-center justify-between">
-                      {role.name}
-                      {!role.is_system && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="size-6">
-                              <MoreVertical className="size-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align={isRTL ? "start" : "end"}>
-                            <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteRole(role.id)}>
-                              <Trash2 className={cn("size-3", isRTL ? "ml-2" : "mr-2")} /> Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </CardTitle>
-                    <CardDescription className="text-xs line-clamp-2">
-                      {role.description || "No description provided."}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className={isRTL ? "text-right" : "text-left"}>
-                    <div className={cn("flex flex-wrap gap-1", isRTL ? "justify-start" : "justify-start")}>
-                      {role.permissions.slice(0, 6).map((p, i) => (
-                        <Badge key={i} variant="secondary" className="text-[9px] px-1 py-0 h-4">
-                          {p.resource_type}:{p.action}
-                        </Badge>
-                      ))}
-                      {role.permissions.length > 6 && (
-                        <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">
-                          +{role.permissions.length - 6} more
-                        </Badge>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                </CardContent>
+              </Card>
+
             </div>
           </TabsContent>
         </Tabs>
+      </div>
 
-        {/* Role Creation Dialog */}
-        <Dialog open={isRoleDialogOpen} onOpenChange={setIsRoleDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-auto">
-            <DialogHeader>
-              <DialogTitle>Create Custom Role</DialogTitle>
-              <DialogDescription>Define a set of permissions for a new role.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="role-name">Role Name</Label>
-                <Input
-                  id="role-name"
-                  placeholder="Content Editor"
-                  value={newRoleData.name}
-                  onChange={e => setNewRoleData({ ...newRoleData, name: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="role-desc">Description</Label>
-                <Input
-                  id="role-desc"
-                  placeholder="Can manage indices but not delete them"
-                  value={newRoleData.description}
-                  onChange={e => setNewRoleData({ ...newRoleData, description: e.target.value })}
-                />
-              </div>
-
-              <div className="space-y-2 pt-4">
-                <Label>Permissions Matrix</Label>
-                <div className="border rounded-lg overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-muted/50">
-                        <TableHead className="w-32">Resource</TableHead>
-                        {ACTIONS.map(a => (
-                          <TableHead key={a} className="text-center text-[10px] uppercase font-bold">{a}</TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {RESOURCE_TYPES.map(res => (
-                        <TableRow key={res}>
-                          <TableCell className="font-medium text-xs py-2 uppercase">{res}</TableCell>
-                          {ACTIONS.map(action => (
-                            <TableCell key={action} className="text-center py-2">
-                              <Checkbox
-                                checked={newRoleData.permissions.some(p => p.resource_type === res && p.action === action)}
-                                onCheckedChange={() => togglePermission(res, action)}
-                              />
-                            </TableCell>
-                          ))}
-                        </TableRow>
+      <Dialog open={isRoleDialogOpen} onOpenChange={setIsRoleDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create New Role</DialogTitle>
+            <DialogDescription>Define a set of permissions for a new role.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="role-name-modal">Role Name</Label>
+              <Input
+                id="role-name-modal"
+                placeholder="Data Steward"
+                value={newRoleData.name}
+                onChange={e => setNewRoleData({ ...newRoleData, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="role-desc-modal">Description</Label>
+              <Input
+                id="role-desc-modal"
+                placeholder="Manage pipelines and audit logs"
+                value={newRoleData.description}
+                onChange={e => setNewRoleData({ ...newRoleData, description: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Permissions</Label>
+              <div className="grid grid-cols-1 gap-2 max-h-64 overflow-auto pr-1">
+                {RESOURCE_TYPES.map(res => (
+                  <div key={res} className="border rounded-lg p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{res}</div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {ACTIONS.map(action => (
+                        <label key={`${res}-${action}`} className="flex items-center gap-2 text-xs">
+                          <Checkbox
+                            checked={newRoleData.permissions.some(p => p.resource_type === res && p.action === action)}
+                            onCheckedChange={() => togglePermission(res, action)}
+                          />
+                          <span>{action}</span>
+                        </label>
                       ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsRoleDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleCreateRole} disabled={!newRoleData.name}>Create Role</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsRoleDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateRole} disabled={!newRoleData.name}>Create Role</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-        {/* Assignment Dialog */}
-        <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Assign Role to User</DialogTitle>
-              <DialogDescription>Grant a user permissions at a specific scope.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
+      <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Role</DialogTitle>
+            <DialogDescription>Assign a role to a user in a tenant or org unit scope.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="assign-user">User ID</Label>
+              <Input
+                id="assign-user"
+                placeholder="User UUID"
+                value={newAssignmentData.user_id}
+                onChange={e => setNewAssignmentData({ ...newAssignmentData, user_id: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="assign-role">Role</Label>
+              <select
+                id="assign-role"
+                className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                value={newAssignmentData.role_id}
+                onChange={e => setNewAssignmentData({ ...newAssignmentData, role_id: e.target.value })}
+              >
+                <option value="">Select a role...</option>
+                {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Scope</Label>
+              <select
+                className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                value={newAssignmentData.scope_type}
+                onChange={e => setNewAssignmentData({ ...newAssignmentData, scope_type: e.target.value })}
+              >
+                <option value="tenant">Entire Tenant</option>
+                <option value="org_unit">Organization Unit</option>
+              </select>
+            </div>
+            {newAssignmentData.scope_type !== "tenant" && (
               <div className="space-y-2">
-                <Label htmlFor="assign-user">User ID</Label>
-                <Input
-                  id="assign-user"
-                  placeholder="user_id..."
-                  value={newAssignmentData.user_id}
-                  onChange={e => setNewAssignmentData({ ...newAssignmentData, user_id: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="assign-role">Role</Label>
+                <Label>Organization Unit</Label>
                 <select
-                  id="assign-role"
                   className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                  value={newAssignmentData.role_id}
-                  onChange={e => setNewAssignmentData({ ...newAssignmentData, role_id: e.target.value })}
+                  value={newAssignmentData.scope_id}
+                  onChange={e => setNewAssignmentData({ ...newAssignmentData, scope_id: e.target.value })}
                 >
-                  <option value="">Select a role...</option>
-                  {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  <option value="">Select a unit...</option>
+                  {orgUnits.map(u => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.type})</option>
+                  ))}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="assign-scope-type">Scope Type</Label>
-                  <select
-                    id="assign-scope-type"
-                    className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                    value={newAssignmentData.scope_type}
-                    onChange={e => setNewAssignmentData({ ...newAssignmentData, scope_type: e.target.value })}
-                  >
-                    <option value="tenant">Entire Tenant</option>
-                    <option value="org_unit">Organization Unit</option>
-                    <option value="index">Specific Index</option>
-                  </select>
-                </div>
-                {newAssignmentData.scope_type !== "tenant" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="assign-scope-id">Scope Target</Label>
-                    <select
-                      id="assign-scope-id"
-                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                      value={newAssignmentData.scope_id}
-                      onChange={e => setNewAssignmentData({ ...newAssignmentData, scope_id: e.target.value })}
-                    >
-                      <option value="">Select target...</option>
-                      {newAssignmentData.scope_type === "org_unit" && orgUnits.map(u => (
-                        <option key={u.id} value={u.id}>{u.name} ({u.type})</option>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleAssignRole}
+              disabled={!newAssignmentData.user_id || !newAssignmentData.role_id || (newAssignmentData.scope_type !== "tenant" && !newAssignmentData.scope_id)}
+            >
+              Assign Role
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Role</DialogTitle>
+            <DialogDescription>Update role details and permissions.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-role-name">Role Name</Label>
+              <Input
+                id="edit-role-name"
+                value={editRoleData.name}
+                onChange={e => setEditRoleData({ ...editRoleData, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-role-desc">Description</Label>
+              <Input
+                id="edit-role-desc"
+                value={editRoleData.description}
+                onChange={e => setEditRoleData({ ...editRoleData, description: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Permissions</Label>
+              <div className="grid grid-cols-1 gap-2 max-h-64 overflow-auto pr-1">
+                {RESOURCE_TYPES.map(res => (
+                  <div key={res} className="border rounded-lg p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{res}</div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {ACTIONS.map(action => (
+                        <label key={`${res}-${action}`} className="flex items-center gap-2 text-xs">
+                          <Checkbox
+                            checked={editRoleData.permissions.some(p => p.resource_type === res && p.action === action)}
+                            onCheckedChange={() => toggleEditPermission(res, action)}
+                          />
+                          <span>{action}</span>
+                        </label>
                       ))}
-                      {/* For index we'd need to fetch indices too, or allow typing ID */}
-                    </select>
+                    </div>
                   </div>
-                )}
+                ))}
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)}>Cancel</Button>
-              <Button
-                onClick={handleAssignRole}
-                disabled={!newAssignmentData.user_id || !newAssignmentData.role_id || (newAssignmentData.scope_type !== "tenant" && !newAssignmentData.scope_id)}
-              >
-                Assign Role
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleEditRole} disabled={!editRoleData.name}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

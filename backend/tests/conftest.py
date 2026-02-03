@@ -1,6 +1,19 @@
 import sys
 import os
 import asyncio
+
+USE_REAL_DB = os.getenv("TEST_USE_REAL_DB") == "1"
+
+if USE_REAL_DB:
+    try:
+        from pathlib import Path
+        from dotenv import load_dotenv
+        env_path = Path(__file__).resolve().parents[1] / ".env"
+        load_dotenv(env_path)
+    except Exception:
+        # If dotenv is unavailable or .env missing, we proceed with existing env.
+        pass
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -14,7 +27,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db.postgres.base import Base
 from app.db.postgres.session import get_db
-from main import app
+
 
 # Database URL for testing
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -28,8 +41,12 @@ def event_loop():
 
 @pytest_asyncio.fixture()
 async def test_engine():
+    """Create a test engine with SQLite in-memory or use real DB when enabled."""
+    if USE_REAL_DB:
+        from app.db.postgres.engine import engine as real_engine
+        yield real_engine
+        return
 
-    """Create a test engine with SQLite in-memory."""
     engine = create_async_engine(
         TEST_DATABASE_URL,
         connect_args={"check_same_thread": False},
@@ -105,6 +122,7 @@ async def db_session(test_engine):
 @pytest_asyncio.fixture
 async def client(db_session):
     """Create a new FastAPI TestClient."""
+    from main import app
     async def override_get_db():
         yield db_session
 
@@ -126,4 +144,3 @@ def artifact_context():
         )
     
     return _create_context
-

@@ -1,0 +1,32 @@
+id: custom/tool_alpha
+version: "1.0.0"
+display_name: Tool Alpha
+category: tool
+description: Tool artifact that appends a suffix.
+input_type: none
+output_type: none
+scope: tool
+inputs:
+  - name: text
+    type: string
+    required: true
+  - name: suffix
+    type: string
+    required: false
+    default: "!"
+outputs:
+  - name: tool_alpha
+    type: string
+reads:
+  - messages
+  - context
+writes:
+  - context
+  - tool_outputs
+ui:
+  icon: Wrench
+  color: "#f97316"
+author: Test Suite
+tags:
+  - test
+  - tool

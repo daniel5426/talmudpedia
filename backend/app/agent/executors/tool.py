@@ -2,16 +2,35 @@ import logging
 import json
 import httpx
 from typing import Any, Dict
+from types import SimpleNamespace
 from uuid import UUID
 
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.registry import AgentStateField
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import ProgrammingError
 from app.db.postgres.models.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 class ToolNodeExecutor(BaseNodeExecutor):
+    async def _has_artifact_columns(self) -> bool:
+        try:
+            result = await self.db.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'tool_registry'
+                      AND column_name IN ('artifact_id', 'artifact_version')
+                    """
+                )
+            )
+            cols = {row[0] for row in result.all()}
+            return "artifact_id" in cols and "artifact_version" in cols
+        except Exception:
+            return False
+
     async def validate_config(self, config: Dict[str, Any]) -> ValidationResult:
         if not config.get("tool_id"):
             return ValidationResult(valid=False, errors=["Missing 'tool_id' in configuration"])
@@ -31,9 +50,45 @@ class ToolNodeExecutor(BaseNodeExecutor):
         tool_id = UUID(tool_id_str)
         
         # 1. Fetch Tool
-        stmt = select(ToolRegistry).where(ToolRegistry.id == tool_id)
-        result = await self.db.execute(stmt)
-        tool = result.scalar_one_or_none()
+        tool = None
+        try:
+            if await self._has_artifact_columns():
+                stmt = select(ToolRegistry).where(ToolRegistry.id == tool_id)
+                result = await self.db.execute(stmt)
+                tool = result.scalar_one_or_none()
+            else:
+                raise ProgrammingError("tool_registry missing artifact columns", None, None)
+        except ProgrammingError as e:
+            logger.warning(f"ToolNodeExecutor fallback to raw query due to schema mismatch: {e}")
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            raw = await self.db.execute(
+                text(
+                    """
+                    SELECT id, name, description, scope, schema, config_schema, is_active, is_system
+                    FROM tool_registry
+                    WHERE id = :tool_id
+                    """
+                ),
+                {"tool_id": str(tool_id)},
+            )
+            row = raw.first()
+            if row:
+                # Map to a lightweight object with expected attributes
+                tool = SimpleNamespace(
+                    id=row[0],
+                    name=row[1],
+                    description=row[2],
+                    scope=row[3],
+                    schema=row[4] or {},
+                    config_schema=row[5] or {},
+                    is_active=row[6],
+                    is_system=row[7],
+                    artifact_id=None,
+                    artifact_version=None,
+                )
         
         if not tool:
             # Fallback for system tools if needed, but registry handles scope usually
@@ -91,7 +146,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
             }
             
             artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
-            return await artifact_executor.execute(state, artifact_config, context)
+            result = await artifact_executor.execute(state, artifact_config, context)
+            if emitter:
+                emitter.emit_tool_end(tool.name, result, node_id)
+            return result
         
         # Support inline config pointer
         if impl_type == "artifact" and implementation_config.get("artifact_id"):
@@ -105,7 +163,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 "label": tool.name,
              }
              artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
-             return await artifact_executor.execute(state, artifact_config, context)
+             result = await artifact_executor.execute(state, artifact_config, context)
+             if emitter:
+                 emitter.emit_tool_end(tool.name, result, node_id)
+             return result
 
         output_data = {}
 

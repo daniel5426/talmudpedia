@@ -117,6 +117,8 @@ interface ArtifactFormData {
     output_type: string
     python_code: string
     config_schema: string
+    inputs: string
+    outputs: string
     reads: string[]
     writes: string[]
 }
@@ -131,6 +133,8 @@ const initialFormData: ArtifactFormData = {
     output_type: "raw_documents",
     python_code: DEFAULT_PYTHON_CODE,
     config_schema: "[]",
+    inputs: "[]",
+    outputs: "[]",
     reads: [],
     writes: [],
 }
@@ -239,6 +243,8 @@ export default function ArtifactsPage() {
             output_type: fullArtifact.output_type,
             python_code: fullArtifact.python_code || DEFAULT_PYTHON_CODE,
             config_schema: JSON.stringify(fullArtifact.config_schema || [], null, 2),
+            inputs: JSON.stringify(fullArtifact.inputs || [], null, 2),
+            outputs: JSON.stringify(fullArtifact.outputs || [], null, 2),
             reads: (fullArtifact as any).reads || [],
             writes: (fullArtifact as any).writes || [],
         })
@@ -267,6 +273,8 @@ export default function ArtifactsPage() {
         setSaving(true)
         try {
             let configSchema = []
+            let inputs = []
+            let outputs = []
             try {
                 configSchema = JSON.parse(formData.config_schema || "[]")
             } catch (e) {
@@ -274,10 +282,26 @@ export default function ArtifactsPage() {
                 setSaving(false)
                 return
             }
+            try {
+                inputs = JSON.parse(formData.inputs || "[]")
+            } catch (e) {
+                alert("Invalid Inputs JSON")
+                setSaving(false)
+                return
+            }
+            try {
+                outputs = JSON.parse(formData.outputs || "[]")
+            } catch (e) {
+                alert("Invalid Outputs JSON")
+                setSaving(false)
+                return
+            }
 
             const payload = {
                 ...formData,
                 config_schema: configSchema,
+                inputs: inputs,
+                outputs: outputs,
             }
 
             if (viewMode === "create") {
@@ -567,7 +591,7 @@ export default function ArtifactsPage() {
 
     const renderEditor = () => (
         <div className="relative flex-1 min-w-0 overflow-hidden flex flex-col">
-            <div className="flex-1 relative min-h-0 bg-[#0d0d0d]">
+            <div className="flex-1 relative min-h-0">
                 <CodeEditor
                     value={formData.python_code}
                     onChange={(val) => updateFormData("python_code", val)}
@@ -597,9 +621,10 @@ export default function ArtifactsPage() {
 
                         <Tabs defaultValue="general" className="w-full">
                             <div className="px-3 py-2">
-                                <TabsList className="grid w-full grid-cols-2">
-                                    <TabsTrigger value="general">Properties</TabsTrigger>
-                                    <TabsTrigger value="parameters">Config Schema</TabsTrigger>
+                                <TabsList className="grid w-full grid-cols-3">
+                                    <TabsTrigger value="general" className="text-xs">Properties</TabsTrigger>
+                                    <TabsTrigger value="io" className="text-xs">I/O Schema</TabsTrigger>
+                                    <TabsTrigger value="parameters" className="text-xs">Parameters</TabsTrigger>
                                 </TabsList>
                             </div>
 
@@ -612,7 +637,7 @@ export default function ArtifactsPage() {
                                     <div className="space-y-1.5">
                                         <Label className="text-[10px] font-bold uppercase text-foreground/50">Category</Label>
                                         <Select value={formData.category} onValueChange={(v) => updateFormData("category", v)}>
-                                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
                                             <SelectContent>
                                                 {CATEGORIES.map((cat) => <SelectItem key={cat.value} value={cat.value} className="text-xs">{cat.label}</SelectItem>)}
                                             </SelectContent>
@@ -633,7 +658,7 @@ export default function ArtifactsPage() {
                                     <div className="space-y-1.5">
                                         <Label className="text-[10px] font-bold uppercase text-foreground/50">Scope</Label>
                                         <Select value={formData.scope} onValueChange={(v) => updateFormData("scope", v as ArtifactScope)}>
-                                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
                                             <SelectContent>
                                                 {SCOPES.map((s) => <SelectItem key={s.value} value={s.value} className="text-xs">{s.label}</SelectItem>)}
                                             </SelectContent>
@@ -654,7 +679,7 @@ export default function ArtifactsPage() {
                                     <div className="space-y-1.5">
                                         <Label className="text-[10px] font-bold uppercase text-foreground/50">Input Type</Label>
                                         <Select value={formData.input_type} onValueChange={(v) => updateFormData("input_type", v)}>
-                                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
                                             <SelectContent>
                                                 {DATA_TYPES.map((dt) => <SelectItem key={dt.value} value={dt.value} className="text-xs">{dt.label}</SelectItem>)}
                                             </SelectContent>
@@ -663,7 +688,7 @@ export default function ArtifactsPage() {
                                     <div className="space-y-1.5">
                                         <Label className="text-[10px] font-bold uppercase text-foreground/50">Output Type</Label>
                                         <Select value={formData.output_type} onValueChange={(v) => updateFormData("output_type", v)}>
-                                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
                                             <SelectContent>
                                                 {DATA_TYPES.map((dt) => <SelectItem key={dt.value} value={dt.value} className="text-xs">{dt.label}</SelectItem>)}
                                             </SelectContent>
@@ -689,6 +714,41 @@ export default function ArtifactsPage() {
                                         onChange={(e) => updateFormData("writes", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
                                         className="h-8 text-xs font-mono"
                                     />
+                                </div>
+                            </TabsContent>
+
+                            <TabsContent value="io" className="p-0 m-0 outline-none">
+                                <div className="p-4 space-y-4 max-h-[65vh] overflow-y-auto">
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-bold uppercase text-foreground/50">Inputs Definition (JSON)</span>
+                                            <Badge variant="outline" className="h-4 text-[8px]">Field Mapping</Badge>
+                                        </div>
+                                        <JsonEditor
+                                            value={formData.inputs}
+                                            onChange={(val) => updateFormData("inputs", val)}
+                                            height="180px"
+                                            className="border-border/30 rounded-md overflow-hidden"
+                                        />
+                                        <p className="text-[9px] text-muted-foreground italic">
+                                            {'Example: [{"name": "query", "type": "string", "required": true}]'}
+                                        </p>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-bold uppercase text-foreground/50">Outputs Definition (JSON)</span>
+                                        </div>
+                                        <JsonEditor
+                                            value={formData.outputs}
+                                            onChange={(val) => updateFormData("outputs", val)}
+                                            height="180px"
+                                            className="border-border/30 rounded-md overflow-hidden"
+                                        />
+                                        <p className="text-[9px] text-muted-foreground italic">
+                                            {'Example: [{"name": "result", "type": "string"}]'}
+                                        </p>
+                                    </div>
                                 </div>
                             </TabsContent>
 
@@ -762,7 +822,7 @@ export default function ArtifactsPage() {
                             <TabsContent value="config" className="absolute inset-0 m-0">
                                 <CodeEditor value={testConfig} onChange={setTestConfig} language="json" className="h-full" />
                             </TabsContent>
-                            <TabsContent value="output" className="absolute inset-0 m-0 bg-[#0d0d0d] p-4 font-mono text-sm overflow-auto">
+                            <TabsContent value="output" className="absolute inset-0 m-0 p-4 font-mono text-sm overflow-auto transition-colors">
                                 {isTesting ? (
                                     <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
                                         <Loader2 className="h-6 w-6 animate-spin text-primary" />

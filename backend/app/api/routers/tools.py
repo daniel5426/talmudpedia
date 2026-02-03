@@ -4,7 +4,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, delete, func
+from sqlalchemy import select, and_, delete, func, text
+from sqlalchemy.exc import ProgrammingError
 
 from app.db.postgres.models.registry import ToolRegistry, ToolVersion, ToolDefinitionScope
 from app.db.postgres.session import get_db
@@ -75,42 +76,95 @@ async def list_tools(
     """List all tools for the current tenant or global tools."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
-    stmt = select(ToolRegistry).where(
-        and_(
-            (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None),
-            ToolRegistry.is_active == is_active
+    try:
+        stmt = select(ToolRegistry).where(
+            and_(
+                (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None),
+                ToolRegistry.is_active == is_active
+            )
+        ).offset(skip).limit(limit).order_by(ToolRegistry.name.asc())
+
+        result = await db.execute(stmt)
+        tools = result.scalars().all()
+
+        count_stmt = select(func.count(ToolRegistry.id)).where(
+            (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None)
         )
-    ).offset(skip).limit(limit).order_by(ToolRegistry.name.asc())
-    
-    result = await db.execute(stmt)
-    tools = result.scalars().all()
-    
-    count_stmt = select(func.count(ToolRegistry.id)).where(
-        (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None)
-    )
-    total_res = await db.execute(count_stmt)
-    total = total_res.scalar()
-    
-    return ToolListResponse(
-        tools=[ToolResponse(
-            id=t.id,
-            tenant_id=t.tenant_id,
-            name=t.name,
-            slug=t.slug,
-            description=t.description,
-            scope=t.scope.value,
-            input_schema=t.schema.get("input", {}),
-            output_schema=t.schema.get("output", {}),
-            config_schema=t.config_schema or {},
-            artifact_id=t.artifact_id,
-            artifact_version=t.artifact_version,
-            is_active=t.is_active,
-            is_system=t.is_system,
-            created_at=t.created_at,
-            updated_at=t.updated_at
-        ) for t in tools],
-        total=total
-    )
+        total_res = await db.execute(count_stmt)
+        total = total_res.scalar()
+
+        return ToolListResponse(
+            tools=[ToolResponse(
+                id=t.id,
+                tenant_id=t.tenant_id,
+                name=t.name,
+                slug=t.slug,
+                description=t.description,
+                scope=t.scope.value,
+                input_schema=t.schema.get("input", {}),
+                output_schema=t.schema.get("output", {}),
+                config_schema=t.config_schema or {},
+                artifact_id=t.artifact_id,
+                artifact_version=t.artifact_version,
+                is_active=t.is_active,
+                is_system=t.is_system,
+                created_at=t.created_at,
+                updated_at=t.updated_at
+            ) for t in tools],
+            total=total
+        )
+    except ProgrammingError:
+        # Fallback for legacy schema without artifact columns
+        await db.rollback()
+        raw = await db.execute(
+            text(
+                """
+                SELECT id, tenant_id, name, slug, description, scope, schema, config_schema,
+                       is_active, is_system, created_at, updated_at
+                FROM tool_registry
+                WHERE (tenant_id = :tid OR tenant_id IS NULL)
+                  AND is_active = :is_active
+                ORDER BY name ASC
+                LIMIT :limit OFFSET :skip
+                """
+            ),
+            {"tid": str(tid), "is_active": is_active, "limit": limit, "skip": skip},
+        )
+        rows = raw.fetchall()
+
+        count_raw = await db.execute(
+            text(
+                """
+                SELECT COUNT(id)
+                FROM tool_registry
+                WHERE (tenant_id = :tid OR tenant_id IS NULL)
+                """
+            ),
+            {"tid": str(tid)},
+        )
+        total = count_raw.scalar() or 0
+
+        tools = []
+        for row in rows:
+            tools.append(ToolResponse(
+                id=row[0],
+                tenant_id=row[1],
+                name=row[2],
+                slug=row[3],
+                description=row[4],
+                scope=row[5],
+                input_schema=(row[6] or {}).get("input", {}),
+                output_schema=(row[6] or {}).get("output", {}),
+                config_schema=row[7] or {},
+                artifact_id=None,
+                artifact_version=None,
+                is_active=row[8],
+                is_system=row[9],
+                created_at=row[10],
+                updated_at=row[11],
+            ))
+
+        return ToolListResponse(tools=tools, total=total)
 
 @router.post("", response_model=ToolResponse)
 async def create_tool(

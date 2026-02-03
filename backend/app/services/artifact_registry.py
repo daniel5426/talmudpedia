@@ -138,10 +138,16 @@ class ArtifactRegistryService:
         required_config = [f for f in config_fields if f.required]
         optional_config = [f for f in config_fields if not f.required]
         
+        category_value = manifest.get("category", "custom")
+        try:
+            category = OperatorCategory(category_value)
+        except Exception:
+            category = OperatorCategory.CUSTOM
+
         return OperatorSpec(
             operator_id=manifest["id"],
             display_name=manifest["display_name"],
-            category=OperatorCategory(manifest.get("category", "custom")),
+            category=category,
             version=str(manifest.get("version", "1.0.0")),
             description=manifest.get("description"),
             input_type=DataType(manifest["input_type"]),

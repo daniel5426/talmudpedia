@@ -32,6 +32,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
 import {
     AgentNodeData,
+    AgentNodeSpec,
     ConfigFieldSpec,
     CATEGORY_COLORS,
     getNodeSpec
@@ -43,7 +44,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
-import { modelsService, toolsService, ragAdminService, LogicalModel, ToolDefinition } from "@/services"
+import { modelsService, toolsService, ragAdminService, agentService, AgentOperatorSpec, LogicalModel, ToolDefinition } from "@/services"
 import { useTenant } from "@/contexts/TenantContext"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
 import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
@@ -811,6 +812,7 @@ export function ConfigPanel({
     const [models, setModels] = useState<ResourceOption[]>([])
     const [tools, setTools] = useState<ResourceOption[]>([])
     const [namespaces, setNamespaces] = useState<ResourceOption[]>([])
+    const [operatorSpecs, setOperatorSpecs] = useState<AgentOperatorSpec[]>([])
     const [loading, setLoading] = useState(true)
 
     const { currentTenant } = useTenant()
@@ -855,17 +857,46 @@ export function ConfigPanel({
         loadResources()
     }, [currentTenant?.slug])
 
+    useEffect(() => {
+        agentService.listOperators()
+            .then(setOperatorSpecs)
+            .catch((error) => {
+                console.error("Failed to load agent operators:", error)
+                setOperatorSpecs([])
+            })
+    }, [])
+
     const handleFieldChange = (fieldName: string, value: unknown) => {
         const newConfig = { ...localConfig, [fieldName]: value }
         setLocalConfig(newConfig)
         onConfigChange(nodeId, newConfig)
     }
 
-    const nodeSpec = getNodeSpec(data.nodeType)
-    const configFields = nodeSpec?.configFields || []
+    const dynamicSpec = operatorSpecs.length
+        ? operatorSpecs.find((op) => op.type === data.nodeType)
+        : undefined
 
-    const color = CATEGORY_COLORS[data.category]
-    const Icon = CATEGORY_ICONS[data.nodeType] || CATEGORY_ICONS[data.category] || Hash
+    const resolvedSpec: AgentNodeSpec | undefined = dynamicSpec
+        ? {
+            nodeType: dynamicSpec.type as AgentNodeSpec["nodeType"],
+            displayName: dynamicSpec.display_name,
+            description: dynamicSpec.description,
+            category: dynamicSpec.category as AgentNodeSpec["category"],
+            inputType: (dynamicSpec.ui?.inputType as AgentNodeSpec["inputType"]) || "any",
+            outputType: (dynamicSpec.ui?.outputType as AgentNodeSpec["outputType"]) || "any",
+            icon: (dynamicSpec.ui?.icon as string) || "Circle",
+            configFields: (dynamicSpec.ui?.configFields as ConfigFieldSpec[]) || [],
+        }
+        : undefined
+
+    const nodeSpec = resolvedSpec || getNodeSpec(data.nodeType)
+    const configFields = ((data as any).configFields as ConfigFieldSpec[]) || nodeSpec?.configFields || []
+
+    const displayName = data.displayName || nodeSpec?.displayName || data.nodeType
+    const category = data.category || nodeSpec?.category || "data"
+
+    const color = CATEGORY_COLORS[category] || CATEGORY_COLORS.data
+    const Icon = CATEGORY_ICONS[data.nodeType] || CATEGORY_ICONS[category] || Hash
 
     return (
         <div className="flex flex-col min-w-[320px]">
@@ -878,7 +909,7 @@ export function ConfigPanel({
                         <Icon className="h-4 w-4 text-foreground" />
                     </div>
                     <div>
-                        <h3 className="text-xs font-bold text-foreground/80 uppercase tracking-tight">{data.displayName}</h3>
+                        <h3 className="text-xs font-bold text-foreground/80 uppercase tracking-tight">{displayName}</h3>
                         <p className="text-[10px] text-muted-foreground leading-none mt-0.5 uppercase tracking-wider font-medium opacity-50">
                             Settings
                         </p>

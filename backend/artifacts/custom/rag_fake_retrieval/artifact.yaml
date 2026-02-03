@@ -1,0 +1,21 @@
+id: custom/rag_fake_retrieval
+version: "1.0.0"
+display_name: RAG Fake Retrieval
+category: retrieval
+description: Fake retrieval operator that emits deterministic search results.
+input_type: query
+output_type: search_results
+config:
+  - name: result_count
+    type: integer
+    default: 2
+    description: Number of fake results to emit
+  - name: source
+    type: string
+    default: "fake"
+    description: Source label for test results
+scope: rag
+author: Test Suite
+tags:
+  - test
+  - rag

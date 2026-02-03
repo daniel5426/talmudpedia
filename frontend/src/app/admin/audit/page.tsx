@@ -17,7 +17,7 @@ import {
   ChevronRight
 } from "lucide-react"
 
-import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -92,9 +92,9 @@ export default function AuditPage() {
 
   const ResultBadge = ({ result }: { result: string }) => {
     switch (result) {
-      case "success": return <Badge variant="default" className="bg-green-500 hover:bg-green-600 gap-1"><CheckCircle2 className="size-3" /> Success</Badge>
+      case "success": return <Badge variant="default" className="bg-emerald-500 hover:bg-emerald-600 gap-1"><CheckCircle2 className="size-3" /> Success</Badge>
       case "failure": return <Badge variant="destructive" className="gap-1"><XCircle className="size-3" /> Failure</Badge>
-      case "denied": return <Badge variant="secondary" className="bg-orange-500 text-white hover:bg-orange-600 gap-1"><AlertCircle className="size-3" /> Denied</Badge>
+      case "denied": return <Badge variant="secondary" className="bg-amber-500 text-white hover:bg-amber-600 gap-1"><AlertCircle className="size-3" /> Denied</Badge>
       default: return <Badge variant="outline">{result}</Badge>
     }
   }
@@ -117,14 +117,13 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-muted/20 w-full" dir={direction}>
+    <div className="flex flex-col h-full bg-muted/30 w-full" dir={direction}>
       <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <CustomBreadcrumb items={[
-              { label: "Audit Logs", active: true },
-            ]} />
-          </div>
+          <CustomBreadcrumb items={[
+            { label: "Security & Org", href: "/admin/organization" },
+            { label: "Audit Logs", active: true }
+          ]} />
         </div>
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-muted/50 px-2 py-0.5 rounded-full border">
           <Activity className="size-3 text-primary" />
@@ -132,41 +131,72 @@ export default function AuditPage() {
         </div>
       </header>
 
-      <div className="flex-1 p-6 min-h-0 overflow-hidden">
-        <Card className="h-full flex flex-col border-none shadow-md ring-1 ring-border/50 overflow-hidden">
-          <CardHeader className="py-4 border-b bg-muted/10">
-            <div className="flex flex-wrap gap-4">
-              <div className="flex-1 min-w-[200px] relative">
+      <div className="flex-1 min-h-0 p-6 overflow-hidden">
+        <div className="flex flex-col h-full gap-6 min-h-0">
+          <div className={cn("space-y-2", isRTL ? "text-right" : "text-left")}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">Audit Logs</h2>
+                <p className="text-sm text-muted-foreground">Track security events, access attempts, and data changes.</p>
+              </div>
+              <Badge variant="outline" className="text-xs">{total.toLocaleString()} entries</Badge>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+              <div className="lg:col-span-4 relative">
                 <Search className={cn("absolute top-2.5 size-4 text-muted-foreground", isRTL ? "right-2.5" : "left-2.5")} />
                 <Input
-                  placeholder="Search by Actor ID..."
-                  className={cn("bg-background shadow-sm", isRTL ? "pr-9 text-right" : "pl-9 text-left")}
+                  placeholder="Actor ID"
+                  className={cn("bg-background", isRTL ? "pr-9 text-right" : "pl-9 text-left")}
                   onChange={e => setFilters(prev => ({ ...prev, actor_id: e.target.value, skip: 0 }))}
                 />
               </div>
-              <div className="w-48">
+              <div className="lg:col-span-2">
                 <select
-                  className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm shadow-sm", isRTL ? "text-right" : "text-left")}
+                  className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm", isRTL ? "text-right" : "text-left")}
                   onChange={e => setFilters(prev => ({ ...prev, action: e.target.value || undefined, skip: 0 }))}
                   dir={direction}
                 >
-                  <option value="">All Actions</option>
+                  <option value="">Action</option>
                   {["read", "write", "delete", "execute", "admin"].map(a => <option key={a} value={a}>{a.toUpperCase()}</option>)}
                 </select>
               </div>
-              <div className="w-48">
+              <div className="lg:col-span-2">
                 <select
-                  className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm shadow-sm", isRTL ? "text-right" : "text-left")}
+                  className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm", isRTL ? "text-right" : "text-left")}
                   onChange={e => setFilters(prev => ({ ...prev, resource_type: e.target.value || undefined, skip: 0 }))}
                   dir={direction}
                 >
-                  <option value="">All Resources</option>
+                  <option value="">Resource</option>
                   {["index", "pipeline", "job", "org_unit", "role", "membership", "audit"].map(r => <option key={r} value={r}>{r.toUpperCase()}</option>)}
                 </select>
               </div>
+              <div className="lg:col-span-2">
+                <select
+                  className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm", isRTL ? "text-right" : "text-left")}
+                  onChange={e => setFilters(prev => ({ ...prev, result: e.target.value || undefined, skip: 0 }))}
+                  dir={direction}
+                >
+                  <option value="">Result</option>
+                  {["success", "failure", "denied"].map(r => <option key={r} value={r}>{r.toUpperCase()}</option>)}
+                </select>
+              </div>
+              <div className="lg:col-span-2 grid grid-cols-2 gap-2">
+                <Input
+                  type="date"
+                  className={cn(isRTL ? "text-right" : "text-left")}
+                  onChange={e => setFilters(prev => ({ ...prev, start_date: e.target.value || undefined, skip: 0 }))}
+                />
+                <Input
+                  type="date"
+                  className={cn(isRTL ? "text-right" : "text-left")}
+                  onChange={e => setFilters(prev => ({ ...prev, end_date: e.target.value || undefined, skip: 0 }))}
+                />
+              </div>
             </div>
-          </CardHeader>
-          <CardContent className="p-0 flex-1 overflow-auto custom-scrollbar">
+          </div>
+
+          <Card className="border-none shadow-sm ring-1 ring-border/50 overflow-hidden flex-1 min-h-0 flex flex-col">
+            <CardContent className="p-0 flex-1 overflow-auto custom-scrollbar">
             {isLoading ? (
               <div className="p-6 space-y-4">
                 {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-12 w-full rounded-xl" />)}
@@ -196,7 +226,7 @@ export default function AuditPage() {
                 <TableBody>
                   {logs.map(log => (
                     <TableRow key={log.id} className="cursor-pointer hover:bg-muted/10 transition-colors" onClick={() => handleViewDetail(log.id)}>
-                      <TableCell className={cn("text-xs whitespace-nowrap py-4", isRTL ? "text-right" : "text-left")}>
+                      <TableCell className={cn("text-xs whitespace-nowrap py-4", isRTL ? "text-right" : "text-left")}> 
                         <div className="font-medium text-muted-foreground/80">
                           {new Date(log.timestamp).toLocaleDateString()}
                         </div>
@@ -253,13 +283,15 @@ export default function AuditPage() {
               </Button>
             </div>
           </div>
-        </Card>
+          </Card>
+
+        </div>
       </div>
-      {/* Log Detail Dialog */}
+
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-auto" dir={direction}>
           <DialogHeader>
-            <DialogTitle className={cn("flex items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}>
+            <DialogTitle className={cn("flex items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}> 
               Audit Entry Details
               {selectedLog && <ResultBadge result={selectedLog.result} />}
             </DialogTitle>
@@ -268,29 +300,29 @@ export default function AuditPage() {
           {selectedLog && (
             <div className="space-y-6 py-4">
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm border p-4 rounded-xl bg-muted/10">
-                <div className={cn("space-y-1", isRTL ? "text-right" : "text-left")}>
+                <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
                   <Label className="text-[10px] uppercase opacity-50 block">Timestamp</Label>
                   <p className="font-medium">{new Date(selectedLog.timestamp).toLocaleString()}</p>
                 </div>
-                <div className={cn("space-y-1", isRTL ? "text-right" : "text-left")}>
+                <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
                   <Label className="text-[10px] uppercase opacity-50 block">Action</Label>
                   <p className="font-medium">{selectedLog.action.toUpperCase()} on {selectedLog.resource_type.toUpperCase()}</p>
                 </div>
-                <div className={cn("space-y-1", isRTL ? "text-right" : "text-left")}>
+                <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
                   <Label className="text-[10px] uppercase opacity-50 block">Duration</Label>
                   <p className="font-medium">{selectedLog.duration_ms || 0}ms</p>
                 </div>
-                <div className={cn("space-y-1", isRTL ? "text-right" : "text-left")}>
+                <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
                   <Label className="text-[10px] uppercase opacity-50 block">Actor</Label>
-                  <p className="font-medium">{selectedLog.actor_email}</p>
+                  <p className="font-medium truncate" title={selectedLog.actor_email}>{selectedLog.actor_email}</p>
                 </div>
-                <div className={cn("space-y-1", isRTL ? "text-right" : "text-left")}>
+                <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
                   <Label className="text-[10px] uppercase opacity-50 block">IP Address</Label>
                   <p className="font-medium">{selectedLog.ip_address || "Unknown"}</p>
                 </div>
-                <div className={cn("space-y-1 overflow-hidden", isRTL ? "text-right" : "text-left")}>
+                <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
                   <Label className="text-[10px] uppercase opacity-50 block">Resource ID</Label>
-                  <p className="font-mono text-[10px] truncate">{selectedLog.resource_id}</p>
+                  <p className="font-mono text-[10px] truncate" title={selectedLog.resource_id || ""}>{selectedLog.resource_id}</p>
                 </div>
               </div>
 

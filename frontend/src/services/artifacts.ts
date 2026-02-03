@@ -23,6 +23,8 @@ export interface Artifact {
   path?: string;
   reads: string[];
   writes: string[];
+  inputs: any[];
+  outputs: any[];
 }
 
 export interface ArtifactCreateRequest {
@@ -37,6 +39,8 @@ export interface ArtifactCreateRequest {
   config_schema?: any[];
   reads?: string[];
   writes?: string[];
+  inputs?: any[];
+  outputs?: any[];
 }
 
 export interface ArtifactUpdateRequest {
@@ -50,6 +54,8 @@ export interface ArtifactUpdateRequest {
   config_schema?: any[];
   reads?: string[];
   writes?: string[];
+  inputs?: any[];
+  outputs?: any[];
 }
 
 export interface ArtifactTestRequest {

@@ -124,14 +124,47 @@ class OpenAILLM(LLMProvider):
         # Default reasoning config
         reasoning_config = kwargs.pop("reasoning", {"effort": "low", "summary": "auto"})
 
-        stream = await self.client.responses.create(
-            model=self.model,
-            reasoning=reasoning_config,
-            input=input_messages,
-            include=["reasoning.encrypted_content"],
-            stream=True,
-            **kwargs
-        )
+        try:
+            stream = await self.client.responses.create(
+                model=self.model,
+                reasoning=reasoning_config,
+                input=input_messages,
+                include=["reasoning.encrypted_content"],
+                stream=True,
+                **kwargs
+            )
+        except Exception as e:
+            err = str(e)
+            # Some models don't support encrypted reasoning content. Retry without include.
+            if "Encrypted content is not supported" in err:
+                try:
+                    stream = await self.client.responses.create(
+                        model=self.model,
+                        reasoning=reasoning_config,
+                        input=input_messages,
+                        stream=True,
+                        **kwargs
+                    )
+                except Exception as e2:
+                    err2 = str(e2)
+                    if "reasoning" in err2 and "unsupported" in err2:
+                        stream = await self.client.responses.create(
+                            model=self.model,
+                            input=input_messages,
+                            stream=True,
+                            **kwargs
+                        )
+                    else:
+                        raise
+            elif "reasoning" in err and "unsupported" in err:
+                stream = await self.client.responses.create(
+                    model=self.model,
+                    input=input_messages,
+                    stream=True,
+                    **kwargs
+                )
+            else:
+                raise
 
         async for chunk in stream:
             yield chunk

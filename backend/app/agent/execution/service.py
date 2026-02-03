@@ -148,6 +148,9 @@ class AgentExecutorService:
                 if not agent:
                     raise ValueError(f"Agent {run.agent_id} not found")
 
+                # Capture input params before commit to avoid async lazy-loads
+                run_input_params = run.input_params
+
                 # Update status
                 run.status = RunStatus.running
                 if not run.started_at:
@@ -175,7 +178,7 @@ class AgentExecutorService:
                 config = {"configurable": {"thread_id": str(run_id), "emitter": emitter}}
 
                 # 5. Run Execution
-                input_val = Command(resume=resume_payload) if resume_payload else run.input_params
+                input_val = Command(resume=resume_payload) if resume_payload else run_input_params
 
                 async for event in workflow.astream_events(input_val, config=config, version="v2"):
                     # Fire-and-forget trace persistence
@@ -276,6 +279,15 @@ class AgentExecutorService:
                 try:
                     # Wait for event with timeout to check execution status
                     event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+                    # Persist explicit emitter events (tools, nodes, etc.)
+                    self._schedule_trace_persistence(run_id, {
+                        "event": event.event,
+                        "data": event.data,
+                        "name": event.name,
+                        "run_id": event.span_id,
+                        "metadata": event.metadata,
+                        "parent_ids": [],
+                    })
                     yield event
                 except asyncio.TimeoutError:
                     # Check if execution is done and queue is empty
@@ -310,18 +322,38 @@ class AgentExecutorService:
         """
         Persists execution events to AgentTrace table.
         """
+        from uuid import UUID as _UUID, uuid4 as _uuid4
         kind = event.get("event")
         name = event.get("name")
         span_id = event.get("run_id")
+        span_id_str = str(span_id) if span_id is not None else None
         
         if kind not in ("on_chain_start", "on_chain_end", "on_tool_start", "on_tool_end", "on_chat_model_start", "on_chat_model_end"):
             return
+        if not span_id_str:
+            return
+
+        # Avoid duplicate inserts for the same span
+        existing = await db.execute(
+            select(AgentTrace).where(
+                AgentTrace.run_id == run_id,
+                AgentTrace.span_id == span_id_str,
+            )
+        )
+        trace_existing = existing.scalars().first()
 
         if kind.endswith("_start"):
+            if trace_existing:
+                return
+            # If span_id isn't a UUID, generate a stable DB id
+            try:
+                trace_id = _UUID(span_id_str)
+            except (ValueError, TypeError):
+                trace_id = _uuid4()
             trace = AgentTrace(
-                id=span_id,
+                id=trace_id,
                 run_id=run_id,
-                span_id=str(span_id),
+                span_id=span_id_str,
                 parent_span_id=str(event.get("parent_ids", [])[-1]) if event.get("parent_ids") else None,
                 name=name,
                 span_type=kind,
@@ -332,12 +364,28 @@ class AgentExecutorService:
             db.add(trace)
         
         elif kind.endswith("_end"):
-            # Check if exists first (it should)
-            result = await db.execute(select(AgentTrace).where(AgentTrace.span_id == str(span_id)))
-            trace = result.scalars().first()
-            if trace:
-                trace.end_time = datetime.utcnow()
-                trace.outputs = self._serialize_state(event.get("data", {}).get("output"))
+            if trace_existing:
+                trace_existing.end_time = datetime.utcnow()
+                trace_existing.outputs = self._serialize_state(event.get("data", {}).get("output"))
+            else:
+                try:
+                    trace_id = _UUID(span_id_str)
+                except (ValueError, TypeError):
+                    trace_id = _uuid4()
+                trace = AgentTrace(
+                    id=trace_id,
+                    run_id=run_id,
+                    span_id=span_id_str,
+                    parent_span_id=str(event.get("parent_ids", [])[-1]) if event.get("parent_ids") else None,
+                    name=name,
+                    span_type=kind,
+                    inputs=self._serialize_state(event.get("data", {}).get("input")),
+                    start_time=datetime.utcnow(),
+                    end_time=datetime.utcnow(),
+                    outputs=self._serialize_state(event.get("data", {}).get("output")),
+                    metadata_=event.get("metadata", {})
+                )
+                db.add(trace)
 
     def _serialize_state(self, state: Any) -> Any:
         """Helper to make state JSON serializable (handling LangChain messages)."""
@@ -363,4 +411,3 @@ class AgentExecutorService:
             return state.isoformat()
             
         return state
-

@@ -142,7 +142,7 @@ export const ChainOfThoughtStep = memo(
     };
 
     const shouldShimmer =
-      label === "חושב..." ||
+      label === "Thinking..." ||
       (label === "Retrieval" && status === "active" && !description);
     const showDetails = !isCollapsible || isExpanded;
     const labelContent = shouldShimmer ? (

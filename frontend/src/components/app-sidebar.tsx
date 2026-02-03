@@ -54,24 +54,6 @@ const data = {
       items: [],
     },
     {
-      title: "Organization",
-      url: "/admin/organization",
-      icon: Landmark,
-      items: [],
-    },
-    {
-      title: "Security & Roles",
-      url: "/admin/security",
-      icon: ShieldCheck,
-      items: [],
-    },
-    {
-      title: "Audit Logs",
-      url: "/admin/audit",
-      icon: History,
-      items: [],
-    },
-    {
       title: "Users",
       url: "/admin/users",
       icon: Users,
@@ -88,6 +70,28 @@ const data = {
       url: "/admin/artifacts",
       icon: Code2,
       items: [],
+    },
+    {
+      title: "Security & Org",
+      url: "/admin/organization",
+      icon: ShieldCheck,
+      items: [
+        {
+          title: "Organization",
+          url: "/admin/organization",
+          icon: Landmark,
+        },
+        {
+          title: "Security & Roles",
+          url: "/admin/security",
+          icon: ShieldCheck,
+        },
+        {
+          title: "Audit Logs",
+          url: "/admin/audit",
+          icon: History,
+        },
+      ],
     },
     {
       title: "RAG Management",
@@ -290,15 +294,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50 shadow-none border" {...props}>
       <SidebarHeader>
-        <div dir={direction} className="flex items-center justify-between gap-1 p-2">
-          {user && (user.role === "admin" || isAdminPath) && (
+        <div dir={direction} className={`flex items-center gap-1 p-2 ${(isSidebarOpen || openMobile) ? "justify-between" : "justify-center"}`}>
+          {(isSidebarOpen || openMobile) && user && (user.role === "admin" || isAdminPath) && (
             <div className="flex-1 overflow-hidden">
               <TenantSwitcher />
             </div>
           )}
-          {(isSidebarOpen || openMobile) && <SidebarTrigger
+          <SidebarTrigger
             aria-label="Toggle sidebar"
-            className="size-8" />}
+            className="size-8" />
         </div>
       </SidebarHeader>
       <SidebarContent className="flex h-full flex-col gap-4">

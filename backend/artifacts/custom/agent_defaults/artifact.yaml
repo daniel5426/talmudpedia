@@ -1,0 +1,39 @@
+id: custom/agent_defaults
+version: "1.0.0"
+display_name: Agent Defaults
+category: logic
+description: Emits default values when no input mappings are provided.
+input_type: none
+output_type: none
+scope: agent
+inputs:
+  - name: static_value
+    type: string
+    required: false
+    default: "static-default"
+  - name: count_hint
+    type: integer
+    required: false
+    default: 0
+  - name: feature_flag
+    type: boolean
+    required: false
+    default: true
+outputs:
+  - name: static_value
+    type: string
+  - name: count_hint
+    type: integer
+  - name: feature_flag
+    type: boolean
+reads:
+  - messages
+writes:
+  - context
+ui:
+  icon: ToggleLeft
+  color: "#22c55e"
+author: Test Suite
+tags:
+  - test
+  - agent

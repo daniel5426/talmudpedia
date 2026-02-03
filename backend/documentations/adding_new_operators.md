@@ -1,124 +1,92 @@
-# Adding New Operators
+# Adding New Operators (Code Artifacts)
 
-This guide explains the process of adding a new operator to the RAG Pipeline platform. Our platform uses a **Contract-Driven Architecture** where every operator consists of a **Specification (Spec)** and an **Executor**.
-
----
-
-## 1. Backend Implementation
-
-### Step A: Define the Operator Specification
-Operators are defined in `backend/app/rag/pipeline/registry.py`. You must add your operator to the appropriate category dictionary (e.g., `TRANSFORM_OPERATORS`, `RETRIEVAL_OPERATORS`, etc.).
-
-```python
-# Example: Adding a new Text Translator operator
-"text_translator": OperatorSpec(
-    operator_id="text_translator",
-    display_name="Text Translator",
-    category=OperatorCategory.TRANSFORM,
-    version="1.0.0",
-    description="Translates text between languages",
-    input_type=DataType.NORMALIZED_DOCUMENTS,
-    output_type=DataType.NORMALIZED_DOCUMENTS,
-    required_config=[
-        ConfigFieldSpec(
-            name="target_language",
-            field_type=ConfigFieldType.SELECT,
-            options=["en", "he", "fr", "es"],
-            required=True,
-            description="The language to translate to"
-        ),
-    ],
-    tags=["nlp", "translation"],
-)
-```
-
-**Key Fields:**
-- `operator_id`: Unique identifier used by the engine.
-- `input_type` / `output_type`: Defines compatibility with other nodes (Type Safety).
-- `required_config`: Fields the user *must* fill in the UI.
-
-### Step B: Create the Executor
-Executors live in `backend/app/rag/pipeline/operator_executor.py`. Create a class that inherits from `OperatorExecutor`.
-
-```python
-class TextTranslatorExecutor(OperatorExecutor):
-    async def execute(
-        self, 
-        input_data: OperatorInput, 
-        context: ExecutionContext
-    ) -> OperatorOutput:
-        # 1. Get config
-        target_lang = context.config.get("target_language", "en")
-        
-        # 2. Process data
-        documents = input_data.data
-        translated_docs = []
-        
-        for doc in documents:
-            # Your logic here...
-            translated_docs.append(translate(doc, target_lang))
-            
-        # 3. Return results
-        return OperatorOutput(
-            operator_id=self.spec.operator_id,
-            data=translated_docs,
-            success=True
-        )
-```
-
-### Step C: Register the Executor
-In `backend/app/rag/factory.py` (or the dispatcher within `operator_executor.py`), ensure the new executor is mapped to its `operator_id`.
+This guide explains how to add new logic to the platform using the **Code Artifacts** system. Artifacts are file-based operators that can be used in RAG Pipelines, Agent Graphs, and as Tools.
 
 ---
 
-## 2. Frontend Implementation
+## 1. Creating a New Artifact
 
-To make the operator visible and functional in the Builder UI, follow these steps in `frontend/src/components/pipeline/`.
+The preferred way to add logic is by creating an artifact in `backend/artifacts/`.
 
-### Step A: Update Category & Types (If needed)
-If you created a new category or data type, add it to `types.ts`:
-- `OperatorCategory`: Add the new category string.
-- `DataType`: Add the new data type string.
-- `CATEGORY_COLORS`: Define a CSS variable for the node color.
-
-### Step B: Map Component Type
-Update `nodes/index.ts` to tell ReactFlow which visual component to use for your category:
-
-```typescript
-export const nodeTypes = {
-  // ...
-  translation: TransformNode, // Use TransformNode for most processing tasks
-}
+### Step A: Scaffold the Directory
+Use the CLI helper to create a standard structure:
+```bash
+python3 backend/scripts/create_artifact.py my_awesome_operator --scope agent
 ```
 
-### Step C: Add Category Icon
-Update `nodes/BaseNode.tsx` to map an icon from `lucide-react`:
+### Step B: Define the Manifest (`artifact.yaml`)
+Define your operator's contract. The **Field Mapping Architecture** allows you to specify explicit inputs and outputs.
 
-```typescript
-const CATEGORY_ICONS: Record<string, React.ElementType> = {
-  // ...
-  translation: Languages, 
-}
+```yaml
+id: my_awesome_operator
+display_name: Awesome Operator
+version: 1.0.0
+category: transform
+scope: agent  # or rag
+
+# Explicit Input Schema (Enables Field Mapping in UI)
+inputs:
+  - name: query
+    type: string
+    required: true
+    description: "The text to process"
+  - name: max_length
+    type: number
+    default: 100
+
+# Output Schema
+outputs:
+  - name: result
+    type: string
+
+# Traditional Configuration (Static settings)
+config:
+  - name: api_key
+    type: string
+    required: false
 ```
 
-### Step D: Update Catalog Visibility
-In `NodeCatalog.tsx`, ensure your new category is included in the `categories` list for the relevant pipeline type:
+### Step C: Implement the Handler (`handler.py`)
+Implement the execution logic. The `exec_context` now contains a resolved `inputs` dictionary.
 
-```typescript
-const categories = useMemo(() => {
-  if (pipelineType === "ingestion") {
-    return ["source", "normalization", "translation", "storage"]; // Add it here
-  }
-  // ...
-}, [pipelineType]);
+```python
+async def execute(state: dict, config: dict, exec_context: dict) -> dict:
+    # 1. Access resolved inputs (mapped from UI)
+    query = exec_context["inputs"].get("query")
+    
+    # 2. Access static config
+    api_key = config.get("api_key")
+    
+    # 3. Process
+    processed_text = await my_logic(query, api_key)
+    
+    # 4. Return updates to merge into Agent State
+    return {
+        "processed_result": processed_text
+    }
 ```
+
+---
+
+## 2. Using Field Mapping in the Agent Builder
+
+When you add an artifact node to the Agent Builder, you can map its inputs using **Expressions**:
+
+- **Direct State Access**: `{{ messages[-1].content }}`
+- **Upstream Connection**: `{{ upstream.previous_node_id.output_field }}`
+- **String Interpolation**: `Translate this: {{ text_to_translate }}`
+
+---
+
+## 3. Traditional (Built-in) Operators
+
+For core platform operators that are hardcoded in the engine, follow the legacy process of adding to `backend/app/rag/pipeline/registry.py` and `operator_executor.py`. However, **Code Artifacts are recommended for 95% of use cases.**
 
 ---
 
 ## Summary Checklist
-- [ ] Added `OperatorSpec` to `registry.py`
-- [ ] Added `OperatorExecutor` to `operator_executor.py`
-- [ ] Connected Spec to Executor in the Factory
-- [ ] (Frontend) Added category/icon to `BaseNode.tsx`
-- [ ] (Frontend) Updated `nodeTypes` in `nodes/index.ts`
-- [ ] (Frontend) Verified visibility in `NodeCatalog.tsx`
+- [ ] Created artifact directory in `backend/artifacts/`
+- [ ] Defined `inputs` and `outputs` in `artifact.yaml`
+- [ ] Implemented `execute` in `handler.py`
+- [ ] Added unit tests in `tests/`
+- [ ] (Frontend) Verified custom icon and mapping UI in the Agent Builder

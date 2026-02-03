@@ -39,7 +39,8 @@ class AgentNodePosition(BaseModel):
 class AgentNode(BaseModel):
     """A node in the agent graph."""
     id: str
-    type: NodeType
+    # Use string type to support dynamic artifact/tool nodes in addition to static enums.
+    type: str
     position: AgentNodePosition
     label: Optional[str] = None
     config: dict[str, Any] = Field(default_factory=dict)
@@ -90,10 +91,10 @@ class AgentGraph(BaseModel):
         return None
     
     def get_input_nodes(self) -> list[AgentNode]:
-        return [n for n in self.nodes if n.type in (NodeType.INPUT, NodeType.START)]
+        return [n for n in self.nodes if str(n.type) in (NodeType.INPUT.value, NodeType.START.value)]
     
     def get_output_nodes(self) -> list[AgentNode]:
-        return [n for n in self.nodes if n.type in (NodeType.OUTPUT, NodeType.END)]
+        return [n for n in self.nodes if str(n.type) in (NodeType.OUTPUT.value, NodeType.END.value)]
     
     def get_outgoing_edges(self, node_id: str) -> list[AgentEdge]:
         return [e for e in self.edges if e.source == node_id]

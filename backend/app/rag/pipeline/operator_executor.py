@@ -1015,16 +1015,32 @@ class VectorSearchExecutor(OperatorExecutor):
         from app.rag.factory import VectorStoreConfig
         
         config_dict = {**context.config}
-        index_name = config_dict.get("index_name")
-        if not index_name:
-            raise ValueError("index_name is required for search")
-            
-        vs_config = VectorStoreConfig(
-            provider=config_dict.get("provider", "pgvector"), # default
-            **{k: v for k, v in config_dict.items() if k not in ["index_name"]}
-        )
+        knowledge_store_id = config_dict.get("knowledge_store_id")
         
-        vector_store = RAGFactory.create_vector_store(vs_config)
+        # Prefer Knowledge Store if provided (matches registry contract)
+        if knowledge_store_id:
+            from uuid import UUID
+            from app.rag.adapters import create_adapter
+            from app.db.postgres.models import KnowledgeStore
+            
+            db = getattr(context, "db", None)
+            if not db:
+                raise ValueError("Database session is required for knowledge store search")
+            store = await db.get(KnowledgeStore, UUID(knowledge_store_id))
+            if not store:
+                raise ValueError(f"Knowledge store not found: {knowledge_store_id}")
+            adapter = create_adapter(store.backend, store.backend_config)
+            vector_store = adapter
+        else:
+            index_name = config_dict.get("index_name")
+            if not index_name:
+                raise ValueError("index_name is required for search")
+            provider = config_dict.pop("provider", "pgvector")
+            vs_config = VectorStoreConfig(
+                provider=provider,  # default
+                **{k: v for k, v in config_dict.items() if k not in ["index_name", "provider"]}
+            )
+            vector_store = RAGFactory.create_vector_store(vs_config)
         
         query_val = input_data.data
         vector = None
@@ -1040,16 +1056,26 @@ class VectorSearchExecutor(OperatorExecutor):
         if not vector:
             raise ValueError("No query vector found for search")
             
-        results = await vector_store.search(
-            index_name=index_name,
-            query_vector=vector,
-            limit=config_dict.get("top_k", 10),
-            filters=filters,
-            namespace=config_dict.get("namespace")
-        )
+        if knowledge_store_id:
+            results = await vector_store.query(
+                vector=vector,
+                top_k=config_dict.get("top_k", 10),
+                filters=filters,
+                namespace=config_dict.get("namespace")
+            )
+            output_data = [r.model_dump() for r in results]
+        else:
+            results = await vector_store.search(
+                index_name=index_name,
+                query_vector=vector,
+                top_k=config_dict.get("top_k", 10),
+                filter=filters,
+                namespace=config_dict.get("namespace")
+            )
+            output_data = [r.model_dump() for r in results]
         
         return OperatorOutput(
-            data=[r.model_dump() for r in results],
+            data=output_data,
             metadata=input_data.metadata,
             operator_id=self.operator_id,
             success=True
@@ -1071,9 +1097,10 @@ class HybridSearchExecutor(OperatorExecutor):
         config_dict = {**context.config}
         index_name = config_dict.get("index_name")
         
+        provider = config_dict.pop("provider", "pgvector")
         vs_config = VectorStoreConfig(
-            provider=config_dict.get("provider", "pgvector"),
-            **{k: v for k, v in config_dict.items() if k not in ["index_name"]}
+            provider=provider,
+            **{k: v for k, v in config_dict.items() if k not in ["index_name", "provider"]}
         )
         
         vector_store = RAGFactory.create_vector_store(vs_config)
@@ -1095,8 +1122,8 @@ class HybridSearchExecutor(OperatorExecutor):
             index_name=index_name,
             query_vector=vector,
             query_text=text,
-            limit=config_dict.get("top_k", 10),
-            filters=filters,
+            top_k=config_dict.get("top_k", 10),
+            filter=filters,
             alpha=config_dict.get("alpha", 0.5),
             namespace=config_dict.get("namespace")
         )

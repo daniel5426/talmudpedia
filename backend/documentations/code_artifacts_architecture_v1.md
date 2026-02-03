@@ -40,6 +40,17 @@ Expanded the artifact system to support Agent nodes and Tools, making artifacts 
 - **Dynamic Node Registration**: Agents now dynamically discover and register artifact-based nodes at startup via the `AgentOperatorRegistry`.
 - **First-Class Builder Support**: The Agent Builder frontend (`AgentBuilder.tsx`) now supports dynamic node types (e.g., `artifact:my_id`), allowing users to drag-and-drop filesystem artifacts alongside standard nodes.
 - **Tool System Integration**: Updated `ToolRegistry` and `ToolNodeExecutor` to allow artifacts to be wrapped as callable Tools (`implementation_type: artifact`), enabling agents to use complex custom logic as tools.
+    
+### 7. Field Mapping Architecture (Phase 5)
+Implemented a robust data-flow layer that decouples node execution from the global agent state, enabling predictable and reusable artifacts.
+- **Explicit Input/Output Schemas**: Artifacts now declare structured `inputs` and `outputs` in their `artifact.yaml`, defining expected field names, types, and requirements.
+- **FieldResolver Service**: A dedicated service (`field_resolver.py`) that resolves mapping expressions at runtime using `{{ ... }}` syntax.
+- **Dynamic Expression Engine**: Supports sophisticated state traversal:
+    - **State Access**: `{{ messages }}` or `{{ state.variables.my_var }}`.
+    - **Upstream Referencing**: `{{ upstream.node_id.output_field }}` enables direct data pass-through between specific nodes.
+    - **String Interpolation**: `The user said: {{ messages[-1].content }}`.
+- **Validation Layer**: Built-in validation with strict/lenient modes ensures operators receive the correct data format, reducing runtime "silent failures".
+- **Execution Lifecycle**: `ArtifactNodeExecutor` now automatically resolves inputs and captures outputs, storing them in `state._node_outputs` for downstream consumption.
 
 ## Technical Components Modified
 
@@ -48,9 +59,10 @@ Expanded the artifact system to support Agent nodes and Tools, making artifacts 
 - `app/db/postgres/models/rag.py`: Removed direct definition of `CustomOperator` in favor of the shared model.
 - `app/services/artifact_registry.py`: Core discovery logic updated to support scoping (`agent`/`rag`).
 - `app/rag/pipeline/operator_executor.py`: RAG-specific execution handling.
-- `app/agent/executors/artifact.py`: **[NEW]** specialized executor for Agent nodes with full observability.
-- `app/agent/executors/tool.py`: Updated to delegate execution to artifacts.
-- `app/agent/registry.py`: Dynamic registration of artifact operators.
+- `app/agent/execution/field_resolver.py`: **[NEW]** Core engine for parsing `{{ mappings }}` and validating node inputs.
+- `app/agent/executors/artifact.py`: Integrated `FieldResolver` to decouple handler execution from raw state.
+- `app/agent/graph/compiler.py`: Updated to pass `input_mappings` and persist node outputs for upstream referencing.
+- `app/agent/graph/schema.py`: Added `input_mappings` to `AgentNode` model.
 - `app/api/routers/agents.py`: Added `/operators` endpoint for dynamic catalog serving.
 - `app/api/routers/tools.py`: Updated schemas for artifact-backed tools.
 
@@ -58,6 +70,8 @@ Expanded the artifact system to support Agent nodes and Tools, making artifacts 
 - `app/admin/artifacts/page.tsx`: **[NEW]** Unified dashboard and editor for all artifact types.
 - `services/artifacts.ts`: **[NEW]** Centralized service for CRUD, testing, and promotion logic.
 - `components/app-sidebar.tsx`: Integrated top-level "Code Artifacts" navigation.
+- `components/agent-builder/types.ts`: Extended with `inputMappings` and explicit artifact I/O types.
+- `components/agent-builder/ConfigPanel.tsx`: **[UPDATE]** Added `field_mapping` editor and specialized input rendering.
 - `components/agent-builder/NodeCatalog.tsx`: Fetches and displays dynamic artifact nodes.
 - `components/agent-builder/AgentBuilder.tsx`: Logic for handling dynamic node types and props.
 - `app/admin/tools/page.tsx`: UI for creating tools backed by artifacts.

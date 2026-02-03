@@ -58,8 +58,18 @@ function NodeBranchRow({
 }
 
 function BaseNodeComponent(props: NodeProps) {
-    const data = props.data as AgentNodeData
-    const borderColor = CATEGORY_COLORS[data.category]
+    const fallbackData: AgentNodeData = {
+        nodeType: "transform",
+        category: "data",
+        displayName: "Node",
+        config: {},
+        inputType: "any",
+        outputType: "any",
+        isConfigured: false,
+        hasErrors: false,
+    }
+    const data = (props.data ?? fallbackData) as AgentNodeData
+    const borderColor = CATEGORY_COLORS[data.category] ?? CATEGORY_COLORS.data
     const Icon = NODE_ICONS[data.nodeType] || Brain
 
     const isStartNode = data.nodeType === "start"

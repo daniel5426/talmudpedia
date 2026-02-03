@@ -1,0 +1,17 @@
+id: custom/rag_query_passthrough
+version: "1.0.0"
+display_name: RAG Query Passthrough
+category: enrichment
+description: Pass through query objects while adding a tag for test coverage.
+input_type: query
+output_type: query
+config:
+  - name: tag
+    type: string
+    default: "passthrough"
+    description: Tag to attach in metadata
+scope: rag
+author: Test Suite
+tags:
+  - test
+  - rag

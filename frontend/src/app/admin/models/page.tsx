@@ -184,7 +184,7 @@ function CreateModelDialog({ onCreated }: { onCreated: () => void }) {
                             value={form.capability_type}
                             onValueChange={(v) => setForm({ ...form, capability_type: v as ModelCapabilityType })}
                         >
-                            <SelectTrigger>
+                            <SelectTrigger className="w-full">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -263,7 +263,7 @@ function AddProviderDialog({ model, onAdded }: { model: LogicalModel; onAdded: (
                             value={form.provider}
                             onValueChange={(v) => setForm({ ...form, provider: v as ModelProviderType })}
                         >
-                            <SelectTrigger>
+                            <SelectTrigger className="w-full">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>

@@ -339,7 +339,9 @@ class AgentCompiler:
                 # This enables {{ upstream.node_id.field }} expressions
                 if state_update and isinstance(state_update, dict):
                     node_outputs = state.get("_node_outputs", {})
-                    node_outputs[node.id] = state_update
+                    # Avoid cycles by excluding _node_outputs from stored snapshot
+                    safe_update = {k: v for k, v in state_update.items() if k != "_node_outputs"}
+                    node_outputs[node.id] = safe_update
                     state_update["_node_outputs"] = node_outputs
                 
                 return state_update
@@ -348,4 +350,3 @@ class AgentCompiler:
                 raise e
 
         return node_fn
-

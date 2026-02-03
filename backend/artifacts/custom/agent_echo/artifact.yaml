@@ -1,0 +1,50 @@
+id: custom/agent_echo
+version: "1.0.0"
+display_name: Agent Echo
+category: logic
+description: Echo inputs into context and transform_output.
+input_type: none
+output_type: none
+scope: agent
+inputs:
+  - name: user_text
+    type: string
+    required: true
+    description: Latest user message
+  - name: upstream_note
+    type: string
+    required: false
+    description: Note from upstream node
+  - name: tagged
+    type: string
+    required: false
+    description: Interpolated tag
+  - name: default_tag
+    type: string
+    required: false
+    default: "default-tag"
+outputs:
+  - name: echo
+    type: string
+  - name: note
+    type: string
+  - name: tagged
+    type: string
+config:
+  - name: prefix
+    type: string
+    default: "echo:"
+    description: Prefix for echoed text
+reads:
+  - messages
+  - state
+writes:
+  - context
+  - transform_output
+ui:
+  icon: MessageCircle
+  color: "#0ea5e9"
+author: Test Suite
+tags:
+  - test
+  - agent

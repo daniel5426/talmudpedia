@@ -33,3 +33,6 @@ class AgentState(TypedDict):
     
     # Error handling
     error: Optional[str]
+
+    # Internal: per-node outputs for field mapping ({{ upstream.node_id.field }})
+    _node_outputs: Dict[str, Any]

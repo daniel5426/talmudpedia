@@ -211,7 +211,7 @@ function CreateToolDialog({ onCreated }: { onCreated: () => void }) {
                             value={form.implementation_type}
                             onValueChange={(v) => setForm({ ...form, implementation_type: v as ToolImplementationType })}
                         >
-                            <SelectTrigger>
+                            <SelectTrigger className="w-full">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -227,7 +227,7 @@ function CreateToolDialog({ onCreated }: { onCreated: () => void }) {
                             <Select
                                 onValueChange={handleArtifactChange}
                             >
-                                <SelectTrigger>
+                                <SelectTrigger className="w-full">
                                     <SelectValue placeholder="Select an artifact..." />
                                 </SelectTrigger>
                                 <SelectContent>

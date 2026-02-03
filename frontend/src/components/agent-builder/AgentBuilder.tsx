@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState, useRef, useEffect } from "react"
+import { useCallback, useState, useRef, useEffect, useMemo } from "react"
 import {
     ReactFlow,
     Controls,
@@ -65,12 +65,71 @@ function AgentBuilderInner({
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
     const { screenToFlowPosition, getViewport, setViewport, getNodes } = useReactFlow()
 
-    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
+    const normalizeNode = useCallback((node: Node) => {
+        const raw: any = node as any
+        const existing = (raw.data || {}) as Partial<AgentNodeData>
+        const nodeType = (raw.type || raw.nodeType || existing.nodeType || "transform") as AgentNodeType
+        const spec = getNodeSpec(nodeType)
+        const config = existing.config ?? raw.config ?? {}
+        const category =
+            existing.category ??
+            spec?.category ??
+            (typeof nodeType === "string" && nodeType.startsWith("artifact:") ? "action" : "data")
+        const displayName =
+            existing.displayName ??
+            spec?.displayName ??
+            (config?.label as string) ??
+            nodeType
+        const inputType = existing.inputType ?? spec?.inputType ?? "any"
+        const outputType = existing.outputType ?? spec?.outputType ?? "any"
+
+        return {
+            ...node,
+            type: nodeType,
+            data: {
+                ...existing,
+                nodeType,
+                category,
+                displayName,
+                config,
+                inputType,
+                outputType,
+                isConfigured: existing.isConfigured ?? false,
+                hasErrors: existing.hasErrors ?? false,
+                inputMappings: existing.inputMappings ?? raw.input_mappings,
+            } as AgentNodeData,
+        } as Node<AgentNodeData>
+    }, [])
+
+    const normalizedInitialNodes = useMemo(() => {
+        return (initialNodes || []).map((node) => {
+            if (node.data && (node.data as AgentNodeData).category) {
+                return node as Node<AgentNodeData>
+            }
+            return normalizeNode(node)
+        })
+    }, [initialNodes, normalizeNode])
+
+    const [nodes, setNodes, onNodesChange] = useNodesState(normalizedInitialNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [mode, setMode] = useState<"build" | "execute">("build")
     const [interactionMode, setInteractionMode] = useState<InteractionMode>("pan")
     const [isCatalogVisible, setIsCatalogVisible] = useState(true)
+
+    useEffect(() => {
+        setNodes((nds) => {
+            let changed = false
+            const normalized = nds.map((node) => {
+                if (node.data && (node.data as AgentNodeData).category) {
+                    return node
+                }
+                changed = true
+                return normalizeNode(node)
+            })
+            return changed ? normalized : nds
+        })
+    }, [setNodes, normalizeNode])
 
     // Dedicated controller for execution (chat) mode
     const controller = useAgentRunController(agentId)
@@ -153,6 +212,7 @@ function AgentBuilderInner({
         if (mode !== "execute") {
             setNodes((nds) =>
                 nds.map((node) => {
+                    if (!node.data) return node
                     if (node.data.executionStatus) {
                         const { executionStatus, ...rest } = node.data
                         return { ...node, data: rest }
@@ -167,14 +227,15 @@ function AgentBuilderInner({
 
         setNodes((nds) =>
             nds.map((node) => {
+                if (!node.data) return node
                 const data = node.data as AgentNodeData
                 // Find steps matching this node by name or ID
                 // Note: LangGraph nodes usually match the display name or a simplified version of it
                 const nodeSteps = executionSteps.filter(s => {
                     // console.log(`[AgentBuilder] Checking node ${node.id} (${data.displayName}) against step ${s.name} (${s.id})`)
                     return s.name === data.displayName ||
-                        s.name.toLowerCase() === data.nodeType.toLowerCase() ||
-                        s.id.includes(node.id) ||
+                        (s.name ?? "").toLowerCase() === (data.nodeType ?? "").toLowerCase() ||
+                        (s.id ?? "").includes(node.id) ||
                         s.name === node.id
                 })
 
@@ -207,6 +268,9 @@ function AgentBuilderInner({
     const selectedNode = nodes.find((n) => n.id === selectedNodeId) as
         | Node<AgentNodeData>
         | undefined
+
+    const selectedNodeData: AgentNodeData | undefined = selectedNode?.data as AgentNodeData | undefined
+    const safeSelectedNodeData: AgentNodeData | undefined = selectedNodeData ?? (selectedNode ? normalizeNode(selectedNode).data : undefined)
 
     const isValidConnection = useCallback(
         (connection: Edge | Connection) => {
@@ -363,7 +427,7 @@ function AgentBuilderInner({
             </FloatingPanel>
 
             {/* 2. Execute Mode: Node Trace (Floating on the left) */}
-            {mode === "execute" && selectedNode && (
+            {mode === "execute" && selectedNode && safeSelectedNodeData && (
                 <FloatingPanel
                     position="left"
                     visible={true}
@@ -372,10 +436,10 @@ function AgentBuilderInner({
                 >
                     <NodeTracePanel
                         nodeId={selectedNode.id}
-                        nodeName={selectedNode.data.displayName}
+                        nodeName={safeSelectedNodeData.displayName}
                         steps={executionSteps.filter(s =>
-                            s.name === selectedNode.data.displayName ||
-                            s.name.toLowerCase() === selectedNode.data.nodeType.toLowerCase() ||
+                            s.name === safeSelectedNodeData.displayName ||
+                            s.name.toLowerCase() === safeSelectedNodeData.nodeType.toLowerCase() ||
                             s.id.includes(selectedNode.id) ||
                             s.name === selectedNode.id
                         )}
@@ -475,18 +539,18 @@ function AgentBuilderInner({
             )}
 
             {/* 3. Build Mode: Show Config Panel if node is selected */}
-            {mode === "build" && selectedNode && (
+            {mode === "build" && selectedNode && safeSelectedNodeData && (
                 <FloatingPanel position="right" visible={true} className="w-[400px]" autoHeight={true}>
                     <ConfigPanel
                         key={selectedNode.id}
                         nodeId={selectedNode.id}
-                        data={selectedNode.data}
+                        data={safeSelectedNodeData}
                         onConfigChange={handleConfigChange}
                         onClose={() => setSelectedNodeId(null)}
                         availableVariables={[
                             // Flatten input and state variables from Start node
-                            ...((nodes.find(n => n.type === "start")?.data.config?.input_variables as any[]) || []),
-                            ...((nodes.find(n => n.type === "start")?.data.config?.state_variables as any[]) || [])
+                            ...((nodes.find(n => n.type === "start")?.data?.config?.input_variables as any[]) || []),
+                            ...((nodes.find(n => n.type === "start")?.data?.config?.state_variables as any[]) || [])
                         ]}
                     />
                 </FloatingPanel>

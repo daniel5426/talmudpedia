@@ -7,6 +7,13 @@ import { SearchIcon, DotIcon, Terminal } from "lucide-react";
 import { agentService } from "@/services";
 import { ChatController, ChatMessage, Citation, mergeReasoningSteps } from "@/components/layout/useChatController";
 
+export interface AgentChatHistoryItem {
+  id: string;
+  title: string;
+  timestamp: number;
+  messages: ChatMessage[];
+}
+
 export interface ExecutionStep {
   id: string;
   name: string;
@@ -17,10 +24,13 @@ export interface ExecutionStep {
   timestamp: Date;
 }
 
-export function useAgentRunController(agentId: string | undefined): ChatController & { 
+export function useAgentRunController(agentId: string | undefined): ChatController & {
   executionSteps: ExecutionStep[];
   currentRunId: string | null;
   isPaused: boolean;
+  history: AgentChatHistoryItem[];
+  startNewChat: () => void;
+  loadHistoryChat: (item: AgentChatHistoryItem) => void;
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -34,6 +44,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [activeStreamingId, setActiveStreamingId] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
+  const [history, setHistory] = useState<AgentChatHistoryItem[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -42,6 +53,33 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const reasoningRef = useRef<ChatMessage["reasoningSteps"]>([]);
   const lastReasoningRef = useRef<ChatMessage["reasoningSteps"]>([]);
   const thinkingDurationRef = useRef<number | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
+
+  const historyKey = agentId ? `agent-exec-history:${agentId}` : null;
+  const historyLimit = 5;
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    if (!historyKey || typeof window === "undefined") {
+      setHistory([]);
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(historyKey);
+      if (!raw) {
+        setHistory([]);
+        return;
+      }
+      const parsed = JSON.parse(raw) as AgentChatHistoryItem[];
+      setHistory(Array.isArray(parsed) ? parsed : []);
+    } catch (error) {
+      console.warn("Failed to load agent chat history", error);
+      setHistory([]);
+    }
+  }, [historyKey]);
 
   // Reset state when agentId changes
   useEffect(() => {
@@ -54,6 +92,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setActiveStreamingId(null);
     setCurrentRunId(null);
     setIsPaused(false);
+    setHistory([]);
     reasoningRef.current = [];
     thinkingDurationRef.current = null;
     if (abortControllerRef.current) {
@@ -68,6 +107,76 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       abortControllerRef.current = null;
     }
     setIsLoading(false);
+  }, []);
+
+  const persistHistory = useCallback((nextMessages: ChatMessage[]) => {
+    if (!historyKey || typeof window === "undefined") return;
+    if (nextMessages.length === 0) return;
+    const lastMessage = nextMessages[nextMessages.length - 1];
+    if (lastMessage.role !== "assistant") return;
+    const firstUser = nextMessages.find((msg) => msg.role === "user");
+    if (!firstUser) return;
+
+    const title = firstUser.content.trim().slice(0, 80) || "New chat";
+    const item: AgentChatHistoryItem = {
+      id: nanoid(),
+      title,
+      timestamp: Date.now(),
+      messages: nextMessages,
+    };
+
+    setHistory((prev) => {
+      const last = prev[0];
+      if (last && last.title === item.title && last.messages.length === item.messages.length && last.messages[last.messages.length - 1]?.content === lastMessage.content) {
+        return prev;
+      }
+      const updated = [item, ...prev].slice(0, historyLimit);
+      try {
+        window.localStorage.setItem(historyKey, JSON.stringify(updated));
+      } catch (error) {
+        console.warn("Failed to save agent chat history", error);
+      }
+      return updated;
+    });
+  }, [historyKey]);
+
+  const startNewChat = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+    setStreamingContent("");
+    setCurrentReasoning([]);
+    setExecutionSteps([]);
+    setLastThinkingDurationMs(null);
+    setActiveStreamingId(null);
+    setCurrentRunId(null);
+    setIsPaused(false);
+    reasoningRef.current = [];
+    lastReasoningRef.current = [];
+    thinkingDurationRef.current = null;
+    setMessages([]);
+  }, []);
+
+  const loadHistoryChat = useCallback((item: AgentChatHistoryItem) => {
+    if (!item) return;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+    setStreamingContent("");
+    setCurrentReasoning([]);
+    setExecutionSteps([]);
+    setLastThinkingDurationMs(null);
+    setActiveStreamingId(null);
+    setCurrentRunId(null);
+    setIsPaused(false);
+    reasoningRef.current = [];
+    lastReasoningRef.current = [];
+    thinkingDurationRef.current = null;
+    setMessages(item.messages || []);
   }, []);
 
   const handleSubmit = async (message: { text: string; files: any[] }) => {
@@ -242,7 +351,11 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
         reasoningSteps: lastReasoningRef.current && lastReasoningRef.current.length > 0 ? lastReasoningRef.current : undefined,
         thinkingDurationMs: thinkingDurationRef.current || undefined,
       };
-      setMessages(prev => [...prev, assistantMsg]);
+      setMessages(prev => {
+        const next = [...prev, assistantMsg];
+        persistHistory(next);
+        return next;
+      });
       setStreamingContent("");
       setCurrentReasoning([]);
       setActiveStreamingId(null);
@@ -304,6 +417,9 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     activeStreamingId,
     currentRunId,
     isPaused,
+    history,
+    startNewChat,
+    loadHistoryChat,
     handleSubmit,
     handleStop,
     handleCopy,

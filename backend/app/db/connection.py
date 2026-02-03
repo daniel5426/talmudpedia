@@ -40,7 +40,7 @@ class MongoDatabase:
         Get a Sefaria-specific collection. 
         Only allows access to 'library_siblings' and 'library_search'.
         """
-        ALLOWED_COLLECTIONS = {"library_siblings", "library_search"}
+        ALLOWED_COLLECTIONS = {"library_siblings", "library_search", "texts", "index"}
         
         if collection_name not in ALLOWED_COLLECTIONS:
             raise ValueError(f"Access to collection '{collection_name}' is restricted. Only Sefaria collections are allowed via Mongo.")

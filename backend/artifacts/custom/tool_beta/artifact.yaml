@@ -1,0 +1,32 @@
+id: custom/tool_beta
+version: "1.0.0"
+display_name: Tool Beta
+category: tool
+description: Tool artifact that scales a number.
+input_type: none
+output_type: none
+scope: tool
+inputs:
+  - name: number
+    type: integer
+    required: false
+    default: 1
+  - name: multiplier
+    type: integer
+    required: false
+    default: 2
+outputs:
+  - name: tool_beta
+    type: integer
+reads:
+  - context
+writes:
+  - context
+  - tool_outputs
+ui:
+  icon: Calculator
+  color: "#a855f7"
+author: Test Suite
+tags:
+  - test
+  - tool
