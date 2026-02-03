@@ -16,6 +16,8 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 import {
     Play,
     CheckCircle2,
@@ -56,6 +58,7 @@ export default function PipelineEditorPage() {
 
     const [pipelineName, setPipelineName] = useState("")
     const [pipelineDescription, setPipelineDescription] = useState("")
+    const [pipelineType, setPipelineType] = useState<"ingestion" | "retrieval">("ingestion")
     const [editorNodes, setEditorNodes] = useState<Node<PipelineNodeData>[]>([])
     const [editorEdges, setEditorEdges] = useState<Edge[]>([])
 
@@ -113,6 +116,7 @@ export default function PipelineEditorPage() {
                         setPipeline(foundPipeline)
                         setPipelineName(foundPipeline.name)
                         setPipelineDescription(foundPipeline.description || "")
+                        setPipelineType((foundPipeline as any).pipeline_type || "ingestion")
 
                         // Convert pipeline data to editor format
                         const nodes: Node<PipelineNodeData>[] = foundPipeline.nodes.map((n: any) => {
@@ -281,6 +285,7 @@ export default function PipelineEditorPage() {
                     {
                         name: pipelineName,
                         description: pipelineDescription,
+                        pipeline_type: pipelineType,
                         nodes: nodesPayload,
                         edges: edgesPayload,
                     },
@@ -294,6 +299,7 @@ export default function PipelineEditorPage() {
                     {
                         name: pipelineName,
                         description: pipelineDescription,
+                        pipeline_type: pipelineType,
                         nodes: nodesPayload,
                         edges: edgesPayload,
                     },
@@ -377,6 +383,36 @@ export default function PipelineEditorPage() {
                         placeholder="Description (optional)"
                         className="w-64 h-9 hidden md:block"
                     />
+                    {!isNew ? (
+                        <div className="flex items-center px-2 py-1 bg-muted/50 rounded-md border border-border/50">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mr-2">Type</span>
+                            <Badge variant="outline" className={cn(
+                                "h-5 text-[9px] px-1.5 uppercase font-bold border-none",
+                                pipelineType === "retrieval" ? "bg-purple-500/10 text-purple-600" : "bg-blue-500/10 text-blue-600"
+                            )}>
+                                {pipelineType}
+                            </Badge>
+                        </div>
+                    ) : (
+                        <div className="flex bg-muted/50 p-1 rounded-md h-9 items-center">
+                            <Button
+                                variant={pipelineType === "ingestion" ? "secondary" : "ghost"}
+                                size="sm"
+                                className="h-7 text-[10px] px-2 rounded-sm"
+                                onClick={() => setPipelineType("ingestion")}
+                            >
+                                Ingestion
+                            </Button>
+                            <Button
+                                variant={pipelineType === "retrieval" ? "secondary" : "ghost"}
+                                size="sm"
+                                className="h-7 text-[10px] px-2 rounded-sm"
+                                onClick={() => setPipelineType("retrieval")}
+                            >
+                                Retrieval
+                            </Button>
+                        </div>
+                    )}
                     <div className="w-px h-6 bg-border mx-1" />
                     {!isNew && pipeline && (
                         <Button
@@ -411,6 +447,7 @@ export default function PipelineEditorPage() {
                     operatorSpecs={operatorSpecs as any}
                     initialNodes={editorNodes as any}
                     initialEdges={editorEdges}
+                    pipelineType={pipelineType}
                     onChange={handleSaveGraph as any}
                     onSave={handleSave}
                     onAddCustomOperator={() => {

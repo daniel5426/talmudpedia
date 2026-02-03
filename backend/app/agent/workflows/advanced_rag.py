@@ -11,9 +11,9 @@ except ImportError as e:
     raise ImportError("langgraph.prebuilt is required; install langgraph>=0.2.0") from e
 
 from app.agent.components.llm.openai import OpenAILLM
-from app.agent.components.retrieval.vector import VectorRetriever
 from app.agent.components.tools.retrieval_tool import RetrievalTool
 from app.agent.core.base import BaseAgent
+from app.agent.core.interfaces import Retriever
 from app.agent.core.state import AgentState
 
 
@@ -23,7 +23,7 @@ class AdvancedRAGWorkflow(BaseAgent):
     The agent decides when to retrieve based on the query.
     """
 
-    def __init__(self, llm: OpenAILLM, retriever: VectorRetriever):
+    def __init__(self, llm: OpenAILLM, retriever: Retriever):
         print("[TIMER] AdvancedRAGWorkflow init started")
         super().__init__()
         # We use ChatOpenAI for standard tool calling support
@@ -31,24 +31,9 @@ class AdvancedRAGWorkflow(BaseAgent):
         model_name = getattr(llm, "model", "gpt-4o")
         api_key = os.getenv("OPENAI_API_KEY")
         
-        # Initialize Reranker and wrap the retriever
-        # Initialize Reranker and wrap the retriever
-        from app.agent.components.retrieval.reranker import PineconeReranker
-        from app.agent.components.retrieval.lexical import LexicalRetriever
-        from app.agent.components.retrieval.hybrid import HybridRetriever
-        
-        self.reranker = PineconeReranker()
-        self.lexical_retriever = LexicalRetriever()
-        
-        ti = time.perf_counter()
-        self.retriever = HybridRetriever(
-            lexical_retriever=self.lexical_retriever,
-            semantic_retriever=retriever,
-            reranker=self.reranker,
-            lexical_limit=5,
-            semantic_limit=20
-        )
-        print(f"[TIMER] HybridRetriever setup: {time.perf_counter()-ti:.4f}s")
+        # The retriever is now responsible for the entire retrieval strategy 
+        # (semantic, hybrid, reranking) via RetrievalService or other implementations.
+        self.retriever = retriever
         
         self.retrieval_tool = RetrievalTool(retriever=self.retriever)
         self.tools = [self.retrieval_tool]
@@ -57,7 +42,7 @@ class AdvancedRAGWorkflow(BaseAgent):
             model=model_name,
             api_key=api_key,
             streaming=True,
-            temperature=1
+            temperature=0  # Lower temperature for fact-based usage
         ).bind_tools(self.tools)
 
     def build_graph(self) -> StateGraph:

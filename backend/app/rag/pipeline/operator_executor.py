@@ -312,8 +312,111 @@ class PythonOperatorExecutor(OperatorExecutor):
 
 
 # =============================================================================
-# BUILT-IN OPERATOR EXECUTORS
+# ARTIFACT-BASED OPERATOR EXECUTOR 
 # =============================================================================
+
+class ArtifactContext:
+    """The context passed to an artifact's execute(context) function."""
+    def __init__(self, input_data: Any, config: Dict[str, Any], metadata: Dict[str, Any] = None):
+        self.input_data = input_data
+        self.config = config
+        self.metadata = metadata or {}
+
+
+class ArtifactExecutor(OperatorExecutor):
+
+    """
+    Executor for artifact-based operators.
+    
+    Loads and executes operator code from the filesystem using importlib,
+    providing a more robust and testable execution model than PythonOperatorExecutor.
+    """
+    
+    def __init__(self, spec: OperatorSpec, artifact_id: str, version: Optional[str] = None):
+        super().__init__(spec)
+        self.artifact_id = artifact_id
+        self.version = version or spec.version
+        self._module = None
+        self._execute_func = None
+
+    
+    def _load_module(self):
+        """Load the artifact's handler module dynamically."""
+        if self._module is not None:
+            return
+        
+        import importlib
+        import importlib.util
+        from app.services.artifact_registry import get_artifact_registry
+        
+        registry = get_artifact_registry()
+        artifact_path = registry.get_artifact_path(self.artifact_id, self.version)
+
+        
+        if not artifact_path:
+            raise ValueError(f"Artifact not found: {self.artifact_id}")
+        
+        handler_path = artifact_path / "handler.py"
+        if not handler_path.exists():
+            raise ValueError(f"Handler not found for artifact: {self.artifact_id}")
+        
+        # Load the module from file path
+        # Append version to module name to avoid name collisions between different versions
+        ver_slug = self.version.replace(".", "_").replace("-", "_")
+        mod_name = f"artifact_{self.artifact_id.replace('/', '_')}_{ver_slug}_handler"
+        
+        spec = importlib.util.spec_from_file_location(
+            mod_name,
+            handler_path
+        )
+
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Failed to load module spec for: {handler_path}")
+        
+        self._module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self._module)
+        
+        if not hasattr(self._module, "execute"):
+            raise ValueError(f"Artifact handler must define 'execute(context)' function: {self.artifact_id}")
+        
+        self._execute_func = self._module.execute
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        """Execute the artifact's handler."""
+        try:
+            self._load_module()
+            
+            artifact_context = ArtifactContext(
+                input_data.data,
+                context.config,
+                input_data.metadata
+            )
+            
+            # Run in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self._execute_func(artifact_context)
+            )
+            
+            return OperatorOutput(
+                data=result,
+                metadata=input_data.metadata,
+                operator_id=self.operator_id,
+                success=True
+            )
+            
+        except Exception as e:
+            return OperatorOutput(
+                data=None,
+                operator_id=self.operator_id,
+                success=False,
+                error_message=f"Artifact execution error: {str(e)}\n{traceback.format_exc()}"
+            )
 
 class PassthroughExecutor(OperatorExecutor):
     """Simple passthrough operator for testing."""
@@ -639,6 +742,48 @@ class ChunkerExecutor(OperatorExecutor):
         )
 
 
+class QueryInputExecutor(OperatorExecutor):
+    """Entry point for retrieval pipelines."""
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        # data contains the structured query from trigger params
+        # Expected structure: {"text": "...", "filters": {...}, "metadata": {...}, "params": {...}}
+        query_data = input_data.data or {}
+        
+        # If input is just a string, wrap it in a QUERY object
+        if isinstance(query_data, str):
+            query_data = {"text": query_data}
+        
+        return OperatorOutput(
+            data=query_data,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
+class RetrievalResultExecutor(OperatorExecutor):
+    """Exit point for retrieval pipelines. Captures final result."""
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        # This node just passes the data through, but the PipelineExecutor 
+        # will recognize it as an output node based on its category.
+        return OperatorOutput(
+            data=input_data.data,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
 class EmbedderExecutor(OperatorExecutor):
     """Generate embeddings using Model Registry."""
     
@@ -665,9 +810,21 @@ class EmbedderExecutor(OperatorExecutor):
         embedder = await resolver.resolve_embedding(model_id)
         
         all_embeddings = []
-        chunks = input_data.data
-        if not isinstance(chunks, list):
-            chunks = [chunks]
+        input_val = input_data.data
+        
+        # Handle DataType.QUERY
+        if isinstance(input_val, dict) and "text" in input_val and "values" not in input_val:
+            # It's a structured query that needs embedding
+            embedding_result = await embedder.embed_batch([input_val["text"]])
+            input_val["values"] = embedding_result[0].values
+            return OperatorOutput(
+                data=input_val, # Now it has values
+                metadata=input_data.metadata,
+                operator_id=self.operator_id,
+                success=True
+            )
+
+        chunks = input_val if isinstance(input_val, list) else [input_val]
             
         # Extract texts for batch embedding
         texts = []
@@ -698,7 +855,7 @@ class EmbedderExecutor(OperatorExecutor):
 
 
 class StorageExecutor(OperatorExecutor):
-    """Execute vector storage."""
+    """Execute vector storage (legacy - for existing pipelines)."""
     
     async def execute(
         self, 
@@ -764,6 +921,194 @@ class StorageExecutor(OperatorExecutor):
         )
 
 
+class KnowledgeStoreSinkExecutor(OperatorExecutor):
+    """
+    Execute vector storage to a Knowledge Store.
+    
+    This executor abstracts away the underlying vector database and:
+    1. Resolves the KnowledgeStore by ID
+    2. Instantiates the correct VectorBackendAdapter
+    3. Upserts vectors in batches
+    4. Updates document/chunk counts on the store
+    """
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        from uuid import UUID
+        from app.rag.adapters import create_adapter, VectorRecord
+        from app.db.postgres.models import KnowledgeStore
+        
+        config_dict = {**context.config}
+        
+        # Get the knowledge store ID
+        knowledge_store_id = config_dict.get("knowledge_store_id")
+        if not knowledge_store_id:
+            raise ValueError("knowledge_store_id is required for Knowledge Store sink")
+        
+        # Get DB from context
+        db = getattr(context, "db", None)
+        if not db:
+            raise ValueError("Database session is required in execution context")
+        
+        # Fetch the knowledge store
+        store = await db.get(KnowledgeStore, UUID(knowledge_store_id))
+        if not store:
+            raise ValueError(f"Knowledge store not found: {knowledge_store_id}")
+        
+        # Create the adapter based on backend
+        adapter = create_adapter(store.backend, store.backend_config)
+        
+        # Prepare vectors
+        documents = input_data.data
+        if not isinstance(documents, list):
+            documents = [documents]
+        
+        vectors = []
+        for doc in documents:
+            if isinstance(doc, dict):
+                doc_id = str(doc.get("id")) if doc.get("id") else str(uuid.uuid4())
+                vectors.append(VectorRecord(
+                    id=doc_id,
+                    values=doc.get("values", []),
+                    text=doc.get("text", ""),
+                    metadata=doc.get("metadata", {})
+                ))
+        
+        # Upsert in batches
+        batch_size = config_dict.get("batch_size", 100)
+        namespace = config_dict.get("namespace", "default")
+        total_upserted = 0
+        
+        for i in range(0, len(vectors), batch_size):
+            batch = vectors[i:i + batch_size]
+            count = await adapter.upsert(batch, namespace)
+            total_upserted += count
+        
+        # Update store metrics
+        store.chunk_count = (store.chunk_count or 0) + total_upserted
+        await db.commit()
+        
+        return OperatorOutput(
+            data={
+                "upsert_count": total_upserted,
+                "knowledge_store_id": str(store.id),
+                "knowledge_store_name": store.name
+            },
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
+
+class VectorSearchExecutor(OperatorExecutor):
+    """Execute semantic search."""
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        from app.rag.factory import VectorStoreConfig
+        
+        config_dict = {**context.config}
+        index_name = config_dict.get("index_name")
+        if not index_name:
+            raise ValueError("index_name is required for search")
+            
+        vs_config = VectorStoreConfig(
+            provider=config_dict.get("provider", "pgvector"), # default
+            **{k: v for k, v in config_dict.items() if k not in ["index_name"]}
+        )
+        
+        vector_store = RAGFactory.create_vector_store(vs_config)
+        
+        query_val = input_data.data
+        vector = None
+        filters = {}
+        
+        if isinstance(query_val, dict):
+            vector = query_val.get("values")
+            filters = query_val.get("filters", {})
+        else:
+            # Assume it's just the vector if it's a list
+            vector = query_val
+            
+        if not vector:
+            raise ValueError("No query vector found for search")
+            
+        results = await vector_store.search(
+            index_name=index_name,
+            query_vector=vector,
+            limit=config_dict.get("top_k", 10),
+            filters=filters,
+            namespace=config_dict.get("namespace")
+        )
+        
+        return OperatorOutput(
+            data=[r.model_dump() for r in results],
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
+class HybridSearchExecutor(OperatorExecutor):
+    """Execute hybrid (vector + keyword) search."""
+    
+    async def execute(
+        self, 
+        input_data: OperatorInput, 
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        # For now, we'll use the vector store's hybrid search if supported
+        # This implementation is similar to VectorSearch but passes alpha
+        from app.rag.factory import VectorStoreConfig
+        
+        config_dict = {**context.config}
+        index_name = config_dict.get("index_name")
+        
+        vs_config = VectorStoreConfig(
+            provider=config_dict.get("provider", "pgvector"),
+            **{k: v for k, v in config_dict.items() if k not in ["index_name"]}
+        )
+        
+        vector_store = RAGFactory.create_vector_store(vs_config)
+        
+        query_val = input_data.data
+        text = ""
+        vector = None
+        filters = {}
+        
+        if isinstance(query_val, dict):
+            text = query_val.get("text", "")
+            vector = query_val.get("values")
+            filters = query_val.get("filters", {})
+            
+        if not vector or not text:
+            raise ValueError("Hybrid search requires both text and query vector")
+            
+        results = await vector_store.search(
+            index_name=index_name,
+            query_vector=vector,
+            query_text=text,
+            limit=config_dict.get("top_k", 10),
+            filters=filters,
+            alpha=config_dict.get("alpha", 0.5),
+            namespace=config_dict.get("namespace")
+        )
+        
+        return OperatorOutput(
+            data=[r.model_dump() for r in results],
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True
+        )
+
+
 # =============================================================================
 # EXECUTOR REGISTRY
 # =============================================================================
@@ -780,9 +1125,11 @@ class ExecutorRegistry:
         "recursive_chunker": ChunkerExecutor,
         "token_based_chunker": ChunkerExecutor,
         "model_embedder": EmbedderExecutor,
-        "pinecone_store": StorageExecutor,
-        "pgvector_store": StorageExecutor,
-        "qdrant_store": StorageExecutor,
+        "knowledge_store_sink": KnowledgeStoreSinkExecutor,
+        "vector_search": VectorSearchExecutor,
+        "hybrid_search": HybridSearchExecutor,
+        "query_input": QueryInputExecutor,
+        "retrieval_result": RetrievalResultExecutor,
         "passthrough": PassthroughExecutor,
     }
     
@@ -802,10 +1149,26 @@ class ExecutorRegistry:
         spec: OperatorSpec, 
         python_code: Optional[str] = None
     ) -> OperatorExecutor:
-        """Create an executor instance for an operator."""
+        """Create an executor instance for an operator.
+        
+        Routing order:
+        1. Artifacts (file-based operators from /backend/artifacts)
+        2. Custom operators (DB-stored python_code)
+        3. Built-in executors (hardcoded in ExecutorRegistry)
+        """
+        # Check if this operator is an artifact
+        from app.services.artifact_registry import get_artifact_registry
+        artifact_registry = get_artifact_registry()
+        
+        if artifact_registry.get_artifact(spec.operator_id, spec.version):
+            return ArtifactExecutor(spec, spec.operator_id, spec.version)
+
+        
+        # Custom operators with inline code
         if spec.is_custom and python_code:
             return PythonOperatorExecutor(spec, python_code)
         
+        # Built-in executors
         executor_class = cls.get(spec.operator_id)
         if executor_class:
             return executor_class(spec)

@@ -14,9 +14,23 @@ import { usePermissions } from "@/hooks/usePermission"
 import {
   Plus,
   RefreshCw,
+  Loader2,
 } from "lucide-react"
 import { PipelineJob } from "@/services"
 import { RunPipelineDialog } from "@/components/pipeline/RunPipelineDialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu"
+import {
+  Database,
+  Search,
+  ChevronDown,
+} from "lucide-react"
 
 export default function PipelinesPage() {
   const { currentTenant } = useTenant()
@@ -35,6 +49,8 @@ export default function PipelinesPage() {
   const [isRunDialogOpen, setIsRunDialogOpen] = useState(false)
   const [runningJobs, setRunningJobs] = useState<Record<string, { jobId: string; status: string; progress?: number }>>({})
   const [runningCompileId, setRunningCompileId] = useState<string | null>(null)
+
+  const [isCreating, setIsCreating] = useState(false)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -97,6 +113,25 @@ export default function PipelinesPage() {
       alert("Failed to compile pipeline")
     } finally {
       setRunningCompileId(null)
+    }
+  }
+
+  const handleQuickCreate = async (type: "ingestion" | "retrieval") => {
+    if (!currentTenant) return
+    setIsCreating(true)
+    try {
+      const res = await ragAdminService.createVisualPipeline({
+        name: `New ${type.charAt(0).toUpperCase() + type.slice(1)} Pipeline`,
+        pipeline_type: type,
+        nodes: [],
+        edges: [],
+      }, currentTenant.slug)
+      router.push(`/admin/pipelines/${res.id}`)
+    } catch (error) {
+      console.error("Failed to create pipeline", error)
+      alert("Failed to create pipeline")
+    } finally {
+      setIsCreating(false)
     }
   }
 
@@ -202,10 +237,47 @@ export default function PipelinesPage() {
                   <RefreshCw className="h-4 w-4 mr-2" />
                   Refresh
                 </Button>
-                <Button size="sm" onClick={() => router.push("/admin/pipelines/new")}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  New Pipeline
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" disabled={isCreating}>
+                      {isCreating ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Plus className="h-4 w-4 mr-2" />
+                      )}
+                      New Pipeline
+                      <ChevronDown className="h-4 w-4 ml-1 opacity-50" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuLabel>Choose Pipeline Type</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="flex flex-col items-start gap-1 py-3 cursor-pointer"
+                      onClick={() => handleQuickCreate("ingestion")}
+                    >
+                      <div className="flex items-center gap-2 font-semibold text-blue-600">
+                        <Database className="h-4 w-4" />
+                        <span>Ingestion Pipeline</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground leading-tight">
+                        Load, chunk, and index data into vector storage.
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="flex flex-col items-start gap-1 py-3 cursor-pointer"
+                      onClick={() => handleQuickCreate("retrieval")}
+                    >
+                      <div className="flex items-center gap-2 font-semibold text-purple-600">
+                        <Search className="h-4 w-4" />
+                        <span>Retrieval Pipeline</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground leading-tight">
+                        Query, search, and rerank documents.
+                      </span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
 

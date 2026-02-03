@@ -208,6 +208,16 @@ class PipelineExecutor:
                     if not output.success:
                         raise Exception(f"Step {step_id} ({op_id}) failed: {output.error_message}")
 
+                    # If this is an OUTPUT node (retrieval result) or STORAGE node, capture its output
+                    if spec.category == OperatorCategory.OUTPUT:
+                        job.output = output.data
+                    elif spec.category == OperatorCategory.STORAGE:
+                        # For storage nodes, we might want to capture metadata or counts
+                        if job.output is None:
+                            job.output = {}
+                        if isinstance(job.output, dict):
+                            job.output[step_id] = output.data
+
                 except Exception as step_err:
                     if step_exec:
                         step_exec.status = PipelineStepStatus.FAILED
@@ -218,7 +228,7 @@ class PipelineExecutor:
 
             # 6. Success
             job.status = PipelineJobStatus.COMPLETED
-            job.finished_at = datetime.utcnow()
+            job.completed_at = datetime.utcnow()
             await self.db.commit()
 
         except Exception as e:
@@ -232,7 +242,7 @@ class PipelineExecutor:
             try:
                 job.status = PipelineJobStatus.FAILED
                 job.error_message = str(e)
-                job.finished_at = datetime.utcnow()
+                job.completed_at = datetime.utcnow()
                 await self.db.commit()
             except Exception as e2:
                 print(f"Failed to update job status: {e2}")

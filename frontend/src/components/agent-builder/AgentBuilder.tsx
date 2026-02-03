@@ -33,6 +33,7 @@ import {
     InteractionMode,
 } from "@/components/builder"
 import {
+    AgentNodeSpec,
     AgentNodeData,
     AgentNodeCategory,
     AgentNodeType,
@@ -248,10 +249,11 @@ function AgentBuilderInner({
 
             const nodeType = event.dataTransfer.getData("application/node-type") as AgentNodeType
             const category = event.dataTransfer.getData("application/node-category") as AgentNodeCategory
+            const specString = event.dataTransfer.getData("application/node-spec")
 
             if (!nodeType || !category) return
 
-            const spec = getNodeSpec(nodeType)
+            let spec = specString ? JSON.parse(specString) as AgentNodeSpec : getNodeSpec(nodeType)
             if (!spec) return
 
             const position = screenToFlowPosition({
@@ -270,7 +272,7 @@ function AgentBuilderInner({
                     config: {},
                     inputType: spec.inputType,
                     outputType: spec.outputType,
-                    isConfigured: spec.configFields.length === 0,
+                    isConfigured: (spec.configFields || []).length === 0,
                     hasErrors: false,
                 },
             }
@@ -284,11 +286,11 @@ function AgentBuilderInner({
     const handleDragStart = useCallback(
         (
             event: React.DragEvent,
-            nodeType: AgentNodeType,
-            category: AgentNodeCategory
+            spec: AgentNodeSpec
         ) => {
-            event.dataTransfer.setData("application/node-type", nodeType)
-            event.dataTransfer.setData("application/node-category", category)
+            event.dataTransfer.setData("application/node-type", spec.nodeType)
+            event.dataTransfer.setData("application/node-category", spec.category)
+            event.dataTransfer.setData("application/node-spec", JSON.stringify(spec))
             event.dataTransfer.effectAllowed = "move"
         },
         []
@@ -481,6 +483,11 @@ function AgentBuilderInner({
                         data={selectedNode.data}
                         onConfigChange={handleConfigChange}
                         onClose={() => setSelectedNodeId(null)}
+                        availableVariables={[
+                            // Flatten input and state variables from Start node
+                            ...((nodes.find(n => n.type === "start")?.data.config?.input_variables as any[]) || []),
+                            ...((nodes.find(n => n.type === "start")?.data.config?.state_variables as any[]) || [])
+                        ]}
                     />
                 </FloatingPanel>
             )}

@@ -4,7 +4,7 @@ The Custom Operators feature provides a dedicated interface for creating, testin
 
 ## Overview
 
-Custom operators allow users to inject custom logic into RAG pipelines. These operators execute Python code and can transform data at various stages (ingestion, chunking, embedding, etc.). They adhere to a strict input/output contract based on the `DataType` system.
+Custom operators allow users to inject custom logic into RAG pipelines. These operators execute Python code and can transform data at various stages (ingestion, chunking, embedding, etc.). They adhere to a strict input/output contract based on the `DataType` system, including the new `QUERY` and `RETRIEVAL_RESULT` types.
 
 ## Execution Protocol
 

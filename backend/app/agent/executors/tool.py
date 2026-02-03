@@ -77,6 +77,36 @@ class ToolNodeExecutor(BaseNodeExecutor):
         implementation_config = config_schema.get("implementation", {})
         impl_type = implementation_config.get("type", "internal")
 
+        # Check for Artifact linkage (Phase 4)
+        if hasattr(tool, "artifact_id") and tool.artifact_id:
+            logger.info(f"Delegating tool execution to artifact: {tool.artifact_id}")
+            from app.agent.executors.artifact import ArtifactNodeExecutor
+            
+            # Prepare config for artifact executor
+            artifact_config = {
+                **config,
+                "_artifact_id": tool.artifact_id,
+                "_artifact_version": tool.artifact_version,
+                "label": tool.name,
+            }
+            
+            artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
+            return await artifact_executor.execute(state, artifact_config, context)
+        
+        # Support inline config pointer
+        if impl_type == "artifact" and implementation_config.get("artifact_id"):
+             artifact_id = implementation_config.get("artifact_id")
+             logger.info(f"Delegating tool execution to artifact (inline): {artifact_id}")
+             from app.agent.executors.artifact import ArtifactNodeExecutor
+             artifact_config = {
+                **config,
+                "_artifact_id": artifact_id,
+                "_artifact_version": implementation_config.get("artifact_version"),
+                "label": tool.name,
+             }
+             artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
+             return await artifact_executor.execute(state, artifact_config, context)
+
         output_data = {}
 
         try:

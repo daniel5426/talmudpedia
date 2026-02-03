@@ -25,6 +25,7 @@ from app.db.postgres.models.rag import (
     CustomOperator,
     PipelineStepExecution,
     PipelineStepStatus,
+    PipelineType,
 )
 from app.rag.pipeline.registry import (
     OperatorRegistry,
@@ -237,6 +238,7 @@ class PipelineEdgeRequest(BaseModel):
 class CreatePipelineRequest(BaseModel):
     name: str
     description: Optional[str] = None
+    pipeline_type: PipelineType = PipelineType.INGESTION
     nodes: List[PipelineNodeRequest] = []
     edges: List[PipelineEdgeRequest] = []
     org_unit_id: Optional[UUID] = None
@@ -245,6 +247,7 @@ class CreatePipelineRequest(BaseModel):
 class UpdatePipelineRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    pipeline_type: Optional[PipelineType] = None
     nodes: Optional[List[PipelineNodeRequest]] = None
     edges: Optional[List[PipelineEdgeRequest]] = None
 
@@ -301,6 +304,7 @@ def pipeline_to_dict(p: VisualPipeline) -> Dict[str, Any]:
         "edges": p.edges or [],
         "version": p.version,
         "is_published": p.is_published,
+        "pipeline_type": p.pipeline_type.value if hasattr(p.pipeline_type, "value") else p.pipeline_type,
         "created_at": p.created_at.isoformat() if p.created_at else None,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
         "created_by": str(p.created_by) if p.created_by else None,
@@ -315,6 +319,7 @@ def exec_pipeline_to_dict(p: ExecutablePipeline) -> Dict[str, Any]:
         "tenant_id": str(p.tenant_id),
         "version": p.version,
         "compiled_graph": p.compiled_graph or {},
+        "pipeline_type": p.pipeline_type.value if hasattr(p.pipeline_type, "value") else p.pipeline_type,
         "is_valid": p.is_valid,
         "created_at": p.created_at.isoformat() if p.created_at else None,
         "compiled_by": str(p.compiled_by) if p.compiled_by else None,
@@ -463,6 +468,7 @@ async def create_visual_pipeline(
         edges=edges,
         version=1,
         is_published=False,
+        pipeline_type=request.pipeline_type,
         created_by=user.id,
     )
 
@@ -550,6 +556,8 @@ async def update_visual_pipeline(
         pipeline.nodes = [n.model_dump(mode='json') for n in request.nodes]
     if request.edges is not None:
         pipeline.edges = [e.model_dump(mode='json') for e in request.edges]
+    if request.pipeline_type is not None:
+        pipeline.pipeline_type = request.pipeline_type
 
     pipeline.updated_at = datetime.utcnow()
 
@@ -656,6 +664,7 @@ async def compile_pipeline(
             self.nodes = p.nodes or []
             self.edges = p.edges or []
             self.version = p.version
+            self.pipeline_type = p.pipeline_type
     
     mock_pipeline = MockVisualPipeline(pipeline)
     
@@ -683,6 +692,7 @@ async def compile_pipeline(
         version=pipeline.version,
         compiled_graph=compile_result.executable_pipeline.model_dump(mode='json') if hasattr(compile_result.executable_pipeline, 'model_dump') else {},
         is_valid=True,
+        pipeline_type=pipeline.pipeline_type,
         compiled_by=user.id,
     )
 
@@ -979,7 +989,18 @@ class PipelineInputValidator:
             if not isinstance(value, bool):
                 errors.append(self._error(step_id, field.name, "Must be a boolean"))
         elif field_type == ConfigFieldType.JSON.value:
-            if not isinstance(value, (dict, list)):
+            if value == "" or value is None:
+                if field.required:
+                    errors.append(self._error(step_id, field.name, "Missing required JSON field"))
+                return errors
+            
+            if isinstance(value, str):
+                try:
+                    import json
+                    json.loads(value)
+                except Exception:
+                    errors.append(self._error(step_id, field.name, "Invalid JSON format"))
+            elif not isinstance(value, (dict, list)):
                 errors.append(self._error(step_id, field.name, "Must be an object or list"))
         elif field_type in {
             ConfigFieldType.MODEL_SELECT.value,
@@ -1163,7 +1184,7 @@ async def list_pipeline_jobs(
     
     if status:
         try:
-            status_enum = PipelineJobStatus(status)
+            status_enum = PipelineJobStatus(status.upper())
             query = query.where(PipelineJob.status == status_enum)
         except ValueError:
             pass

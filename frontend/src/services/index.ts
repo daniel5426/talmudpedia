@@ -72,3 +72,11 @@ export type {
   ToolsListResponse,
 } from "./agent";
 
+// Knowledge Stores
+export { knowledgeStoresService } from "./knowledge-stores";
+export type {
+  KnowledgeStore,
+  CreateKnowledgeStoreRequest,
+  UpdateKnowledgeStoreRequest,
+  KnowledgeStoreStats,
+} from "./knowledge-stores";

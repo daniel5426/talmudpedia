@@ -44,3 +44,5 @@ pypdf>=4.0.0
 
 # Optional Local Embeddings
 sentence-transformers>=2.2.0
+cel-python>=0.1.5
+beautifulsoup4>=4.12.0

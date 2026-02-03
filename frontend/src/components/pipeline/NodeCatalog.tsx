@@ -24,7 +24,8 @@ import {
   OperatorCategory,
   CATEGORY_COLORS,
   CATEGORY_LABELS,
-  DataType
+  DataType,
+  PipelineType
 } from "./types"
 
 interface OperatorCatalogItem {
@@ -42,6 +43,7 @@ interface NodeCatalogProps {
   onDragStart: (event: React.DragEvent, operatorId: string, category: OperatorCategory) => void
   onAddCustomOperator?: () => void
   onClose?: () => void
+  pipelineType?: PipelineType
 }
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -54,6 +56,8 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
   storage: Database,
   retrieval: Search,
   reranking: SortAsc,
+  input: FolderInput,
+  output: Database,
   custom: Code,
 }
 
@@ -129,21 +133,31 @@ function CategorySection({
   )
 }
 
-export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator, onClose }: NodeCatalogProps) {
+export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator, onClose, pipelineType = "ingestion" }: NodeCatalogProps) {
   const [search, setSearch] = useState("")
 
-  const categories: OperatorCategory[] = [
-    "source",
-    "normalization",
-    "enrichment",
-    "chunking",
-    "embedding",
-    "storage",
-    "retrieval",
-    "reranking",
-    "custom",
-    "transform"
-  ]
+  const categories = useMemo(() => {
+    if (pipelineType === "retrieval") {
+      return [
+        "input",
+        "embedding",
+        "retrieval",
+        "reranking",
+        "output",
+        "custom"
+      ] as OperatorCategory[]
+    }
+    return [
+      "source",
+      "normalization",
+      "enrichment",
+      "chunking",
+      "embedding",
+      "storage",
+      "custom",
+      "transform"
+    ] as OperatorCategory[]
+  }, [pipelineType])
 
   return (
     <div className="h-full flex flex-col">

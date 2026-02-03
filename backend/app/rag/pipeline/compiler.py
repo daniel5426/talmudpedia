@@ -16,11 +16,14 @@ from datetime import datetime
 import hashlib
 import json
 
+from app.db.postgres.models.rag import (
+    VisualPipeline,
+    ExecutablePipeline,
+    PipelineType,
+)
 from app.rag.pipeline.registry import (
-    OperatorRegistry, 
-    DataType, 
-    OperatorCategory,
     OperatorSpec,
+    OperatorRegistry,
 )
 
 
@@ -54,6 +57,7 @@ class VisualPipeline(BaseModel):
     description: Optional[str] = None
     nodes: List[PipelineNode] = []
     edges: List[PipelineEdge] = []
+    pipeline_type: PipelineType = PipelineType.INGESTION
     version: int = 1
     is_published: bool = False
 
@@ -81,8 +85,8 @@ class ExecutablePipeline(BaseModel):
     - A hash for integrity verification
     """
     visual_pipeline_id: Optional[UUID] = None
-    version: int
     tenant_id: Optional[UUID] = None
+    pipeline_type: PipelineType = PipelineType.INGESTION
     dag: List[ExecutableStep] = []
     config_snapshot: Dict[str, Any] = {}
     
@@ -203,6 +207,7 @@ class PipelineCompiler:
             visual_pipeline_id=pipeline.id,
             version=pipeline.version,
             tenant_id=pipeline.tenant_id,
+            pipeline_type=pipeline.pipeline_type,
             dag=dag,
             config_snapshot=config_snapshot,
             locked_operator_versions=locked_versions,
@@ -300,14 +305,19 @@ class PipelineCompiler:
         raw_nodes = getattr(visual_pipeline, 'nodes', []) or []
         for node in raw_nodes:
             if isinstance(node, dict):
-                cat = node.get('category', 'chunking')
+                # Handle ReactFlow format where metadata is in 'data'
+                data = node.get('data', {})
+                cat = data.get('category') or node.get('category', 'chunking')
+                operator = data.get('operator') or node.get('operator', '')
+                config = data.get('config') or node.get('config', {})
+                
                 pos = node.get('position', {'x': 0, 'y': 0})
                 nodes.append(PipelineNode(
                     id=node.get('id', ''),
                     category=cat,
-                    operator=node.get('operator', ''),
+                    operator=operator,
                     position=PipelineNodePosition(**pos) if isinstance(pos, dict) else pos,
-                    config=node.get('config', {}),
+                    config=config,
                 ))
             elif hasattr(node, 'id'):
                 cat = getattr(node, 'category', 'chunking')
@@ -354,6 +364,7 @@ class PipelineCompiler:
             description=getattr(visual_pipeline, 'description', None),
             nodes=nodes,
             edges=edges,
+            pipeline_type=getattr(visual_pipeline, 'pipeline_type', PipelineType.INGESTION),
             version=getattr(visual_pipeline, 'version', 1),
             is_published=getattr(visual_pipeline, 'is_published', False),
         )
@@ -366,43 +377,67 @@ class PipelineCompiler:
         for node in pipeline.nodes:
             nodes_by_category[node.category].append(node)
 
-        # Check for source nodes
-        source_nodes = nodes_by_category.get("source", [])
-        if len(source_nodes) == 0:
-            errors.append(CompilationError(
-                code="NO_SOURCE",
-                message="Pipeline must have at least one source node",
-            ))
+        if pipeline.pipeline_type == PipelineType.INGESTION:
+            # Check for source nodes
+            source_nodes = nodes_by_category.get("source", [])
+            if len(source_nodes) == 0:
+                errors.append(CompilationError(
+                    code="NO_SOURCE",
+                    message="Ingestion pipeline must have at least one source node",
+                ))
 
-        # Check for storage nodes (for ingestion pipelines)
-        storage_nodes = nodes_by_category.get("storage", [])
-        retrieval_nodes = nodes_by_category.get("retrieval", [])
-        
-        # Either storage OR retrieval is required
-        if len(storage_nodes) == 0 and len(retrieval_nodes) == 0:
-            errors.append(CompilationError(
-                code="NO_OUTPUT",
-                message="Pipeline must have either storage (ingestion) or retrieval (query) nodes",
-            ))
+            # Check for storage nodes
+            storage_nodes = nodes_by_category.get("storage", [])
+            if len(storage_nodes) == 0:
+                errors.append(CompilationError(
+                    code="NO_STORAGE",
+                    message="Ingestion pipeline must have at least one storage node",
+                ))
 
-        # Check for chunking nodes in ingestion pipelines
-        chunking_nodes = nodes_by_category.get("chunking", [])
-        # Also check legacy "transform" category
-        transform_nodes = nodes_by_category.get("transform", [])
-        
-        if storage_nodes and len(chunking_nodes) == 0 and len(transform_nodes) == 0:
-            errors.append(CompilationError(
-                code="NO_CHUNKING",
-                message="Ingestion pipeline must have at least one chunking node",
-            ))
+            # Check for chunking nodes
+            chunking_nodes = nodes_by_category.get("chunking", [])
+            transform_nodes = nodes_by_category.get("transform", [])
+            if len(chunking_nodes) == 0 and len(transform_nodes) == 0:
+                errors.append(CompilationError(
+                    code="NO_CHUNKING",
+                    message="Ingestion pipeline must have at least one chunking node",
+                ))
 
-        # Check for embedding nodes
-        embedding_nodes = nodes_by_category.get("embedding", [])
-        if storage_nodes and len(embedding_nodes) == 0:
-            errors.append(CompilationError(
-                code="NO_EMBEDDING",
-                message="Ingestion pipeline must have at least one embedding node",
-            ))
+            # Check for embedding nodes
+            embedding_nodes = nodes_by_category.get("embedding", [])
+            if len(embedding_nodes) == 0:
+                errors.append(CompilationError(
+                    code="NO_EMBEDDING",
+                    message="Ingestion pipeline must have at least one embedding node",
+                ))
+
+            entry_nodes = source_nodes
+            exit_nodes = storage_nodes
+
+        else: # RETRIEVAL
+            # Check for query input nodes
+            input_nodes = nodes_by_category.get("input", [])
+            if len(input_nodes) == 0:
+                errors.append(CompilationError(
+                    code="NO_QUERY_INPUT",
+                    message="Retrieval pipeline must have at least one query input node",
+                ))
+            elif len(input_nodes) > 1:
+                errors.append(CompilationError(
+                    code="MULTIPLE_QUERY_INPUTS",
+                    message="Retrieval pipeline must have exactly one query input node",
+                ))
+
+            # Check for retrieval output nodes
+            output_nodes = nodes_by_category.get("output", [])
+            if len(output_nodes) == 0:
+                errors.append(CompilationError(
+                    code="NO_RETRIEVAL_RESULT",
+                    message="Retrieval pipeline must have at least one retrieval result node",
+                ))
+
+            entry_nodes = input_nodes
+            exit_nodes = output_nodes
 
         # Validate edge references
         node_ids = {n.id for n in pipeline.nodes}
@@ -425,31 +460,31 @@ class PipelineCompiler:
             adjacency[edge.source].add(edge.target)
             reverse_adjacency[edge.target].add(edge.source)
 
-        # Source nodes should not have inputs
-        for node in source_nodes:
+        # Entry nodes should not have inputs
+        for node in entry_nodes:
             if node.id in reverse_adjacency and reverse_adjacency[node.id]:
                 errors.append(CompilationError(
-                    code="SOURCE_HAS_INPUTS",
-                    message=f"Source node '{node.id}' should not have incoming edges",
+                    code="ENTRY_NODE_HAS_INPUTS",
+                    message=f"Entry node '{node.id}' should not have incoming edges",
                     node_id=node.id,
                 ))
 
-        # Storage nodes should not have outputs
-        for node in storage_nodes:
+        # Exit nodes should not have outputs
+        for node in exit_nodes:
             if node.id in adjacency and adjacency[node.id]:
                 errors.append(CompilationError(
-                    code="STORAGE_HAS_OUTPUTS",
-                    message=f"Storage node '{node.id}' should not have outgoing edges",
+                    code="EXIT_NODE_HAS_OUTPUTS",
+                    message=f"Exit node '{node.id}' should not have outgoing edges",
                     node_id=node.id,
                 ))
 
-        # Check all nodes are reachable from source
-        reachable = self._get_reachable_nodes(pipeline, source_nodes)
+        # Check all nodes are reachable from entry nodes
+        reachable = self._get_reachable_nodes(pipeline, entry_nodes)
         for node in pipeline.nodes:
             if node.id not in reachable:
                 errors.append(CompilationError(
                     code="UNREACHABLE_NODE",
-                    message=f"Node '{node.id}' is not reachable from source",
+                    message=f"Node '{node.id}' is not reachable from entry nodes",
                     node_id=node.id,
                 ))
 

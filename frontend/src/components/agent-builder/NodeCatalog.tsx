@@ -3,7 +3,7 @@
 import { useMemo, useEffect, useState } from "react"
 import {
     Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle,
-    GripVertical, PanelLeftClose
+    GripVertical, PanelLeftClose, Database, Bot, Sparkles, RefreshCw, ListFilter
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -24,28 +24,42 @@ const CATEGORY_ICONS: Record<AgentNodeCategory, React.ElementType> = {
     action: Wrench,
     logic: GitBranch,
     interaction: UserCheck,
+    data: Database,
 }
 
-const NODE_ICONS: Record<string, React.ElementType> = {
+const ICON_MAP: Record<string, React.ElementType> = {
+    Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle,
+    Database, Bot, Sparkles, RefreshCw, ListFilter,
+    // Lowercase mappings for types
     start: Play,
     end: Square,
     llm: Brain,
+    agent: Bot,
     tool: Wrench,
     rag: Search,
     conditional: GitBranch,
+    if_else: GitBranch,
+    while: RefreshCw,
     parallel: GitFork,
     human_input: UserCheck,
+    user_approval: UserCheck,
+    transform: Sparkles,
+    set_state: Database,
+    classify: ListFilter,
 }
 
 // Helper to get icon component safely
 const getIcon = (iconName: string) => {
-    const mapped = Object.entries(NODE_ICONS).find(([k]) => k.toLowerCase() === iconName.toLowerCase())
-    if (mapped) return mapped[1]
+    // Try exact match (e.g. Brain)
+    if (ICON_MAP[iconName]) return ICON_MAP[iconName]
+    // Try lowercase match (e.g. brain or llm)
+    const lower = iconName.toLowerCase()
+    if (ICON_MAP[lower]) return ICON_MAP[lower]
     return Circle
 }
 
 interface NodeCatalogProps {
-    onDragStart: (event: React.DragEvent, nodeType: AgentNodeType, category: AgentNodeCategory) => void
+    onDragStart: (event: React.DragEvent, spec: AgentNodeSpec) => void
     onClose?: () => void
 }
 
@@ -93,7 +107,7 @@ function CategorySection({
 }: {
     category: AgentNodeCategory
     specs: AgentNodeSpec[]
-    onDragStart: (event: React.DragEvent, nodeType: AgentNodeType, category: AgentNodeCategory) => void
+    onDragStart: (event: React.DragEvent, spec: AgentNodeSpec) => void
 }) {
     const label = CATEGORY_LABELS[category]
 
@@ -111,7 +125,7 @@ function CategorySection({
                     <CatalogItem
                         key={spec.nodeType}
                         spec={spec}
-                        onDragStart={(e) => onDragStart(e, spec.nodeType, spec.category)}
+                        onDragStart={(e) => onDragStart(e, spec)}
                     />
                 ))}
             </div>
@@ -141,16 +155,36 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
             // Fallback to static specs
             return AGENT_NODE_SPECS
         }
-        return operators.map(op => ({
-            nodeType: op.type as AgentNodeType,
-            displayName: op.display_name,
-            description: op.description,
-            category: op.category as AgentNodeCategory,
-            inputType: op.ui.inputType || "any",
-            outputType: op.ui.outputType || "any",
-            icon: op.ui.icon || "Circle",
-            configFields: op.ui.configFields || []
-        }))
+        return operators
+            .filter(op => op.type !== "conditional") // Remove legacy node
+            .map(op => {
+                // Clean up legacy display names if any
+                let displayName = op.display_name
+                let description = op.description
+                if (op.type === "human_input") {
+                    displayName = "Human Input"
+                    if (description.toLowerCase().includes("legacy")) {
+                        description = "Wait for human text input."
+                    }
+                }
+                if (op.type === "llm") {
+                    displayName = "LLM"
+                    if (description.toLowerCase().includes("simple")) {
+                        description = "Simple LLM completion for basic text generation."
+                    }
+                }
+
+                return {
+                    nodeType: op.type as AgentNodeType,
+                    displayName,
+                    description,
+                    category: op.category as AgentNodeCategory,
+                    inputType: op.ui.inputType || "any",
+                    outputType: op.ui.outputType || "any",
+                    icon: op.ui.icon || "Circle",
+                    configFields: op.ui.configFields || []
+                }
+            })
     }, [operators])
 
     // Filter specs by search
@@ -170,6 +204,7 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
             action: [],
             logic: [],
             interaction: [],
+            data: [],
         }
 
         filteredSpecs.forEach(spec => {
@@ -181,7 +216,7 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
         return groups
     }, [filteredSpecs])
 
-    const categories: AgentNodeCategory[] = ["control", "reasoning", "action", "logic", "interaction"]
+    const categories: AgentNodeCategory[] = ["control", "reasoning", "action", "logic", "interaction", "data"]
 
     return (
         <div className="flex flex-col">

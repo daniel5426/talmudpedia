@@ -154,6 +154,8 @@ export default function OperatorsPage() {
         execution_time_ms: number
     } | null>(null)
     const [testTab, setTestTab] = useState("input")
+    const [promotingId, setPromotingId] = useState<string | null>(null)
+
 
     // Helper to slugify a string
     const slugify = (text: string) => text.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/__+/g, "_").replace(/^_|_$/g, "")
@@ -347,6 +349,23 @@ export default function OperatorsPage() {
         }
     }
 
+    const handlePromote = async (operator: CustomOperator) => {
+        if (!confirm(`Promote "${operator.display_name}" to a file-based artifact? This will make it available across all pipelines.`)) return
+
+        setPromotingId(operator.id)
+        try {
+            const result = await ragAdminService.promoteCustomOperator(operator.id, "custom", currentTenant?.slug)
+            alert(`Successfully promoted to artifact: ${result.artifact_id}\nPath: ${result.path}`)
+            fetchOperators()
+        } catch (error) {
+            console.error("Failed to promote operator", error)
+            alert("Promotion failed. Check console for details.")
+        } finally {
+            setPromotingId(null)
+        }
+    }
+
+
     const updateFormData = (field: keyof OperatorFormData, value: string) => {
         setFormData((prev) => {
             const updated = { ...prev, [field]: value }
@@ -442,6 +461,19 @@ export default function OperatorsPage() {
                                     </TableCell>
                                     <TableCell className="text-right">
                                         <div className="flex justify-end gap-1">
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                title="Promote to Artifact"
+                                                onClick={() => handlePromote(op)}
+                                                disabled={promotingId === op.id}
+                                            >
+                                                {promotingId === op.id ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <Zap className="h-4 w-4 text-amber-500" />
+                                                )}
+                                            </Button>
                                             <Button variant="ghost" size="icon" onClick={() => setViewModeWithUrl("edit", op.id)}>
                                                 <Edit className="h-4 w-4" />
                                             </Button>
@@ -450,6 +482,7 @@ export default function OperatorsPage() {
                                             </Button>
                                         </div>
                                     </TableCell>
+
                                 </TableRow>
                             ))
                         )}
@@ -853,6 +886,22 @@ export default function OperatorsPage() {
                             <Code2 className="h-4 w-4" />
                             <span className="font-mono text-xs">{formData.name || "operator"}.py</span>
                         </div>
+                        {viewMode === "edit" && selectedOperator && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handlePromote(selectedOperator)}
+                                disabled={promotingId === selectedOperator.id}
+                                className="bg-amber-500/5 border-amber-500/20 text-amber-600 hover:bg-amber-500/10"
+                            >
+                                {promotingId === selectedOperator.id ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                    <Zap className="h-4 w-4 mr-2" />
+                                )}
+                                Promote
+                            </Button>
+                        )}
                         <Button
                             size="sm"
                             variant="outline"
@@ -867,6 +916,7 @@ export default function OperatorsPage() {
                             )}
                             Test
                         </Button>
+
                         <Button size="sm" onClick={handleSave} disabled={saving || !!slugError}>
                             {saving ? (
                                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />

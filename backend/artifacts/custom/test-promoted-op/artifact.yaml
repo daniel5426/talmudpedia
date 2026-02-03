@@ -1,0 +1,12 @@
+id: custom/test-promoted-op
+version: 1.0.0
+display_name: Test Promoted Operator
+category: normalization
+description: This was promoted from a DB draft
+input_type: raw_documents
+output_type: normalized_documents
+config: []
+author: Antigravity
+tags:
+- test
+- promoted

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -61,6 +61,10 @@ class ToolRegistry(Base):
     # Metadata
     schema = Column(JSONB, default={}, nullable=False) 
     config_schema = Column(JSONB, default={}, nullable=False)
+
+    # Artifact Integration
+    artifact_id = Column(String, nullable=True, index=True)
+    artifact_version = Column(String, nullable=True)
     
     is_active = Column(Boolean, default=True, nullable=False)
     is_system = Column(Boolean, default=False, nullable=False)
@@ -123,6 +127,11 @@ class ModelRegistry(Base):
     tenant = relationship("Tenant")
     providers = relationship("ModelProviderBinding", back_populates="model", cascade="all, delete-orphan")
 
+    __table_args__ = (
+        Index('uq_model_registry_slug_tenant', 'slug', 'tenant_id', unique=True, postgresql_where=(tenant_id != None)),
+        Index('uq_model_registry_slug_global', 'slug', unique=True, postgresql_where=(tenant_id == None)),
+    )
+
 
 class ModelProviderBinding(Base):
     """Link between a logical model and a specific provider implementation."""
@@ -146,4 +155,31 @@ class ModelProviderBinding(Base):
 
     # Relationships
     model = relationship("ModelRegistry", back_populates="providers")
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        Index('uq_model_binding_tenant', 'model_id', 'provider', 'provider_model_id', 'tenant_id', unique=True, postgresql_where=(tenant_id != None)),
+        Index('uq_model_binding_global', 'model_id', 'provider', 'provider_model_id', unique=True, postgresql_where=(tenant_id == None)),
+    )
+
+
+class ProviderConfig(Base):
+    """Centralized configuration for model providers (credentials, base_url, etc)."""
+    __tablename__ = "provider_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True) # Null for Global
+    
+    provider = Column(SQLEnum(ModelProviderType), nullable=False)
+    provider_variant = Column(String, nullable=True) # e.g. "azure", "org_abc", or null
+    
+    # Stores SECRETS (api_key, base_url, org_id) - Encrypted in future
+    credentials = Column(JSONB, default={}, nullable=False)
+    
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
     tenant = relationship("Tenant")

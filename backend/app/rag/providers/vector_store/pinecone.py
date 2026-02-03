@@ -107,9 +107,11 @@ class PineconeVectorStore(VectorStoreProvider):
         documents: List[VectorDocument],
         namespace: Optional[str] = None
     ) -> int:
+        # Validate inputs
         if not documents:
             return 0
         
+        # Propagate exceptions to caller (PipelineExecutor) for proper failure handling
         try:
             index = self._get_index(index_name)
             vectors = [
@@ -125,10 +127,15 @@ class PineconeVectorStore(VectorStoreProvider):
             if namespace:
                 kwargs["namespace"] = namespace
             
+            # This will raise PineconeException if it fails (e.g. auth error, network)
             await asyncio.to_thread(index.upsert, **kwargs)
+            
             return len(documents)
-        except Exception:
-            return 0
+            
+        except Exception as e:
+            # We still catch to log, but we re-raise so the pipeline fails
+            print(f"Error upserting to Pinecone index '{index_name}': {str(e)}")
+            raise e
     
     async def delete(
         self,

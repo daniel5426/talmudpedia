@@ -24,6 +24,8 @@ class CreateToolRequest(BaseModel):
     output_schema: dict
     config_schema: Optional[dict] = None
     scope: ToolDefinitionScope = ToolDefinitionScope.TENANT
+    artifact_id: Optional[str] = None
+    artifact_version: Optional[str] = None
 
 class UpdateToolRequest(BaseModel):
     name: Optional[str] = None
@@ -32,6 +34,8 @@ class UpdateToolRequest(BaseModel):
     output_schema: Optional[dict] = None
     config_schema: Optional[dict] = None
     is_active: Optional[bool] = None
+    artifact_id: Optional[str] = None
+    artifact_version: Optional[str] = None
 
 class ToolResponse(BaseModel):
     id: uuid.UUID
@@ -43,6 +47,8 @@ class ToolResponse(BaseModel):
     input_schema: dict
     output_schema: dict
     config_schema: dict
+    artifact_id: Optional[str] = None
+    artifact_version: Optional[str] = None
     is_active: bool
     is_system: bool
     created_at: datetime
@@ -96,6 +102,8 @@ async def list_tools(
             input_schema=t.schema.get("input", {}),
             output_schema=t.schema.get("output", {}),
             config_schema=t.config_schema or {},
+            artifact_id=t.artifact_id,
+            artifact_version=t.artifact_version,
             is_active=t.is_active,
             is_system=t.is_system,
             created_at=t.created_at,
@@ -131,6 +139,8 @@ async def create_tool(
             "output": request.output_schema
         },
         config_schema=request.config_schema or {},
+        artifact_id=request.artifact_id,
+        artifact_version=request.artifact_version,
         is_active=True,
         is_system=False
     )
@@ -149,6 +159,8 @@ async def create_tool(
         input_schema=new_tool.schema.get("input", {}),
         output_schema=new_tool.schema.get("output", {}),
         config_schema=new_tool.config_schema or {},
+        artifact_id=new_tool.artifact_id,
+        artifact_version=new_tool.artifact_version,
         is_active=new_tool.is_active,
         is_system=new_tool.is_system,
         created_at=new_tool.created_at,
@@ -187,6 +199,8 @@ async def get_tool(
         input_schema=tool.schema.get("input", {}),
         output_schema=tool.schema.get("output", {}),
         config_schema=tool.config_schema or {},
+        artifact_id=tool.artifact_id,
+        artifact_version=tool.artifact_version,
         is_active=tool.is_active,
         is_system=tool.is_system,
         created_at=tool.created_at,
@@ -231,6 +245,12 @@ async def update_tool(
     
     if request.config_schema is not None:
         tool.config_schema = request.config_schema
+    
+    if request.artifact_id is not None:
+        tool.artifact_id = request.artifact_id
+    if request.artifact_version is not None:
+        tool.artifact_version = request.artifact_version
+
     if request.is_active is not None:
         tool.is_active = request.is_active
         

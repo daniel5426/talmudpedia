@@ -7,20 +7,23 @@ The Agent subsystem is a sophisticated, graph-based orchestration engine designe
 
 ### 1. Visual Agent Builder
 - **Graph-Based Construction**: Built on `@xyflow/react`, allowing users to define agent logic as a Directed Acyclic Graph (DAG) or cyclic workflows (for loops/retries).
+- **Unified Node Shell**: Uses a shared `BaseNode` component for consistent visual design and integrated handle positioning across the platform.
+- **Specialized Node Layouts**: Row-based layouts for logic and interaction nodes (If/Else, While, User Approval) that align branch labels directly with their output handles.
 - **Node-Based Architecture**:
-    - **Unified Node Shell**: Uses a shared `BaseNode` component for consistent visual design and integrated handle positioning across the platform.
-    - **Input/Start**: Entry points for user queries and initial state.
-    - **LLM Call**: Core reasoning nodes where specific models (OpenAI, Gemini, etc.) are invoked with system prompts.
-    - **Tool Call**: Integration points for external capabilities (Search, Retrieval, API calls).
-    - **Conditional/Router**: Branching nodes for complex decision logic (T/F paths).
-    - **Output/End**: Final response generation and state termination.
+    - **Input/Start**: Entry points for user queries and initial state initialization.
+    - **Reasoning (Agent)**: Primary reasoning nodes with multi-tool binding and reasoning effort control.
+    - **Logic (If/Else, While)**: Dynamic branching and looping powered by restricted CEL expressions.
+    - **Data (Transform, Set State)**: Direct manipulation of agent `state` via expression-based mapping or literal assignments.
+    - **Actions (Tool/RAG)**: Integration points for external capabilities.
 - **Dynamic Configuration**: Each node type has a specific configuration schema (e.g., `model_id`, `temperature`, `system_prompt` for LLM nodes).
 - **Subdued Aesthetic**: Operator colors utilize a softened, pastel palette harmonized with the RAG Pipeline Builder to reduce visual noise.
 
-### 2. LangGraph Integration
-- **State Management**: Uses a centralized `AgentState` to track message history, reasoning steps, and intermediate data across the graph.
-- **Compiler & Executable**: An `AgentCompiler` validates the visual graph and transforms it into a `CompiledStateGraph` (LangGraph), which is then wrapped in an `ExecutableAgent`.
-- **Cyclic Support**: Unlike standard RAG pipelines, the Agent system is designed to support cycles, enabling iterative reasoning and self-correction patterns.
+### 2. LangGraph & Logic Engine
+- **State vs Context**: Clear architectural distinction between persistent `state` (checkpointed) and ephemeral `context` (erased between major steps).
+- **CEL Engine**: Integration of restricted Common Expression Language (CEL) for safe, performant logic evaluation without risk of side effects.
+- **State Management**: Uses a centralized `AgentState` to track message history, reasoning steps, and persistent user-defined variables.
+- **Compiler & Executable**: An `AgentCompiler` validates the visual graph and transforms it into a `CompiledStateGraph` (LangGraph).
+- **Cyclic Support**: Full support for loops and iterative reasoning patterns (e.g., `While` nodes with max iteration safety).
 
 ### 3. Unified Model & Tool Registry
 - **Model Resolution**: Integrates with the platform's `ModelResolver` to dynamically bind LLM nodes to specific model providers at runtime.
@@ -59,21 +62,24 @@ The Agent subsystem is a sophisticated, graph-based orchestration engine designe
 
 | Feature | Status | Details |
 | :--- | :--- | :--- |
-| Visual Agent Builder | ✅ Completed | Drag-and-drop interface for building agent graphs. |
+| Visual Agent Builder | ✅ Completed | Drag-and-drop interface with specialized branch-row UI. |
 | LangGraph Compiler | ✅ Completed | Translation of visual graphs into executable LangGraph states. |
+| Logic Engine (CEL) | ✅ Completed | Safe, restricted CEL evaluation for conditions and transforms. |
+| Looping (While) | ✅ Completed | Iterative workflows with iteration counters and safety limits. |
+| Data Manipulation | ✅ Completed | `Transform` and `Set State` nodes for complex state reshaping. |
 | Streaming API | ✅ Completed | Robust SSE/NDJSON streaming of tokens and reasoning steps. |
 | Model Resolver Integration | ✅ Completed | Dynamic model binding based on tenant configuration. |
 | Tracing & Telemetry | ✅ Completed | Detailed recording of agent runs and internal spans. |
 | Versioning System | ✅ Completed | Snapshot-based versioning for agent configurations. |
 | Tool Call Nodes | ✅ Completed | Infrastructure for external capabilities resolution and execution. |
-| Human-in-the-loop | ✅ Completed | Execution pausing/resumption for user approval or manual input. |
+| Human-in-the-loop | ✅ Completed | Specialized User Approval UI with Approve/Reject branching. |
 | Unified Node UI | ✅ Completed | Consistent shell and handle positioning shared with Pipeline Builder. |
-| Conditional Routing | ✅ Completed | Robust UI support for True/False branching and handle labels. |
+| Conditional Routing | ✅ Completed | Multi-branch If/Else support with dynamic rows and labels. |
 | Memory Management | 🚧 In Progress | Short-term memory active; long-term/vector memory in development. |
 
 ## Next Implementation Priorities
-1. **Advanced Tool Integration**: Streamlining the process of adding and configuring custom tools within the builder.
-2. **Refined Conditional Routing**: Implementing robust "Router" nodes for complex branching logic based on LLM output.
+1. **Performance Analytics**: Dashboard for visualizing agent cost, latency, and success rates across versions.
+2. **Advanced Tool Integration**: Streamlining the process of adding and configuring custom tools within the builder.
 3. **Multi-Agent Collaboration**: Enabling agents to call other agents as tools.
 4. **Long-term Memory (Vector)**: Integration with knowledge bases for persistent agent memory.
-5. **Performance Analytics**: Dashboard for visualizing agent cost, latency, and success rates across versions.
+5. **Classify & Guardrail Nodes**: Specialized reasoning nodes for automated intent classification and safety checks.

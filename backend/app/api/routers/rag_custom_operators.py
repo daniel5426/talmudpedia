@@ -242,3 +242,77 @@ async def test_custom_operator(
         error_message=output.error_message,
         execution_time_ms=output.execution_time_ms
     )
+
+@router.post("/{operator_id}/promote")
+async def promote_to_artifact(
+    operator_id: UUID,
+    namespace: str = "custom",
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Promote a custom operator to a file-based artifact.
+    
+    This writes the operator's code and metadata to the /backend/artifacts 
+    directory, allowing it to be managed as a first-class code entity.
+    """
+    # Get tenant context
+    tenant, user, db = await get_tenant_context(tenant_slug, current_user, db)
+    
+    # Fetch operator
+    query = select(CustomOperator).where(CustomOperator.id == operator_id)
+    if tenant:
+        query = query.where(CustomOperator.tenant_id == tenant.id)
+        
+    operator = await db.scalar(query)
+    if not operator:
+        raise HTTPException(status_code=404, detail="Operator not found")
+        
+    # Prepare manifest for artifact.yaml
+    artifact_id = f"{namespace}/{operator.name}"
+    
+    # Convert config schema to list of dicts if needed
+    config_list = operator.config_schema if isinstance(operator.config_schema, list) else []
+    
+    manifest = {
+        "id": artifact_id,
+        "version": operator.version or "1.0.0",
+        "display_name": operator.display_name,
+        "category": operator.category.value,
+        "description": operator.description,
+        "input_type": operator.input_type,
+        "output_type": operator.output_type,
+        "config": config_list,
+        "author": f"{user.full_name} ({user.email})" if hasattr(user, "full_name") and user.full_name else user.email,
+        "tags": ["promoted", "custom"]
+    }
+    
+    # Use the Registry Service to save it
+    from app.services.artifact_registry import get_artifact_registry
+    registry = get_artifact_registry()
+    
+    try:
+        path = registry.promote_to_artifact(namespace, operator.name, manifest, operator.python_code)
+        
+        # Log action
+        log_simple_action(
+            db, 
+            current_user.id, 
+            "promote_artifact", 
+            "custom_operator", 
+            str(operator.id),
+            {"artifact_id": artifact_id}
+        )
+        
+        return {
+            "status": "promoted",
+            "artifact_id": artifact_id,
+            "path": str(path),
+            "version": manifest["version"]
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Promotion failed: {str(e)}")
+

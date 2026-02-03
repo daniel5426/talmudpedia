@@ -1,0 +1,29 @@
+id: builtin/html_cleaner
+version: "1.0.0"
+display_name: HTML Cleaner
+category: normalization
+description: Clean HTML content and extract plain text
+
+input_type: raw_documents
+output_type: normalized_documents
+
+config:
+  - name: remove_scripts
+    type: boolean
+    default: true
+    description: Remove script tags
+
+  - name: remove_styles
+    type: boolean
+    default: true
+    description: Remove style tags
+
+  - name: preserve_links
+    type: boolean
+    default: false
+    description: Preserve link URLs in output
+
+tags:
+  - html
+  - cleaning
+  - text

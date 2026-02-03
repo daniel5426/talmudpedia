@@ -70,6 +70,7 @@ export function PipelinesTable({
         <TableRow>
           <TableHead className={isRTL ? "text-right" : "text-left"}>Name</TableHead>
           {showDescription && <TableHead className={isRTL ? "text-right" : "text-left"}>Description</TableHead>}
+          <TableHead className={isRTL ? "text-right" : "text-left"}>Type</TableHead>
           <TableHead className={isRTL ? "text-right" : "text-left"}>Version</TableHead>
           <TableHead className={isRTL ? "text-right" : "text-left"}>Status</TableHead>
           <TableHead className={isRTL ? "text-right" : "text-left"}>Updated</TableHead>
@@ -84,94 +85,105 @@ export function PipelinesTable({
             ? `/admin/pipelines/${pipeline.id}?jobId=${runningJob.jobId}`
             : `/admin/pipelines/${pipeline.id}`
           return (
-          <TableRow key={pipeline.id}>
-            <TableCell className={cn("font-medium", isRTL ? "text-right" : "text-left")}>
-              <div className="flex flex-col">
-                <Link href={pipelineHref} className="hover:underline">
-                  {pipeline.name}
-                </Link>
-                {!showDescription && pipeline.description && (
-                  <span className="text-xs text-muted-foreground font-normal">
-                    {pipeline.description}
-                  </span>
-                )}
-                {runningJob && (
-                  <div className="mt-2">
-                    <Progress value={runningJob.progress ?? 5} className="h-1" />
-                  </div>
-                )}
-              </div>
-            </TableCell>
-            {showDescription && (
-              <TableCell className={cn("text-muted-foreground max-w-[200px] truncate", isRTL ? "text-right" : "text-left")}>
-                {pipeline.description || "-"}
+            <TableRow key={pipeline.id}>
+              <TableCell className={cn("font-medium", isRTL ? "text-right" : "text-left")}>
+                <div className="flex flex-col">
+                  <Link href={pipelineHref} className="hover:underline">
+                    {pipeline.name}
+                  </Link>
+                  {!showDescription && pipeline.description && (
+                    <span className="text-xs text-muted-foreground font-normal">
+                      {pipeline.description}
+                    </span>
+                  )}
+                  {runningJob && (
+                    <div className="mt-2">
+                      <Progress value={runningJob.progress ?? 5} className="h-1" />
+                    </div>
+                  )}
+                </div>
               </TableCell>
-            )}
-            <TableCell className={isRTL ? "text-right" : "text-left"}>
-              <Badge variant="outline">v{pipeline.version}</Badge>
-            </TableCell>
-            <TableCell className={isRTL ? "text-right" : "text-left"}>
-              {runningJob ? (
-                <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">
-                  <Play className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />
-                  Running
-                </Badge>
-              ) : pipeline.is_published ? (
-                <Badge className="bg-green-500/10 text-green-600 border-green-500/20">
-                  <CheckCircle2 className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />
-                  Published
-                </Badge>
-              ) : (
-                <Badge variant="secondary">
-                  <Edit className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />
-                  Draft
-                </Badge>
+              {showDescription && (
+                <TableCell className={cn("text-muted-foreground max-w-[200px] truncate", isRTL ? "text-right" : "text-left")}>
+                  {pipeline.description || "-"}
+                </TableCell>
               )}
-            </TableCell>
-            <TableCell className={isRTL ? "text-right" : "text-left"}>
-              {new Date(pipeline.updated_at).toLocaleDateString()}
-            </TableCell>
-            <TableCell className={isRTL ? "text-left" : "text-right"}>
-              <div className={cn("flex gap-1", isRTL ? "justify-start" : "justify-end")}>
-                {onRun && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    title={isCompiling ? "Preparing Run" : "Run Pipeline"}
-                    onClick={() => onRun(pipeline)}
-                    disabled={isCompiling}
-                  >
-                    {isCompiling ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Play className="h-4 w-4" />
-                    )}
-                  </Button>
+              <TableCell className={isRTL ? "text-right" : "text-left"}>
+                {pipeline.pipeline_type === "retrieval" ? (
+                  <Badge variant="outline" className="bg-purple-500/10 text-purple-600 border-purple-500/20">
+                    Retrieval
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/20">
+                    Ingestion
+                  </Badge>
                 )}
-                {onViewHistory && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    title="View Execution History"
-                    onClick={() => onViewHistory(pipeline)}
-                  >
-                    <History className="h-4 w-4" />
-                  </Button>
+              </TableCell>
+              <TableCell className={isRTL ? "text-right" : "text-left"}>
+                <Badge variant="outline">v{pipeline.version}</Badge>
+              </TableCell>
+              <TableCell className={isRTL ? "text-right" : "text-left"}>
+                {runningJob ? (
+                  <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">
+                    <Play className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />
+                    Running
+                  </Badge>
+                ) : pipeline.is_published ? (
+                  <Badge className="bg-green-500/10 text-green-600 border-green-500/20">
+                    <CheckCircle2 className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />
+                    Published
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary">
+                    <Edit className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />
+                    Draft
+                  </Badge>
                 )}
-                {onDelete && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => onDelete(pipeline.id)}
-                    disabled={!canDelete}
-                    title="Delete Pipeline"
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                )}
-              </div>
-            </TableCell>
-          </TableRow>
+              </TableCell>
+              <TableCell className={isRTL ? "text-right" : "text-left"}>
+                {new Date(pipeline.updated_at).toLocaleDateString()}
+              </TableCell>
+              <TableCell className={isRTL ? "text-left" : "text-right"}>
+                <div className={cn("flex gap-1", isRTL ? "justify-start" : "justify-end")}>
+                  {onRun && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title={isCompiling ? "Preparing Run" : "Run Pipeline"}
+                      onClick={() => onRun(pipeline)}
+                      disabled={isCompiling}
+                    >
+                      {isCompiling ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                    </Button>
+                  )}
+                  {onViewHistory && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="View Execution History"
+                      onClick={() => onViewHistory(pipeline)}
+                    >
+                      <History className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {onDelete && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onDelete(pipeline.id)}
+                      disabled={!canDelete}
+                      title="Delete Pipeline"
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  )}
+                </div>
+              </TableCell>
+            </TableRow>
           )
         })}
       </TableBody>

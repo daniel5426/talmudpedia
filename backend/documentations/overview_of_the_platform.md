@@ -1,178 +1,109 @@
-# Platform Overview – Enterprise AI Agent & RAG Platform
+# Platform Overview – Enterprise AI Operating System
 
-This platform is a **foundational AI development and execution environment** designed for large organizations to build, govern, and operate AI systems at scale.
+TalmudPedia is a foundational **AI Development and Execution OS** designed for organizations to build, govern, and operate sophisticated AI systems at scale. It provides a unified control plane for models, data, tools, and reasoning workflows while remaining fully agnostic to vendors and infrastructure.
 
-It provides a unified control plane for **models, data, tools, and reasoning workflows**, while remaining fully agnostic to vendors, infrastructure, and deployment topology.
-
-The platform is intentionally designed as a **long‑lived internal AI platform**, not a single-use application.
+The platform is built on the philosophy of **"Separation of Concerns"**, where data ingestion (RAG) and reasoning (Agents) are decoupled through a central bridge: the **Knowledge Store**.
 
 ---
 
-## Platform Mission
+## 🏗️ High-Level Architecture
 
-Enable enterprises to:
+The platform is organized into independent, root-level domains that communicate through stable service contracts.
 
-- Build AI agents and RAG systems in a **modular, composable way**
-- Safely mix **API-based and self-hosted open-source models**
-- Enforce **governance, security, and auditability by default**
-- Remain portable across **cloud, on‑prem, and hybrid infrastructures**
-
----
-
-## High-Level Platform Architecture
-
-The platform is organized around a small number of **root-level domains**, each with a clear responsibility boundary.
-
+```text
+       ┌─────────────────────────────────────────────────────────┐
+       │                   Governance & Identity                 │
+       └───────────────────────────┬─────────────────────────────┘
+                                   │
+       ┌───────────────────────────▼─────────────────────────────┐
+       │               Unified Execution Kernel                  │
+       │        (Jobs, Traces, Streaming, State Management)       │
+       └─────┬─────────────────────┬───────────────────────┬─────┘
+             │                     │                       │
+ ┌───────────▼───────────┐ ┌───────▼─────────────┐ ┌───────▼──────────┐
+ │      RAG Domain       │ │   Knowledge Store   │ │   Agent Domain   │
+ │ (Ingestion Pipelines) │ │    (The Bridge)     │ │ (Reasoning Flows)│
+ └───────────┬───────────┘ └───────▲─────────────┘ └───────┬──────────┘
+             │                     │                       │
+             └─────────────────────┴───────────────────────┘
+                                   │
+ ┌─────────────────────────────────▼──────────────────────────────────┐
+ │                  Resource Layer (Shared Assets)                    │
+ │         (Model Registry, Tool Catalog, Artifact Registry)          │
+ └────────────────────────────────────────────────────────────────────┘
 ```
-Platform
-│
-├─ Models        → Logical AI capabilities (shared)
-├─ Tools         → Callable platform capabilities (shared)
-├─ RAG           → Knowledge ingestion & retrieval workflows
-├─ Agents        → Reasoning & orchestration workflows
-├─ Execution     → Jobs, runs, traces, runtime resolution
-└─ Governance    → Tenancy, RBAC, policy, audit
-```
-
-Each domain is independently evolvable and communicates through stable contracts.
 
 ---
 
-## Core Architectural Principles
+## 💎 Core Domains
 
-### 1. Strong Separation of Concerns
+### 1. Resource Layer (Models, Tools & Artifacts)
+Defines **what** capabilities exist.
+- **Model Registry**: A central hub for Chat, Embedding, and Reranking models. Supports tenant-specific configurations and automatic dimension resolution.
+- **Tool Catalog**: A registry of callable assets (APIs, specialized handlers) that Agents can utilize.
+- **Artifact Registry**: A filesystem-based extension system that allows deploying versioned, manifest-driven code blocks (Handlers) as first-class operators.
 
-- **Resources** (models, tools, data) are defined once and reused
-- **Workflows** (RAG pipelines, agents) only reference resources
-- **Execution** is late-bound and policy-driven
+### 2. RAG Domain (Knowledge Builder)
+Responsible for **how raw data becomes knowledge**.
+- **Visual Pipeline Builder**: A drag-and-drop interface for constructing complex ingestion and retrieval DAGs.
+- **Operator Ecosystem**: Supports diverse processing nodes including OCR, PII redaction, semantic chunking, and LLM-based enrichment.
+- **Extensibility**: Developers can inject logic via **Custom Python Operators** (browser-based) or **Code Artifacts** (filesystem-based).
 
-### 2. Vendor and Infrastructure Neutrality
+### 3. Knowledge Store (The Bridge) 🚀
+The central abstraction that decouples domain logic from physical vector databases.
+- **Implementation Independence**: Agents and Pipelines interact with logical "Knowledge Stores" rather than specific database instances.
+- **Unified Interface**: Handles embedding generation, vector search, and reranking policies (Semantic, Hybrid, Keyword) transparently.
+- **Cascading Lifecycle**: Manages the link between ingestion pipelines and retrieval requests.
 
-The platform does not assume:
+### 4. Agent Domain (Reasoning & Orchestration)
+Responsible for **decision-making workflows**.
+- **LangGraph Integration**: Powered by a sophisticated state-machine engine supporting cyclic workflows, loops, and retries.
+- **Logic Engine (CEL)**: Uses Common Expression Language for safe, high-performance branching and data transformation.
+- **Human-in-the-Loop**: Built-in support for "User Approval" nodes and interactive state updates.
+- **Streaming & Tracing**: Real-time event firehose for tokens, thoughts, and retrieval results.
 
-- A specific model provider
-- A specific vector database
-- A specific hosting strategy
-
-All such concerns are resolved at runtime.
-
-### 3. Enterprise-Grade by Design
-
-- Multi-tenancy is a first-class concept
-- RBAC and audit logging are mandatory, not optional
-- All execution paths are traceable and inspectable
-
-### 4. DAG-Based Orchestration Everywhere
-
-Both RAG pipelines and Agents are expressed as:
-
-- Declarative directed graphs
-- Versioned, immutable definitions
-- Executed by a shared execution kernel
-
----
-
-## Domain-Specific Roles
-
-### Models (Root Domain)
-
-Defines **what AI capabilities exist**.
-
-- Chat models
-- Embedding models
-- Rerankers
-- Vision / speech / multimodal models
-
-Models are logical entities, independent of how or where they run.
+### 5. Execution & Governance
+The foundation that ensures **reliability and trust**.
+- **Service Layer Pattern**: All domains are refactored into clean Service Layers (`AgentService`, `RetrievalService`, etc.) for robust API interaction.
+- **Divergent Observability**: Unified engine with separate modes for **Playground (Full Trace)** and **Production (Clean Output)**.
+- **Multi-Tenancy**: First-class support for tenant isolation, scoped resources, and RBAC.
 
 ---
 
-### Tools (Root Domain)
+## 🛠️ Operator Hierarchy
+The platform supports three levels of functional extension:
 
-Defines **callable capabilities** exposed by the platform.
-
-- External APIs
-- Internal services
-- RAG lookups
-- Business logic actions
-
-Tools are governed resources, not agent logic.
+| Type | Storage | Best For... | Developer Experience |
+| :--- | :--- | :--- | :--- |
+| **Built-in** | Source Code | Standardized logic (Loaders, Chunkers) | No-code (Config only) |
+| **Custom Python** | Database | Quick hacks, "Escape hatch" logic | In-browser Editor |
+| **Artifacts** | Filesystem | Heavy logic, specialized libraries, external SDKs | Local Dev / Git-based |
 
 ---
 
-### RAG Domain
+## 🚀 Key Capabilities
 
-Responsible for **knowledge ingestion and retrieval**.
-
-- Data loading
-- Chunking
-- Embedding
-- Indexing
-- Retrieval pipelines
-
-RAG produces retrievable knowledge, not reasoning.
+- **Vendor Agnostic**: Seamlessly swap between OpenAI, Anthropic, or Self-hosted models.
+- **Hybrid Search**: Out-of-the-box support for Vector (Semantic), Keyword, and Reranked search flows.
+- **Traceability**: Every reasoning step and data transformation is recorded and inspectable.
+- **Safe Execution**: User-code is executed in restricted environments with curated standard libraries.
+- **Dynamic Frontend**: Modern, responsive UI built with Next.js, Radix UI, and React Flow.
 
 ---
 
-### Agent Domain
+## 💻 Technology Stack
 
-Responsible for **reasoning and decision-making workflows**.
-
-- LLM-driven control flow
-- Tool invocation
-- Memory and state handling
-- Multi-step orchestration
-
-Agents consume models and tools but do not own them.
+- **Backend**: Python 3.11+, FastAPI (Async), LangGraph, SQLAlchemy (Async).
+- **Frontend**: TypeScript, Next.js 14, Shadcn/UI, xyflow (React Flow).
+- **Data**: PostgreSQL (Metadata & pgvector), MongoDB (Legacy/Specific Data), Redis (Caching/Workers).
+- **Orchestration**: Celery & BackgroundTasks.
+- **Infrastructure**: Docker, AWS/GCP ready.
 
 ---
 
-### Execution Domain
+## 🔮 Platform Vision
 
-Responsible for **turning definitions into running systems**.
-
-- Runtime resolution (models, tools)
-- Job orchestration
-- Traces and logs
-- Failure handling
-
-Execution is shared across all workflow domains.
-
----
-
-### Governance Domain
-
-Responsible for **control and compliance**.
-
-- Tenant isolation
-- Organizational hierarchy
-- Permissions
-- Audit trails
-
-Governance applies uniformly across the platform.
-
----
-
-## Intended Use Cases
-
-The platform supports:
-
-- Internal enterprise AI agents
-- Retrieval-augmented systems
-- Domain-specific copilots
-- Secure experimentation with open-source models
-- Regulated AI deployments
-
----
-
-## Long-Term Vision
-
-This platform serves as a **base AI operating system** for enterprises:
-
-- New models can be added without refactoring workflows
-- Infrastructure can change without breaking agents
-- Governance remains consistent as capabilities grow
-
-It is designed to evolve with the AI ecosystem, not be locked to it.
-
-#
+TalmudPedia serves as a **long-lived AI operating system**. It allows organizations to:
+1.  **Iterate Fast**: Build and test agents in minutes using the Playground.
+2.  **Govern Everything**: Enforce consistent security and cost policies across all AI apps.
+3.  **Future Proof**: Switch models or vector stores as the ecosystem evolves without rewriting a single agent.

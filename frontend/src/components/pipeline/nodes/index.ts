@@ -19,5 +19,7 @@ export const nodeTypes = {
   storage: StorageNode,
   retrieval: SourceNode,
   reranking: TransformNode,
+  pipeline_input: SourceNode,
+  pipeline_output: StorageNode,
   custom: EmbeddingNode,
 }

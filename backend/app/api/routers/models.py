@@ -13,7 +13,8 @@ from app.db.postgres.models.registry import (
     ModelProviderType, 
     ModelCapabilityType, 
     ModelStatus,
-    ModelProviderBinding
+    ModelProviderBinding,
+    ProviderConfig
 )
 from app.db.postgres.session import get_db
 from app.api.dependencies import get_current_user, get_tenant_context
@@ -366,3 +367,152 @@ async def remove_provider_binding(
     await db.commit()
     
     return {"status": "deleted"}
+
+
+# ============================================================================
+# Provider Config Endpoints
+# ============================================================================
+
+class ProviderConfigResponse(BaseModel):
+    id: uuid.UUID
+    provider: ModelProviderType
+    provider_variant: Optional[str]
+    is_enabled: bool
+    source: str # "tenant" or "global"
+    updated_at: datetime
+
+class CreateProviderConfigRequest(BaseModel):
+    provider: ModelProviderType
+    provider_variant: Optional[str] = None
+    credentials: dict = Field(..., description="API Keys, Base URL, etc.")
+    is_enabled: bool = True
+
+class ProviderStatus(BaseModel):
+    provider: ModelProviderType
+    provider_variant: Optional[str]
+    is_configured: bool
+    source: Optional[str] # tenant | global
+    is_enabled: bool
+
+@router.post("/providers", response_model=ProviderConfigResponse)
+async def configure_provider(
+    request: CreateProviderConfigRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tenant_context),
+    current_user=Depends(get_current_user),
+):
+    """Set credentials for a provider."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+    
+    # Check if exists
+    stmt = select(ProviderConfig).where(
+        ProviderConfig.tenant_id == tid,
+        ProviderConfig.provider == request.provider,
+        ProviderConfig.provider_variant == request.provider_variant
+    )
+    res = await db.execute(stmt)
+    config = res.scalar_one_or_none()
+    
+    if config:
+        # Update
+        config.credentials = request.credentials
+        config.is_enabled = request.is_enabled
+    else:
+        # Create
+        config = ProviderConfig(
+            tenant_id=tid,
+            provider=request.provider,
+            provider_variant=request.provider_variant,
+            credentials=request.credentials,
+            is_enabled=request.is_enabled
+        )
+        db.add(config)
+        
+    await db.commit()
+    await db.refresh(config)
+    
+    return ProviderConfigResponse(
+        id=config.id,
+        provider=config.provider,
+        provider_variant=config.provider_variant,
+        is_enabled=config.is_enabled,
+        source="tenant",
+        updated_at=config.updated_at
+    )
+
+@router.get("/providers", response_model=List[ProviderConfigResponse])
+async def list_configured_providers(
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tenant_context),
+    current_user=Depends(get_current_user),
+):
+    """List configured providers (masked)."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+    
+    # Get Tenant Configs
+    stmt = select(ProviderConfig).where(ProviderConfig.tenant_id == tid)
+    res = await db.execute(stmt)
+    tenant_configs = res.scalars().all()
+    
+    # We could also show global configs that are available?
+    # For now, let's just show what the tenant has configured.
+    
+    return [
+        ProviderConfigResponse(
+            id=c.id,
+            provider=c.provider,
+            provider_variant=c.provider_variant,
+            is_enabled=c.is_enabled,
+            source="tenant",
+            updated_at=c.updated_at
+        ) for c in tenant_configs
+    ]
+
+@router.get("/providers/status", response_model=List[ProviderStatus])
+async def get_provider_status(
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tenant_context),
+    current_user=Depends(get_current_user),
+):
+    """Check status of all known providers (Tenant > Global)."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+    
+    # List of all relevant provider types/variants could be hardcoded or distinct from DB
+    # For now, distinct from DB is safer.
+    
+    # 1. Fetch all tenant configs
+    t_stmt = select(ProviderConfig).where(ProviderConfig.tenant_id == tid)
+    t_res = await db.execute(t_stmt)
+    t_configs = t_res.scalars().all()
+    
+    # 2. Fetch all global configs
+    g_stmt = select(ProviderConfig).where(ProviderConfig.tenant_id == None)
+    g_res = await db.execute(g_stmt)
+    g_configs = g_res.scalars().all()
+    
+    # Map (provider, variant) -> Config
+    status_map = {}
+    
+    # Process Global First
+    for c in g_configs:
+        key = (c.provider, c.provider_variant)
+        status_map[key] = ProviderStatus(
+            provider=c.provider,
+            provider_variant=c.provider_variant,
+            is_configured=True,
+            source="global",
+            is_enabled=c.is_enabled
+        )
+        
+    # Override with Tenant
+    for c in t_configs:
+        key = (c.provider, c.provider_variant)
+        status_map[key] = ProviderStatus(
+            provider=c.provider,
+            provider_variant=c.provider_variant,
+            is_configured=True,
+            source="tenant",
+            is_enabled=c.is_enabled
+        )
+        
+    return list(status_map.values())

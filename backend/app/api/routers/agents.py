@@ -108,6 +108,29 @@ def handle_service_error(e: AgentServiceError):
     raise HTTPException(status_code=500, detail=e.message)
 
 
+
+# =============================================================================
+# Catalog Endpoint
+# =============================================================================
+
+@router.get("/operators")
+async def list_operators(
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all available agent operators including artifacts.
+    """
+    from app.agent.registry import AgentOperatorRegistry
+    
+    # Ensure artifacts are registered (lazy load if needed)
+    from app.agent.executors.standard import register_standard_operators
+    register_standard_operators()
+    
+    operators = AgentOperatorRegistry.list_operators()
+    return [op.model_dump() for op in operators]
+
+
 # =============================================================================
 # CRUD Endpoints
 # =============================================================================

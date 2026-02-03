@@ -374,6 +374,12 @@ export default function RAGAdminPage() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" asChild>
+            <Link href="/admin/rag/knowledge-stores">
+              <Database className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
+              Knowledge Stores
+            </Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
             <Link href="/admin/pipelines">
               <Workflow className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
               Pipeline Builder

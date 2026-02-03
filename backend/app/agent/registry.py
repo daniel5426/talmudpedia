@@ -13,14 +13,37 @@ class AgentStateField(str, Enum):
     """
     Enum representing different fields in the AgentState.
     Used to define read/write contracts for operators.
+    
+    Architecture:
+    - STATE fields: Workflow-level, persistent, versioned, survives loops/approvals
+    - CONTEXT fields: Step-local, ephemeral, discardable
     """
-    MESSAGE_HISTORY = "messages"       # The conversation history
-    TOOL_CALLS = "tool_calls"          # Pending tool calls
-    OBSERVATIONS = "tool_outputs"      # Results from tool executions
-    MEMORY = "memory"                  # Short/Long term memory state
-    ROUTING_KEY = "next"               # Control flow decision
-    FINAL_OUTPUT = "final_output"      # Final response to user
-    CONTEXT = "context"                # Global context variables
+    # ==========================================================================
+    # STATE (Persistent, Versioned)
+    # ==========================================================================
+    MESSAGE_HISTORY = "messages"           # The conversation history
+    STATE_VARIABLES = "state"              # User-defined persistent variables
+    MEMORY = "memory"                      # Short/Long term memory state
+    FINAL_OUTPUT = "final_output"          # Final response to user
+    
+    # Control Flow
+    ROUTING_KEY = "next"                   # Control flow decision (routing)
+    LOOP_COUNTERS = "loop_counters"        # While loop iteration counters
+    APPROVAL_STATUS = "approval_status"   # User approval state (approve/reject)
+    
+    # Classification/Branching
+    CLASSIFICATION = "classification"      # Result from Classify node
+    BRANCH_TAKEN = "branch_taken"          # Which branch was taken in If/Else
+    
+    # ==========================================================================
+    # CONTEXT (Ephemeral, Step-local)
+    # ==========================================================================
+    CONTEXT = "context"                    # Step-local scratch space
+    TOOL_CALLS = "tool_calls"              # Pending tool calls (current step)
+    OBSERVATIONS = "tool_outputs"          # Results from tool executions (current step)
+    GUARDRAIL_RESULTS = "guardrail_results"  # Safety check results (current step)
+    TRANSFORM_OUTPUT = "transform_output"  # Transform node output (current step)
+
 
 
 class AgentOperatorSpec(BaseModel):

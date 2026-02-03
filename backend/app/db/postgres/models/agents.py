@@ -21,7 +21,7 @@ class Agent(Base):
     __tablename__ = "agents"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     
     name = Column(String, nullable=False)
     slug = Column(String, nullable=False, index=True)
@@ -67,7 +67,7 @@ class Agent(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     published_at = Column(DateTime(timezone=True), nullable=True)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     tenant = relationship("Tenant")
@@ -83,13 +83,13 @@ class AgentVersion(Base):
     __tablename__ = "agent_versions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False, index=True)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     
     version = Column(Integer, nullable=False)
     config_snapshot = Column(JSONB, nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     agent = relationship("Agent")
@@ -108,9 +108,9 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     
     status = Column(SQLEnum(RunStatus), default=RunStatus.queued, nullable=False)
     
@@ -139,7 +139,7 @@ class AgentTrace(Base):
     __tablename__ = "agent_traces"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"), nullable=False, index=True)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     
     span_id = Column(String, nullable=False)
     parent_span_id = Column(String, nullable=True)

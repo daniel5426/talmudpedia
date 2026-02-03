@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState, useRef, useEffect } from "react"
+import { useCallback, useState, useRef, useEffect, useMemo } from "react"
 import {
   ReactFlow,
   Controls,
@@ -58,6 +58,7 @@ interface PipelineBuilderProps {
   onAddCustomOperator?: () => void
   onCompile?: () => void
   onRun?: () => void
+  pipelineType?: "ingestion" | "retrieval"
   isSaving?: boolean
   isCompiling?: boolean
   executionSteps?: Record<string, PipelineStepExecution>
@@ -75,6 +76,7 @@ function PipelineBuilderInner({
   onAddCustomOperator,
   onCompile,
   onRun,
+  pipelineType = "ingestion",
   isSaving = false,
   isCompiling = false,
   executionSteps,
@@ -92,7 +94,16 @@ function PipelineBuilderInner({
 
   const { screenToFlowPosition } = useReactFlow()
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
+  const sanitizedInitialNodes = useMemo(() => {
+    return initialNodes.map(node => {
+      if (node.type === "input" || node.type === "output") {
+        return { ...node, type: `pipeline_${node.type}` }
+      }
+      return node
+    })
+  }, [initialNodes])
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(sanitizedInitialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('pan')
@@ -227,9 +238,11 @@ function PipelineBuilderInner({
         y: event.clientY,
       })
 
+      const nodeType = category === "input" || category === "output" ? `pipeline_${category}` : category
+
       const newNode: Node<PipelineNodeData> = {
         id: `node-${nanoid(6)}`,
-        type: category,
+        type: nodeType,
         position,
         data: {
           operator: operatorId,
@@ -317,12 +330,13 @@ function PipelineBuilderInner({
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       {/* Floating Operator Catalog using shared component */}
-      <FloatingPanel position="left" visible={isCatalogVisible} className="w-64">
+      <FloatingPanel position="left" visible={isCatalogVisible} className="w-64 z-40">
         <NodeCatalog
           catalog={catalog}
           onDragStart={handleDragStart}
           onAddCustomOperator={onAddCustomOperator}
           onClose={() => setIsCatalogVisible(false)}
+          pipelineType={pipelineType}
         />
       </FloatingPanel>
 

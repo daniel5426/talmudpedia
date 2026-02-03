@@ -51,6 +51,7 @@ export interface ChunkPreview {
 export interface RAGPipeline {
   id: string;
   name: string;
+  slug?: string;
   description?: string;
   embedding_provider: string;
   vector_store_provider: string;
@@ -83,6 +84,7 @@ export interface VisualPipeline {
   org_unit_id?: string;
   name: string;
   description?: string;
+  pipeline_type: "ingestion" | "retrieval";
   nodes: VisualPipelineNode[];
   edges: VisualPipelineEdge[];
   version: number;
@@ -319,6 +321,7 @@ class RAGAdminService {
     data: {
       name: string;
       description?: string;
+      pipeline_type?: "ingestion" | "retrieval";
       nodes: VisualPipelineNode[];
       edges: VisualPipelineEdge[];
       org_unit_id?: string;
@@ -343,6 +346,7 @@ class RAGAdminService {
     data: {
       name?: string;
       description?: string;
+      pipeline_type?: "ingestion" | "retrieval";
       nodes?: VisualPipelineNode[];
       edges?: VisualPipelineEdge[];
     },
@@ -510,6 +514,18 @@ class RAGAdminService {
       : "/admin/rag/custom-operators/test";
     return httpClient.post(url, data);
   }
+
+  async promoteCustomOperator(
+    id: string,
+    namespace: string = "custom",
+    tenantSlug?: string
+  ): Promise<{ status: string; artifact_id: string; path: string; version: string }> {
+    const url = tenantSlug
+      ? `/admin/rag/custom-operators/${id}/promote?tenant_slug=${tenantSlug}&namespace=${namespace}`
+      : `/admin/rag/custom-operators/${id}/promote?namespace=${namespace}`;
+    return httpClient.post(url, {});
+  }
 }
+
 
 export const ragAdminService = new RAGAdminService();

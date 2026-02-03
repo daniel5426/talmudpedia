@@ -25,6 +25,8 @@ class DataType(str, Enum):
     VECTORS = "vectors"
     SEARCH_RESULTS = "search_results"              # For query pipelines
     RERANKED_RESULTS = "reranked_results"          # After reranking
+    QUERY = "query"                                # Structured query (text, filters, etc)
+    QUERY_EMBEDDINGS = "query_embeddings"          # Tuple of (QUERY, vector)
 
 
 class OperatorCategory(str, Enum):
@@ -37,6 +39,8 @@ class OperatorCategory(str, Enum):
     STORAGE = "storage"               # Vector stores
     RETRIEVAL = "retrieval"           # Search operators (vector, hybrid, BM25)
     RERANKING = "reranking"           # Reranker models
+    INPUT = "input"                   # Pipeline entry points (e.g. Query Input)
+    OUTPUT = "output"                 # Pipeline exit points (e.g. Retrieval Result)
     CUSTOM = "custom"                 # User-defined Python operators
 
 
@@ -49,6 +53,8 @@ class ConfigFieldType(str, Enum):
     SECRET = "secret"
     SELECT = "select"
     MODEL_SELECT = "model_select"
+    KNOWLEDGE_STORE_SELECT = "knowledge_store_select"
+    RETRIEVAL_PIPELINE_SELECT = "retrieval_pipeline_select"
     JSON = "json"           # For complex nested configs
     CODE = "code"           # For Python code editors
     FILE_PATH = "file_path" # For file/directory selection
@@ -117,6 +123,7 @@ class OperatorSpec(BaseModel):
     # Metadata
     author: Optional[str] = None
     tags: List[str] = []
+    scope: str = "rag" # rag, agent, or both
     deprecated: bool = False
     deprecation_message: Optional[str] = None
 
@@ -732,8 +739,8 @@ EMBEDDING_OPERATORS: Dict[str, OperatorSpec] = {
         category=OperatorCategory.EMBEDDING,
         version="1.0.0",
         description="Generate embeddings using Model Registry",
-        input_type=DataType.CHUNKS,
-        output_type=DataType.EMBEDDINGS,
+        input_type=DataType.CHUNKS, # Also supports DataType.QUERY via logic
+        output_type=DataType.EMBEDDINGS, # Also supports DataType.QUERY_EMBEDDINGS via logic
         supports_parallelism=True,
         supports_batching=True,
         max_batch_size=100,
@@ -757,91 +764,98 @@ EMBEDDING_OPERATORS: Dict[str, OperatorSpec] = {
 # =============================================================================
 
 STORAGE_OPERATORS: Dict[str, OperatorSpec] = {
-    "pinecone_store": OperatorSpec(
-        operator_id="pinecone_store",
-        display_name="Pinecone Vector Store",
+    "knowledge_store_sink": OperatorSpec(
+        operator_id="knowledge_store_sink",
+        display_name="Knowledge Store",
         category=OperatorCategory.STORAGE,
         version="1.0.0",
-        description="Store vectors in Pinecone",
+        description="Store embeddings in a Knowledge Store. Select a knowledge store to save your documents to.",
         input_type=DataType.EMBEDDINGS,
         output_type=DataType.VECTORS,
         required_config=[
             ConfigFieldSpec(
-                name="index_name",
-                field_type=ConfigFieldType.STRING,
+                name="knowledge_store_id",
+                field_type=ConfigFieldType.KNOWLEDGE_STORE_SELECT,
                 required=True,
-                description="Target Pinecone index name",
+                description="Target Knowledge Store",
+                placeholder="Select a Knowledge Store",
+                # Options will be populated dynamically from API
+                required_capability="knowledge_stores",
             ),
         ],
         optional_config=[
-            ConfigFieldSpec(
-                name="api_key",
-                field_type=ConfigFieldType.SECRET,
-                description="Pinecone API key (uses env if not set)",
-            ),
             ConfigFieldSpec(
                 name="namespace",
                 field_type=ConfigFieldType.STRING,
-                description="Pinecone namespace",
+                description="Optional namespace within the store",
+                default="default",
+            ),
+            ConfigFieldSpec(
+                name="batch_size",
+                field_type=ConfigFieldType.INTEGER,
+                description="Number of vectors to upsert per batch",
+                default=100,
+                min_value=1,
+                max_value=1000,
             ),
         ],
-        tags=["vector-store", "pinecone", "cloud"],
+        tags=["vector-store", "knowledge-store", "storage"],
     ),
-    "pgvector_store": OperatorSpec(
-        operator_id="pgvector_store",
-        display_name="PGVector Store",
-        category=OperatorCategory.STORAGE,
+}
+
+
+# =============================================================================
+# INPUT OPERATORS
+# =============================================================================
+
+INPUT_OPERATORS: Dict[str, OperatorSpec] = {
+    "query_input": OperatorSpec(
+        operator_id="query_input",
+        display_name="Query Input",
+        category=OperatorCategory.INPUT,
         version="1.0.0",
-        description="Store vectors in PostgreSQL with pgvector",
-        input_type=DataType.EMBEDDINGS,
-        output_type=DataType.VECTORS,
+        description="Entry point for retrieval pipelines. Receives search text and optional filters.",
+        input_type=DataType.NONE,
+        output_type=DataType.QUERY,
         required_config=[
             ConfigFieldSpec(
-                name="table_name",
+                name="text",
                 field_type=ConfigFieldType.STRING,
                 required=True,
-                description="Target table name",
+                runtime=True,
+                description="Search query text",
             ),
         ],
         optional_config=[
             ConfigFieldSpec(
-                name="connection_string",
-                field_type=ConfigFieldType.SECRET,
-                description="PostgreSQL connection string (uses default if not set)",
+                name="schema",
+                field_type=ConfigFieldType.JSON,
+                description="Optional JSON Schema for complex filters/metadata",
+            ),
+            ConfigFieldSpec(
+                name="filters",
+                field_type=ConfigFieldType.JSON,
+                description="Optional metadata filters in JSON format",
             ),
         ],
-        tags=["vector-store", "postgres", "pgvector"],
+        tags=["input", "query"],
     ),
-    "qdrant_store": OperatorSpec(
-        operator_id="qdrant_store",
-        display_name="Qdrant Vector Store",
-        category=OperatorCategory.STORAGE,
+}
+
+# =============================================================================
+# OUTPUT OPERATORS
+# =============================================================================
+
+OUTPUT_OPERATORS: Dict[str, OperatorSpec] = {
+    "retrieval_result": OperatorSpec(
+        operator_id="retrieval_result",
+        display_name="Retrieval Result",
+        category=OperatorCategory.OUTPUT,
         version="1.0.0",
-        description="Store vectors in Qdrant",
-        input_type=DataType.EMBEDDINGS,
-        output_type=DataType.VECTORS,
-        required_config=[
-            ConfigFieldSpec(
-                name="url",
-                field_type=ConfigFieldType.STRING,
-                required=True,
-                description="Qdrant server URL",
-            ),
-            ConfigFieldSpec(
-                name="collection_name",
-                field_type=ConfigFieldType.STRING,
-                required=True,
-                description="Qdrant collection name",
-            ),
-        ],
-        optional_config=[
-            ConfigFieldSpec(
-                name="api_key",
-                field_type=ConfigFieldType.SECRET,
-                description="Qdrant API key",
-            ),
-        ],
-        tags=["vector-store", "qdrant"],
+        description="Exit point for retrieval pipelines. Captures final search results.",
+        input_type=DataType.SEARCH_RESULTS, # Also supports DataType.RERANKED_RESULTS via logic
+        output_type=DataType.NONE,
+        tags=["output", "result"],
     ),
 }
 
@@ -856,14 +870,16 @@ RETRIEVAL_OPERATORS: Dict[str, OperatorSpec] = {
         category=OperatorCategory.RETRIEVAL,
         version="1.0.0",
         description="Semantic search using vector similarity",
-        input_type=DataType.EMBEDDINGS,
+        input_type=DataType.EMBEDDINGS, # Also supports DataType.QUERY_EMBEDDINGS via logic
         output_type=DataType.SEARCH_RESULTS,
         required_config=[
             ConfigFieldSpec(
-                name="index_name",
-                field_type=ConfigFieldType.STRING,
+                name="knowledge_store_id",
+                field_type=ConfigFieldType.KNOWLEDGE_STORE_SELECT,
                 required=True,
-                description="Vector index to search",
+                description="Target Knowledge Store",
+                placeholder="Select a Knowledge Store",
+                required_capability="knowledge_stores",
             ),
         ],
         optional_config=[
@@ -897,7 +913,7 @@ RETRIEVAL_OPERATORS: Dict[str, OperatorSpec] = {
         category=OperatorCategory.RETRIEVAL,
         version="1.0.0",
         description="Combined vector and keyword search",
-        input_type=DataType.EMBEDDINGS,
+        input_type=DataType.EMBEDDINGS, # Also supports DataType.QUERY_EMBEDDINGS via logic
         output_type=DataType.SEARCH_RESULTS,
         required_config=[
             ConfigFieldSpec(
@@ -1049,6 +1065,26 @@ class OperatorRegistry:
             self._operators[op.operator_id] = op
         for op in RERANKING_OPERATORS.values():
             self._operators[op.operator_id] = op
+        for op in INPUT_OPERATORS.values():
+            self._operators[op.operator_id] = op
+        for op in OUTPUT_OPERATORS.values():
+            self._operators[op.operator_id] = op
+        
+        # Load artifacts from filesystem
+        self._load_artifact_operators()
+    
+    def _load_artifact_operators(self):
+        """Load operators from the ArtifactRegistryService."""
+        try:
+            from app.services.artifact_registry import get_artifact_registry
+            artifact_registry = get_artifact_registry()
+            artifacts = artifact_registry.get_all_artifacts()
+            for artifact_id, spec in artifacts.items():
+                # Artifacts can override built-in operators of the same ID
+                self._operators[artifact_id] = spec
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to load artifact operators: {e}")
 
     def register(self, spec: OperatorSpec):
         """Register a new operator."""
@@ -1103,6 +1139,8 @@ class OperatorRegistry:
             "storage": [],
             "retrieval": [],
             "reranking": [],
+            "input": [],
+            "output": [],
             "custom": [],
         }
         for op in self.list_all(tenant_id):
@@ -1135,6 +1173,13 @@ class OperatorRegistry:
             (DataType.NORMALIZED_DOCUMENTS, DataType.CHUNKS),       # Skip enrichment
             (DataType.ENRICHED_DOCUMENTS, DataType.CHUNKS),
             (DataType.SEARCH_RESULTS, DataType.RERANKED_RESULTS),
+            (DataType.RERANKED_RESULTS, DataType.SEARCH_RESULTS), # Reciprocal for output nodes
+            (DataType.QUERY, DataType.CHUNKS),              # For embedding a query
+            (DataType.QUERY, DataType.EMBEDDINGS),         # Flexible connection
+            (DataType.QUERY_EMBEDDINGS, DataType.SEARCH_RESULTS), # Searching with query
+            (DataType.EMBEDDINGS, DataType.SEARCH_RESULTS), # Vector search direct
+            (DataType.RERANKED_RESULTS, DataType.NONE),
+            (DataType.SEARCH_RESULTS, DataType.NONE),
         ]
         
         if (source_spec.output_type, target_spec.input_type) in compatible_flows:

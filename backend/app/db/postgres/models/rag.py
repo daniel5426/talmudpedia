@@ -30,12 +30,18 @@ class OperatorCategory(str, enum.Enum):
 
 
 
+class PipelineType(str, enum.Enum):
+    INGESTION = "ingestion"
+    RETRIEVAL = "retrieval"
+
+
+
 class PipelineJobStatus(str, enum.Enum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class PipelineStepStatus(str, enum.Enum):
@@ -46,14 +52,79 @@ class PipelineStepStatus(str, enum.Enum):
     SKIPPED = "skipped"
 
 
+class KnowledgeStoreStatus(str, enum.Enum):
+    ACTIVE = "active"
+    SYNCING = "syncing"
+    ERROR = "error"
+    ARCHIVED = "archived"
+
+
+class StorageBackend(str, enum.Enum):
+    PGVECTOR = "pgvector"
+    PINECONE = "pinecone"
+    QDRANT = "qdrant"
+
+
+class RetrievalPolicy(str, enum.Enum):
+    SEMANTIC_ONLY = "semantic_only"
+    HYBRID = "hybrid"
+    KEYWORD_ONLY = "keyword_only"
+    RECENCY_BOOSTED = "recency_boosted"
+
+
+
+def pg_enum(enum_cls):
+    return SQLEnum(enum_cls, values_callable=lambda x: [e.value for e in x])
 
 # Models
+
+class KnowledgeStore(Base):
+    """
+    Logical knowledge repository that abstracts away vector DB implementation.
+    
+    This represents a corpus of knowledge with a defined embedding model and retrieval policy.
+    The physical storage (Pinecone, PGVector, etc.) is an implementation detail.
+    """
+    __tablename__ = "knowledge_stores"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Identity
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    
+    # Logical Configuration (The Contract)
+    embedding_model_id = Column(String, nullable=False)
+    chunking_strategy = Column(JSONB, default={}, nullable=False)
+    retrieval_policy = Column(pg_enum(RetrievalPolicy), default=RetrievalPolicy.SEMANTIC_ONLY, nullable=False)
+    
+    # Physical Binding (Implementation Detail - hidden from users)
+    backend = Column(pg_enum(StorageBackend), default=StorageBackend.PGVECTOR, nullable=False)
+    backend_config = Column(JSONB, default={}, nullable=False)
+    
+    # Status & Metrics
+    status = Column(pg_enum(KnowledgeStoreStatus), default=KnowledgeStoreStatus.ACTIVE, nullable=False)
+    document_count = Column(Integer, default=0, nullable=False)
+    chunk_count = Column(Integer, default=0, nullable=False)
+    
+    # Timestamps & Ownership
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Relationships
+    tenant = relationship("Tenant")
+    creator = relationship("User")
+
+
+
 
 class RAGPipeline(Base):
     __tablename__ = "rag_pipelines"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     
     name = Column(String, nullable=False)
     slug = Column(String, unique=True, nullable=False, index=True)
@@ -70,13 +141,11 @@ class RAGPipeline(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     tenant = relationship("Tenant")
     creator = relationship("User")
-
-
 
 
 class VisualPipeline(Base):
@@ -84,8 +153,8 @@ class VisualPipeline(Base):
     __tablename__ = "visual_pipelines"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    org_unit_id = Column(UUID(as_uuid=True), ForeignKey("org_units.id"), nullable=True, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_unit_id = Column(UUID(as_uuid=True), ForeignKey("org_units.id", ondelete="SET NULL"), nullable=True, index=True)
     
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
@@ -97,9 +166,11 @@ class VisualPipeline(Base):
     version = Column(Integer, default=1, nullable=False)
     is_published = Column(Boolean, default=False, nullable=False)
     
+    pipeline_type = Column(pg_enum(PipelineType), default=PipelineType.INGESTION, nullable=False)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     tenant = relationship("Tenant")
@@ -113,18 +184,19 @@ class ExecutablePipeline(Base):
     __tablename__ = "executable_pipelines"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    visual_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("visual_pipelines.id"), nullable=False, index=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    visual_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("visual_pipelines.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     
     version = Column(Integer, nullable=False)
     
     # Compiled pipeline definition
     compiled_graph = Column(JSONB, default={}, nullable=False)
+    pipeline_type = Column(pg_enum(PipelineType), default=PipelineType.INGESTION, nullable=False)
     
     is_valid = Column(Boolean, default=True, nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    compiled_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    compiled_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     visual_pipeline = relationship("VisualPipeline", back_populates="executable_pipelines")
@@ -138,10 +210,10 @@ class PipelineJob(Base):
     __tablename__ = "pipeline_jobs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    executable_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("executable_pipelines.id"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    executable_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("executable_pipelines.id", ondelete="CASCADE"), nullable=False, index=True)
     
-    status = Column(SQLEnum(PipelineJobStatus), default=PipelineJobStatus.QUEUED, nullable=False)
+    status = Column(pg_enum(PipelineJobStatus), default=PipelineJobStatus.QUEUED, nullable=False)
     input_params = Column(JSONB, default={}, nullable=False)
     output = Column(JSONB, nullable=True)
     error_message = Column(Text, nullable=True)
@@ -151,7 +223,7 @@ class PipelineJob(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     
-    triggered_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    triggered_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     tenant = relationship("Tenant")
@@ -164,11 +236,11 @@ class CustomOperator(Base):
     __tablename__ = "custom_operators"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     
     name = Column(String, nullable=False)
     display_name = Column(String, nullable=False)
-    category = Column(SQLEnum(OperatorCategory), nullable=False)
+    category = Column(pg_enum(OperatorCategory), nullable=False)
     description = Column(String, nullable=True)
     
     # Python code for the operator
@@ -184,7 +256,7 @@ class CustomOperator(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     tenant = relationship("Tenant")
@@ -196,15 +268,13 @@ class PipelineStepExecution(Base):
     __tablename__ = "pipeline_step_executions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_jobs.id"), nullable=False, index=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     
     step_id = Column(String, nullable=False) # Node ID from visual graph
     operator_id = Column(String, nullable=False) # Operator Identifier
     
-    operator_id = Column(String, nullable=False) # Operator Identifier
-    
-    status = Column(SQLEnum(PipelineStepStatus), default=PipelineStepStatus.PENDING, nullable=False)
+    status = Column(pg_enum(PipelineStepStatus), default=PipelineStepStatus.PENDING, nullable=False)
     
     input_data = Column(JSONB, nullable=True) # Serialized input
     output_data = Column(JSONB, nullable=True) # Serialized output

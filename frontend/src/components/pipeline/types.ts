@@ -14,6 +14,8 @@ export type OperatorCategory =
   | "storage"
   | "retrieval"
   | "reranking"
+  | "input"
+  | "output"
   | "custom"
 
 // =============================================================================
@@ -30,6 +32,8 @@ export type DataType =
   | "vectors"
   | "search_results"
   | "reranked_results"
+  | "query" 
+  | "query_embeddings"
 
 // =============================================================================
 // CONFIG FIELD TYPES
@@ -43,6 +47,8 @@ export type ConfigFieldType =
   | "secret" 
   | "select" 
   | "model_select"
+  | "knowledge_store_select"
+  | "retrieval_pipeline_select"
   | "json"
   | "code"
   | "file_path"
@@ -117,6 +123,8 @@ export const CATEGORY_COLORS: Record<OperatorCategory, string> = {
   storage: "var(--pipeline-storage)",
   retrieval: "var(--pipeline-source)",
   reranking: "var(--pipeline-transform)",
+  input: "var(--pipeline-source)",
+  output: "var(--pipeline-storage)",
   custom: "var(--pipeline-embedding)",
 }
 
@@ -130,6 +138,8 @@ export const CATEGORY_LABELS: Record<OperatorCategory, string> = {
   storage: "Storage",
   retrieval: "Retrieval",
   reranking: "Reranking",
+  input: "Input",
+  output: "Output",
   custom: "Custom",
 }
 
@@ -147,6 +157,8 @@ export const DATA_TYPE_COLORS: Record<DataType, string> = {
   vectors: "#fed7aa",
   search_results: "#fbcfe8",
   reranked_results: "#f9a8d4",
+  query: "#93c5fd",
+  query_embeddings: "#c084fc",
 }
 
 // =============================================================================
@@ -160,14 +172,22 @@ export function canConnect(sourceType: DataType, targetType: DataType): boolean 
   // Compatible flows matching backend/app/rag/pipeline/registry.py
   const compatibleFlows: [DataType, DataType][] = [
     ["raw_documents", "normalized_documents"],
-    ["raw_documents", "enriched_documents"],  // Skip normalization
-    ["raw_documents", "chunks"],              // Skip all preprocessing
+    ["raw_documents", "enriched_documents"],
+    ["raw_documents", "chunks"],
     ["normalized_documents", "enriched_documents"],
-    ["normalized_documents", "chunks"],       // Skip enrichment
+    ["normalized_documents", "chunks"],
     ["enriched_documents", "chunks"],
     ["chunks", "embeddings"],
     ["embeddings", "vectors"],
     ["search_results", "reranked_results"],
+    ["reranked_results", "search_results"], // Allowed for reranker-to-output connectivity
+    ["query", "query_embeddings"],
+    ["query", "chunks"], // Allowed for query-to-embedder connectivity
+    ["query", "embeddings"], // Allowed for embedding query text (flex)
+    ["query_embeddings", "search_results"], // Searching with embedded query
+    ["embeddings", "search_results"], // Direct vector search
+    ["search_results", "none"],
+    ["reranked_results", "none"],
   ]
   
   return compatibleFlows.some(([src, tgt]) => src === sourceType && tgt === targetType)
@@ -237,3 +257,9 @@ export interface ExecutablePipelineInputStep {
 export interface ExecutablePipelineInputSchema {
   steps: ExecutablePipelineInputStep[]
 }
+
+// =============================================================================
+// PIPELINE TYPES
+// =============================================================================
+
+export type PipelineType = "ingestion" | "retrieval"

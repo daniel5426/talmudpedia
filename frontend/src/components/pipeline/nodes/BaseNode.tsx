@@ -28,6 +28,8 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
   storage: Database,
   retrieval: Search,
   reranking: SortAsc,
+  input: FolderInput,
+  output: Database,
   custom: Code,
 }
 

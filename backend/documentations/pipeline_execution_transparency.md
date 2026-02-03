@@ -30,6 +30,7 @@ The system doesn't wait for the entire job to finish. It streams execution steps
     - Status transitions (`running`, `completed`, `failed`).
     - Input params and output results (truncated if too large).
     - Exception details.
+- **Unified Result Storage**: For retrieval pipelines, the final result is automatically promoted from the last node to the `job.output` field for direct API consumption.
 - **API**: New endpoints under `/api/v1/rag/pipelines/jobs/{job_id}/steps` allow fetching the execution history of a job.
 
 ### Frontend Integration

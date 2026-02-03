@@ -33,7 +33,6 @@ import {
 import { ThemeCustomizer } from "./theme-customizer";
 import { useDirection } from "@/components/direction-provider";
 import { DirectionToggle } from "./direction-toggle";
-import { LibraryMenu } from "@/components/library-menu";
 import { TenantSwitcher } from "@/components/tenant-switcher";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { usePathname, useRouter } from "next/navigation";
@@ -41,7 +40,7 @@ import { usePathname, useRouter } from "next/navigation";
 const data = {
   navMain: [
     {
-      title: "חיפוש בתורה ",
+      title: "Search",
       url: "/document-search",
       icon: FileText,
       items: [],
@@ -49,7 +48,7 @@ const data = {
   ],
   adminNavMain: [
     {
-      title: "לוח בקרה",
+      title: "Dashboard",
       url: "/admin/dashboard",
       icon: LayoutDashboard,
       items: [],
@@ -73,15 +72,21 @@ const data = {
       items: [],
     },
     {
-      title: "משתמשים",
+      title: "Users",
       url: "/admin/users",
       icon: Users,
       items: [],
     },
     {
-      title: "שיחות",
+      title: "Chats",
       url: "/admin/chats",
       icon: MessageSquare,
+      items: [],
+    },
+    {
+      title: "Code Artifacts",
+      url: "/admin/artifacts",
+      icon: Code2,
       items: [],
     },
     {
@@ -100,9 +105,9 @@ const data = {
           icon: Workflow,
         },
         {
-          title: "Operators",
-          url: "/admin/rag/operators",
-          icon: Code2,
+          title: "Knowledge Store",
+          url: "/admin/rag/knowledge-stores",
+          icon: Database,
         },
       ],
     },
@@ -281,133 +286,108 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
   }, [fetchChats]);
 
-  const logoButton = (
-    <Button
-      size="icon"
-      aria-label="Toggle sidebar logo"
-      onClick={handleSidebarToggle}
-      className="h-9 w-9 rounded-md bg-transparent hover:bg-sidebar-accent cursor-pointer"
-    >
-      <Image
-        src="/kesher.png"
-        alt="Kesher"
-        width={40}
-        height={40}
-        className="h-6 w-6 rounded-md object-cover hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
-        priority
-      />
-    </Button>
-  );
 
   return (
     <Sidebar collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50 shadow-none border" {...props}>
       <SidebarHeader>
-        <div dir={direction} className="flex items-center justify-between gap-2">
-          {logoButton}
+        <div dir={direction} className="flex items-center justify-between gap-1 p-2">
+          {user && (user.role === "admin" || isAdminPath) && (
+            <div className="flex-1 overflow-hidden">
+              <TenantSwitcher />
+            </div>
+          )}
           {(isSidebarOpen || openMobile) && <SidebarTrigger
             aria-label="Toggle sidebar"
             className="size-8" />}
         </div>
       </SidebarHeader>
       <SidebarContent className="flex h-full flex-col gap-4">
-        {isLibraryMode ? (
-          <LibraryMenu onBack={() => setLibraryMode(false)} />
-        ) : (
-          <>
-            {user && (user.role === "admin" || isAdminPath) && (
-              <div className="px-2 pt-2">
-                <TenantSwitcher />
-              </div>
-            )}
-            <div className=" ">
-              <NavMain
-                items={navItems}
-                handleNewChat={handleNewChat}
-                handleLibraryToggle={() => setLibraryMode(true)}
-                direction={direction}
-              />
-            </div>
-            {!isAdminPath && isSidebarOpen && <div className="flex min-h-0 flex-1 flex-col">
-              <SidebarGroup className="flex h-full flex-col">
-                <SidebarGroupLabel dir={direction} className=" font-semibold">
-                  שיחות קודמות
-                </SidebarGroupLabel>
-                <div
-                  className="min-h-0 flex-1 overflow-hidden rounded-2xl p-2"
-                  dir={direction}
-                >
-                  <div
-                    ref={chatListRef}
-                    onScroll={handleChatScroll}
-                    className={`flex h-full flex-col gap-1 overflow-y-auto ${isRTL ? "pr-2 text-right" : "pl-2 text-left"}`}
-                  >
-                    <SidebarMenu className="space-y-1" dir={direction}>
-                      {chats.map((chat) => (
-                        <SidebarMenuItem key={`chat-${chat.id}`}>
-                          <SidebarMenuButton
-                            dir={direction}
-                            onClick={() => {
-                              router.push(`/chat?chatId=${chat.id}`);
-                              setActiveChatId(chat.id);
-                            }}
-                            isActive={activeChatId === chat.id}
-                            className={`group justify-between gap-2 cursor-pointer ${isRTL ? "text-right" : "text-left"}`}
+        <div className=" ">
+          <NavMain
+            items={navItems}
+            handleNewChat={handleNewChat}
+            direction={direction}
+          />
+        </div>
+        {!isAdminPath && isSidebarOpen && <div className="flex min-h-0 flex-1 flex-col">
+          <SidebarGroup className="flex h-full flex-col">
+            <SidebarGroupLabel dir={direction} className=" font-semibold">
+              Previous Chats
+            </SidebarGroupLabel>
+            <div
+              className="min-h-0 flex-1 overflow-hidden rounded-2xl p-2"
+              dir={direction}
+            >
+              <div
+                ref={chatListRef}
+                onScroll={handleChatScroll}
+                className={`flex h-full flex-col gap-1 overflow-y-auto ${isRTL ? "pr-2 text-right" : "pl-2 text-left"}`}
+              >
+                <SidebarMenu className="space-y-1" dir={direction}>
+                  {chats.map((chat) => (
+                    <SidebarMenuItem key={`chat-${chat.id}`}>
+                      <SidebarMenuButton
+                        dir={direction}
+                        onClick={() => {
+                          router.push(`/chat?chatId=${chat.id}`);
+                          setActiveChatId(chat.id);
+                        }}
+                        isActive={activeChatId === chat.id}
+                        className={`group justify-between gap-2 cursor-pointer ${isRTL ? "text-right" : "text-left"}`}
+                      >
+                        <span className="flex-1 truncate">{chat.title}</span>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <div role="button" className="opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground hover:text-foreground p-1 cursor-pointer">
+                              <MoreHorizontal className="h-4 w-4" />
+                              <span className="sr-only">More</span>
+                            </div>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            className="w-48"
+                            side="bottom"
+                            align="end"
                           >
-                            <span className="flex-1 truncate">{chat.title}</span>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <div role="button" className="opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground hover:text-foreground p-1 cursor-pointer">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                  <span className="sr-only">More</span>
-                                </div>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent
-                                className="w-48"
-                                side="bottom"
-                                align="end"
-                              >
-                                <DropdownMenuItem
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleShareChat(chat.id);
-                                  }}
-                                  className="cursor-pointer"
-                                >
-                                  <Share2 className="mr-2 h-4 w-4" />
-                                  <span>Share</span>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteChat(chat.id);
-                                  }}
-                                  className="cursor-pointer"
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  <span>Delete</span>
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
-                      {!user && (
-                        <div className="py-4 text-center text-sm text-muted-foreground">
-                          Please login to view chats
-                        </div>
-                      )}
-                    </SidebarMenu>
-                    {isFetchingChats && (
-                      <div className="py-2 text-center text-xs text-muted-foreground">
-                        Loading chats...
-                      </div>
-                    )}
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleShareChat(chat.id);
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <Share2 className="mr-2 h-4 w-4" />
+                              <span>Share</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteChat(chat.id);
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              <span>Delete</span>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                  {!user && (
+                    <div className="py-4 text-center text-sm text-muted-foreground">
+                      Please login to view chats
+                    </div>
+                  )}
+                </SidebarMenu>
+                {isFetchingChats && (
+                  <div className="py-2 text-center text-xs text-muted-foreground">
+                    Loading chats...
                   </div>
-                </div>
-              </SidebarGroup>
-            </div>}
-          </>
-        )}
+                )}
+              </div>
+            </div>
+          </SidebarGroup>
+        </div>}
       </SidebarContent>
       <SidebarFooter dir={direction}>
         <div className={`flex items-center gap-2 ${isRTL ? "justify-start" : "justify-start"}`}>
@@ -428,8 +408,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <SidebarMenuButton dir={direction} asChild size="lg" className={`${isRTL ? "rtl" : "ltr"}`}>
                 <a href="/auth/login" dir={direction} className={`${isRTL ? "rtl" : "ltr"}`}>
                   <div dir={direction} className={`grid flex-1  text-sm leading-tight ${isRTL ? "text-right" : "text-left"}`}>
-                    <span className="truncate font-semibold" >התחברות</span>
-                    <span className="truncate text-xs">התחבר לחשבון שלך</span>
+                    <span className="truncate font-semibold" >Login</span>
+                    <span className="truncate text-xs">Login to your account</span>
                   </div>
                   <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                     <LogIn className="size-4" />
@@ -441,6 +421,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         )}
       </SidebarFooter>
       <SidebarRail />
-    </Sidebar>
+    </Sidebar >
   );
 }

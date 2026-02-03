@@ -17,6 +17,7 @@ export interface SharedNodeHandle {
     label?: string
     color?: string
     position?: Position
+    manual?: boolean // If true, the handle is rendered but its position is NOT managed by BaseNode
 }
 
 export interface SharedNodeData {
@@ -37,6 +38,7 @@ interface BaseNodeProps extends NodeProps {
     categoryColor: string
     getHandleColor: (type: string) => string
     className?: string
+    children?: React.ReactNode
 }
 
 function BaseNodeComponent({
@@ -45,7 +47,8 @@ function BaseNodeComponent({
     icon: Icon = Hash,
     categoryColor,
     getHandleColor,
-    className
+    className,
+    children
 }: BaseNodeProps) {
     const inputHandleColor = data.inputType ? getHandleColor(data.inputType) : "#6b7280"
     const outputHandleColor = data.outputType ? getHandleColor(data.outputType) : "#6b7280"
@@ -75,7 +78,7 @@ function BaseNodeComponent({
     return (
         <div
             className={cn(
-                "relative min-w-[200px] p-0 rounded-2xl bg-background/90 backdrop-blur-md transition-all duration-300 border",
+                "relative min-w-[200px] flex flex-col p-0 rounded-2xl bg-background/90 backdrop-blur-md transition-all duration-300 border",
                 selected ? "border-primary ring-2 ring-primary/20 shadow-lg shadow-primary/5" : "border-border/50 shadow-sm",
                 data.executionStatus && statusBorder[data.executionStatus as keyof typeof statusBorder],
                 className
@@ -130,6 +133,13 @@ function BaseNodeComponent({
                 </div>
             </div>
 
+            {/* Content Area */}
+            {children && (
+                <div className="border-t border-border/40 bg-muted/5">
+                    {children}
+                </div>
+            )}
+
             {/* Output Handles */}
             {!data.outputHandles && data.outputType && data.outputType !== "none" && (
                 <Handle
@@ -144,34 +154,55 @@ function BaseNodeComponent({
             )}
 
             {/* Support for multiple handles (Conditional) */}
-            {data.outputHandles && data.outputHandles.map((handle, idx) => (
-                <div key={handle.id} className="relative group">
-                    <Handle
-                        type="source"
-                        position={handle.position || Position.Right}
-                        id={handle.id}
-                        className={cn(
-                            "!w-3 !h-3 !border-2 !border-background",
-                            "transition-all duration-200 hover:!w-4 hover:!h-4"
-                        )}
-                        style={{
-                            backgroundColor: handle.color || outputHandleColor,
-                            top: `${((idx + 1) / (data.outputHandles!.length + 1)) * 100}%`
-                        }}
-                    />
-                    {handle.label && (
-                        <div
-                            className="absolute right-[-24px] text-[9px] font-bold text-muted-foreground/60 uppercase"
+            {data.outputHandles && data.outputHandles.map((handle, idx) => {
+                // If it's a manual handle, we render it but don't position it here
+                if (handle.manual) {
+                    return (
+                        <Handle
+                            key={handle.id}
+                            type="source"
+                            position={handle.position || Position.Right}
+                            id={handle.id}
+                            className={cn(
+                                "!w-3 !h-3 !border-2 !border-background",
+                                "transition-all duration-200 hover:!w-4 hover:!h-4"
+                            )}
                             style={{
-                                top: `${((idx + 1) / (data.outputHandles!.length + 1)) * 100}%`,
-                                transform: 'translateY(-50%)'
+                                backgroundColor: handle.color || outputHandleColor,
                             }}
-                        >
-                            {handle.label}
-                        </div>
-                    )}
-                </div>
-            ))}
+                        />
+                    )
+                }
+
+                return (
+                    <div key={handle.id} className="relative group">
+                        <Handle
+                            type="source"
+                            position={handle.position || Position.Right}
+                            id={handle.id}
+                            className={cn(
+                                "!w-3 !h-3 !border-2 !border-background",
+                                "transition-all duration-200 hover:!w-4 hover:!h-4"
+                            )}
+                            style={{
+                                backgroundColor: handle.color || outputHandleColor,
+                                top: `${((idx + 1) / (data.outputHandles!.length + 1)) * 100}%`
+                            }}
+                        />
+                        {handle.label && (
+                            <div
+                                className="absolute right-[-24px] text-[9px] font-bold text-muted-foreground/60 uppercase"
+                                style={{
+                                    top: `${((idx + 1) / (data.outputHandles!.length + 1)) * 100}%`,
+                                    transform: 'translateY(-50%)'
+                                }}
+                            >
+                                {handle.label}
+                            </div>
+                        )}
+                    </div>
+                )
+            })}
         </div>
     )
 }

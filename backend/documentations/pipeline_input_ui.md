@@ -11,6 +11,7 @@ The Pipeline Input UI feature replaces the generic JSON input dialog for running
 - **Runtime Mutability**: Only fields explicitly marked as runtime-mutable are exposed in the run dialog.
 - **Backend Validation**: Job creation validates runtime inputs against operator contracts with structured, field-level errors.
 - **Improved UX**: Users no longer need to know the exact JSON structure of the input; the platform guides them through the required fields.
+- **Retrieval Pipeline Support (NEW)**: Specialized handling for `query_input` nodes, supporting structured query objects (text, filters, top_k, alpha) instead of just raw file paths.
 
 ## Architecture
 
@@ -59,3 +60,4 @@ graph TD
 - **Validation**: Supports `required` flags, default values, enum constraints, and type checks in the backend with field-level errors.
 - **Styling**: Uses the platform's minimalist design system (Shadcn/UI) with pastel category-themed headers in the form.
 - **File Lifecycle**: Uploads are metadata-tracked and cleaned with a TTL-based sweep to prevent orphaned storage.
+- **Structured Query Schema**: For retrieval pipelines, the `query_input` operator defines a specialized input schema that allows the UI to render fields for search filters and retrieval parameters (e.g., top_k, alpha) directly in the run dialog.

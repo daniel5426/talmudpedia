@@ -5,6 +5,8 @@ import { useDirection } from "@/components/direction-provider"
 import { useTenant } from "@/contexts/TenantContext"
 import {
     toolsService,
+    agentService,
+    AgentOperatorSpec,
     ToolDefinition,
     ToolImplementationType,
     ToolStatus,
@@ -31,6 +33,7 @@ import {
     Check,
     Clock,
     AlertCircle,
+    Package,
 } from "lucide-react"
 import {
     Dialog,
@@ -70,6 +73,7 @@ const IMPLEMENTATION_ICONS: Record<ToolImplementationType, React.ElementType> = 
     rag_retrieval: Database,
     function: Code,
     custom: Wrench,
+    artifact: Package,
 }
 
 const IMPLEMENTATION_LABELS: Record<ToolImplementationType, string> = {
@@ -78,6 +82,7 @@ const IMPLEMENTATION_LABELS: Record<ToolImplementationType, string> = {
     rag_retrieval: "RAG Retrieval",
     function: "Python Function",
     custom: "Custom",
+    artifact: "Agent Artifact",
 }
 
 function StatusBadge({ status }: { status: ToolStatus }) {
@@ -119,6 +124,30 @@ function CreateToolDialog({ onCreated }: { onCreated: () => void }) {
         output_schema: { type: "object", properties: {} },
         implementation_type: "http",
     })
+    const [artifacts, setArtifacts] = useState<AgentOperatorSpec[]>([])
+
+    useEffect(() => {
+        agentService.listOperators().then(setArtifacts).catch(console.error)
+    }, [])
+
+    const handleArtifactChange = (artifactId: string) => {
+        const artifact = artifacts.find(a => a.type === artifactId)
+        if (!artifact) return
+
+        setForm(prev => ({
+            ...prev,
+            name: prev.name || artifact.display_name,
+            slug: prev.slug || artifact.type.replace("artifact:", ""),
+            description: prev.description || artifact.description,
+            input_schema: artifact.config_schema, // Artifact config becomes tool input? 
+            // Wait, Artifact "config_schema" is static config. "ui" has input/output types.
+            // Artifacts usually expect 'state' but might have specific inputs if adapted.
+            // For now, let's map config_schema to input_schema as a starting point.
+            output_schema: {},
+            artifact_id: artifact.type, // Using type string as ID for now
+            artifact_version: "1.0.0" // Placeholder
+        }))
+    }
 
     const handleCreate = async () => {
         if (!form.name || !form.slug || !form.description) return
@@ -192,6 +221,28 @@ function CreateToolDialog({ onCreated }: { onCreated: () => void }) {
                             </SelectContent>
                         </Select>
                     </div>
+                    {form.implementation_type === "artifact" && (
+                        <div className="space-y-2">
+                            <Label>Select Artifact</Label>
+                            <Select
+                                onValueChange={handleArtifactChange}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select an artifact..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {artifacts.filter(a => a.type.startsWith("artifact:")).map(a => (
+                                        <SelectItem key={a.type} value={a.type}>
+                                            <div className="flex items-center gap-2">
+                                                <Package className="h-4 w-4" />
+                                                <span>{a.display_name}</span>
+                                            </div>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
                     <div className="space-y-2">
                         <Label htmlFor="description">Description</Label>
                         <Textarea

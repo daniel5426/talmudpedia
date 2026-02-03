@@ -12,11 +12,25 @@ class OpenAILLM(LLMProvider):
     LLM Provider using OpenAI (specifically the responses API for reasoning).
     """
 
-    def __init__(self, model: str = "gpt-5.1", api_key: Optional[str] = None):
+    def __init__(self, model: str = "gpt-5.1", api_key: Optional[str] = None, **kwargs):
         self.model = model
+        
+        # Extract client-specific args
+        client_args = {}
+        client_keys = ["base_url", "organization", "timeout", "max_retries", "default_headers", "default_query", "http_client"]
+        
+        self.default_kwargs = {}
+        
+        for k, v in kwargs.items():
+            if k in client_keys:
+                client_args[k] = v
+            else:
+                self.default_kwargs[k] = v
+
         self.client = AsyncOpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY"),
-            timeout=Timeout(60.0, connect=10.0)
+            timeout=Timeout(60.0, connect=10.0),
+            **client_args
         )
 
     def _convert_messages(self, messages: List[BaseMessage]) -> List[Dict[str, Any]]:

@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/select"
 import { modelsService, LogicalModel } from "@/services"
 import { ConfigFieldSpec } from "./types"
+import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
+import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
 
 export function ModelSelectField({
   capability,
@@ -97,12 +99,34 @@ export function ConfigFieldInput({
   const isBoolean = field.field_type === "boolean"
   const isFilePath = field.field_type === "file_path"
   const isTextarea = field.field_type === "json" || field.field_type === "code"
+  const isKnowledgeStoreSelect = field.field_type === "knowledge_store_select"
+  const isRetrievalPipelineSelect = field.field_type === "retrieval_pipeline_select"
 
   if (isFilePath && renderFileInput) {
     return renderFileInput({
       value: String(value ?? ""),
       onChange: (nextValue) => onChange(nextValue),
     })
+  }
+
+  if (isKnowledgeStoreSelect) {
+    return (
+      <KnowledgeStoreSelect
+        value={(value as string) || ""}
+        onChange={onChange}
+        placeholder={field.placeholder}
+      />
+    )
+  }
+
+  if (isRetrievalPipelineSelect) {
+    return (
+      <RetrievalPipelineSelect
+        value={(value as string) || ""}
+        onChange={(val) => onChange(val)}
+        placeholder={field.placeholder}
+      />
+    )
   }
 
   if (field.field_type === "model_select") {

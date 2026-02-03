@@ -77,7 +77,7 @@ export interface ModelsListResponse {
 }
 
 // Tool Types
-export type ToolImplementationType = "internal" | "http" | "rag_retrieval" | "function" | "custom";
+export type ToolImplementationType = "internal" | "http" | "rag_retrieval" | "function" | "custom" | "artifact";
 export type ToolStatus = "draft" | "published" | "deprecated" | "disabled";
 
 export interface ToolDefinition {
@@ -96,6 +96,8 @@ export interface ToolDefinition {
   created_at: string;
   updated_at: string;
   published_at: string | null;
+  artifact_id?: string;
+  artifact_version?: string;
 }
 
 export interface CreateToolRequest {
@@ -105,18 +107,23 @@ export interface CreateToolRequest {
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
   implementation_type: ToolImplementationType;
-  implementation_config?: Record<string, unknown>;
-  execution_config?: Record<string, unknown>;
+  config_schema?: Record<string, unknown>;
+  artifact_id?: string;
+  artifact_version?: string;
 }
 
 export interface UpdateToolRequest {
-  name?: string;
-  description?: string;
-  input_schema?: Record<string, unknown>;
-  output_schema?: Record<string, unknown>;
-  implementation_config?: Record<string, unknown>;
-  execution_config?: Record<string, unknown>;
+    name?: string;
+    description?: string;
+    input_schema?: Record<string, unknown>;
+    output_schema?: Record<string, unknown>;
+    config_schema?: Record<string, unknown>;
+    is_active?: boolean;
+    artifact_id?: string;
+    artifact_version?: string;
 }
+
+
 
 export interface ToolsListResponse {
   tools: ToolDefinition[];

@@ -35,6 +35,12 @@ async def lifespan(app: FastAPI):
 
     print("VectorStore initialized successfully.")
     
+    # Global Model Registry Seeding
+    from app.db.postgres.engine import sessionmaker as AsyncSessionLocal
+    from app.services.registry_seeding import seed_global_models
+    async with AsyncSessionLocal() as db:
+        await seed_global_models(db)
+    
     # Start LiveKit worker in separate process if credentials are configured
     # worker_process = None
     # if all([
@@ -97,6 +103,7 @@ from app.api.routers import rag_pipelines as rag_pipelines_router
 from app.api.routers import rag_custom_operators as rag_custom_operators_router
 from app.api.routers import models as models_router
 from app.api.routers import tools as tools_router
+from app.api.routers import artifacts as artifacts_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 from app.api.routers import agent_operators
@@ -106,6 +113,11 @@ app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
 app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
 app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom-operators", tags=["rag-custom-operators"])
+app.include_router(artifacts_router.router, tags=["artifacts"])
+
+from app.api.routers import knowledge_stores as knowledge_stores_router
+app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stores", tags=["knowledge-stores"])
+
 app.include_router(models_router.router, tags=["models"])
 app.include_router(tools_router.router, tags=["tools"])
 app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
