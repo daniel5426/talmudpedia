@@ -1,0 +1,1 @@
+"""Platform SDK artifact package."""

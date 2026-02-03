@@ -67,6 +67,7 @@ export type {
   ToolDefinition,
   ToolImplementationType,
   ToolStatus,
+  ToolTypeBucket,
   CreateToolRequest,
   UpdateToolRequest,
   ToolsListResponse,

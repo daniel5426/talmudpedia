@@ -34,7 +34,13 @@ class ToolResolver(ComponentResolver):
             cols = {row[0] for row in result.all()}
             return "artifact_id" in cols and "artifact_version" in cols
         except Exception:
-            return False
+            # SQLite fallback
+            try:
+                result = await self.db.execute(text("PRAGMA table_info(tool_registry)"))
+                cols = {row[1] for row in result.all()}
+                return "artifact_id" in cols and "artifact_version" in cols
+            except Exception:
+                return False
 
     async def resolve(self, tool_id: UUID) -> Dict[str, Any]:
         """
@@ -83,10 +89,17 @@ class ToolResolver(ComponentResolver):
         if not tool.is_active:
              raise ResolutionError(f"Tool {tool_id} is inactive")
              
+        impl_type = getattr(tool, "implementation_type", None)
+        if hasattr(impl_type, "value"):
+            impl_type = impl_type.value
+        if not impl_type:
+            config_schema = getattr(tool, "config_schema", {}) or {}
+            impl_type = (config_schema.get("implementation") or {}).get("type", "internal")
+
         return {
             "id": str(tool.id),
             "name": tool.name,
-            "implementation_type": "http" # Simplified, ideally from schema
+            "implementation_type": impl_type
         }
 
 class RAGPipelineResolver(ComponentResolver):

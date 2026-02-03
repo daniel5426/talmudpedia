@@ -37,9 +37,15 @@ async def lifespan(app: FastAPI):
     
     # Global Model Registry Seeding
     from app.db.postgres.engine import sessionmaker as AsyncSessionLocal
-    from app.services.registry_seeding import seed_global_models
+    from app.services.registry_seeding import (
+        seed_global_models,
+        seed_platform_sdk_tool,
+        seed_platform_architect_agent,
+    )
     async with AsyncSessionLocal() as db:
         await seed_global_models(db)
+        await seed_platform_sdk_tool(db)
+        await seed_platform_architect_agent(db)
     
     # Start LiveKit worker in separate process if credentials are configured
     # worker_process = None

@@ -1,0 +1,43 @@
+id: builtin/platform_sdk
+version: "1.0.0"
+display_name: Platform SDK
+category: tool
+description: SDK-powered tool to fetch catalogs and execute platform build plans.
+input_type: none
+output_type: none
+scope: tool
+inputs:
+  - name: action
+    type: string
+    required: false
+    default: fetch_catalog
+  - name: steps
+    type: array
+    required: false
+  - name: dry_run
+    type: boolean
+    required: false
+    default: false
+  - name: payload
+    type: object
+    required: false
+outputs:
+  - name: result
+    type: object
+  - name: errors
+    type: array
+reads:
+  - messages
+  - state
+  - context
+writes:
+  - context
+  - tool_outputs
+ui:
+  icon: Wrench
+  color: "#0ea5e9"
+author: Platform
+tags:
+  - platform
+  - sdk
+  - tool

@@ -325,13 +325,17 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse JSON output, returning raw string")
             
-            return {
+            state_update = {
                 "messages": [AIMessage(content=full_content)],
                 "state": {
                     **(state.get("state", {})),
                     "last_agent_output": result_content
                 }
             }
+            if config.get("write_output_to_context") and isinstance(result_content, dict):
+                state_update["context"] = result_content
+
+            return state_update
 
         except Exception as e:
             logger.error(f"Agent execution failed: {e}")

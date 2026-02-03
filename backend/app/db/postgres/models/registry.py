@@ -14,6 +14,21 @@ class ToolDefinitionScope(str, enum.Enum):
     TENANT = "tenant"
     USER = "user"
 
+class ToolStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    DEPRECATED = "deprecated"
+    DISABLED = "disabled"
+
+class ToolImplementationType(str, enum.Enum):
+    INTERNAL = "internal"
+    HTTP = "http"
+    RAG_RETRIEVAL = "rag_retrieval"
+    FUNCTION = "function"
+    CUSTOM = "custom"
+    ARTIFACT = "artifact"
+    MCP = "mcp"
+
 class ModelProviderType(str, enum.Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
@@ -61,6 +76,12 @@ class ToolRegistry(Base):
     # Metadata
     schema = Column(JSONB, default={}, nullable=False) 
     config_schema = Column(JSONB, default={}, nullable=False)
+
+    # Tool execution metadata
+    status = Column(SQLEnum(ToolStatus), default=ToolStatus.DRAFT, nullable=False)
+    version = Column(String, default="1.0.0", nullable=False)
+    implementation_type = Column(SQLEnum(ToolImplementationType), default=ToolImplementationType.CUSTOM, nullable=False)
+    published_at = Column(DateTime(timezone=True), nullable=True)
 
     # Artifact Integration
     artifact_id = Column(String, nullable=True, index=True)

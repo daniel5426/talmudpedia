@@ -7,12 +7,23 @@ class Client:
     Client for the TalmudPedia SDK.
     Handles authentication and dynamic loading of the operator catalog.
     """
-    def __init__(self, base_url: str = "http://localhost:8000", api_key: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        api_key: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.tenant_id = tenant_id
         self.headers = {}
         if self.api_key:
             self.headers["Authorization"] = f"Bearer {self.api_key}"
+        if self.tenant_id:
+            self.headers["X-Tenant-ID"] = self.tenant_id
+        if extra_headers:
+            self.headers.update(extra_headers)
         
         # Default tenant header if running in single-tenant dev mode or similar
         # Ideally this is passed in init, but for now we assume default/admin access

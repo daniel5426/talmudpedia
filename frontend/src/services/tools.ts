@@ -5,12 +5,14 @@ export const toolsService = {
   async listTools(
     implementationType?: ToolImplementationType,
     status?: ToolStatus,
+    toolType?: string,
     skip = 0,
     limit = 50
   ): Promise<ToolsListResponse> {
     const query = new URLSearchParams();
     if (implementationType) query.set("implementation_type", implementationType);
     if (status) query.set("status", status);
+    if (toolType) query.set("tool_type", toolType);
     query.set("skip", String(skip));
     query.set("limit", String(limit));
     const queryString = query.toString();

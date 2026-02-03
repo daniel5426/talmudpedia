@@ -1,5 +1,6 @@
 import logging
 import json
+from collections.abc import Mapping
 import httpx
 from typing import Any, Dict
 from types import SimpleNamespace
@@ -14,6 +15,90 @@ from app.db.postgres.models.registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 class ToolNodeExecutor(BaseNodeExecutor):
+    def _resolve_input_data(self, state: Dict[str, Any], config: Dict[str, Any] = None) -> Dict[str, Any]:
+        prefer_last = False
+        if isinstance(config, dict):
+            if config.get("input_source") == "last_agent_output":
+                prefer_last = True
+            if config.get("prefer_last_agent_output") is True:
+                prefer_last = True
+
+        last_output = (state.get("state") or {}).get("last_agent_output")
+        if isinstance(last_output, Mapping) and not isinstance(last_output, dict):
+            last_output = dict(last_output)
+        if prefer_last and isinstance(last_output, dict) and last_output:
+            return last_output
+
+        parsed_message = self._try_parse_last_message_json(state)
+        if isinstance(parsed_message, dict) and parsed_message.get("action"):
+            return parsed_message
+
+        node_output = self._try_extract_last_agent_output(state)
+        if isinstance(node_output, dict) and node_output.get("action"):
+            return node_output
+
+        input_data = state.get("context")
+        if isinstance(input_data, Mapping) and not isinstance(input_data, dict):
+            input_data = dict(input_data)
+        if isinstance(input_data, dict) and input_data:
+            if isinstance(last_output, dict) and last_output and input_data.get("action") == "fetch_catalog":
+                return last_output
+            if input_data.get("action") == "fetch_catalog":
+                parsed = self._try_parse_last_message_json(state)
+                if parsed:
+                    return parsed
+        if not isinstance(input_data, dict) or not input_data:
+            input_data = last_output
+
+        if not isinstance(input_data, dict) or not input_data:
+            last_msg = state.get("messages", [])[-1] if state.get("messages") else None
+            if last_msg:
+                if isinstance(last_msg, dict):
+                    input_data = {"text": last_msg.get("content")}
+                else:
+                    input_data = {"text": getattr(last_msg, "content", str(last_msg))}
+
+        if not isinstance(input_data, dict):
+            input_data = {}
+
+        return input_data
+
+    def _try_extract_last_agent_output(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        node_outputs = state.get("_node_outputs") or {}
+        if isinstance(node_outputs, Mapping):
+            for output in node_outputs.values():
+                if isinstance(output, Mapping):
+                    output = dict(output)
+                    nested_state = output.get("state")
+                    if isinstance(nested_state, Mapping):
+                        nested_state = dict(nested_state)
+                    if isinstance(nested_state, dict) and "last_agent_output" in nested_state:
+                        last = nested_state.get("last_agent_output")
+                        if isinstance(last, Mapping) and not isinstance(last, dict):
+                            last = dict(last)
+                        if isinstance(last, dict):
+                            return last
+        return {}
+
+    def _try_parse_last_message_json(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        last_msg = state.get("messages", [])[-1] if state.get("messages") else None
+        if not last_msg:
+            return {}
+        if isinstance(last_msg, dict):
+            content = last_msg.get("content")
+        else:
+            content = getattr(last_msg, "content", None)
+        if not isinstance(content, str):
+            return {}
+        text = content.strip()
+        if not (text.startswith("{") and text.endswith("}")):
+            return {}
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
     async def _has_artifact_columns(self) -> bool:
         try:
             result = await self.db.execute(
@@ -29,7 +114,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
             cols = {row[0] for row in result.all()}
             return "artifact_id" in cols and "artifact_version" in cols
         except Exception:
-            return False
+            # SQLite fallback
+            try:
+                result = await self.db.execute(text("PRAGMA table_info(tool_registry)"))
+                cols = {row[1] for row in result.all()}
+                return "artifact_id" in cols and "artifact_version" in cols
+            except Exception:
+                return False
 
     async def validate_config(self, config: Dict[str, Any]) -> ValidationResult:
         if not config.get("tool_id"):
@@ -100,13 +191,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         # Ideally, we should use `tool.schema['input']` to map state fields to tool inputs.
         # Here we assume the input is in `state.get('context')` or passed in explicitly?
         # Let's assume input comes from `state['context']` or is passed in `runtime_input`.
-        input_data = state.get("context", {})
-        if not isinstance(input_data, dict):
-            # Try to parse from last message?
-            last_msg = state.get("messages", [])[-1] if state.get("messages") else None
-            if last_msg:
-                 # Minimal fallback
-                 input_data = {"text": getattr(last_msg, "content", str(last_msg))}
+        input_data = self._resolve_input_data(state, config)
 
         # Extract emitter from ContextVar (global implicit context)
         from app.agent.execution.emitter import active_emitter
@@ -129,8 +214,15 @@ class ToolNodeExecutor(BaseNodeExecutor):
         
         # Checking implementation details from common patterns:
         config_schema = tool.config_schema or {}
+        if isinstance(config_schema, str):
+            try:
+                config_schema = json.loads(config_schema)
+            except Exception:
+                config_schema = {}
         implementation_config = config_schema.get("implementation", {})
-        impl_type = implementation_config.get("type", "internal")
+        impl_type = getattr(tool, "implementation_type", None) or implementation_config.get("type", "internal")
+        if hasattr(impl_type, "value"):
+            impl_type = impl_type.value
 
         # Check for Artifact linkage (Phase 4)
         if hasattr(tool, "artifact_id") and tool.artifact_id:
@@ -184,6 +276,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
             elif impl_type == "function":
                  # TODO: Registry of internal functions
                  output_data = {"error": "Function execution not fully implemented"}
+            elif impl_type == "mcp":
+                raise NotImplementedError("MCP tool execution is not implemented yet")
             
             else:
                 # Stub for now

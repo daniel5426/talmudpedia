@@ -28,7 +28,6 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
 import {
     AgentNodeData,
@@ -45,6 +44,7 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { modelsService, toolsService, ragAdminService, agentService, AgentOperatorSpec, LogicalModel, ToolDefinition } from "@/services"
+import { ToolPicker } from "./ToolPicker"
 import { useTenant } from "@/contexts/TenantContext"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
 import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
@@ -88,13 +88,34 @@ interface ResourceOption {
     providerInfo?: string
 }
 
+const EXPRESSION_OPERATORS = [
+    "==",
+    "!=",
+    ">=",
+    "<=",
+    ">",
+    "<",
+    "&&",
+    "||",
+    "!",
+    "in",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "(",
+    ")",
+]
+
 function SmartInput({
     value,
     onChange,
     placeholder,
     className,
     multiline = false,
-    availableVariables = []
+    availableVariables = [],
+    mode = "template",
 }: {
     value: string
     onChange: (val: string) => void
@@ -102,68 +123,165 @@ function SmartInput({
     className?: string
     multiline?: boolean
     availableVariables?: any[]
+    mode?: "template" | "expression" | "variable"
 }) {
     const [showSuggestions, setShowSuggestions] = useState(false)
     const [cursorPosition, setCursorPosition] = useState(0)
     const [searchTerm, setSearchTerm] = useState("")
     const [selectedIndex, setSelectedIndex] = useState(0)
+    const [suggestionType, setSuggestionType] = useState<"variables" | "operators">("variables")
 
-    // Handle input change and detect {{
+    const detectExpressionContext = (textBeforeCursor: string) => {
+        const hasTrailingSpace = /\s$/.test(textBeforeCursor)
+        const trimmed = textBeforeCursor.trimEnd()
+        const tokens = trimmed.split(/\s+/).filter(Boolean)
+        const lastToken = tokens[tokens.length - 1] || ""
+        const isOperator = EXPRESSION_OPERATORS.includes(lastToken)
+        const variableMatch = lastToken.match(/^[A-Za-z_][A-Za-z0-9_.\[\]]*$/)
+
+        if (!hasTrailingSpace) {
+            return { type: "variables" as const, term: lastToken }
+        }
+        if (isOperator) {
+            return { type: "variables" as const, term: "" }
+        }
+        if (variableMatch) {
+            return { type: "operators" as const, term: "" }
+        }
+        return { type: "variables" as const, term: "" }
+    }
+
+    // Handle input change and detect suggestions based on mode
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         const val = e.target.value
         const pos = e.target.selectionStart || 0
         onChange(val)
         setCursorPosition(pos)
 
-        // Detect {{ pattern
         const textBeforeCursor = val.slice(0, pos)
-        const match = textBeforeCursor.match(/{{([^{}]*)$/)
 
-        if (match) {
-            setShowSuggestions(true)
-            setSearchTerm(match[1])
-            setSelectedIndex(0)
-        } else {
-            setShowSuggestions(false)
+        if (mode === "template") {
+            const match = textBeforeCursor.match(/{{([^{}]*)$/)
+            if (match) {
+                setShowSuggestions(true)
+                setSuggestionType("variables")
+                setSearchTerm(match[1])
+                setSelectedIndex(0)
+            } else {
+                setShowSuggestions(false)
+            }
+            return
         }
+
+        if (mode === "variable") {
+            const trimmed = textBeforeCursor.trimEnd()
+            const tokens = trimmed.split(/\s+/).filter(Boolean)
+            const lastToken = tokens[tokens.length - 1] || ""
+            setSuggestionType("variables")
+            setSearchTerm(lastToken)
+            setSelectedIndex(0)
+            setShowSuggestions(true)
+            return
+        }
+
+        const context = detectExpressionContext(textBeforeCursor)
+        setSuggestionType(context.type)
+        setSearchTerm(context.term)
+        setSelectedIndex(0)
+        setShowSuggestions(true)
     }
 
     const filteredVariables = availableVariables?.filter(v =>
         v.name.toLowerCase().includes(searchTerm.toLowerCase())
     ) || []
+    const filteredOperators = EXPRESSION_OPERATORS.filter(op =>
+        op.toLowerCase().includes(searchTerm.toLowerCase())
+    )
 
     const insertVariable = (varName: string) => {
         const textBeforeCursor = value.slice(0, cursorPosition)
         const textAfterCursor = value.slice(cursorPosition)
-        const match = textBeforeCursor.match(/{{([^{}]*)$/)
 
-        if (match) {
-            const prefix = textBeforeCursor.slice(0, match.index! + 2) // keep {{
-            const newText = prefix + varName + "}}" + textAfterCursor
+        if (mode === "template") {
+            const match = textBeforeCursor.match(/{{([^{}]*)$/)
+            if (match) {
+                const prefix = textBeforeCursor.slice(0, match.index! + 2) // keep {{
+                const newText = prefix + varName + "}}" + textAfterCursor
+                onChange(newText)
+                setShowSuggestions(false)
+            }
+            return
+        }
+
+        const tokenMatch = textBeforeCursor.match(/[A-Za-z_][A-Za-z0-9_.\[\]]*$/)
+        if (tokenMatch) {
+            const prefix = textBeforeCursor.slice(0, textBeforeCursor.length - tokenMatch[0].length)
+            const newText = prefix + varName + textAfterCursor
             onChange(newText)
             setShowSuggestions(false)
-            // Ideally we'd reset cursor too but simple onChange is okay for now
+            return
         }
+
+        const insertText = varName
+        const newText = textBeforeCursor + insertText + textAfterCursor
+        onChange(newText)
+        setShowSuggestions(false)
+    }
+
+    const insertOperator = (op: string) => {
+        const textBeforeCursor = value.slice(0, cursorPosition)
+        const textAfterCursor = value.slice(cursorPosition)
+        const newText = textBeforeCursor + op + textAfterCursor
+        onChange(newText)
+        setShowSuggestions(false)
     }
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (!showSuggestions || filteredVariables.length === 0) return
+        if (!showSuggestions) return
+
+        const list = suggestionType === "variables" ? filteredVariables : filteredOperators
+        if (list.length === 0) return
 
         if (e.key === "ArrowDown") {
             e.preventDefault()
-            setSelectedIndex(i => (i + 1) % filteredVariables.length)
+            setSelectedIndex(i => (i + 1) % list.length)
         } else if (e.key === "ArrowUp") {
             e.preventDefault()
-            setSelectedIndex(i => (i - 1 + filteredVariables.length) % filteredVariables.length)
+            setSelectedIndex(i => (i - 1 + list.length) % list.length)
         } else if (e.key === "Enter" || e.key === "Tab") {
             e.preventDefault()
-            insertVariable(filteredVariables[selectedIndex].name)
+            if (suggestionType === "variables") {
+                const selected = filteredVariables[selectedIndex]
+                if (selected) {
+                    insertVariable(selected.name)
+                }
+            } else {
+                const selected = filteredOperators[selectedIndex]
+                if (selected) {
+                    insertOperator(selected)
+                }
+            }
         } else if (e.key === "Escape") {
             setShowSuggestions(false)
         }
     }
 
     const Component = multiline ? Textarea : Input
+
+    const suggestionList =
+        suggestionType === "variables"
+            ? filteredVariables.map(v => ({
+                key: v.name,
+                label: v.name,
+                meta: v.type || "any",
+            }))
+            : filteredOperators.map(op => ({
+                key: op,
+                label: op,
+                meta: "Operator",
+            }))
+
+    const hasSuggestions = showSuggestions && suggestionList.length > 0
 
     return (
         <div className="relative">
@@ -179,25 +297,33 @@ function SmartInput({
                 onBlur={() => setShowSuggestions(false)}
                 rows={multiline ? 4 : 1}
             />
-            {showSuggestions && filteredVariables.length > 0 && (
+            {hasSuggestions && (
                 <div className="absolute z-50 w-full mt-1 bg-popover text-popover-foreground shadow-md rounded-md border border-border p-1 max-h-[200px] overflow-auto">
-                    {filteredVariables.map((v, idx) => (
+                    {suggestionList.map((item, idx) => (
                         <div
-                            key={v.name}
+                            key={item.key}
                             className={cn(
                                 "flex items-center justify-between px-2 py-1.5 text-xs rounded-sm cursor-pointer",
                                 idx === selectedIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted"
                             )}
                             onMouseDown={(e) => {
                                 e.preventDefault()
-                                insertVariable(v.name)
+                                if (suggestionType === "variables") {
+                                    insertVariable(item.label)
+                                } else {
+                                    insertOperator(item.label)
+                                }
                             }}
                         >
                             <div className="flex items-center gap-2">
-                                <Hash className="h-3 w-3 opacity-50" />
-                                <span className="font-medium">{v.name}</span>
+                                {suggestionType === "variables" ? (
+                                    <Hash className="h-3 w-3 opacity-50" />
+                                ) : null}
+                                <span className={cn("font-medium", suggestionType === "operators" && "font-mono")}>
+                                    {item.label}
+                                </span>
                             </div>
-                            <span className="text-[10px] opacity-50">{v.type || "any"}</span>
+                            <span className="text-[10px] opacity-50">{item.meta}</span>
                         </div>
                     ))}
                 </div>
@@ -336,13 +462,15 @@ function ListEditor({
     onChange,
     fields,
     addItemLabel = "Add Item",
-    availableVariables
+    availableVariables,
+    layout = "grid",
 }: {
     items: any[]
     onChange: (items: any[]) => void
     fields: { key: string; label: string; placeholder?: string; type?: "text" | "select" | "expression"; options?: string[] }[]
     addItemLabel?: string
     availableVariables?: any[]
+    layout?: "grid" | "stacked"
 }) {
     const handleAdd = () => {
         const newItem: any = {}
@@ -366,7 +494,13 @@ function ListEditor({
         <div className="space-y-2">
             {(items || []).map((item, idx) => (
                 <div key={idx} className="flex gap-2 items-start group">
-                    <div className="flex-1 grid gap-2" style={{ gridTemplateColumns: `repeat(${fields.length}, 1fr)` }}>
+                    <div
+                        className={cn(
+                            "flex-1 gap-2",
+                            layout === "grid" ? "grid" : "flex flex-col"
+                        )}
+                        style={layout === "grid" ? { gridTemplateColumns: `repeat(${fields.length}, 1fr)` } : undefined}
+                    >
                         {fields.map(field => (
                             <div key={field.key} className="min-w-0">
                                 {field.type === "select" ? (
@@ -390,6 +524,7 @@ function ListEditor({
                                         value={item[field.key] || ""}
                                         onChange={(val) => handleChange(idx, field.key, val)}
                                         availableVariables={field.type === "expression" ? availableVariables : undefined}
+                                        mode={field.type === "expression" ? "expression" : "template"}
                                         multiline={false}
                                     />
                                 )}
@@ -419,6 +554,60 @@ function ListEditor({
     )
 }
 
+function ToolListField({
+    value,
+    onChange,
+    toolCatalog
+}: {
+    value: string[]
+    onChange: (value: string[]) => void
+    toolCatalog: ToolDefinition[]
+}) {
+    const [open, setOpen] = useState(false)
+    const selectedTools = toolCatalog.filter(tool => value.includes(tool.id))
+
+    return (
+        <div className="space-y-2">
+            <div className="flex flex-wrap justify-between gap-2">
+                <div className="flex flex-wrap gap-1">
+                {selectedTools.length === 0 ? (
+                    <span className="text-[11px] text-muted-foreground">No tools selected</span>
+                ) : (
+                    selectedTools.map(tool => (
+                        <Badge key={tool.id} variant="secondary" className="text-[11px] flex items-center gap-1">
+                            {tool.name}
+                            <button
+                                type="button"
+                                className="ml-1 text-muted-foreground/70 hover:text-foreground"
+                                onClick={() => onChange(value.filter(id => id !== tool.id))}
+                                aria-label={`Remove ${tool.name}`}
+                            >
+                                <X className="h-3 w-3" />
+                            </button>
+                        </Badge>
+                    ))
+                )}
+                </div>
+                <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7 border-dashed"
+                    onClick={() => setOpen(true)}
+                >
+                    <Plus className="h-3.5 w-3.5" />
+                </Button>
+            </div>
+            <ToolPicker
+                tools={toolCatalog}
+                value={value}
+                onChange={onChange}
+                open={open}
+                onOpenChange={setOpen}
+            />
+        </div>
+    )
+}
+
 function ConfigField({
     field,
     value,
@@ -426,7 +615,8 @@ function ConfigField({
     models,
     tools,
     namespaces,
-    availableVariables
+    availableVariables,
+    toolCatalog
 }: {
     field: ConfigFieldSpec
     value: unknown
@@ -435,6 +625,7 @@ function ConfigField({
     tools: ResourceOption[]
     namespaces: ResourceOption[]
     availableVariables?: any[]
+    toolCatalog: ToolDefinition[]
 }) {
     const isNumber = field.fieldType === "number"
     const isBoolean = field.fieldType === "boolean"
@@ -592,6 +783,7 @@ function ConfigField({
                         field.fieldType === "expression" && "font-mono text-blue-600"
                     )}
                     availableVariables={availableVariables}
+                    mode={field.fieldType === "expression" ? "expression" : "template"}
                 />
             )
         }
@@ -618,6 +810,7 @@ function ConfigField({
                     items={(value as any[]) || []}
                     onChange={onChange}
                     addItemLabel="Add Category"
+                    layout="stacked"
                     fields={[
                         { key: "name", label: "Category Name", placeholder: "support" },
                         { key: "description", label: "Description", placeholder: "Requests about support" }
@@ -633,6 +826,7 @@ function ConfigField({
                     items={(value as any[]) || []}
                     onChange={onChange}
                     addItemLabel="Add Condition"
+                    layout="stacked"
                     fields={[
                         { key: "name", label: "Name", placeholder: "high_score" },
                         { key: "expression", label: "Condition (CEL)", placeholder: "state.score > 80", type: "expression" }
@@ -673,35 +867,12 @@ function ConfigField({
         }
 
         if (isToolList) {
-            const currentTools = new Set((value as string[]) || []);
             return (
-                <div className="space-y-1 bg-muted/40 p-2 rounded-lg max-h-[200px] overflow-y-auto">
-                    {tools.length === 0 ? (
-                        <div className="text-[11px] text-muted-foreground text-center">No tools available</div>
-                    ) : (
-                        tools.map(tool => (
-                            <div key={tool.value} className="flex items-center space-x-2">
-                                <Checkbox
-                                    id={`tool-${tool.value}`}
-                                    checked={currentTools.has(tool.value)}
-                                    onCheckedChange={(checked) => {
-                                        const next = new Set(currentTools);
-                                        if (checked) next.add(tool.value);
-                                        else next.delete(tool.value);
-                                        onChange(Array.from(next));
-                                    }}
-                                />
-                                <label
-                                    htmlFor={`tool-${tool.value}`}
-                                    className="text-xs font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                                >
-                                    {tool.label}
-                                    {tool.providerInfo && <span className="ml-1 text-[10px] text-muted-foreground">({tool.providerInfo})</span>}
-                                </label>
-                            </div>
-                        ))
-                    )}
-                </div>
+                <ToolListField
+                    value={(value as string[]) || []}
+                    onChange={(next) => onChange(next)}
+                    toolCatalog={toolCatalog}
+                />
             )
         }
 
@@ -715,6 +886,7 @@ function ConfigField({
                     placeholder="Select or type variable name..."
                     className="h-9 px-3 bg-muted/40 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40 font-mono text-blue-600"
                     availableVariables={availableVariables}
+                    mode="variable"
                     multiline={false}
                 />
             )
@@ -751,6 +923,7 @@ function ConfigField({
                                     placeholder={input.description || `{{ state.field }} or {{ upstream.node.field }}`}
                                     className="h-8 px-2 text-[11px] bg-background/50 font-mono text-blue-600"
                                     availableVariables={availableVariables}
+                                    mode="expression"
                                     multiline={false}
                                 />
                             </div>
@@ -810,7 +983,8 @@ export function ConfigPanel({
         data.config || {}
     )
     const [models, setModels] = useState<ResourceOption[]>([])
-    const [tools, setTools] = useState<ResourceOption[]>([])
+    const [toolOptions, setToolOptions] = useState<ResourceOption[]>([])
+    const [toolCatalog, setToolCatalog] = useState<ToolDefinition[]>([])
     const [namespaces, setNamespaces] = useState<ResourceOption[]>([])
     const [operatorSpecs, setOperatorSpecs] = useState<AgentOperatorSpec[]>([])
     const [loading, setLoading] = useState(true)
@@ -828,7 +1002,7 @@ export function ConfigPanel({
             try {
                 const [modelsRes, toolsRes, pipelinesRes] = await Promise.all([
                     modelsService.listModels("chat", "active", 0, 100),
-                    toolsService.listTools(undefined, "published", 0, 100),
+                    toolsService.listTools(undefined, "published", undefined, 0, 100),
                     ragAdminService.listVisualPipelines(currentTenant?.slug)
                 ])
 
@@ -837,7 +1011,8 @@ export function ConfigPanel({
                     label: m.name,
                     providerInfo: `${m.providers?.[0]?.provider} • ${m.providers?.[0]?.provider_model_id}`
                 })))
-                setTools(toolsRes.tools.map(t => ({
+                setToolCatalog(toolsRes.tools)
+                setToolOptions(toolsRes.tools.map(t => ({
                     value: t.id,
                     label: t.name,
                     providerInfo: t.implementation_type
@@ -942,9 +1117,10 @@ export function ConfigPanel({
                             value={localConfig[field.name]}
                             onChange={(value) => handleFieldChange(field.name, value)}
                             models={models}
-                            tools={tools}
+                            tools={toolOptions}
                             namespaces={namespaces}
                             availableVariables={availableVariables}
+                            toolCatalog={toolCatalog}
                         />
                     ))
                 )}

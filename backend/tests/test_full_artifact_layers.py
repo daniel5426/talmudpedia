@@ -290,6 +290,9 @@ async def test_agent_artifacts_tools_mapping_and_tracing(db_session, tenant_user
         await db_session.refresh(tool_beta)
         tool_alpha_id = tool_alpha.id
         tool_beta_id = tool_beta.id
+        assert tool_alpha.status is not None
+        assert tool_alpha.version is not None
+        assert tool_alpha.implementation_type is not None
     else:
         from sqlalchemy import text
         import json

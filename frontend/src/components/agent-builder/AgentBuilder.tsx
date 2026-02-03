@@ -419,7 +419,7 @@ function AgentBuilderInner({
             {/* Left Side Panels */}
 
             {/* 1. Build Mode: Catalog */}
-            <FloatingPanel position="left" visible={isCatalogVisible && mode === "build"} className="w-64 z-60">
+            <FloatingPanel position="left" visible={isCatalogVisible && mode === "build"} className="w-64 z-40">
                 <NodeCatalog
                     onDragStart={handleDragStart}
                     onClose={() => setIsCatalogVisible(false)}

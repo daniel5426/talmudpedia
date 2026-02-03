@@ -77,8 +77,9 @@ export interface ModelsListResponse {
 }
 
 // Tool Types
-export type ToolImplementationType = "internal" | "http" | "rag_retrieval" | "function" | "custom" | "artifact";
+export type ToolImplementationType = "internal" | "http" | "rag_retrieval" | "function" | "custom" | "artifact" | "mcp";
 export type ToolStatus = "draft" | "published" | "deprecated" | "disabled";
+export type ToolTypeBucket = "built_in" | "mcp" | "artifact" | "custom";
 
 export interface ToolDefinition {
   id: string;
@@ -88,10 +89,11 @@ export interface ToolDefinition {
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
   implementation_type: ToolImplementationType;
-  implementation_config: Record<string, unknown>;
-  execution_config: Record<string, unknown>;
+  implementation_config?: Record<string, unknown>;
+  execution_config?: Record<string, unknown>;
   version: string;
   status: ToolStatus;
+  tool_type?: ToolTypeBucket;
   tenant_id: string;
   created_at: string;
   updated_at: string;
@@ -108,8 +110,11 @@ export interface CreateToolRequest {
   output_schema: Record<string, unknown>;
   implementation_type: ToolImplementationType;
   config_schema?: Record<string, unknown>;
+  implementation_config?: Record<string, unknown>;
+  execution_config?: Record<string, unknown>;
   artifact_id?: string;
   artifact_version?: string;
+  status?: ToolStatus;
 }
 
 export interface UpdateToolRequest {
@@ -118,9 +123,13 @@ export interface UpdateToolRequest {
     input_schema?: Record<string, unknown>;
     output_schema?: Record<string, unknown>;
     config_schema?: Record<string, unknown>;
+    implementation_type?: ToolImplementationType;
+    implementation_config?: Record<string, unknown>;
+    execution_config?: Record<string, unknown>;
     is_active?: boolean;
     artifact_id?: string;
     artifact_version?: string;
+    status?: ToolStatus;
 }
 
 
