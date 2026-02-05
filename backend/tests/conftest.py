@@ -1,47 +1,53 @@
-import sys
-import os
 import asyncio
+import os
+from pathlib import Path
+from uuid import UUID, uuid4
+
+import pytest
+import pytest_asyncio
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 USE_REAL_DB = os.getenv("TEST_USE_REAL_DB") == "1"
 
 if USE_REAL_DB:
     try:
-        from pathlib import Path
         from dotenv import load_dotenv
         env_path = Path(__file__).resolve().parents[1] / ".env"
         load_dotenv(env_path)
     except Exception:
-        # If dotenv is unavailable or .env missing, we proceed with existing env.
         pass
 
-import pytest
-import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy import Column, String, JSON
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB as PG_JSONB
-
-# Add the project root to sys.path
+import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db.postgres.base import Base
 from app.db.postgres.session import get_db
+from app.db.postgres.models.identity import User, OrgMembership, MembershipStatus
 
 
-# Database URL for testing
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
 
 @pytest.fixture(scope="session")
 def event_loop():
-    """Create an instance of the default event loop for each test case."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
-@pytest_asyncio.fixture()
+
+def pytest_collection_modifyitems(config, items):
+    if USE_REAL_DB:
+        return
+    skip_real_db = pytest.mark.skip(reason="TEST_USE_REAL_DB=1 is required for real DB tests.")
+    for item in items:
+        if "real_db" in item.keywords:
+            item.add_marker(skip_real_db)
+
+
+@pytest_asyncio.fixture(scope="session")
 async def test_engine():
-    """Create a test engine with SQLite in-memory or use real DB when enabled."""
     if USE_REAL_DB:
         from app.db.postgres.engine import engine as real_engine
         yield real_engine
@@ -52,35 +58,27 @@ async def test_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    
-    # SQLite compatibility for Postgres types
+
     from sqlalchemy import event, types
     from sqlalchemy.dialects import postgresql
-    import json
-    import uuid
+    import uuid as _uuid
 
     class SQLiteUUID(types.TypeDecorator):
         impl = types.String(36)
         cache_ok = True
-        def process_bind_param(self, value, dialect):
-            if value is None: return value
-            return str(value)
-        def process_result_value(self, value, dialect):
-            if value is None: return value
-            return uuid.UUID(value)
 
-    class SQLiteJSON(types.TypeDecorator):
-        impl = types.JSON
-        cache_ok = True
         def process_bind_param(self, value, dialect):
-            if value is None: return value
-            return value # types.JSON handles dict to string
+            if value is None:
+                return value
+            return str(value)
+
         def process_result_value(self, value, dialect):
-            return value
+            if value is None:
+                return value
+            return _uuid.UUID(value)
 
     @event.listens_for(Base.metadata, "before_create")
     def receive_before_create(target, connection, **kw):
-        """Map Postgres types to SQLite-compatible types."""
         for table in target.tables.values():
             for column in table.columns:
                 if isinstance(column.type, (postgresql.ENUM, types.Enum)):
@@ -89,58 +87,100 @@ async def test_engine():
                     column.type = SQLiteUUID()
                 elif isinstance(column.type, postgresql.JSONB):
                     column.type = types.JSON()
-    
+
     async with engine.begin() as conn:
         import app.db.postgres.models
         await conn.run_sync(Base.metadata.create_all)
 
-    
     yield engine
     await engine.dispose()
 
 
-
 @pytest_asyncio.fixture
 async def db_session(test_engine):
-    """Create a new database session for a test."""
     from app.db.postgres.engine import sessionmaker as global_sessionmaker
-    import app.db.postgres.engine
-    
+    import app.db.postgres.engine as engine_module
+
     session_factory = async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
-    
-    # Patch the global sessionmaker so background tasks in AgentExecutorService use the test DB
-    original_factory = app.db.postgres.engine.sessionmaker
-    app.db.postgres.engine.sessionmaker = session_factory
-    
+
+    original_factory = engine_module.sessionmaker
+    engine_module.sessionmaker = session_factory
+
     async with session_factory() as session:
         yield session
         await session.rollback()
-    
-    # Restore (though usually not necessary for in-memory tests, good practice)
-    app.db.postgres.engine.sessionmaker = original_factory
+
+    engine_module.sessionmaker = original_factory
+
 
 @pytest_asyncio.fixture
 async def client(db_session):
-    """Create a new FastAPI TestClient."""
     from main import app
+
     async def override_get_db():
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    from httpx import AsyncClient, ASGITransport
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
 
-@pytest.fixture
-def artifact_context():
-    """Fixture to provide an ArtifactContext for testing operators."""
-    from app.rag.pipeline.operator_executor import ArtifactContext
-    
-    def _create_context(data=None, config=None, metadata=None):
-        return ArtifactContext(
-            input_data=data or [],
-            config=config or {},
-            metadata=metadata or {}
+
+async def _resolve_tenant_id(engine) -> UUID:
+    tenant_id = os.getenv("TEST_TENANT_ID")
+    if tenant_id:
+        return UUID(tenant_id)
+
+    email = os.getenv("TEST_TENANT_EMAIL")
+    if not email:
+        raise RuntimeError("TEST_TENANT_EMAIL or TEST_TENANT_ID must be set for real DB tests.")
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_factory() as session:
+        user = await session.scalar(select(User).where(User.email == email))
+        if not user:
+            raise RuntimeError(f"No user found for TEST_TENANT_EMAIL={email}")
+
+        membership = await session.scalar(
+            select(OrgMembership).where(
+                OrgMembership.user_id == user.id,
+                OrgMembership.status == MembershipStatus.active,
+            )
         )
-    
-    return _create_context
+        if not membership:
+            membership = await session.scalar(
+                select(OrgMembership).where(OrgMembership.user_id == user.id)
+            )
+        if not membership:
+            raise RuntimeError(f"No org membership found for user {email}")
+
+        return membership.tenant_id
+
+
+@pytest_asyncio.fixture(scope="session")
+async def test_tenant_id(test_engine):
+    if not USE_REAL_DB:
+        pytest.skip("TEST_USE_REAL_DB=1 is required for tenant-scoped tests.")
+    return await _resolve_tenant_id(test_engine)
+
+
+@pytest_asyncio.fixture(scope="session")
+async def test_user_id(test_engine):
+    if not USE_REAL_DB:
+        pytest.skip("TEST_USE_REAL_DB=1 is required for tenant-scoped tests.")
+    email = os.getenv("TEST_TENANT_EMAIL")
+    if not email:
+        raise RuntimeError("TEST_TENANT_EMAIL must be set to resolve test user.")
+
+    session_factory = async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_factory() as session:
+        user = await session.scalar(select(User).where(User.email == email))
+        if not user:
+            raise RuntimeError(f"No user found for TEST_TENANT_EMAIL={email}")
+        return user.id
+
+
+@pytest.fixture
+def run_prefix():
+    return f"test-{uuid4().hex[:8]}"

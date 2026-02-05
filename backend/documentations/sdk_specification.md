@@ -1,5 +1,7 @@
 # SDK Specification & Architecture (v1.0)
 
+Last Updated: 2026-02-04
+
 This document provides a technical specification for the TalmudPedia Dynamic Python SDK, intended for developers maintaining the platform or extending the SDK's capabilities.
 
 ## Architecture: Schema-Driven Discovery
@@ -25,6 +27,13 @@ The SDK provides a Fluent API for constructing Directed Acyclic Graphs (DAGs).
 - **Edge Construction**: Simplifies edge definition `connect(source, target)` which handles the manual ID mapping required by the backend API.
 - **Serialization**: The `to_payload()` method ensures the graph structure matches the `VisualPipeline` and `AgentGraph` schemas expected by the backend.
 
+### 3.1 SDK Helpers (Agent Graphs)
+- **`Client.from_env()`**: Initializes a client from `TEST_BASE_URL`, `TEST_API_KEY`, and `TEST_TENANT_ID`.
+- **`Agent.execute()`**: Executes a created agent by ID (wraps `POST /agents/{agent_id}/execute`).
+- **`GraphSpecValidator`**: Validates node configs against `config_schema` from the operator catalog.
+- **`AgentGraphBuilder`**: Adds routing helpers for handles (`if_else`, `classify`, `while`, `user_approval`, `conditional`).
+- **`GraphFuzzer`**: Generates randomized graphs for limit testing with optional config factories.
+
 ### 4. SaaS Remote Artifacts (`ArtifactBuilder`)
 To support AI Agents that cannot access the host's local filesystem, the `ArtifactBuilder` bypasses file-based registration.
 - **Method**: It hits the `POST /admin/rag/custom-operators` endpoint.
@@ -41,7 +50,7 @@ This SDK is specifically designed to be "Agent-Consumable":
 ## Future Roadmap
 
 ### Client-Side Validation
-The `OperatorSpec` includes `config_schema`. Future versions of the SDK should use this to validate node arguments *before* hitting the API, providing faster feedback to the user/agent.
+The `OperatorSpec` includes `config_schema`. The SDK now ships a `GraphSpecValidator` to validate configs *before* hitting the API. Future work should integrate validation directly into node instantiation and the builder flow for automatic checks.
 
 ### Versioning
 Currently, the SDK pulls the default/latest version of operators. Future updates should support pinned versions for production stability.

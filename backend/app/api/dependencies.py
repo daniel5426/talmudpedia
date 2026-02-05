@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 from fastapi import Depends, HTTPException, Header
 from pydantic import BaseModel
-from .routers.auth import get_current_user
+from .routers.auth import get_current_user, oauth2_scheme
 from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgMembership
 from app.db.postgres.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +9,7 @@ from sqlalchemy import select
 from uuid import UUID
 import jwt
 from app.core.security import SECRET_KEY, ALGORITHM
+from app.core.internal_token import decode_service_token
 
 class AuthContext(BaseModel):
     user: User
@@ -81,3 +82,54 @@ async def get_auth_context(
     org_unit = org_unit_result.scalar_one_or_none()
     
     return AuthContext(user=user, tenant=tenant, org_unit=org_unit)
+
+
+async def get_current_service_caller(
+    authorization: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    token = authorization.split("Bearer")[-1].strip()
+    try:
+        payload = decode_service_token(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid service token")
+
+    return {
+        "tenant_id": payload.get("tenant_id"),
+        "is_service": True,
+        "role": payload.get("role"),
+        "auth_token": token,
+    }
+
+
+async def get_current_user_or_service(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    try:
+        user = await get_current_user(token=token, db=db)
+        tenant_id = None
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            tenant_id = payload.get("tenant_id")
+        except Exception:
+            tenant_id = None
+        return {
+            "user": user,
+            "tenant_id": tenant_id,
+            "is_service": False,
+            "auth_token": token,
+        }
+    except HTTPException:
+        try:
+            payload = decode_service_token(token)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Could not validate credentials")
+        return {
+            "user": None,
+            "tenant_id": payload.get("tenant_id"),
+            "is_service": True,
+            "role": payload.get("role"),
+            "auth_token": token,
+        }

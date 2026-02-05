@@ -3,6 +3,7 @@ Platform SDK Tool Artifact
 
 Executes platform actions via the dynamic SDK:
 - fetch_catalog: summarize available RAG/Agent nodes
+- validate_plan: validate plan steps without mutation
 - execute_plan: create artifacts, deploy pipelines, deploy agents
 - respond: echo message without mutation
 """
@@ -10,11 +11,17 @@ from __future__ import annotations
 
 import json
 import os
+import asyncio
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 from sdk import Client, ArtifactBuilder
+from app.core.security import create_access_token
+from app.core.internal_token import create_service_token
+from app.agent.graph.schema import AgentGraph, NodeType
+from app.agent.graph.compiler import AgentCompiler
+from app.rag.pipeline.compiler import PipelineCompiler
 
 
 def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
@@ -24,21 +31,40 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     action = inputs.get("action") or (inputs.get("payload") or {}).get("action") or "fetch_catalog"
     payload = inputs.get("payload") if isinstance(inputs.get("payload"), dict) else {}
     steps = inputs.get("steps") if isinstance(inputs.get("steps"), list) else []
+    steps = _normalize_steps(steps)
     dry_run = bool(inputs.get("dry_run") or payload.get("dry_run", False))
 
-    base_url, api_key, tenant_id, extra_headers = _resolve_auth(inputs, payload)
+    base_url, api_key, tenant_id, extra_headers = _resolve_auth(inputs, payload, state=state, context=context)
+    print(
+        "[platform_sdk] "
+        f"action={action} "
+        f"base_url={base_url} "
+        f"token={'yes' if api_key else 'no'} "
+        f"tenant_id={tenant_id} "
+        f"headers={list(extra_headers.keys())}"
+    )
     client = Client(base_url=base_url, api_key=api_key, tenant_id=tenant_id, extra_headers=extra_headers)
 
     errors: List[Dict[str, Any]] = []
 
     if action == "fetch_catalog":
         result = _fetch_catalog(client, payload)
+    elif action == "validate_plan":
+        result, errors = _validate_plan(client, steps)
     elif action == "execute_plan":
-        result, errors = _execute_plan(client, steps, dry_run)
+        validation, validation_errors = _validate_plan(client, steps)
+        if validation_errors:
+            result = {
+                "status": "validation_failed",
+                "validation": validation,
+            }
+            errors = validation_errors
+        else:
+            result, errors = _execute_plan(client, steps, dry_run)
     elif action == "respond":
         result = {"message": payload.get("message") or inputs.get("message") or ""}
     else:
-        result = {"message": f"Unknown action '{action}'. Supported: fetch_catalog, execute_plan, respond."}
+        result = {"message": f"Unknown action '{action}'. Supported: fetch_catalog, validate_plan, execute_plan, respond."}
         errors.append({"error": "unknown_action", "action": action})
 
     output = {
@@ -84,8 +110,18 @@ def _coerce_json_text(inputs: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(inputs, dict):
         return {}
 
+    # If we got a single text field, try to parse JSON, handling ``` fences.
     if set(inputs.keys()) == {"text"} and isinstance(inputs.get("text"), str):
         text = inputs.get("text", "").strip()
+        if text.startswith("```"):
+            text = text.lstrip("`")
+            # Drop optional leading language label
+            first_newline = text.find("\n")
+            if first_newline != -1:
+                text = text[first_newline + 1 :]
+            if text.endswith("```"):
+                text = text[: -3]
+            text = text.strip()
         if text.startswith("{") and text.endswith("}"):
             try:
                 parsed = json.loads(text)
@@ -96,7 +132,54 @@ def _coerce_json_text(inputs: Dict[str, Any]) -> Dict[str, Any]:
     return inputs
 
 
-def _resolve_auth(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Tuple[str, Optional[str], Optional[str], Dict[str, str]]:
+def _normalize_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Accepts looser planner output such as:
+      {"create_custom_node": {...}}
+      {"deploy_agent": {"payload/graph_json": {...}}}
+    and rewrites into the expected shape:
+      {"action": "create_custom_node", ...}
+    """
+    normalized: List[Dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+
+        if "action" in step:
+            normalized.append(step)
+            continue
+
+        if "create_custom_node" in step and isinstance(step["create_custom_node"], dict):
+            data = step["create_custom_node"]
+            norm = {"action": "create_custom_node"}
+            norm.update(data)
+            normalized.append(norm)
+            continue
+
+        if "deploy_agent" in step and isinstance(step["deploy_agent"], dict):
+            data = step["deploy_agent"]
+            payload = data.get("payload/graph_json") or data.get("graph_json") or data.get("payload")
+            norm = {"action": "deploy_agent"}
+            if payload:
+                norm["payload"] = payload
+            normalized.append(norm)
+            continue
+
+        if "deploy_rag_pipeline" in step and isinstance(step["deploy_rag_pipeline"], dict):
+            data = step["deploy_rag_pipeline"]
+            payload = data.get("payload/graph_json") or data.get("graph_json") or data.get("payload")
+            norm = {"action": "deploy_rag_pipeline"}
+            if payload:
+                norm["payload"] = payload
+            normalized.append(norm)
+            continue
+
+        normalized.append(step)
+
+    return normalized
+
+
+def _resolve_auth(inputs: Dict[str, Any], payload: Dict[str, Any], state: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[str], Optional[str], Dict[str, str]]:
     base_url = (
         payload.get("base_url")
         or inputs.get("base_url")
@@ -105,18 +188,62 @@ def _resolve_auth(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Tuple[str,
         or "http://localhost:8000"
     )
 
-    token = (
-        payload.get("token")
-        or inputs.get("token")
-        or payload.get("api_key")
-        or inputs.get("api_key")
-        or payload.get("bearer_token")
-        or inputs.get("bearer_token")
-        or os.getenv("PLATFORM_API_KEY")
-        or os.getenv("API_KEY")
+    state_ctx = state.get("context") if isinstance(state, dict) else {}
+    if state_ctx is None:
+        state_ctx = {}
+    tool_ctx = context if isinstance(context, dict) else {}
+    if tool_ctx is None:
+        tool_ctx = {}
+
+    tenant_id = (
+        payload.get("tenant_id")
+        or inputs.get("tenant_id")
+        or state_ctx.get("tenant_id")
+        or tool_ctx.get("tenant_id")
+        or os.getenv("TENANT_ID")
+    )
+    if tenant_id is not None:
+        tenant_id = str(tenant_id)
+
+    user_id = (
+        payload.get("user_id")
+        or inputs.get("user_id")
+        or state_ctx.get("user_id")
+        or tool_ctx.get("user_id")
     )
 
-    tenant_id = payload.get("tenant_id") or inputs.get("tenant_id") or os.getenv("TENANT_ID")
+    token = None
+
+    # 1) Service token (minted from PLATFORM_SERVICE_SECRET)
+    if tenant_id and os.getenv("PLATFORM_SERVICE_SECRET"):
+        try:
+            token = create_service_token(tenant_id=tenant_id)
+        except Exception:
+            token = None
+
+    # 2) Explicit token from inputs/context
+    if token is None:
+        token = (
+            payload.get("token")
+            or inputs.get("token")
+            or payload.get("api_key")
+            or inputs.get("api_key")
+            or payload.get("bearer_token")
+            or inputs.get("bearer_token")
+            or state_ctx.get("token")
+            or tool_ctx.get("token")
+        )
+
+    # 3) Environment fallbacks for client-side tokens
+    if token is None:
+        token = os.getenv("PLATFORM_API_KEY") or os.getenv("API_KEY")
+
+    # Final fallback: mint a short-lived user token if none is provided but we have a tenant_id
+    if token is None and tenant_id:
+        try:
+            token = create_access_token(subject=user_id or "platform-sdk", tenant_id=tenant_id)
+        except Exception:
+            token = None
 
     extra_headers = {}
     if isinstance(payload.get("headers"), dict):
@@ -125,6 +252,123 @@ def _resolve_auth(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Tuple[str,
         extra_headers.update(inputs.get("headers"))
 
     return base_url, token, tenant_id, extra_headers
+
+
+def _run_async(coro):
+    try:
+        return asyncio.run(coro)
+    except RuntimeError:
+        # Avoid crashing if a loop is already running
+        return None
+
+
+def _validate_plan(client: Client, steps: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    errors: List[Dict[str, Any]] = []
+
+    try:
+        client.connect()
+    except Exception:
+        pass
+
+    rag_catalog = client.nodes.catalog or {}
+    agent_catalog = client.agent_nodes.catalog or []
+
+    rag_operator_ids = set()
+    if isinstance(rag_catalog, dict):
+        for specs in rag_catalog.values():
+            if isinstance(specs, list):
+                for spec in specs:
+                    if isinstance(spec, dict) and spec.get("operator_id"):
+                        rag_operator_ids.add(spec["operator_id"])
+
+    agent_types = set()
+    if isinstance(agent_catalog, list):
+        for spec in agent_catalog:
+            if isinstance(spec, dict) and spec.get("type"):
+                agent_types.add(spec["type"])
+
+    builtin_agent_types = {node.value for node in NodeType}
+    allowed_agent_types = builtin_agent_types.union(agent_types)
+
+    for idx, step in enumerate(steps):
+        if not isinstance(step, dict):
+            errors.append({"step": idx, "error": "invalid_step", "detail": "Step must be an object"})
+            continue
+
+        step_type = step.get("action") or step.get("type")
+        if not step_type:
+            errors.append({"step": idx, "error": "missing_action"})
+            continue
+
+        if step_type == "create_custom_node":
+            if not step.get("name") or not (step.get("python_code") or step.get("code")):
+                errors.append({"step": idx, "error": "missing_fields", "fields": ["name", "python_code"]})
+            continue
+
+        if step_type == "deploy_rag_pipeline":
+            payload = step.get("graph_json") or step.get("payload")
+            if not isinstance(payload, dict):
+                errors.append({"step": idx, "error": "missing_payload", "action": step_type})
+                continue
+
+            # Validate operators against catalog
+            for node in payload.get("nodes", []) or []:
+                operator_id = None
+                if isinstance(node, dict):
+                    data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
+                    operator_id = data.get("operator") or node.get("operator")
+                if operator_id and rag_operator_ids and operator_id not in rag_operator_ids:
+                    errors.append({"step": idx, "error": "unknown_operator", "operator": operator_id})
+
+            compiler = PipelineCompiler()
+            result = compiler.compile(payload)
+            if not result.success:
+                for err in result.errors:
+                    errors.append({
+                        "step": idx,
+                        "error": "pipeline_validation_error",
+                        "code": err.code,
+                        "message": err.message,
+                        "node_id": err.node_id,
+                    })
+            continue
+
+        if step_type == "deploy_agent":
+            payload = step.get("graph_json") or step.get("payload")
+            if not isinstance(payload, dict):
+                errors.append({"step": idx, "error": "missing_payload", "action": step_type})
+                continue
+
+            graph_payload = payload.get("graph_definition") if isinstance(payload.get("graph_definition"), dict) else payload
+            try:
+                graph = AgentGraph.model_validate(graph_payload)
+            except Exception as exc:
+                errors.append({"step": idx, "error": "agent_graph_invalid", "detail": str(exc)})
+                continue
+
+            for node in graph.nodes:
+                if node.type and allowed_agent_types and node.type not in allowed_agent_types:
+                    errors.append({"step": idx, "error": "unknown_agent_node", "node_type": node.type})
+
+            compiler = AgentCompiler()
+            validation_result = _run_async(compiler.validate(graph))
+            if validation_result is None:
+                errors.append({"step": idx, "error": "validation_unavailable", "detail": "Async validation unavailable"})
+            else:
+                for err in validation_result:
+                    errors.append({
+                        "step": idx,
+                        "error": "agent_validation_error",
+                        "node_id": err.node_id,
+                        "edge_id": err.edge_id,
+                        "message": err.message,
+                        "severity": err.severity,
+                    })
+            continue
+
+        errors.append({"step": idx, "error": "unsupported_action", "action": step_type})
+
+    return {"valid": len(errors) == 0, "issues": errors}, errors
 
 
 def _fetch_catalog(client: Client, payload: Dict[str, Any]) -> Dict[str, Any]:

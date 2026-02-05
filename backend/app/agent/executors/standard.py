@@ -1,4 +1,6 @@
 import logging
+import json
+import re
 from typing import Any, Dict, List, Optional
 
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
@@ -217,6 +219,8 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         "medium": {"temperature": 0.7, "max_tokens": 2000},
         "high": {"temperature": 0.9, "max_tokens": 4000},
     }
+
+    _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
     
     async def validate_config(self, config: Dict[str, Any]) -> ValidationResult:
         errors = []
@@ -231,6 +235,155 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 errors.append("output_schema must be a valid JSON Schema object")
         
         return ValidationResult(valid=len(errors) == 0, errors=errors)
+
+    def _extract_json_payload(self, text: Optional[str]) -> Optional[Any]:
+        if not isinstance(text, str) or not text.strip():
+            return None
+
+        trimmed = text.strip()
+
+        # 1) Code fence blocks first
+        for match in self._JSON_FENCE_RE.finditer(trimmed):
+            candidate = match.group(1).strip()
+            if not candidate:
+                continue
+            try:
+                return json.loads(candidate)
+            except Exception:
+                continue
+
+        # 2) Direct JSON
+        if (trimmed.startswith("{") and trimmed.endswith("}")) or (
+            trimmed.startswith("[") and trimmed.endswith("]")
+        ):
+            try:
+                return json.loads(trimmed)
+            except Exception:
+                pass
+
+        # 3) Embedded JSON object
+        first = trimmed.find("{")
+        last = trimmed.rfind("}")
+        if first != -1 and last != -1 and last > first:
+            candidate = trimmed[first:last + 1]
+            try:
+                return json.loads(candidate)
+            except Exception:
+                return None
+
+        return None
+
+    def _normalize_tool_call(self, payload: Any) -> Optional[Dict[str, Any]]:
+        if payload is None:
+            return None
+
+        if isinstance(payload, list):
+            for item in payload:
+                normalized = self._normalize_tool_call(item)
+                if normalized:
+                    return normalized
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        candidate = payload.get("tool_call") or payload.get("toolCall") or payload
+        if isinstance(candidate, list):
+            for item in candidate:
+                normalized = self._normalize_tool_call(item)
+                if normalized:
+                    return normalized
+            return None
+        if not isinstance(candidate, dict):
+            return None
+
+        tool_id = candidate.get("tool_id") or candidate.get("toolId") or candidate.get("toolID")
+        tool_name = candidate.get("tool")
+
+        if "input" in candidate:
+            input_data = candidate.get("input")
+        elif "args" in candidate:
+            input_data = candidate.get("args")
+        elif "parameters" in candidate:
+            input_data = candidate.get("parameters")
+        else:
+            input_data = {}
+
+        if input_data is None:
+            input_data = {}
+        if not isinstance(input_data, dict):
+            input_data = {"value": input_data}
+
+        if not tool_id and not tool_name:
+            return None
+
+        return {
+            "tool_id": tool_id,
+            "tool_name": tool_name,
+            "input": input_data,
+        }
+
+    async def _resolve_tool_id(self, tool_call: Dict[str, Any], configured_tools: List[Any]) -> Optional[str]:
+        if not configured_tools:
+            return None
+
+        configured = [str(tool) for tool in configured_tools if tool]
+
+        tool_id = tool_call.get("tool_id")
+        if tool_id:
+            tool_id_str = str(tool_id)
+            if tool_id_str in configured:
+                return tool_id_str
+            return None
+
+        tool_name = tool_call.get("tool_name")
+        if not tool_name:
+            return None
+
+        tool_name_lower = str(tool_name).lower()
+        if tool_name in configured:
+            return str(tool_name)
+
+        if not self.db:
+            return None
+
+        try:
+            from uuid import UUID
+            from sqlalchemy import select
+            from app.db.postgres.models.registry import ToolRegistry
+
+            tool_ids = []
+            for raw in configured:
+                try:
+                    tool_ids.append(UUID(str(raw)))
+                except Exception:
+                    continue
+
+            if not tool_ids:
+                return None
+
+            result = await self.db.execute(select(ToolRegistry).where(ToolRegistry.id.in_(tool_ids)))
+            tools = result.scalars().all()
+        except Exception:
+            return None
+
+        for tool in tools:
+            if not tool:
+                continue
+            name = str(tool.name).lower() if tool.name else ""
+            slug = str(tool.slug).lower() if getattr(tool, "slug", None) else ""
+            if tool_name_lower in (name, slug):
+                return str(tool.id)
+
+        return None
+
+    def _build_tool_state(self, state: Dict[str, Any], tool_input: Dict[str, Any]) -> Dict[str, Any]:
+        tool_state = dict(state or {})
+        nested_state = dict(tool_state.get("state") or {})
+        nested_state["last_agent_output"] = tool_input
+        tool_state["state"] = nested_state
+        tool_state["context"] = tool_input
+        return tool_state
 
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         logger.debug(f"Executing Agent (Reasoning) node")
@@ -319,12 +472,11 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             # Handle structured output
             result_content = full_content
             if output_format == "json":
-                import json
                 try:
                     result_content = json.loads(full_content)
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse JSON output, returning raw string")
-            
+
             state_update = {
                 "messages": [AIMessage(content=full_content)],
                 "state": {
@@ -334,6 +486,49 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             }
             if config.get("write_output_to_context") and isinstance(result_content, dict):
                 state_update["context"] = result_content
+
+            tool_output_payload = None
+            if tools:
+                tool_payload = self._extract_json_payload(full_content)
+                tool_call = self._normalize_tool_call(tool_payload)
+                if not tool_call and isinstance(result_content, dict):
+                    tool_call = self._normalize_tool_call(result_content)
+
+                if tool_call:
+                    resolved_tool_id = await self._resolve_tool_id(tool_call, tools)
+                    if resolved_tool_id:
+                        tool_input = tool_call.get("input") or {}
+                        if not isinstance(tool_input, dict):
+                            tool_input = {"value": tool_input}
+                        tool_state = self._build_tool_state(state, tool_input)
+
+                        from app.agent.executors.tool import ToolNodeExecutor
+                        tool_executor = ToolNodeExecutor(self.tenant_id, self.db)
+                        tool_context = {
+                            "node_id": f"{node_id}::tool::{resolved_tool_id}",
+                            "node_name": f"Tool:{resolved_tool_id}",
+                        }
+                        tool_result = await tool_executor.execute(
+                            tool_state,
+                            {"tool_id": resolved_tool_id},
+                            tool_context,
+                        )
+
+                        if isinstance(tool_result, dict):
+                            if "tool_outputs" in tool_result:
+                                state_update["tool_outputs"] = tool_result.get("tool_outputs")
+                            if "context" in tool_result:
+                                state_update["context"] = tool_result.get("context")
+                            tool_output_payload = tool_result.get("context")
+                            if tool_output_payload is None and tool_result.get("tool_outputs"):
+                                tool_outputs = tool_result.get("tool_outputs")
+                                if isinstance(tool_outputs, list) and tool_outputs:
+                                    tool_output_payload = tool_outputs[0]
+                        else:
+                            tool_output_payload = tool_result
+
+                        if tool_output_payload is not None:
+                            state_update["state"]["last_agent_output"] = tool_output_payload
 
             return state_update
 

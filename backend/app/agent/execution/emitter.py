@@ -101,6 +101,17 @@ class EventEmitter:
             visibility=EventVisibility.INTERNAL,
             metadata={"mode": self._mode}
         ))
+
+    def emit_retrieval(self, results: Any, node_id: Optional[str] = None) -> None:
+        """Emit a retrieval artifact event."""
+        self._emit(ExecutionEvent(
+            event="retrieval",
+            data={"results": results},
+            run_id=self._run_id,
+            span_id=node_id,
+            visibility=EventVisibility.INTERNAL,
+            metadata={"mode": self._mode}
+        ))
     
     def emit_error(self, error: str, node_id: Optional[str] = None) -> None:
         """Emit an error event."""

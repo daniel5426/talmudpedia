@@ -11,22 +11,44 @@ class HumanInputNodeExecutor(BaseNodeExecutor):
         If state contains the expected input for this node ID, proceed.
         Otherwise return False to suspend execution.
         """
-        # Unique ID for this input request (could be node ID)
-        # We need to know 'current_node_id' from context if possible
-        # For now, let's assume input is in 'human_inputs' dict keyed by something
-        
-        # LangGraph Suspension Logic:
-        # If the graph is interrupted, we resume with new state.
-        # So if we are here, we check state.
-        
-        # Simplified for Phase 2:
-        # Always return True (don't block) until we implement full interrupt/resume infrastructure in Phase 4.
-        # But logging that we WOULD block.
-        logger.info("HumanInputNode: Proceeding (Blocking not available until Phase 4)")
+        node_type = context.get("node_type") if context else None
+        if node_type == "user_approval":
+            return "approval" in state
+        if node_type == "human_input":
+            return "input" in state or "message" in state
         return True
 
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
-        logger.info("Executed Human Input Node")
-        return {
-            "messages": [{"role": "system", "content": f"Human Input Placeholder: {config.get('prompt')}"}]
-        }
+        node_type = context.get("node_type") if context else None
+
+        if node_type == "user_approval":
+            approval = state.get("approval")
+            comment = state.get("comment")
+            normalized = str(approval).lower() if approval is not None else ""
+
+            if normalized in ("approved", "approve", "true", "yes", "1"):
+                branch = "approve"
+                status = "approved"
+            elif normalized in ("rejected", "reject", "false", "no", "0"):
+                branch = "reject"
+                status = "rejected"
+            else:
+                raise ValueError("Missing or invalid approval payload")
+
+            return {
+                "approval_status": status,
+                "branch_taken": branch,
+                "next": branch,
+                "context": {"comment": comment} if comment is not None else {},
+            }
+
+        if node_type == "human_input":
+            message = state.get("input") or state.get("message")
+            if message is None:
+                raise ValueError("Missing human input payload")
+            return {
+                "messages": [{"role": "user", "content": str(message)}]
+            }
+
+        logger.info("Executed Human Input Node (default)")
+        return {}

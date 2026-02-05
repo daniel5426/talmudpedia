@@ -7,6 +7,7 @@ from .common import PaginationParams
 
 
 class GraphDefinitionSchema(BaseModel):
+    spec_version: Optional[str] = None
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
 

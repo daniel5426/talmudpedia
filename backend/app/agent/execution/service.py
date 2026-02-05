@@ -8,13 +8,13 @@ from typing import Dict, Any, Optional, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from langgraph.types import Command
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.db.postgres.models.agents import Agent, AgentRun, AgentTrace, RunStatus
-from app.agent.graph.compiler import AgentCompiler, ExecutableAgent
+from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.schema import AgentGraph
-from app.agent.core.state import AgentState
+from app.agent.runtime.registry import RuntimeAdapterRegistry
+from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 
 logger = logging.getLogger(__name__)
@@ -123,179 +123,105 @@ class AgentExecutorService:
         - Runs LangGraph execution and queue consumption concurrently.
         - Normalizes ALL events (both LangGraph and explicit) to ExecutionEvent.
         """
-        from .emitter import EventEmitter, active_emitter
-        
-        # Event queue for explicit emissions (token, node_start, node_end)
-        event_queue: asyncio.Queue[ExecutionEvent] = asyncio.Queue(maxsize=1000)
-        emitter = EventEmitter(event_queue, str(run_id), mode.value)
-        
-        # Set context var for implicit propagation
-        token = active_emitter.set(emitter)
-        
-        # Sentinel to signal execution completion
-        execution_done = asyncio.Event()
-        execution_error: Optional[Exception] = None
-        
-        async def run_graph():
-            nonlocal execution_error
-            try:
-                # 1. Fetch Run & Agent
-                run = await db.get(AgentRun, run_id)
-                if not run:
-                    raise ValueError(f"Run {run_id} not found")
+        # 1. Fetch Run & Agent
+        run = await db.get(AgentRun, run_id)
+        if not run:
+            raise ValueError(f"Run {run_id} not found")
 
-                agent = await db.get(Agent, run.agent_id)
-                if not agent:
-                    raise ValueError(f"Agent {run.agent_id} not found")
+        agent = await db.get(Agent, run.agent_id)
+        if not agent:
+            raise ValueError(f"Agent {run.agent_id} not found")
 
-                # Capture input params before commit to avoid async lazy-loads
-                run_input_params = run.input_params
+        # Capture input params before commit to avoid async lazy-loads
+        run_input_params = run.input_params
 
-                # Update status
-                run.status = RunStatus.running
-                if not run.started_at:
-                    run.started_at = datetime.utcnow()
-                await db.commit()
+        # Update status
+        run.status = RunStatus.running
+        if not run.started_at:
+            run.started_at = datetime.utcnow()
+        await db.commit()
 
-                # 2. Compile Graph
-                compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
-                graph_def = AgentGraph(**agent.graph_definition)
-                executable = await compiler.compile(agent.id, agent.version, graph_def)
-                
-                # 3. Setup Runtime & Checkpointer
-                checkpointer = self._checkpointer
-                interrupt_before_nodes = [n.id for n in graph_def.nodes if n.type == "human_input"]
-                
-                if not executable.workflow:
-                     raise ValueError("ExecutableAgent missing workflow definition")
+        # 2. Compile Graph to GraphIR
+        compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
+        graph_def = AgentGraph(**agent.graph_definition)
+        graph_ir = await compiler.compile(agent.id, agent.version, graph_def, input_params=run_input_params)
 
-                workflow = executable.workflow.compile(
-                    checkpointer=checkpointer,
-                    interrupt_before=interrupt_before_nodes
-                )
-                
-                # 4. Prepare Configuration - PASS EMITTER
-                config = {"configurable": {"thread_id": str(run_id), "emitter": emitter}}
+        # 3. Create Runtime Adapter + Executable
+        adapter_cls = RuntimeAdapterRegistry.get_default()
+        adapter = adapter_cls(tenant_id=agent.tenant_id, db=db)
+        executable = await adapter.compile(graph_ir, checkpointer=self._checkpointer)
 
-                # 5. Run Execution
-                input_val = Command(resume=resume_payload) if resume_payload else run_input_params
+        # 4. Prepare Config
+        config = {
+            "thread_id": str(run_id),
+            "run_id": str(run_id),
+            "mode": mode.value,
+            "resume_payload": resume_payload,
+        }
 
-                async for event in workflow.astream_events(input_val, config=config, version="v2"):
-                    # Fire-and-forget trace persistence
-                    self._schedule_trace_persistence(run_id, event.copy())
-                    
-                    # Normalize LangGraph event to ExecutionEvent
-                    # We skip on_chat_model_stream since tokens are now explicit
-                    kind = event.get("event")
-                    if kind == "on_chat_model_stream":
-                        # Skip - tokens are now emitted explicitly by LLMNodeExecutor
-                        continue
-                    
-                    # Determine Visibility
-                    visibility = EventVisibility.INTERNAL
-                    if kind == "run_status":
-                        visibility = EventVisibility.CLIENT_SAFE
-                    
-                    # Enqueue as ExecutionEvent
-                    try:
-                        event_queue.put_nowait(ExecutionEvent(
-                            event=kind,
-                            data=event.get("data", {}),
-                            run_id=str(run_id),
-                            span_id=event.get("run_id"),
-                            name=event.get("name"),
-                            visibility=visibility,
-                            metadata={"mode": mode.value}
-                        ))
-                    except asyncio.QueueFull:
-                        logger.warning(f"Event queue full, dropping LangGraph event: {kind}")
-
-                # 6. Post-Execution Check
-                snapshot = workflow.get_state(config)
-                
-                final_status = RunStatus.completed
-                if snapshot.next:
-                    final_status = RunStatus.paused
-                    run.status = RunStatus.paused
-                    run.checkpoint = self._serialize_state(snapshot.values)
-                else:
-                    run.status = RunStatus.completed
-                    run.output_result = self._serialize_state(snapshot.values)
-                    run.completed_at = datetime.utcnow()
-                    run.usage_tokens = 0 
-
-                # Enqueue final status event
-                try:
-                    event_queue.put_nowait(ExecutionEvent(
-                        event="run_status",
-                        data={"status": final_status.value},
-                        run_id=str(run_id),
-                        visibility=EventVisibility.CLIENT_SAFE,
-                        metadata={"mode": mode.value}
-                    ))
-                except asyncio.QueueFull:
-                    pass
-
-                await db.commit()
-                
-            except Exception as e:
-                execution_error = e
-                await db.rollback()
-                logger.error(f"Streaming execution failed for run {run_id}: {e}")
-                traceback.print_exc()
-                
-                # Emit error event
-                try:
-                    event_queue.put_nowait(ExecutionEvent(
-                        event="error",
-                        data={"error": str(e)},
-                        run_id=str(run_id),
-                        visibility=EventVisibility.CLIENT_SAFE
-                    ))
-                except asyncio.QueueFull:
-                    pass
-                
-                # Update error status in fresh session
-                try:
-                    from app.db.postgres.engine import sessionmaker as get_session
-                    async with get_session() as err_db:
-                        err_run = await err_db.get(AgentRun, run_id)
-                        if err_run:
-                            err_run.status = RunStatus.failed
-                            err_run.error_message = str(e)
-                            err_run.completed_at = datetime.utcnow()
-                            await err_db.commit()
-                except Exception as se:
-                    logger.error(f"Failed to save error status for {run_id}: {se}")
-            finally:
-                execution_done.set()
-        
-        # Start graph execution in background
-        graph_task = asyncio.create_task(run_graph())
-        
-        # Yield events from queue until execution is done and queue is empty
         try:
-            while True:
-                try:
-                    # Wait for event with timeout to check execution status
-                    event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-                    # Persist explicit emitter events (tools, nodes, etc.)
-                    self._schedule_trace_persistence(run_id, {
-                        "event": event.event,
-                        "data": event.data,
-                        "name": event.name,
-                        "run_id": event.span_id,
-                        "metadata": event.metadata,
-                        "parent_ids": [],
-                    })
-                    yield event
-                except asyncio.TimeoutError:
-                    # Check if execution is done and queue is empty
-                    if execution_done.is_set() and event_queue.empty():
-                        break
-        finally:
-            # Ensure graph task is awaited
-            await graph_task
+            # 5. Stream Execution Events (Platform-normalized)
+            async for event in adapter.stream(executable, run_input_params, config):
+                self._schedule_trace_persistence(run_id, {
+                    "event": event.event,
+                    "data": event.data,
+                    "name": event.name,
+                    "run_id": event.span_id,
+                    "metadata": event.metadata,
+                    "parent_ids": [],
+                })
+                yield event
+
+            # 6. Post-Execution Check
+            snapshot: RuntimeState = adapter.get_state(executable, config)
+
+            final_status = RunStatus.completed
+            if snapshot.next:
+                final_status = RunStatus.paused
+                run.status = RunStatus.paused
+                run.checkpoint = self._serialize_state(snapshot.values)
+            else:
+                run.status = RunStatus.completed
+                run.output_result = self._serialize_state(snapshot.values)
+                run.completed_at = datetime.utcnow()
+                run.usage_tokens = 0
+
+            # Emit final status event
+            yield ExecutionEvent(
+                event="run_status",
+                data={"status": final_status.value},
+                run_id=str(run_id),
+                visibility=EventVisibility.CLIENT_SAFE,
+                metadata={"mode": mode.value}
+            )
+
+            await db.commit()
+
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Streaming execution failed for run {run_id}: {e}")
+            traceback.print_exc()
+
+            # Emit error event
+            yield ExecutionEvent(
+                event="error",
+                data={"error": str(e)},
+                run_id=str(run_id),
+                visibility=EventVisibility.CLIENT_SAFE
+            )
+
+            # Update error status in fresh session
+            try:
+                from app.db.postgres.engine import sessionmaker as get_session
+                async with get_session() as err_db:
+                    err_run = await err_db.get(AgentRun, run_id)
+                    if err_run:
+                        err_run.status = RunStatus.failed
+                        err_run.error_message = str(e)
+                        err_run.completed_at = datetime.utcnow()
+                        await err_db.commit()
+            except Exception as se:
+                logger.error(f"Failed to save error status for {run_id}: {se}")
 
     def _schedule_trace_persistence(self, run_id: UUID, event: Dict[str, Any]):
         """
@@ -322,13 +248,13 @@ class AgentExecutorService:
         """
         Persists execution events to AgentTrace table.
         """
-        from uuid import UUID as _UUID, uuid4 as _uuid4
+        from uuid import uuid4 as _uuid4
         kind = event.get("event")
         name = event.get("name")
         span_id = event.get("run_id")
         span_id_str = str(span_id) if span_id is not None else None
         
-        if kind not in ("on_chain_start", "on_chain_end", "on_tool_start", "on_tool_end", "on_chat_model_start", "on_chat_model_end"):
+        if kind not in ("on_chain_start", "on_chain_end", "on_tool_start", "on_tool_end", "node_start", "node_end"):
             return
         if not span_id_str:
             return
@@ -345,13 +271,8 @@ class AgentExecutorService:
         if kind.endswith("_start"):
             if trace_existing:
                 return
-            # If span_id isn't a UUID, generate a stable DB id
-            try:
-                trace_id = _UUID(span_id_str)
-            except (ValueError, TypeError):
-                trace_id = _uuid4()
             trace = AgentTrace(
-                id=trace_id,
+                id=_uuid4(),
                 run_id=run_id,
                 span_id=span_id_str,
                 parent_span_id=str(event.get("parent_ids", [])[-1]) if event.get("parent_ids") else None,
@@ -368,12 +289,8 @@ class AgentExecutorService:
                 trace_existing.end_time = datetime.utcnow()
                 trace_existing.outputs = self._serialize_state(event.get("data", {}).get("output"))
             else:
-                try:
-                    trace_id = _UUID(span_id_str)
-                except (ValueError, TypeError):
-                    trace_id = _uuid4()
                 trace = AgentTrace(
-                    id=trace_id,
+                    id=_uuid4(),
                     run_id=run_id,
                     span_id=span_id_str,
                     parent_span_id=str(event.get("parent_ids", [])[-1]) if event.get("parent_ids") else None,

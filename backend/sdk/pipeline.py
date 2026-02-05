@@ -96,4 +96,32 @@ class Agent(Pipeline):
             headers=client.headers
         )
         resp.raise_for_status()
-        return resp.json()["id"]
+        agent_id = resp.json()["id"]
+        self.id = agent_id
+        return agent_id
+
+    def execute(
+        self,
+        client,
+        agent_id: str = None,
+        input_text: str = None,
+        messages: List[Dict[str, Any]] = None,
+        context: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
+        """Execute a created agent by ID."""
+        resolved_agent_id = agent_id or getattr(self, "id", None)
+        if not resolved_agent_id:
+            raise ValueError("agent_id is required (or call create() first).")
+
+        payload = {
+            "input": input_text,
+            "messages": messages or [],
+            "context": context or {},
+        }
+        resp = requests.post(
+            f"{client.base_url}/agents/{resolved_agent_id}/execute",
+            json=payload,
+            headers=client.headers,
+        )
+        resp.raise_for_status()
+        return resp.json()

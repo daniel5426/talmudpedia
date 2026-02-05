@@ -1,4 +1,0 @@
-interface:
-  display_name: "UI Production"
-  short_description: "Production-grade Next.js + Tailwind UI"
-  default_prompt: "Use -production to design and polish a production-grade Next.js + Tailwind UI page."

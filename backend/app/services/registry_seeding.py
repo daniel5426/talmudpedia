@@ -112,10 +112,54 @@ async def seed_global_models(db):
     print("Model Registry Sync Complete.")
 
 
+async def _normalize_tool_status_values(db):
+    """
+    Align any lowercase tool status values with the uppercase ENUM literals
+    used by the database. Safe for Postgres and SQLite.
+    """
+    mappings = {
+        "draft": "DRAFT",
+        "published": "PUBLISHED",
+        "deprecated": "DEPRECATED",
+        "disabled": "DISABLED",
+    }
+    for old, new in mappings.items():
+        await db.execute(
+            text("UPDATE tool_registry SET status=:new WHERE lower(status::text)=:old"),
+            {"new": new, "old": old},
+        )
+    await db.commit()
+
+
+async def _normalize_tool_impl_values(db):
+    """
+    Align lowercase implementation_type values with uppercase ENUM literals.
+    """
+    mappings = {
+        "internal": "INTERNAL",
+        "http": "HTTP",
+        "rag_retrieval": "RAG_RETRIEVAL",
+        "function": "FUNCTION",
+        "custom": "CUSTOM",
+        "artifact": "ARTIFACT",
+        "mcp": "MCP",
+    }
+    for old, new in mappings.items():
+        await db.execute(
+            text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type::text)=:old"),
+            {"new": new, "old": old},
+        )
+    await db.commit()
+
+
 async def seed_platform_sdk_tool(db):
     """
     Seeds the Platform SDK tool (artifact-backed, system tool).
     """
+    # Ensure legacy lowercase statuses don't break enum deserialization
+    await _normalize_tool_status_values(db)
+    await _normalize_tool_impl_values(db)
+
     slug = "platform-sdk"
     tool = None
     tool_columns = await _get_table_columns(db, "tool_registry")
@@ -166,7 +210,7 @@ async def seed_platform_sdk_tool(db):
     input_schema = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["fetch_catalog", "execute_plan", "respond"]},
+            "action": {"type": "string", "enum": ["fetch_catalog", "validate_plan", "execute_plan", "respond"]},
             "steps": {"type": "array", "items": {"type": "object"}},
             "dry_run": {"type": "boolean"},
             "payload": {"type": "object"},
@@ -240,6 +284,10 @@ async def seed_platform_architect_agent(db):
     """
     Seeds a tenant-scoped Platform Architect agent with a linear tool-LLM-tool flow.
     """
+    # Prevent enum mismatches when loading tool references
+    await _normalize_tool_status_values(db)
+    await _normalize_tool_impl_values(db)
+
     tenant_result = await db.execute(select(Tenant).limit(1))
     tenant = tenant_result.scalar_one_or_none()
     if not tenant:
@@ -373,17 +421,30 @@ async def _resolve_default_chat_model_id(db, tenant_id):
 
 def _build_architect_graph_definition(tool_id: str, model_id: str) -> dict:
     instructions = (
-        "You are the Platform Architect. Use the catalog summary from {{ state.context }} "
-        "to plan the build. Respond ONLY with JSON matching the schema. "
-        "If you need to build anything, set action to 'execute_plan' and include a steps array. "
-        "Supported step actions: create_custom_node, deploy_rag_pipeline, deploy_agent. "
-        "If the user is just asking a question, set action to 'respond' and include a message."
+        "You are the Platform Architect. The previous tool node fetched a catalog summary; "
+        "use it if available, but proceed even if it's missing. Respond ONLY with JSON matching this schema:\n"
+        "{\n"
+        '  \"action\": \"execute_plan\" | \"validate_plan\" | \"respond\",\n'
+        "  \"steps\": [\n"
+        "    {\"action\": \"create_custom_node\", \"name\": str, \"python_code\": str, \"input_type\": str, \"output_type\": str, \"category\"?: str},\n"
+        "    {\"action\": \"deploy_rag_pipeline\", \"payload\": {\"nodes\": [...], \"edges\": [...]}},\n"
+        "    {\"action\": \"deploy_agent\", \"payload\": {\"nodes\": [...], \"edges\": [...]}}\n"
+        "  ],\n"
+        '  \"message\"?: str\n'
+        "}\n"
+        "Rules:\n"
+        "- Always include \"action\" at the top level.\n"
+        "- For build requests, set action=\"execute_plan\" and include steps with the exact keys above (do not nest under other keys).\n"
+        "- The platform validates plans before execution; you may optionally use action=\"validate_plan\" when explicitly asked to validate.\n"
+        "- For simple answers, use action=\"respond\" and include a \"message\" string.\n"
+        "- When creating nodes, make python_code minimal but valid Python.\n"
+        "- Prefer 5–10 nodes total in deploy payloads when assembling pipelines/agents."
     )
 
     output_schema = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["execute_plan", "respond"]},
+            "action": {"type": "string", "enum": ["execute_plan", "validate_plan", "respond"]},
             "steps": {"type": "array", "items": {"type": "object"}},
             "message": {"type": "string"},
         },
@@ -483,6 +544,10 @@ async def _seed_platform_sdk_tool_legacy(db, schema: dict, config_schema: dict, 
     name = "Platform SDK"
     description = "SDK-powered tool to fetch catalogs and execute platform build plans."
     now = datetime.utcnow()
+    tool_status_labels = await _get_enum_labels(db, "toolstatus")
+    impl_labels = await _get_enum_labels(db, "toolimplementationtype")
+    status_value = _resolve_enum_value(tool_status_labels, "published")
+    impl_value = _resolve_enum_value(impl_labels, "artifact")
 
     where_clause = "slug = :slug"
     if "tenant_id" in columns:
@@ -501,9 +566,9 @@ async def _seed_platform_sdk_tool_legacy(db, schema: dict, config_schema: dict, 
         "scope": scope_value,
         "schema": schema,
         "config_schema": config_schema,
-        "status": "published",
+        "status": status_value,
         "version": "1.0.0",
-        "implementation_type": "artifact",
+        "implementation_type": impl_value,
         "published_at": now,
         "artifact_id": "builtin/platform_sdk",
         "artifact_version": "1.0.0",

@@ -1,4 +1,5 @@
 # Current Platform Status
+Last Updated: 2026-02-04
 
 ## 🤖 Agent Domain
 - **Status**: Backend fully refactored to Service Layer pattern.
@@ -17,6 +18,10 @@
 - **Artifact Registry**: Implemented filesystem-based operator loading (`ArtifactExecutor`).
 - **Custom Operators**: Browser-based Python code execution in restricted namespaces.
 - **Model Registry**: Centralized provider configuration with tenant-level overrides.
+
+## 📈 Admin Analytics & Transparency
+- **Unified Stats UI (Mockups)**: New `/admin/stats` page with three UI mockups (OpenAI-like, Data-dense Ops, Bold Branded) to converge on a compact usage/transparency hub.
+- **Navigation**: Admin sidebar now includes a `Stats` entry for quick access.
 
 ## 📊 Database & Infrastructure
 - **Primary**: PostgreSQL (Alembic managed). Includes `pgvector` for unified vector storage.

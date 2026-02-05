@@ -1,0 +1,16 @@
+DEBUG: Parsed DB User: 'postgres.ouzlrslwcfirfiqzatcs'
+DEBUG: Parsed DB Host: 'aws-1-eu-central-1.pooler.supabase.com:6543/postgres'
+DEBUG: Creating Async Engine with Psycopg (v3) and prepare_threshold=None
+Traceback (most recent call last):
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/main.py", line 103, in <module>
+    from app.api.routers import auth, chat, general, search, stt, texts, library, admin, tts, rag_admin, agent
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/auth.py", line 14, in <module>
+    from app.db.postgres.models.identity import User, UserRole, Tenant, OrgUnit, OrgMembership, OrgUnitType, OrgRole, MembershipStatus
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/db/postgres/models/__init__.py", line 7, in <module>
+    from .agents import Agent, AgentVersion, AgentRun, AgentTrace, RunStatus, AgentStatus
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/db/postgres/models/agents.py", line 20, in <module>
+    class Agent(Base):
+  File "/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/db/postgres/models/agents.py", line 62, in Agent
+    status = Column(SQLEnum(AgentStatus), default=AgentStatus.draft, nullable=False)
+                                                  ^^^^^^^^^^^^^^^^^
+AttributeError: type object 'AgentStatus' has no attribute 'draft'

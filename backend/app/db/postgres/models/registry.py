@@ -15,19 +15,20 @@ class ToolDefinitionScope(str, enum.Enum):
     USER = "user"
 
 class ToolStatus(str, enum.Enum):
-    DRAFT = "draft"
-    PUBLISHED = "published"
-    DEPRECATED = "deprecated"
-    DISABLED = "disabled"
+    # Stored in DB as uppercase enum literals to match existing schema
+    DRAFT = "DRAFT"
+    PUBLISHED = "PUBLISHED"
+    DEPRECATED = "DEPRECATED"
+    DISABLED = "DISABLED"
 
 class ToolImplementationType(str, enum.Enum):
-    INTERNAL = "internal"
-    HTTP = "http"
-    RAG_RETRIEVAL = "rag_retrieval"
-    FUNCTION = "function"
-    CUSTOM = "custom"
-    ARTIFACT = "artifact"
-    MCP = "mcp"
+    INTERNAL = "INTERNAL"
+    HTTP = "HTTP"
+    RAG_RETRIEVAL = "RAG_RETRIEVAL"
+    FUNCTION = "FUNCTION"
+    CUSTOM = "CUSTOM"
+    ARTIFACT = "ARTIFACT"
+    MCP = "MCP"
 
 class ModelProviderType(str, enum.Enum):
     OPENAI = "openai"
@@ -170,6 +171,10 @@ class ModelProviderBinding(Base):
     
     config = Column(JSONB, default={}, nullable=False) # Provider specific config
     credentials_ref = Column(String, nullable=True) # Ref to vault/secret
+    
+    # Cost configuration for spend calculation (per 1K tokens in USD)
+    cost_per_1k_input_tokens = Column(Float, nullable=True)
+    cost_per_1k_output_tokens = Column(Float, nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

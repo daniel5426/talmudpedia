@@ -35,6 +35,7 @@ from app.rag.pipeline.registry import (
 )
 from app.db.postgres.models.rbac import Action, ResourceType, ActorType
 from app.api.routers.auth import get_current_user
+from app.api.dependencies import get_current_user_or_service
 from app.core.rbac import check_permission
 from app.core.audit import log_simple_action
 from app.rag.pipeline import PipelineCompiler, OperatorRegistry
@@ -166,12 +167,27 @@ async def sync_custom_operators(db: AsyncSession, tenant_id: UUID):
 
 async def get_pipeline_context(
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = None,
     db: AsyncSession = Depends(get_db),
+    context: Optional[Dict[str, Any]] = None,
 ):
     """Get pipeline context with tenant and user info."""
+    if context and context.get("is_service"):
+        tenant_id = context.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(status_code=403, detail="Tenant context required")
+        try:
+            tenant_uuid = UUID(str(tenant_id))
+        except Exception:
+            tenant_uuid = None
+        result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
+        tenant = result.scalar_one_or_none()
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        return tenant, None, db
+
     if not tenant_slug:
-        if current_user.role != "admin":
+        if current_user is None or current_user.role != "admin":
             raise HTTPException(status_code=403, detail="Tenant context required")
         return None, current_user, db
 
@@ -198,12 +214,14 @@ async def get_pipeline_context(
 
 async def require_pipeline_permission(
     tenant: Optional[Tenant],
-    user: User,
+    user: Optional[User],
     action: Action,
     pipeline_id: Optional[UUID] = None,
     db: AsyncSession = None,
 ) -> bool:
     """Check if user has permission for pipeline operations."""
+    if user is None:
+        return True
     if user.role == "admin":
         return True
 
@@ -350,7 +368,7 @@ def job_to_dict(j: PipelineJob) -> Dict[str, Any]:
 @router.get("/catalog")
 async def get_operator_catalog(
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_user_or_service),
     db: AsyncSession = Depends(get_db),
 ):
     """Get operator catalog."""
@@ -362,7 +380,17 @@ async def get_operator_catalog(
         if tenant:
              await sync_custom_operators(db, tenant.id)
              return registry.get_catalog(str(tenant.id))
-            
+    if context.get("is_service") and context.get("tenant_id"):
+        tenant_id = context.get("tenant_id")
+        try:
+            tenant_uuid = UUID(str(tenant_id))
+        except Exception:
+            tenant_uuid = None
+        if tenant_uuid:
+            await sync_custom_operators(db, tenant_uuid)
+            return registry.get_catalog(str(tenant_uuid))
+        return registry.get_catalog(str(tenant_id))
+
     return registry.get_catalog()
 
 
@@ -440,11 +468,11 @@ async def create_visual_pipeline(
     request: CreatePipelineRequest,
     http_request: Request,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_user_or_service),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new visual pipeline."""
-    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user=None, db=db, context=context)
 
     if not tenant:
         raise HTTPException(status_code=400, detail="Tenant context required to create pipeline")
@@ -468,25 +496,26 @@ async def create_visual_pipeline(
         version=1,
         is_published=False,
         pipeline_type=request.pipeline_type,
-        created_by=user.id,
+        created_by=user.id if user else None,
     )
 
     db.add(pipeline)
     await db.commit()
     await db.refresh(pipeline)
 
-    await log_simple_action(
-        tenant_id=tenant.id,
-        org_unit_id=org_unit_id,
-        actor_id=user.id,
-        actor_type=ActorType.USER,
-        actor_email=user.email,
-        action=Action.WRITE,
-        resource_type=ResourceType.PIPELINE,
-        resource_id=str(pipeline.id),
-        resource_name=request.name,
-        request=http_request,
-    )
+    if user:
+        await log_simple_action(
+            tenant_id=tenant.id,
+            org_unit_id=org_unit_id,
+            actor_id=user.id,
+            actor_type=ActorType.USER,
+            actor_email=user.email,
+            action=Action.WRITE,
+            resource_type=ResourceType.PIPELINE,
+            resource_id=str(pipeline.id),
+            resource_name=request.name,
+            request=http_request,
+        )
 
     return {"id": str(pipeline.id), "status": "created"}
 

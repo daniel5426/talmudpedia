@@ -62,6 +62,15 @@ class AgentNode(BaseModel):
                 node_data = data.get("data", {})
                 if node_data and isinstance(node_data, dict) and "config" in node_data:
                     data["config"] = node_data["config"]
+            # Normalize inputMappings -> input_mappings
+            if "input_mappings" not in data:
+                if "inputMappings" in data:
+                    data["input_mappings"] = data.get("inputMappings")
+                else:
+                    node_data = data.get("data", {})
+                    if node_data and isinstance(node_data, dict):
+                        if "inputMappings" in node_data:
+                            data["input_mappings"] = node_data.get("inputMappings")
         return data
 
 
@@ -77,9 +86,20 @@ class AgentEdge(BaseModel):
     condition: Optional[str] = None
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_handles(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "source_handle" not in data and "sourceHandle" in data:
+                data["source_handle"] = data.get("sourceHandle")
+            if "target_handle" not in data and "targetHandle" in data:
+                data["target_handle"] = data.get("targetHandle")
+        return data
+
 
 class AgentGraph(BaseModel):
     """The complete graph definition of an agent."""
+    spec_version: Optional[str] = None
     nodes: list[AgentNode] = Field(default_factory=list)
     edges: list[AgentEdge] = Field(default_factory=list)
     model_config = ConfigDict(extra="ignore")

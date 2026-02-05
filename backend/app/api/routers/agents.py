@@ -12,10 +12,11 @@ import json
 
 from app.db.postgres.session import get_db
 from app.api.routers.auth import get_current_user
+from app.api.dependencies import get_current_user_or_service
 from app.db.postgres.models.identity import User, OrgMembership, OrgRole
 from typing import Dict, Any
 import jwt
-from app.core.security import SECRET_KEY, ALGORITHM
+from app.core.security import SECRET_KEY, ALGORITHM, create_access_token
 from fastapi import Request
 
 from app.services.agent_service import (
@@ -50,25 +51,64 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 # =============================================================================
 
 async def get_agent_context(
-    current_user: User = Depends(get_current_user),
+    request: Request,
+    context: Dict[str, Any] = Depends(get_current_user_or_service),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
     """
     Returns a context dict with 'user' and 'tenant_id'.
     Users can manage agents if they are System Admins OR have an Org role.
     """
+    token = context.get("auth_token")
+    if context.get("is_service"):
+        tenant_id = context.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(status_code=403, detail="Tenant context required")
+        return {"user": None, "tenant_id": tenant_id, "auth_token": token, "is_service": True}
+
+    current_user = context.get("user")
+    if current_user is None:
+        raise HTTPException(status_code=403, detail="Not authorized to manage agents")
+
     # Identify tenant via membership
     result = await db.execute(
         select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
     )
     membership = result.scalar_one_or_none()
-    
+
+    tenant_id = None
+    org_unit_id = None
+    org_role = None
+
     if membership:
-        return {"user": current_user, "tenant_id": membership.tenant_id}
-    
+        tenant_id = membership.tenant_id
+        org_unit_id = membership.org_unit_id
+        org_role = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
+        if token is None:
+            token = create_access_token(
+                subject=current_user.id,
+                tenant_id=tenant_id,
+                org_unit_id=org_unit_id,
+                org_role=org_role,
+            )
+        return {"user": current_user, "tenant_id": tenant_id, "auth_token": token, "is_service": False}
+
     # If admin and no membership (true system admin), they can see everything but creation might fail
-    if current_user.role == "admin":
-         return {"user": current_user, "tenant_id": None}
+    # Try tenant from header if membership missing
+    header_tenant = request.headers.get("X-Tenant-ID")
+    if header_tenant:
+         tenant_id = header_tenant
+
+    # Fallback: issue token even without membership so internal tool calls can auth
+    if token is None:
+         token = create_access_token(
+             subject=current_user.id,
+             tenant_id=tenant_id,
+             org_unit_id=org_unit_id,
+             org_role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
+         )
+
+    return {"user": current_user, "tenant_id": tenant_id, "auth_token": token, "is_service": False}
         
     raise HTTPException(status_code=403, detail="Not authorized to manage agents")
 
@@ -175,7 +215,7 @@ async def create_agent(
                 memory_config=request.memory_config,
                 execution_constraints=request.execution_constraints,
             ),
-            user_id=context["user"].id
+            user_id=context["user"].id if context.get("user") else None
         )
         return agent_to_response(agent)
     except AgentServiceError as e:
@@ -414,7 +454,12 @@ async def stream_agent(
         # Resume existing run
         try:
             # For playground, user message is the resume payload
-            resume_payload = {"input": request.input} if request.input else {}
+            if request.context:
+                resume_payload = request.context
+            elif request.input:
+                resume_payload = {"input": request.input}
+            else:
+                resume_payload = {}
             await executor.resume_run(run_id, resume_payload, background=False)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {e}")
@@ -425,9 +470,15 @@ async def stream_agent(
         if request.input:
             current_messages.append({"role": "user", "content": request.input})
             
+        tenant_id = context.get("tenant_id")
         input_params = {
             "messages": current_messages,
-            "input": request.input
+            "input": request.input,
+            "context": {
+                "token": context.get("auth_token"),
+                "tenant_id": str(tenant_id) if tenant_id is not None else None,
+                "user_id": str(context["user"].id),
+            },
         }
         # Start run with explicit mode metadata
         run_id = await executor.start_run(agent_id, input_params, user_id=context["user"].id, background=False, mode=execution_mode)
@@ -446,11 +497,8 @@ async def stream_agent(
         
         try:
             async for event_dict in filtered_stream:
-                # event_dict is already a dict from the adapter
-                print(f"[DEBUG] {time.time()} Agents Router: Yielding SSE event: {event_dict.get('event')}")
-                yield f"data: {json.dumps(event_dict)}\n\n"
+                yield f"data: {json.dumps(event_dict, default=str)}\n\n"
             
-            print(f"[DEBUG] {time.time()} Agents Router: Yielding DONE")
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
             logger = logging.getLogger(__name__)
@@ -504,9 +552,14 @@ async def start_run_v2(
     if request.input:
         current_messages.append({"role": "user", "content": request.input})
         
+    tenant_id = context.get("tenant_id")
     input_params = {
         "messages": current_messages,
-        "input": request.input
+        "input": request.input,
+        "context": {
+            "token": context.get("auth_token"),
+            "tenant_id": str(tenant_id) if tenant_id is not None else None,
+        },
     }
     
     try:

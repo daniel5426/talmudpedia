@@ -216,57 +216,39 @@ class AgentService:
     async def execute_agent(self, agent_id: UUID, data: ExecuteAgentData, user_id: Optional[UUID] = None) -> Any:
         """Orchestrates the execution of an agent."""
         agent = await self.get_agent(agent_id)
-        
-        # Build graph objects
-        from ..agent.graph.schema import AgentGraph, MemoryConfig, ExecutionConstraints
-        from ..agent.graph.compiler import AgentCompiler
-        
-        # Create compiler
-        compiler = AgentCompiler(tenant_id=self.tenant_id, db=self.db)
-        
-        # Parse config
+
+        from app.agent.execution.service import AgentExecutorService
+        from app.agent.execution.types import ExecutionMode
+
         try:
-            graph_def = AgentGraph(**agent.graph_definition)
-            memory_config = MemoryConfig(**agent.memory_config)
-            constraints = ExecutionConstraints(**agent.execution_constraints)
-        except Exception as e:
-            raise AgentServiceError(f"Invalid agent configuration: {e}")
-            
-        try:
-            # Compile
-            executable = await compiler.compile(
-                agent_id=agent.id,
-                version=agent.version,
-                graph=graph_def,
-                memory_config=memory_config,
-                execution_constraints=constraints
-            )
-            
-            # Prepare input
-            # We need to map ExecuteAgentData to the AgentState dict
             input_state = {
-                "messages": data.messages, # Assuming these are compatible dicts or need conversion
-                "files": [], # TODO: handle files
-                "query": data.input,
-                "context": "",
-                "reasoning_items": [],
-                "reasoning_steps_parsed": [],
-                "steps": [],
-                "retrieved_docs": [],
-                "error": None
+                "messages": data.messages or [],
+                "input": data.input,
+                "context": data.context or {},
             }
             if data.input:
-                # Add user message if input string provided
                 input_state["messages"].append({"role": "user", "content": data.input})
-                
-            # Execute
-            result_state = await executable.run(input_state)
-            
-            # Format output for response
-            # Extract last AI message content
-            last_message = result_state["messages"][-1] if result_state["messages"] else None
-            output_text = last_message.content if last_message else ""
-            
+
+            executor = AgentExecutorService(db=self.db)
+            run_id = await executor.start_run(
+                agent_id=agent.id,
+                input_params=input_state,
+                user_id=user_id,
+                background=False,
+                mode=ExecutionMode.PRODUCTION,
+            )
+
+            async for _ in executor.run_and_stream(run_id, self.db, mode=ExecutionMode.PRODUCTION):
+                pass
+
+            run = await self.db.get(AgentRun, run_id)
+            result_state = run.output_result or {}
+            messages = result_state.get("messages", [])
+            last_message = messages[-1] if messages else None
+            output_text = ""
+            if isinstance(last_message, dict):
+                output_text = last_message.get("content", "")
+
             class ExecResult:
                 def __init__(self, run_id, output, steps, messages, usage):
                     self.run_id = run_id
@@ -274,14 +256,14 @@ class AgentService:
                     self.steps = steps
                     self.messages = messages
                     self.usage = usage
-            
-            run_id = str(UUID(int=0))
-            output = {"text": output_text}
-            steps = result_state.get("reasoning_steps_parsed", [])
-            messages = result_state.get("messages", [])
-            usage = {"tokens": 0}
 
-            return ExecResult(run_id, output, steps, messages, usage)
+            return ExecResult(
+                run_id=str(run_id),
+                output={"text": output_text},
+                steps=[],
+                messages=messages,
+                usage={"tokens": run.usage_tokens if run else 0},
+            )
 
         except Exception as e:
             logger.error(f"Agent execution failed: {e}")

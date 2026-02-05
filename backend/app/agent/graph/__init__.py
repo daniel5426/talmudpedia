@@ -2,6 +2,7 @@ from .schema import AgentGraph, AgentNode, AgentEdge, NodeType, EdgeType, Memory
 from .compiler import AgentCompiler, ValidationError
 from .executable import ExecutableAgent
 from .runtime import AgentRuntime
+from .ir import GraphIR
 
 __all__ = [
     "AgentGraph",
@@ -15,4 +16,5 @@ __all__ = [
     "ValidationError",
     "ExecutableAgent",
     "AgentRuntime",
+    "GraphIR",
 ]

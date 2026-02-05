@@ -1,9 +1,9 @@
 import logging
 from typing import Any, Dict, List
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
-from app.agent.execution.emitter import active_emitter
 from app.agent.core.llm_adapter import LLMProviderAdapter
+from app.services.model_resolver import ModelResolver
 logger = logging.getLogger(__name__)
 
 
@@ -53,9 +53,7 @@ Respond ONLY with the category name. Do not include any other text."""
         formatted_messages = self._format_messages(messages)
         formatted_messages.append(SystemMessage(content=prompt))
         
-        # 3. Call LLM (using parent logic for resolution/adapter)
-        # We reuse the specific LLM call logic but enforce text output
-        
+        # 3. Call LLM (using resolver + adapter)
         resolver = ModelResolver(self.db, self.tenant_id)
         provider = await resolver.resolve(model_id)
         adapter = LLMProviderAdapter(provider)
@@ -109,3 +107,23 @@ Respond ONLY with the category name. Do not include any other text."""
     def get_output_handles(self, config: Dict[str, Any]) -> List[str]:
         categories = config.get("categories", [])
         return [c.get("name") for c in categories]
+
+    def _format_messages(self, messages: List[Any]) -> List[BaseMessage]:
+        formatted: List[BaseMessage] = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                role = msg.get("role")
+                content = msg.get("content")
+                if role == "user":
+                    formatted.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    formatted.append(AIMessage(content=content))
+                elif role == "system":
+                    formatted.append(SystemMessage(content=content))
+                else:
+                    formatted.append(HumanMessage(content=str(content)))
+            elif isinstance(msg, BaseMessage):
+                formatted.append(msg)
+            else:
+                formatted.append(HumanMessage(content=str(msg)))
+        return formatted

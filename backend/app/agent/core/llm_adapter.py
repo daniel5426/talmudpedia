@@ -72,7 +72,8 @@ class LLMProviderAdapter(BaseChatModel):
         """
         system_prompt = kwargs.pop("system_prompt", None)
         
-        logger.info(f"[ADAPTER] Starting _astream. run_manager present: {run_manager is not None}")
+        # Debug noise disabled for production runs
+        # logger.info(f"[ADAPTER] Starting _astream. run_manager present: {run_manager is not None}")
         
         try:
             async for chunk in self.provider.stream(messages, system_prompt=system_prompt, **kwargs):
@@ -112,8 +113,26 @@ class LLMProviderAdapter(BaseChatModel):
                      if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                          reasoning_content = delta.reasoning_content
 
+                # Sanitize content if it's not a string (dict or Pydantic model)
+                if content and not isinstance(content, str):
+                    if isinstance(content, dict):
+                        if "text" in content:
+                            content = content["text"]
+                        elif "content" in content:
+                            content = content["content"]
+                        else:
+                            content = str(content)
+                    else:
+                        # Try attribute access for objects/models
+                        if hasattr(content, "text"):
+                            content = content.text
+                        elif hasattr(content, "content"):
+                            content = content.content
+                        else:
+                            content = str(content)
+
                 if content or reasoning_content:
-                    msg_chunk = AIMessageChunk(content=content)
+                    msg_chunk = AIMessageChunk(content=str(content)) # Enforce string
                     if reasoning_content:
                         msg_chunk.additional_kwargs["reasoning_content"] = reasoning_content
                         
@@ -124,7 +143,8 @@ class LLMProviderAdapter(BaseChatModel):
                         if content:
                             await run_manager.on_llm_new_token(content, chunk=lc_chunk)
                     else:
-                        logger.warning("[ADAPTER] run_manager is None, skipping on_llm_new_token")
+                        # Suppress noisy warning when run_manager is absent
+                        logger.debug("run_manager is None, skipping on_llm_new_token")
                     yield lc_chunk
                     
         except Exception as e:

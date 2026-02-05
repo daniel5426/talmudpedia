@@ -7,9 +7,9 @@ from pydantic import BaseModel
 import jsonschema
 
 from .schema import AgentGraph, AgentNode, AgentEdge, NodeType, EdgeType
-from .executable import ExecutableAgent
-from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry, AgentStateField
+from app.agent.registry import AgentOperatorRegistry, AgentStateField
 from app.agent.models import CompiledAgent
+from app.agent.graph.ir import GraphIR, GraphIRNode, GraphIREdge, RoutingMap
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +23,8 @@ class ValidationError(BaseModel):
 
 class AgentCompiler:
     """
-    Compiles an AgentGraph definition into an ExecutableAgent.
-    Handles validation, normalization, and conversion to LangGraph state machine.
+    Compiles an AgentGraph definition into a runtime-agnostic GraphIR.
+    Handles validation and normalization.
     """
     
     def __init__(self, tenant_id: Optional[UUID] = None, db: Any = None):
@@ -34,6 +34,8 @@ class AgentCompiler:
     async def validate(self, graph: AgentGraph) -> list[ValidationError]:
         """Validate the graph structure, configuration, and data flow."""
         errors = []
+        from app.agent.executors.standard import register_standard_operators
+        register_standard_operators()
         
         # 1. Structural Validation
         errors.extend(self._validate_structure(graph))
@@ -46,6 +48,15 @@ class AgentCompiler:
         
         # 4. Parallel Safety Validation
         errors.extend(self._validate_parallel_safety(graph))
+
+        # 5. GraphSpec Version Validation
+        errors.extend(self._validate_graphspec_version(graph))
+
+        # 6. Routing Validation
+        errors.extend(self._validate_routing(graph))
+
+        # 7. Artifact Mapping Validation (lightweight)
+        errors.extend(self._validate_artifact_mappings(graph))
         
         return errors
 
@@ -86,7 +97,8 @@ class AgentCompiler:
     def _validate_configuration(self, graph: AgentGraph) -> list[ValidationError]:
         errors = []
         for node in graph.nodes:
-            spec = AgentOperatorRegistry.get(node.type)
+            normalized_type = self._normalize_node_type(node.type)
+            spec = AgentOperatorRegistry.get(normalized_type)
             if not spec:
                 errors.append(ValidationError(node_id=node.id, message=f"Unknown node type: {node.type}"))
                 continue
@@ -98,6 +110,19 @@ class AgentCompiler:
                     errors.append(ValidationError(node_id=node.id, message=f"Config error: {e.message}"))
                 
         return errors
+
+    def _normalize_node_type(self, node_type: str) -> str:
+        mapping = {
+            "input": "start",
+            "start": "start",
+            "output": "end",
+            "end": "end",
+            "llm_call": "llm",
+            "llm": "llm",
+            "tool_call": "tool",
+            "rag_retrieval": "rag",
+        }
+        return mapping.get(str(node_type), str(node_type))
 
     def _validate_data_flow(self, graph: AgentGraph) -> list[ValidationError]:
         errors = []
@@ -196,7 +221,8 @@ class AgentCompiler:
                     if intersection:
                         errors.append(ValidationError(
                             node_id=p_node.id,
-                            message=f"Parallel write conflict: Branches write to shared fields {intersection}"
+                            message=f"Parallel write conflict: Branches write to shared fields {intersection}",
+                            severity="warning"
                         ))
                         conflict = True
                         break
@@ -204,7 +230,79 @@ class AgentCompiler:
                 
         return errors
 
-    async def compile(self, agent_id: UUID, version: int, graph: AgentGraph, config: Dict[str, Any] = None) -> ExecutableAgent:
+    def _validate_graphspec_version(self, graph: AgentGraph) -> list[ValidationError]:
+        errors = []
+        if graph.spec_version and graph.spec_version != "1.0":
+            errors.append(ValidationError(message=f"Unsupported graph spec version: {graph.spec_version}"))
+        return errors
+
+    def _get_routing_handles(self, node: AgentNode) -> List[str]:
+        node_type = self._normalize_node_type(node.type)
+        if node_type == "if_else":
+            conditions = node.config.get("conditions", []) if isinstance(node.config, dict) else []
+            handles = [c.get("name") or f"condition_{i}" for i, c in enumerate(conditions)]
+            handles.append("else")
+            return handles
+        if node_type == "classify":
+            categories = node.config.get("categories", []) if isinstance(node.config, dict) else []
+            return [c.get("name") or f"category_{i}" for i, c in enumerate(categories)]
+        if node_type == "while":
+            return ["loop", "exit"]
+        if node_type == "user_approval":
+            return ["approve", "reject"]
+        if node_type == "conditional":
+            return ["true", "false"]
+        return []
+
+    def _validate_routing(self, graph: AgentGraph) -> list[ValidationError]:
+        errors: List[ValidationError] = []
+        routing_nodes = {n.id: self._get_routing_handles(n) for n in graph.nodes if self._get_routing_handles(n)}
+        edges_by_source: Dict[str, List[AgentEdge]] = {}
+        for edge in graph.edges:
+            edges_by_source.setdefault(edge.source, []).append(edge)
+
+        for node_id, handles in routing_nodes.items():
+            edges = edges_by_source.get(node_id, [])
+            handle_targets = {}
+            for edge in edges:
+                if not edge.source_handle:
+                    errors.append(ValidationError(node_id=node_id, edge_id=edge.id, message="Conditional edge missing source_handle"))
+                    continue
+                if edge.source_handle not in handles:
+                    errors.append(ValidationError(node_id=node_id, edge_id=edge.id, message=f"Invalid branch handle '{edge.source_handle}'"))
+                    continue
+                if edge.source_handle in handle_targets:
+                    errors.append(ValidationError(node_id=node_id, edge_id=edge.id, message=f"Duplicate branch handle '{edge.source_handle}'"))
+                    continue
+                handle_targets[edge.source_handle] = edge.target
+
+            missing = [h for h in handles if h not in handle_targets]
+            if missing:
+                errors.append(ValidationError(node_id=node_id, message=f"Missing branch edges for handles: {missing}"))
+
+        return errors
+
+    def _validate_artifact_mappings(self, graph: AgentGraph) -> list[ValidationError]:
+        errors: List[ValidationError] = []
+        for node in graph.nodes:
+            if isinstance(node.type, str) and node.type.startswith("artifact:"):
+                if not node.input_mappings:
+                    errors.append(ValidationError(
+                        node_id=node.id,
+                        message="Artifact node missing input_mappings",
+                        severity="warning"
+                    ))
+        return errors
+
+    async def compile(
+        self,
+        agent_id: UUID,
+        version: int,
+        graph: AgentGraph,
+        config: Dict[str, Any] = None,
+        input_params: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> GraphIR:
         from app.agent.resolution import ToolResolver, RAGPipelineResolver, ResolutionError
         
         # 0. Resolve Components (Compile-time resolution)
@@ -232,9 +330,20 @@ class AgentCompiler:
                     try:
                         # RAG node config typically has 'pipeline_id'. 
                         # We verify it exists.
-                         await rag_resolver.resolve(UUID(pipeline_id))
+                        await rag_resolver.resolve(UUID(pipeline_id))
                     except ResolutionError as e:
-                         raise ValueError(f"RAG resolution failed for node {node.id}: {e}")
+                        raise ValueError(f"RAG resolution failed for node {node.id}: {e}")
+
+            elif node.type == "agent":
+                tools = node.config.get("tools") or []
+                if tools:
+                    if not isinstance(tools, list):
+                        raise ValueError(f"Agent node {node.id} tools must be a list")
+                    for tool_id in tools:
+                        try:
+                            await tool_resolver.resolve(UUID(str(tool_id)))
+                        except (ValueError, ResolutionError) as e:
+                            raise ValueError(f"Agent node {node.id} tool resolution failed: {e}")
 
         # 1. Validate
         errors = await self.validate(graph)
@@ -243,110 +352,78 @@ class AgentCompiler:
             error_msg = "; ".join([e.message for e in critical_errors])
             raise ValueError(f"Graph validation failed: {error_msg}")
 
-        # 2. Build LangGraph Workflow
-        from langgraph.graph import StateGraph, END
-        from app.agent.core.state import AgentState
-        
-        workflow = StateGraph(AgentState)
-        
-        for node in graph.nodes:
-            node_fn = self._build_node_fn(node)
-            workflow.add_node(node.id, node_fn)
-            
-        for edge in graph.edges:
-            # Handle conditional edges logic (simplified property check)
-            source_node = next((n for n in graph.nodes if n.id == edge.source), None)
-            if source_node and source_node.type == "conditional":
-                 # Conditional nodes need special edge handling in LangGraph.
-                 # They usually use 'add_conditional_edges'.
-                 # For the standard 'Edge' list, it assumes static.
-                 # If we have a conditional node, we likely need to group edges from it
-                 # and register a routing function.
-                 # SKIPPED for brevity in Phase 1/2 refactor - assuming direct edges work for now
-                 # or that 'conditional' node returns a Runnable that handles internal routing?
-                 # LangGraph pattern: add_conditional_edges(source, routing_fn, path_map).
-                 # Our 'conditional' node returns a 'branch' key.
-                 # We need a routing function that reads 'branch' from state/output.
-                 pass
-            
-            workflow.add_edge(edge.source, edge.target)
-            
-        input_nodes = graph.get_input_nodes()
-        if input_nodes:
-            workflow.set_entry_point(input_nodes[0].id)
-            
-        output_nodes = graph.get_output_nodes()
-        for node in output_nodes:
-             workflow.add_edge(node.id, END)
-
-        compiled_graph = workflow.compile()
+        # 2. Build GraphIR
+        graph_ir = self._build_graph_ir(graph, input_params=input_params)
 
         # 3. Create Compiled Snapshot
         graph_hash = hashlib.sha256(json.dumps(graph.dict(), sort_keys=True, default=str).encode()).hexdigest()
         
+        final_config = (config or {}).copy()
+        final_config.update(kwargs)
+
         snapshot = CompiledAgent(
             agent_id=agent_id,
             version=version,
             dag=graph.dict(),
-            config=config or {},
+            config=final_config,
             hash=graph_hash
         )
+        graph_ir.metadata["snapshot"] = snapshot.model_dump()
+        return graph_ir
 
-        return ExecutableAgent(
-            graph_definition=graph, 
-            compiled_graph=compiled_graph, 
-            config=config or {},
-            snapshot=snapshot,
-            workflow=workflow
+    def _build_graph_ir(self, graph: AgentGraph, input_params: Optional[Dict[str, Any]] = None) -> GraphIR:
+        routing_maps: Dict[str, RoutingMap] = {}
+        for node in graph.nodes:
+            handles = self._get_routing_handles(node)
+            if not handles:
+                continue
+            edge_map: Dict[str, str] = {}
+            for edge in graph.edges:
+                if edge.source == node.id and edge.source_handle:
+                    edge_map[edge.source_handle] = edge.target
+            default_handle = "else" if "else" in handles else None
+            routing_maps[node.id] = RoutingMap(handles=handles, edges=edge_map, default_handle=default_handle)
+
+        input_nodes = graph.get_input_nodes()
+        output_nodes = graph.get_output_nodes()
+
+        if input_params is None:
+            interrupt_before = [n.id for n in graph.nodes if n.type in ("human_input", "user_approval")]
+        else:
+            interrupt_before = []
+            for node in graph.nodes:
+                if node.type == "user_approval" and "approval" not in input_params:
+                    interrupt_before.append(node.id)
+                elif node.type == "human_input" and "input" not in input_params and "message" not in input_params:
+                    interrupt_before.append(node.id)
+
+        return GraphIR(
+            schema_version=graph.spec_version or "1.0",
+            nodes=[
+                GraphIRNode(
+                    id=n.id,
+                    type=self._normalize_node_type(n.type),
+                    config=n.config or {},
+                    input_mappings=n.input_mappings,
+                    data=n.data,
+                )
+                for n in graph.nodes
+            ],
+            edges=[
+                GraphIREdge(
+                    id=e.id,
+                    source=e.source,
+                    target=e.target,
+                    source_handle=e.source_handle,
+                    target_handle=e.target_handle,
+                    type=str(e.type) if e.type else None,
+                    label=e.label,
+                    condition=e.condition,
+                )
+                for e in graph.edges
+            ],
+            entry_point=input_nodes[0].id if input_nodes else None,
+            exit_nodes=[n.id for n in output_nodes],
+            routing_maps=routing_maps,
+            interrupt_before=interrupt_before,
         )
-
-    def _build_node_fn(self, node: AgentNode):
-        """Builds a callable (async) function for a graph node."""
-        executor_cls = AgentExecutorRegistry.get_executor_cls(node.type)
-        if not executor_cls:
-            logger.error(f"No executor registered for node type: {node.type}")
-            async def error_node(state: Any):
-                return state
-            return error_node
-
-        executor = executor_cls(self.tenant_id, self.db)
-
-        async def node_fn(state: Any, config: Any = None):
-            # Extract emitter from LangGraph configurable (passed by run_and_stream)
-            configurable = config.get("configurable", {}) if config else {}
-            emitter = configurable.get("emitter")
-            
-            context = {
-                "langgraph_config": config,
-                "emitter": emitter,
-                "node_id": node.id,
-                "node_type": node.type.value if hasattr(node.type, 'value') else str(node.type),
-                "node_name": node.config.get("label", node.id)
-            }
-            
-            if not await executor.can_execute(state, node.config, context):
-                return {} 
-            
-            # Merge input_mappings into config for field resolver
-            node_config = dict(node.config)
-            if node.input_mappings:
-                node_config["input_mappings"] = node.input_mappings
-            
-            try:
-                state_update = await executor.execute(state, node_config, context)
-                
-                # Store node output for upstream reference by downstream nodes
-                # This enables {{ upstream.node_id.field }} expressions
-                if state_update and isinstance(state_update, dict):
-                    node_outputs = state.get("_node_outputs", {})
-                    # Avoid cycles by excluding _node_outputs from stored snapshot
-                    safe_update = {k: v for k, v in state_update.items() if k != "_node_outputs"}
-                    node_outputs[node.id] = safe_update
-                    state_update["_node_outputs"] = node_outputs
-                
-                return state_update
-            except Exception as e:
-                logger.error(f"Error executing node {node.id} ({node.type}): {e}")
-                raise e
-
-        return node_fn
