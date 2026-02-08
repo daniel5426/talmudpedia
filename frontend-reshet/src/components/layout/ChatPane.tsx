@@ -39,7 +39,7 @@ import {
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
 
-import { CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic, AlertCircle } from "lucide-react";
+import { Code, CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic, AlertCircle } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotInputArea } from "@/components/BotInputArea";
 import { useChatController, type ChatController, type ChatMessage, type Citation } from "./useChatController";
@@ -56,6 +56,11 @@ import { useAuthStore } from "@/lib/store/useAuthStore";
 import { LibrarySearchModal } from "./LibrarySearchModal";
 import { ChatPaneHeader } from "../navigation/ChatPaneHeader";
 import { useSmoothStream } from "@/hooks/useSmoothStream";
+import { Button } from "@/components/ui/button";
+import { ReactArtifactPane } from "@/components/ai-elements/ReactArtifactPane";
+import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPanel";
+import { parseReactArtifact } from "@/lib/react-artifacts/parseReactArtifact";
+import { useTenant } from "@/contexts/TenantContext";
 
 const formatThinkingDuration = (durationMs?: number | null) => {
   if (!durationMs || durationMs <= 0) {
@@ -301,7 +306,9 @@ export function ChatWorkspace({
   isVoiceModeActive,
   handleToggleVoiceMode,
   analyser,
-  noBackground = false
+  noBackground = false,
+  onOpenArtifact,
+  isArtifactMessage,
 }: {
   controller: ReturnType<typeof useChatController>;
   chatId?: string;
@@ -309,6 +316,8 @@ export function ChatWorkspace({
   handleToggleVoiceMode: () => void;
   analyser?: AnalyserNode | null;
   noBackground?: boolean;
+  onOpenArtifact?: (messageId: string, content: string) => void;
+  isArtifactMessage?: (content: string) => boolean;
 }) {
   // Auto (Agent Router) - Extract controller methods and state
   const {
@@ -333,6 +342,7 @@ export function ChatWorkspace({
   } = controller as any;
 
   const isPaused = (controller as any).isPaused || false;
+  const pendingApproval = (controller as any).pendingApproval || false;
   // Auto (Agent Router) - Get direction for RTL/LTR layout
   const { direction } = useDirection();
   // Auto (Agent Router) - Refs for container management
@@ -361,8 +371,17 @@ export function ChatWorkspace({
         _isStreaming: true, // Internal flag for conditional logic
       } as any);
     }
+    if (pendingApproval && !isLoading && !list.some((msg: any) => msg.approvalRequest)) {
+      list.push({
+        id: "approval-request",
+        role: "assistant",
+        content: "Do you wish to continue?",
+        createdAt: new Date(),
+        approvalRequest: true,
+      } as any);
+    }
     return list;
-  }, [messages, activeStreamingId, smoothedStreamingContent, currentReasoning, lastThinkingDurationMs, isLoading]);
+  }, [messages, activeStreamingId, smoothedStreamingContent, currentReasoning, lastThinkingDurationMs, isLoading, pendingApproval]);
 
   // Auto (Agent Router) - Determine if chat is in empty state.
   // We use a "hasStarted" check to prevent flickering back to empty state during completion.
@@ -399,6 +418,14 @@ export function ChatWorkspace({
     setPlayingId(null);
     setLoadingSpeakId(null);
   }, []);
+
+  const handleApprovalClick = useCallback(
+    (decision: "approve" | "reject") => {
+      if (isLoading) return;
+      handleSubmit({ text: decision, files: [] });
+    },
+    [handleSubmit, isLoading]
+  );
 
   const handleSpeak = useCallback(
     async (message: ChatMessage) => {
@@ -534,8 +561,18 @@ export function ChatWorkspace({
         ) : (
           <>
             {displayMessages.length > 0 &&
-              displayMessages.map((msg: any) => (
-                <div key={msg.id} className="flex w-full">
+              displayMessages.map((msg: any) => {
+                const canOpenArtifact = Boolean(
+                  onOpenArtifact &&
+                  isArtifactMessage &&
+                  msg.role === "assistant" &&
+                  !msg.approvalRequest &&
+                  !msg._isStreaming &&
+                  isArtifactMessage(msg.content)
+                );
+
+                return (
+                  <div key={msg.id} className="flex w-full">
                   {msg.role === "assistant" && containerWidth >= 550 && (
                     <div
                       className={cn(
@@ -563,7 +600,7 @@ export function ChatWorkspace({
                     <MessageContent dir={direction}>
                       {msg.role === "assistant" ? (
                         <>
-                          {((msg.reasoningSteps && msg.reasoningSteps.length > 0) || (msg.thinkingDurationMs && msg.thinkingDurationMs > 0) || (msg.id === activeStreamingId && isLoading)) && (
+                          {!msg.approvalRequest && ((msg.reasoningSteps && msg.reasoningSteps.length > 0) || (msg.thinkingDurationMs && msg.thinkingDurationMs > 0) || (msg.id === activeStreamingId && isLoading)) && (
                             <div className="space-y-2">
                               <ChainOfThought
                                 dir={direction}
@@ -619,26 +656,52 @@ export function ChatWorkspace({
                           )}
 
                           <div dir={direction} className="overflow-hidden">
-                            <MessageResponse>{(() => {
-                              // Try to parse if it's a JSON response from the architect agent
-                              try {
-                                const trimmed = msg.content.trim();
-                                if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                                  const parsed = JSON.parse(trimmed);
-                                  // If it's a "respond" action or just has a message field, show that
-                                  if (parsed.action === 'respond' && parsed.message) {
-                                    return parsed.message;
+                            {msg.approvalRequest ? (
+                              <MessageResponse>{msg.content}</MessageResponse>
+                            ) : (
+                              <MessageResponse>{(() => {
+                                // Try to parse if it's a JSON response from the architect agent
+                                try {
+                                  const trimmed = msg.content.trim();
+                                  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                                    const parsed = JSON.parse(trimmed);
+                                    // If it's a "respond" action or just has a message field, show that
+                                    if (parsed.action === 'respond' && parsed.message) {
+                                      return parsed.message;
+                                    }
+                                    if (parsed.message) {
+                                      return parsed.message;
+                                    }
                                   }
-                                  if (parsed.message) {
-                                    return parsed.message;
-                                  }
+                                } catch (e) {
+                                  // Not JSON or invalid, ignore
                                 }
-                              } catch (e) {
-                                // Not JSON or invalid, ignore
-                              }
-                              return msg.content;
-                            })()}</MessageResponse>
+                                return msg.content;
+                              })()}</MessageResponse>
+                            )}
                           </div>
+
+                          {msg.approvalRequest && (
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <Button
+                                type="button"
+                                onClick={() => handleApprovalClick("approve")}
+                                disabled={isLoading}
+                                className="min-w-[96px]"
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => handleApprovalClick("reject")}
+                                disabled={isLoading}
+                                className="min-w-[96px]"
+                              >
+                                Reject
+                              </Button>
+                            </div>
+                          )}
 
                           {msg.citations && msg.citations.length > 0 && (() => {
                             const grouped = groupCitationsBySource(msg.citations);
@@ -701,13 +764,22 @@ export function ChatWorkspace({
                             </div>
                           ) : null}
                         </div>
-                      )}
-                    </MessageContent>
+                        )}
+                      </MessageContent>
 
-                    {msg.role === "assistant" && (
+                    {msg.role === "assistant" && !msg.approvalRequest && (
                       <div className="h-9 w-full mt-1">
                         {(msg.id !== activeStreamingId || !isLoading) && (
                           <MessageActions>
+                            {canOpenArtifact && (
+                              <MessageAction
+                                label="Open artifact"
+                                onClick={() => onOpenArtifact?.(msg.id, msg.content)}
+                                tooltip="Open artifact"
+                              >
+                                <Code className="size-4" />
+                              </MessageAction>
+                            )}
                             <MessageAction
                               label="Retry"
                               onClick={() => handleRetry(msg)}
@@ -773,11 +845,12 @@ export function ChatWorkspace({
                     )}
                   </Message>
                 </div>
-              ))}
+                );
+              })}
 
 
 
-            {isPaused && (
+            {isPaused && !pendingApproval && (
               <div className="flex w-full justify-center p-4 animate-in fade-in slide-in-from-bottom-2">
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-yellow-100/50 border border-yellow-200 text-yellow-800 text-xs font-medium">
                   <AlertCircle className="size-3.5" />
@@ -811,6 +884,8 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   // Auto (Agent Router) - Get chatId from URL search params if not provided as prop
   const searchParams = useSearchParams();
   const effectiveChatId = chatId || searchParams.get('chatId');
+  const { currentTenant } = useTenant();
+  const authUser = useAuthStore((state) => state.user);
 
   // Auto (Agent Router) - Get layout store for active chat management
   const setActiveChatId = useLayoutStore((state) => state.setActiveChatId);
@@ -858,6 +933,19 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
 
   const defaultController = useChatController();
   const chatController = controller ?? defaultController;
+  const tenantKey = currentTenant?.slug ?? authUser?.tenant_id ?? "unknown-tenant";
+  const {
+    artifact,
+    openFromMessage,
+    updateCode,
+    persistCurrent,
+    resetToSaved,
+    closePanel,
+  } = useReactArtifactPanel({
+    messages: chatController.messages,
+    tenantKey,
+    chatId: effectiveChatId ?? undefined,
+  });
 
   const [isVoiceModeActive, setIsVoiceModeActive] = useState(false);
 
@@ -961,36 +1049,50 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
       isVoiceModeActive={isVoiceModeActive}
       handleToggleVoiceMode={handleToggleVoiceMode}
       analyser={analyser}
+      onOpenArtifact={openFromMessage}
+      isArtifactMessage={(content) => Boolean(parseReactArtifact(content))}
     />
   );
 
   const roomContent = (
     <>
       <LibrarySearchModal open={searchOpen} onOpenChange={setSearchOpen} />
-      <Conversation
-        dir={direction}
-        className="relative border-none flex-1 overflow-hidden bg-(--chat-background)"
-        targetScrollTop={chatController.isLoading ? (_target: number, { scrollElement }: any) => scrollElement?.scrollTop ?? 0 : undefined}
-      >
-        <div
-          aria-hidden="true"
-          className={cn(
-            "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out bg-linear-to-br from-(--gradient-from) to-(--gradient-to)",
-            isEmptyState ? "opacity-100" : "opacity-0"
-          )}
-        />
-        {!noHeader && <ChatPaneHeader
-          chatId={effectiveChatId}
-          onSearchOpen={() => setSearchOpen(true)}
-          onShareChat={handleShareChat}
-          onDeleteChat={handleDeleteChat}
-          isEmptyState={isEmptyState}
-        />}
-        {mainContent}
-      </Conversation>
+      <div className="flex h-full w-full overflow-hidden">
+        <div className="flex min-w-0 flex-1">
+          <Conversation
+            dir={direction}
+            className="relative border-none flex-1 overflow-hidden bg-(--chat-background)"
+            targetScrollTop={chatController.isLoading ? (_target: number, { scrollElement }: any) => scrollElement?.scrollTop ?? 0 : undefined}
+          >
+            <div
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out bg-linear-to-br from-(--gradient-from) to-(--gradient-to)",
+                isEmptyState ? "opacity-100" : "opacity-0"
+              )}
+            />
+            {!noHeader && <ChatPaneHeader
+              chatId={effectiveChatId}
+              onSearchOpen={() => setSearchOpen(true)}
+              onShareChat={handleShareChat}
+              onDeleteChat={handleDeleteChat}
+              isEmptyState={isEmptyState}
+            />}
+            {mainContent}
+          </Conversation>
+        </div>
+        {artifact && (
+          <ReactArtifactPane
+            artifact={artifact}
+            onClose={closePanel}
+            onCodeChange={updateCode}
+            onRun={persistCurrent}
+            onReset={resetToSaved}
+          />
+        )}
+      </div>
     </>
   );
 
   return roomContent;
 }
-

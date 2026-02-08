@@ -69,6 +69,13 @@ class IfElseNodeExecutor(BaseNodeExecutor):
         """
         conditions = config.get("conditions", [])
         condition_results = []
+
+        from app.agent.execution.emitter import active_emitter
+        emitter = active_emitter.get()
+        node_id = context.get("node_id", "if_else") if context else "if_else"
+        node_name = context.get("node_name", "If/Else") if context else "If/Else"
+        if emitter:
+            emitter.emit_node_start(node_id, node_name, "if_else", {"conditions": len(conditions)})
         
         for i, condition in enumerate(conditions):
             expression = condition.get("expression", "")
@@ -84,11 +91,14 @@ class IfElseNodeExecutor(BaseNodeExecutor):
                 
                 if result:
                     logger.debug(f"If/Else: Branch '{name}' matched (expression: {expression})")
-                    return {
+                    result = {
                         "next": name,
                         "branch_taken": name,
                         "condition_results": condition_results
                     }
+                    if emitter:
+                        emitter.emit_node_end(node_id, node_name, "if_else", {"branch_taken": name})
+                    return result
                     
             except Exception as e:
                 logger.warning(f"If/Else condition '{name}' evaluation error: {e}")
@@ -101,11 +111,14 @@ class IfElseNodeExecutor(BaseNodeExecutor):
         
         # No condition matched, take "else" branch
         logger.debug("If/Else: No conditions matched, taking 'else' branch")
-        return {
+        result = {
             "next": "else",
             "branch_taken": "else",
             "condition_results": condition_results
         }
+        if emitter:
+            emitter.emit_node_end(node_id, node_name, "if_else", {"branch_taken": "else"})
+        return result
     
     def get_output_handles(self, config: Dict[str, Any]) -> List[str]:
         """

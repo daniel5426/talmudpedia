@@ -35,7 +35,7 @@ from app.rag.pipeline.registry import (
 )
 from app.db.postgres.models.rbac import Action, ResourceType, ActorType
 from app.api.routers.auth import get_current_user
-from app.api.dependencies import get_current_user_or_service
+from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
 from app.core.rbac import check_permission
 from app.core.audit import log_simple_action
 from app.rag.pipeline import PipelineCompiler, OperatorRegistry
@@ -172,7 +172,7 @@ async def get_pipeline_context(
     context: Optional[Dict[str, Any]] = None,
 ):
     """Get pipeline context with tenant and user info."""
-    if context and context.get("is_service"):
+    if context and context.get("type") == "workload":
         tenant_id = context.get("tenant_id")
         if not tenant_id:
             raise HTTPException(status_code=403, detail="Tenant context required")
@@ -368,7 +368,8 @@ def job_to_dict(j: PipelineJob) -> Dict[str, Any]:
 @router.get("/catalog")
 async def get_operator_catalog(
     tenant_slug: Optional[str] = None,
-    context: Dict[str, Any] = Depends(get_current_user_or_service),
+    context: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("pipelines.catalog.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get operator catalog."""
@@ -380,7 +381,7 @@ async def get_operator_catalog(
         if tenant:
              await sync_custom_operators(db, tenant.id)
              return registry.get_catalog(str(tenant.id))
-    if context.get("is_service") and context.get("tenant_id"):
+    if context.get("type") == "workload" and context.get("tenant_id"):
         tenant_id = context.get("tenant_id")
         try:
             tenant_uuid = UUID(str(tenant_id))
@@ -468,11 +469,12 @@ async def create_visual_pipeline(
     request: CreatePipelineRequest,
     http_request: Request,
     tenant_slug: Optional[str] = None,
-    context: Dict[str, Any] = Depends(get_current_user_or_service),
+    context: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new visual pipeline."""
-    tenant, user, db = await get_pipeline_context(tenant_slug, current_user=None, db=db, context=context)
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user=context.get("user"), db=db, context=context)
 
     if not tenant:
         raise HTTPException(status_code=400, detail="Tenant context required to create pipeline")
@@ -552,11 +554,12 @@ async def update_visual_pipeline(
     request: UpdatePipelineRequest,
     http_request: Request,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a visual pipeline."""
-    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user=context.get("user"), db=db, context=context)
 
     if not await require_pipeline_permission(tenant, user, Action.WRITE, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -592,18 +595,19 @@ async def update_visual_pipeline(
     await db.commit()
     await db.refresh(pipeline)
 
-    await log_simple_action(
-        tenant_id=tenant.id if tenant else None,
-        org_unit_id=pipeline.org_unit_id,
-        actor_id=user.id,
-        actor_type=ActorType.USER,
-        actor_email=user.email,
-        action=Action.WRITE,
-        resource_type=ResourceType.PIPELINE,
-        resource_id=pipeline_id,
-        resource_name=pipeline.name,
-        request=http_request,
-    )
+    if user:
+        await log_simple_action(
+            tenant_id=tenant.id if tenant else None,
+            org_unit_id=pipeline.org_unit_id,
+            actor_id=user.id,
+            actor_type=ActorType.USER,
+            actor_email=user.email,
+            action=Action.WRITE,
+            resource_type=ResourceType.PIPELINE,
+            resource_id=pipeline_id,
+            resource_name=pipeline.name,
+            request=http_request,
+        )
 
     return {"status": "updated", "version": pipeline.version}
 
@@ -613,11 +617,12 @@ async def delete_visual_pipeline(
     pipeline_id: UUID,
     http_request: Request,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a visual pipeline."""
-    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user=context.get("user"), db=db, context=context)
 
     if not await require_pipeline_permission(tenant, user, Action.DELETE, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -632,23 +637,33 @@ async def delete_visual_pipeline(
     if not pipeline:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
+    await ensure_sensitive_action_approved(
+        principal=context,
+        tenant_id=tenant.id if tenant else context.get("tenant_id"),
+        subject_type="pipeline",
+        subject_id=str(pipeline.id),
+        action_scope="pipelines.delete",
+        db=db,
+    )
+
     pipeline_name = pipeline.name
 
     await db.delete(pipeline)
     await db.commit()
 
-    await log_simple_action(
-        tenant_id=tenant.id if tenant else None,
-        org_unit_id=pipeline.org_unit_id if pipeline else None,
-        actor_id=user.id,
-        actor_type=ActorType.USER,
-        actor_email=user.email,
-        action=Action.DELETE,
-        resource_type=ResourceType.PIPELINE,
-        resource_id=pipeline_id,
-        resource_name=pipeline_name,
-        request=http_request,
-    )
+    if user:
+        await log_simple_action(
+            tenant_id=tenant.id if tenant else None,
+            org_unit_id=pipeline.org_unit_id if pipeline else None,
+            actor_id=user.id,
+            actor_type=ActorType.USER,
+            actor_email=user.email,
+            action=Action.DELETE,
+            resource_type=ResourceType.PIPELINE,
+            resource_id=pipeline_id,
+            resource_name=pipeline_name,
+            request=http_request,
+        )
 
     return {"status": "deleted"}
 
@@ -658,11 +673,12 @@ async def compile_pipeline(
     pipeline_id: UUID,
     http_request: Request,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Compile a visual pipeline to an executable pipeline."""
-    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user=context.get("user"), db=db, context=context)
 
     if not await require_pipeline_permission(tenant, user, Action.WRITE, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -698,7 +714,8 @@ async def compile_pipeline(
     
     try:
         compiler = PipelineCompiler()
-        compile_result = compiler.compile(mock_pipeline, compiled_by=str(user.id), tenant_id=str(tenant.id))
+        compiled_by = str(user.id) if user else str(context.get("initiator_user_id") or context.get("principal_id") or "")
+        compile_result = compiler.compile(mock_pipeline, compiled_by=compiled_by, tenant_id=str(tenant.id))
     except Exception as e:
         return {
             "success": False,
@@ -721,7 +738,7 @@ async def compile_pipeline(
         compiled_graph=compile_result.executable_pipeline.model_dump(mode='json') if hasattr(compile_result.executable_pipeline, 'model_dump') else {},
         is_valid=True,
         pipeline_type=pipeline.pipeline_type,
-        compiled_by=user.id,
+        compiled_by=user.id if user else None,
     )
 
     db.add(exec_pipeline)
@@ -733,18 +750,19 @@ async def compile_pipeline(
     await db.commit()
     await db.refresh(exec_pipeline)
 
-    await log_simple_action(
-        tenant_id=tenant.id if tenant else None,
-        org_unit_id=pipeline.org_unit_id,
-        actor_id=user.id,
-        actor_type=ActorType.USER,
-        actor_email=user.email,
-        action=Action.WRITE,
-        resource_type=ResourceType.PIPELINE,
-        resource_id=pipeline_id,
-        resource_name=f"{pipeline.name} (compiled v{pipeline.version})",
-        request=http_request,
-    )
+    if user:
+        await log_simple_action(
+            tenant_id=tenant.id if tenant else None,
+            org_unit_id=pipeline.org_unit_id,
+            actor_id=user.id,
+            actor_type=ActorType.USER,
+            actor_email=user.email,
+            action=Action.WRITE,
+            resource_type=ResourceType.PIPELINE,
+            resource_id=pipeline_id,
+            resource_name=f"{pipeline.name} (compiled v{pipeline.version})",
+            request=http_request,
+        )
 
     return {
         "success": True,

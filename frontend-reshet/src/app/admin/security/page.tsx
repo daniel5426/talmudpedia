@@ -7,16 +7,22 @@ import { cn } from "@/lib/utils"
 import { rbacService, Role, RoleAssignment, Permission } from "@/services/rbac"
 import { orgUnitsService, OrgUnit } from "@/services/org-units"
 import {
+  workloadSecurityService,
+  PendingScopePolicy,
+  ActionApprovalDecision,
+} from "@/services/workload-security"
+import {
   ShieldCheck,
   UserPlus,
-  Plus,
   Trash2,
   Edit2,
   Lock,
   Globe,
   User,
   MoreVertical,
-  Key
+  Key,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react"
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -50,6 +56,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { Textarea } from "@/components/ui/textarea"
 
 const RESOURCE_TYPES = ["index", "pipeline", "job", "org_unit", "role", "membership", "audit"]
 const ACTIONS = ["read", "write", "delete", "execute", "admin"]
@@ -62,9 +69,19 @@ export default function SecurityPage() {
   const [assignments, setAssignments] = useState<RoleAssignment[]>([])
   const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isWorkloadLoading, setIsWorkloadLoading] = useState(true)
   const [searchRoles, setSearchRoles] = useState("")
   const [searchAssignments, setSearchAssignments] = useState("")
-  const [activeTab, setActiveTab] = useState<"assignments" | "roles">("assignments")
+  const [searchWorkloads, setSearchWorkloads] = useState("")
+  const [activeTab, setActiveTab] = useState<"assignments" | "roles" | "workloads">("assignments")
+  const [pendingPolicies, setPendingPolicies] = useState<PendingScopePolicy[]>([])
+  const [actionApprovals, setActionApprovals] = useState<ActionApprovalDecision[]>([])
+  const [decisionForm, setDecisionForm] = useState({
+    subject_type: "",
+    subject_id: "",
+    action_scope: "",
+    rationale: "",
+  })
 
   const [isRoleDialogOpen, setIsRoleDialogOpen] = useState(false)
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false)
@@ -106,9 +123,27 @@ export default function SecurityPage() {
     }
   }, [currentTenant])
 
+  const fetchWorkloadData = useCallback(async () => {
+    if (!currentTenant) return
+    setIsWorkloadLoading(true)
+    try {
+      const [pendingData, approvalsData] = await Promise.all([
+        workloadSecurityService.listPendingPolicies(),
+        workloadSecurityService.listActionApprovals(),
+      ])
+      setPendingPolicies(pendingData)
+      setActionApprovals(approvalsData)
+    } catch (error) {
+      console.error("Failed to fetch workload approvals data", error)
+    } finally {
+      setIsWorkloadLoading(false)
+    }
+  }, [currentTenant])
+
   useEffect(() => {
     fetchData()
-  }, [fetchData])
+    fetchWorkloadData()
+  }, [fetchData, fetchWorkloadData])
 
   const handleCreateRole = async () => {
     if (!currentTenant) return
@@ -170,6 +205,46 @@ export default function SecurityPage() {
     }
   }
 
+  const handleApprovePolicy = async (policy: PendingScopePolicy) => {
+    if (!confirm("Approve this workload policy with all requested scopes?")) return
+    try {
+      await workloadSecurityService.approveScopePolicy(policy.principal_id, policy.requested_scopes || [])
+      fetchWorkloadData()
+    } catch (error) {
+      console.error("Failed to approve workload policy", error)
+    }
+  }
+
+  const handleRejectPolicy = async (principalId: string) => {
+    if (!confirm("Reject this workload policy?")) return
+    try {
+      await workloadSecurityService.rejectScopePolicy(principalId)
+      fetchWorkloadData()
+    } catch (error) {
+      console.error("Failed to reject workload policy", error)
+    }
+  }
+
+  const handleDecideActionApproval = async (
+    input: {
+      subject_type: string
+      subject_id: string
+      action_scope: string
+      rationale?: string
+    },
+    status: "approved" | "rejected"
+  ) => {
+    try {
+      await workloadSecurityService.decideActionApproval({
+        ...input,
+        status,
+      })
+      fetchWorkloadData()
+    } catch (error) {
+      console.error("Failed to decide action approval", error)
+    }
+  }
+
   const togglePermission = (res: string, action: string) => {
     setNewRoleData(prev => {
       const exists = prev.permissions.some(p => p.resource_type === res && p.action === action)
@@ -223,6 +298,32 @@ export default function SecurityPage() {
     )
   }, [assignments, searchAssignments])
 
+  const filteredPendingPolicies = useMemo(() => {
+    const query = searchWorkloads.toLowerCase().trim()
+    if (!query) return pendingPolicies
+    return pendingPolicies.filter((policy) => {
+      const scopes = (policy.requested_scopes || []).join(" ").toLowerCase()
+      return (
+        policy.principal_id.toLowerCase().includes(query) ||
+        policy.policy_id.toLowerCase().includes(query) ||
+        scopes.includes(query)
+      )
+    })
+  }, [pendingPolicies, searchWorkloads])
+
+  const filteredActionApprovals = useMemo(() => {
+    const query = searchWorkloads.toLowerCase().trim()
+    if (!query) return actionApprovals
+    return actionApprovals.filter((approval) => {
+      return (
+        approval.subject_type.toLowerCase().includes(query) ||
+        approval.subject_id.toLowerCase().includes(query) ||
+        approval.action_scope.toLowerCase().includes(query) ||
+        approval.status.toLowerCase().includes(query)
+      )
+    })
+  }, [actionApprovals, searchWorkloads])
+
   if (!currentTenant) {
     return (
       <div className="p-8 text-center text-muted-foreground">
@@ -232,22 +333,24 @@ export default function SecurityPage() {
   }
 
   return (
-    <div className="flex flex-col h-full w-full bg-muted/30" dir={direction}>
-      <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+    <div className="flex flex-col h-full w-full" dir={direction}>
+      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
         <div className="flex items-center gap-3">
           <CustomBreadcrumb items={[
             { label: "Security & Org", href: "/admin/organization" },
-            { label: "Security & Roles", active: true }
+            { label: "Security", active: true }
           ]} />
         </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" className="h-9" onClick={() => setIsRoleDialogOpen(true)}>
-            <ShieldCheck className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> New Role
-          </Button>
-          <Button size="sm" className="h-9" onClick={() => setIsAssignDialogOpen(true)}>
-            <UserPlus className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> Assign Role
-          </Button>
-        </div>
+        {activeTab !== "workloads" && (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" className="h-9" onClick={() => setIsRoleDialogOpen(true)}>
+              <ShieldCheck className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> New Role
+            </Button>
+            <Button size="sm" className="h-9" onClick={() => setIsAssignDialogOpen(true)}>
+              <UserPlus className={cn("size-4", isRTL ? "ml-2" : "mr-2")} /> Assign Role
+            </Button>
+          </div>
+        )}
       </header>
 
       <div className="flex-1 min-h-0 overflow-auto p-6 space-y-6">
@@ -255,23 +358,33 @@ export default function SecurityPage() {
           defaultValue="assignments"
           dir={direction}
           className="min-h-0 h-full flex flex-col"
-          onValueChange={(value) => setActiveTab(value as "assignments" | "roles")}
+          onValueChange={(value) => setActiveTab(value as "assignments" | "roles" | "workloads")}
         >
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <TabsList>
               <TabsTrigger value="assignments">Role Assignments</TabsTrigger>
               <TabsTrigger value="roles">Roles & Permissions</TabsTrigger>
+              <TabsTrigger value="workloads">Workload Approvals</TabsTrigger>
             </TabsList>
-            <Input
-              placeholder={activeTab === "assignments" ? "Search user, role, or scope..." : "Search roles..."}
-              value={activeTab === "assignments" ? searchAssignments : searchRoles}
-              onChange={(e) => {
-                const value = e.target.value
-                if (activeTab === "assignments") setSearchAssignments(value)
-                else setSearchRoles(value)
-              }}
-              className="max-w-xs bg-background"
-            />
+            {activeTab !== "workloads" ? (
+              <Input
+                placeholder={activeTab === "assignments" ? "Search user, role, or scope..." : "Search roles..."}
+                value={activeTab === "assignments" ? searchAssignments : searchRoles}
+                onChange={(e) => {
+                  const value = e.target.value
+                  if (activeTab === "assignments") setSearchAssignments(value)
+                  else setSearchRoles(value)
+                }}
+                className="max-w-xs bg-background"
+              />
+            ) : (
+              <Input
+                placeholder="Search principal, policy, subject, or scope..."
+                value={searchWorkloads}
+                onChange={(e) => setSearchWorkloads(e.target.value)}
+                className="max-w-xs bg-background"
+              />
+            )}
           </div>
 
           <TabsContent value="assignments" className="h-full flex-1 min-h-0 flex flex-col">
@@ -414,6 +527,230 @@ export default function SecurityPage() {
                 </CardContent>
               </Card>
 
+            </div>
+          </TabsContent>
+
+          <TabsContent value="workloads" className="h-full flex-1 min-h-0 flex flex-col">
+            <div className="grid grid-cols-1 gap-6 min-h-0 h-full flex-1">
+              <Card className="shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-base">Pending Workload Scope Policies</CardTitle>
+                  <CardDescription>
+                    Approve or reject requested workload scopes for principals.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mb-3">
+                    <Badge variant="outline" className="text-xs">{filteredPendingPolicies.length} pending</Badge>
+                  </div>
+                  {isWorkloadLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  ) : filteredPendingPolicies.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
+                      No pending workload scope policies.
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>Principal</TableHead>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>Requested Scopes</TableHead>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>Created</TableHead>
+                          <TableHead className={isRTL ? "text-left" : "text-right"}>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredPendingPolicies.map((policy) => (
+                          <TableRow key={policy.policy_id}>
+                            <TableCell className={cn("font-mono text-xs", isRTL ? "text-right" : "text-left")}>
+                              {policy.principal_id}
+                            </TableCell>
+                            <TableCell className={isRTL ? "text-right" : "text-left"}>
+                              <div className="flex flex-wrap gap-1">
+                                {(policy.requested_scopes || []).map((scope) => (
+                                  <Badge key={scope} variant="secondary" className="text-[10px]">
+                                    {scope}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </TableCell>
+                            <TableCell className={cn("text-xs", isRTL ? "text-right" : "text-left")}>
+                              {new Date(policy.created_at).toLocaleString()}
+                            </TableCell>
+                            <TableCell className={isRTL ? "text-left" : "text-right"}>
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleApprovePolicy(policy)}
+                                >
+                                  <CheckCircle2 className="size-4 mr-2" />
+                                  Approve Requested
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => handleRejectPolicy(policy.principal_id)}
+                                >
+                                  <XCircle className="size-4 mr-2" />
+                                  Reject
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-base">Action Approvals</CardTitle>
+                  <CardDescription>
+                    Decide sensitive workload actions from one screen.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+                    <Input
+                      placeholder="subject_type (e.g. agent)"
+                      value={decisionForm.subject_type}
+                      onChange={(e) => setDecisionForm((prev) => ({ ...prev, subject_type: e.target.value }))}
+                    />
+                    <Input
+                      placeholder="subject_id"
+                      value={decisionForm.subject_id}
+                      onChange={(e) => setDecisionForm((prev) => ({ ...prev, subject_id: e.target.value }))}
+                    />
+                    <Input
+                      placeholder="action_scope (e.g. agents.publish)"
+                      value={decisionForm.action_scope}
+                      onChange={(e) => setDecisionForm((prev) => ({ ...prev, action_scope: e.target.value }))}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        className="flex-1"
+                        onClick={() => handleDecideActionApproval(decisionForm, "approved")}
+                        disabled={!decisionForm.subject_type || !decisionForm.subject_id || !decisionForm.action_scope}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        className="flex-1"
+                        variant="destructive"
+                        onClick={() => handleDecideActionApproval(decisionForm, "rejected")}
+                        disabled={!decisionForm.subject_type || !decisionForm.subject_id || !decisionForm.action_scope}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  </div>
+                  <Textarea
+                    placeholder="Optional rationale"
+                    value={decisionForm.rationale}
+                    onChange={(e) => setDecisionForm((prev) => ({ ...prev, rationale: e.target.value }))}
+                  />
+
+                  <div className="flex items-center justify-between">
+                    <Badge variant="outline" className="text-xs">{filteredActionApprovals.length} decisions</Badge>
+                  </div>
+                  {isWorkloadLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  ) : filteredActionApprovals.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
+                      No action approval decisions found.
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>Subject</TableHead>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>Action Scope</TableHead>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>Status</TableHead>
+                          <TableHead className={isRTL ? "text-right" : "text-left"}>Decided</TableHead>
+                          <TableHead className={isRTL ? "text-left" : "text-right"}>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredActionApprovals.map((approval) => (
+                          <TableRow key={approval.id}>
+                            <TableCell className={isRTL ? "text-right" : "text-left"}>
+                              <div className="text-xs">
+                                <div className="font-medium">{approval.subject_type}</div>
+                                <div className="font-mono text-muted-foreground">{approval.subject_id}</div>
+                              </div>
+                            </TableCell>
+                            <TableCell className={cn("text-xs", isRTL ? "text-right" : "text-left")}>
+                              {approval.action_scope}
+                            </TableCell>
+                            <TableCell className={isRTL ? "text-right" : "text-left"}>
+                              <Badge
+                                variant={
+                                  approval.status === "approved"
+                                    ? "default"
+                                    : approval.status === "rejected"
+                                      ? "destructive"
+                                      : "secondary"
+                                }
+                                className="text-[10px]"
+                              >
+                                {approval.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className={cn("text-xs", isRTL ? "text-right" : "text-left")}>
+                              {approval.decided_at ? new Date(approval.decided_at).toLocaleString() : "n/a"}
+                            </TableCell>
+                            <TableCell className={isRTL ? "text-left" : "text-right"}>
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    handleDecideActionApproval(
+                                      {
+                                        subject_type: approval.subject_type,
+                                        subject_id: approval.subject_id,
+                                        action_scope: approval.action_scope,
+                                      },
+                                      "approved"
+                                    )
+                                  }
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() =>
+                                    handleDecideActionApproval(
+                                      {
+                                        subject_type: approval.subject_type,
+                                        subject_id: approval.subject_id,
+                                        action_scope: approval.action_scope,
+                                      },
+                                      "rejected"
+                                    )
+                                  }
+                                >
+                                  Reject
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           </TabsContent>
         </Tabs>

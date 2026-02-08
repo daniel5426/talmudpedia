@@ -92,7 +92,7 @@ function PipelineBuilderInner({
     setIsCatalogVisible(!isExecutionMode)
   }
 
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, fitView } = useReactFlow()
 
   const sanitizedInitialNodes = useMemo(() => {
     return initialNodes.map(node => {
@@ -320,6 +320,19 @@ function PipelineBuilderInner({
     }
   }, [setNodes, setEdges, takeSnapshot])
 
+  const handleAutoLayout = useCallback(() => {
+    if (nodes.length === 0) return
+
+    const layoutedNodes = computeAutoLayout(nodes, edges)
+    setNodes(layoutedNodes)
+    setIsCatalogVisible(false)
+
+    setTimeout(() => {
+      takeSnapshot(layoutedNodes as Node<PipelineNodeData>[], edges)
+      fitView({ padding: 0.2, duration: 300 })
+    }, 0)
+  }, [nodes, edges, setNodes, takeSnapshot, fitView])
+
   const handleCatalogToggle = useCallback(() => {
     if (isExecutionMode && onExitExecutionMode) {
       onExitExecutionMode()
@@ -390,6 +403,8 @@ function PipelineBuilderInner({
             onSave={onSave ? () => onSave(nodes as Node<PipelineNodeData>[], edges) : undefined}
             onCompile={onCompile}
             onRun={onRun}
+            onAutoLayout={handleAutoLayout}
+            autoLayoutDisabled={nodes.length === 0}
             onClear={handleClearCanvas}
             isSaving={isSaving}
             isCompiling={isCompiling}
@@ -433,4 +448,86 @@ export function PipelineBuilder(props: PipelineBuilderProps) {
       <PipelineBuilderInner {...props} />
     </ReactFlowProvider>
   )
+}
+
+function computeAutoLayout<T>(nodes: Node<T>[], edges: Edge[]) {
+  const nodeSpacing = 140
+  const rankSpacing = 280
+  const startX = 40
+  const startY = 40
+
+  const indegree = new Map<string, number>()
+  const outgoing = new Map<string, string[]>()
+
+  nodes.forEach((node) => {
+    indegree.set(node.id, 0)
+    outgoing.set(node.id, [])
+  })
+
+  edges.forEach((edge) => {
+    if (!edge.source || !edge.target) return
+    if (!indegree.has(edge.target)) return
+    indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1)
+    const list = outgoing.get(edge.source) || []
+    list.push(edge.target)
+    outgoing.set(edge.source, list)
+  })
+
+  const ranks = new Map<string, number>()
+  const queue: string[] = []
+
+  indegree.forEach((count, id) => {
+    if (count === 0) queue.push(id)
+  })
+
+  while (queue.length) {
+    const current = queue.shift()
+    if (!current) continue
+    const currentRank = ranks.get(current) ?? 0
+    const neighbors = outgoing.get(current) || []
+    neighbors.forEach((target) => {
+      const nextRank = currentRank + 1
+      const existing = ranks.get(target)
+      ranks.set(target, existing !== undefined ? Math.max(existing, nextRank) : nextRank)
+      const nextIndegree = (indegree.get(target) || 0) - 1
+      indegree.set(target, nextIndegree)
+      if (nextIndegree === 0) {
+        queue.push(target)
+      }
+    })
+  }
+
+  nodes.forEach((node) => {
+    if (!ranks.has(node.id)) {
+      ranks.set(node.id, 0)
+    }
+  })
+
+  const grouped = new Map<number, Node<T>[]>()
+  nodes.forEach((node) => {
+    const rank = ranks.get(node.id) ?? 0
+    const list = grouped.get(rank) || []
+    list.push(node)
+    grouped.set(rank, list)
+  })
+
+  const sortedRanks = Array.from(grouped.keys()).sort((a, b) => a - b)
+
+  const layoutedNodes: Node<T>[] = []
+  sortedRanks.forEach((rank) => {
+    const row = grouped.get(rank) || []
+    row.sort((a, b) => (a.position.y - b.position.y) || a.id.localeCompare(b.id))
+
+    row.forEach((node, index) => {
+      layoutedNodes.push({
+        ...node,
+        position: {
+          x: startX + rank * rankSpacing,
+          y: startY + index * nodeSpacing,
+        },
+      })
+    })
+  })
+
+  return layoutedNodes
 }

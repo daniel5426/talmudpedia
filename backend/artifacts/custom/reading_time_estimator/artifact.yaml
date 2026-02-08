@@ -1,0 +1,40 @@
+id: custom/reading_time_estimator
+version: "1.0.0"
+display_name: Reading Time Estimator
+category: tool
+description: Estimate reading time for a text input.
+input_type: none
+output_type: none
+scope: tool
+inputs:
+  - name: text
+    type: string
+    required: true
+    description: Text to analyze.
+  - name: wpm
+    type: number
+    required: false
+    default: 200
+    description: Words per minute.
+outputs:
+  - name: word_count
+    type: integer
+  - name: minutes
+    type: number
+  - name: seconds
+    type: integer
+  - name: summary
+    type: string
+reads:
+  - messages
+  - context
+writes:
+  - context
+  - tool_outputs
+ui:
+  icon: Clock
+  color: "#0ea5e9"
+author: Platform Tests
+tags:
+  - tool
+  - reading_time

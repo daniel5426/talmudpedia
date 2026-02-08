@@ -30,6 +30,14 @@ class CreateProviderRequest(BaseModel):
     provider_model_id: str
     priority: int = 0
     config: Optional[dict] = None
+    credentials_ref: Optional[uuid.UUID] = None
+
+class UpdateProviderRequest(BaseModel):
+    provider_model_id: Optional[str] = None
+    priority: Optional[int] = None
+    is_enabled: Optional[bool] = None
+    config: Optional[dict] = None
+    credentials_ref: Optional[uuid.UUID] = None
 
 class ModelProviderSummary(BaseModel):
     id: uuid.UUID
@@ -38,6 +46,7 @@ class ModelProviderSummary(BaseModel):
     priority: int
     is_enabled: bool
     config: dict
+    credentials_ref: Optional[uuid.UUID] = None
 
 class CreateModelRequest(BaseModel):
     name: str # Display Name
@@ -141,7 +150,8 @@ async def list_models(
                 provider_model_id=p.provider_model_id,
                 priority=p.priority,
                 is_enabled=p.is_enabled,
-                config=p.config or {}
+                config=p.config or {},
+                credentials_ref=p.credentials_ref
             ) for p in m.providers]
         ) for m in models],
         total=total
@@ -229,7 +239,8 @@ async def get_model(
             provider_model_id=p.provider_model_id,
             priority=p.priority,
             is_enabled=p.is_enabled,
-            config=p.config or {}
+            config=p.config or {},
+            credentials_ref=p.credentials_ref
         ) for p in model.providers]
     )
 
@@ -323,7 +334,8 @@ async def add_provider_binding(
         provider=request.provider,
         provider_model_id=request.provider_model_id,
         priority=request.priority,
-        config=request.config or {}
+        config=request.config or {},
+        credentials_ref=request.credentials_ref
     )
     
     db.add(binding)
@@ -336,7 +348,57 @@ async def add_provider_binding(
         provider_model_id=binding.provider_model_id,
         priority=binding.priority,
         is_enabled=binding.is_enabled,
-        config=binding.config or {}
+        config=binding.config or {},
+        credentials_ref=binding.credentials_ref
+    )
+
+@router.patch("/{model_id}/providers/{provider_id}", response_model=ModelProviderSummary)
+async def update_provider_binding(
+    model_id: uuid.UUID,
+    provider_id: uuid.UUID,
+    request: UpdateProviderRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tenant_context),
+    current_user=Depends(get_current_user),
+):
+    """Update a provider binding."""
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    stmt = select(ModelProviderBinding).where(
+        and_(
+            ModelProviderBinding.id == provider_id,
+            ModelProviderBinding.model_id == model_id,
+            ModelProviderBinding.tenant_id == tid
+        )
+    )
+    res = await db.execute(stmt)
+    binding = res.scalar_one_or_none()
+
+    if not binding:
+        raise HTTPException(status_code=404, detail="Provider binding not found")
+
+    if request.provider_model_id is not None:
+        binding.provider_model_id = request.provider_model_id
+    if request.priority is not None:
+        binding.priority = request.priority
+    if request.is_enabled is not None:
+        binding.is_enabled = request.is_enabled
+    if request.config is not None:
+        binding.config = request.config
+    if "credentials_ref" in request.model_fields_set:
+        binding.credentials_ref = request.credentials_ref
+
+    await db.commit()
+    await db.refresh(binding)
+
+    return ModelProviderSummary(
+        id=binding.id,
+        provider=binding.provider,
+        provider_model_id=binding.provider_model_id,
+        priority=binding.priority,
+        is_enabled=binding.is_enabled,
+        config=binding.config or {},
+        credentials_ref=binding.credentials_ref
     )
 
 @router.delete("/{model_id}/providers/{provider_id}")

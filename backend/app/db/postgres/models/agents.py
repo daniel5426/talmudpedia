@@ -123,6 +123,9 @@ class AgentRun(Base):
     cost = Column(String, nullable=True)
     
     trace_id = Column(String, nullable=True)
+    workload_principal_id = Column(UUID(as_uuid=True), ForeignKey("workload_principals.id", ondelete="SET NULL"), nullable=True, index=True)
+    delegation_grant_id = Column(UUID(as_uuid=True), ForeignKey("delegation_grants.id", ondelete="SET NULL"), nullable=True, index=True)
+    initiator_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -131,7 +134,8 @@ class AgentRun(Base):
     # Relationships
     tenant = relationship("Tenant")
     agent = relationship("Agent", back_populates="runs")
-    user = relationship("User")
+    user = relationship("User", foreign_keys=[user_id])
+    initiator_user = relationship("User", foreign_keys=[initiator_user_id])
     traces = relationship("AgentTrace", back_populates="run", cascade="all, delete-orphan")
 
 

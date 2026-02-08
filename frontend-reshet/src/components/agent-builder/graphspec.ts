@@ -62,3 +62,17 @@ export function normalizeGraphSpecForSave(
     }))
     return { spec_version: "1.0", nodes: normalizedNodes, edges: normalizedEdges }
 }
+
+export function normalizeBuilderEdge(edge: Edge): Edge {
+    const sourceHandle = (edge as any).sourceHandle ?? (edge as any).source_handle
+    const targetHandle = (edge as any).targetHandle ?? (edge as any).target_handle
+    return {
+        ...edge,
+        sourceHandle: sourceHandle ?? undefined,
+        targetHandle: targetHandle ?? undefined,
+    }
+}
+
+export function normalizeBuilderEdges(edges: Edge[]) {
+    return edges.map(normalizeBuilderEdge)
+}

@@ -44,11 +44,14 @@ export type { Permission, Role, RoleAssignment, UserPermissions } from "./rbac";
 
 export { auditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";
+export { workloadSecurityService } from "./workload-security";
+export type { ApprovalStatus, PendingScopePolicy, ActionApprovalDecision } from "./workload-security";
 
 // Agent & Resource Services
 export { agentService } from "./agent";
 export { modelsService } from "./models";
 export { toolsService } from "./tools";
+export { credentialsService } from "./credentials";
 
 export type {
   Agent,
@@ -71,6 +74,14 @@ export type {
   UpdateToolRequest,
   ToolsListResponse,
 } from "./agent";
+
+export type {
+  IntegrationCredential,
+  IntegrationCredentialCategory,
+  CreateCredentialRequest,
+  UpdateCredentialRequest,
+  CredentialStatus,
+} from "./credentials";
 
 // Knowledge Stores
 export { knowledgeStoresService } from "./knowledge-stores";

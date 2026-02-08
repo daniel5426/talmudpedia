@@ -1,5 +1,14 @@
 # Authentication & Authorization V2 (Hybrid Model)
 
+Last Updated: 2026-02-07
+
+## Status Note
+This document is legacy context for user/tenant auth structure.
+For the current runtime auth state (delegated workload tokens, scope enforcement, and secure endpoint migration), use:
+- `backend/documentations/authentication_overview.md`
+- `backend/documentations/service_token_auth.md`
+- `backend/documentations/workload_delegation_auth_design.md`
+
 This document describes the current state of authentication and authorization in the platform, following the "Hybrid Product-Led + Enterprise" architecture.
 
 ## 1. Core Architecture

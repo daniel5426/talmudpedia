@@ -15,6 +15,7 @@ export interface KnowledgeStore {
   }
   retrieval_policy: 'semantic_only' | 'hybrid' | 'keyword_only' | 'recency_boosted'
   backend: 'pinecone' | 'pgvector' | 'qdrant'
+  credentials_ref?: string | null
   status: 'initializing' | 'active' | 'syncing' | 'error' | 'archived'
   document_count: number
   chunk_count: number
@@ -35,6 +36,7 @@ export interface CreateKnowledgeStoreRequest {
   retrieval_policy?: 'semantic_only' | 'hybrid' | 'keyword_only' | 'recency_boosted'
   backend?: 'pinecone' | 'pgvector' | 'qdrant'
   backend_config?: Record<string, unknown>
+  credentials_ref?: string | null
 }
 
 export interface UpdateKnowledgeStoreRequest {
@@ -46,6 +48,7 @@ export interface UpdateKnowledgeStoreRequest {
     chunk_overlap?: number
   }
   retrieval_policy?: 'semantic_only' | 'hybrid' | 'keyword_only' | 'recency_boosted'
+  credentials_ref?: string | null
 }
 
 export interface KnowledgeStoreStats {

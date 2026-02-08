@@ -1,5 +1,6 @@
 import logging
 import json
+import asyncio
 from collections.abc import Mapping
 import httpx
 from typing import Any, Dict
@@ -11,10 +12,97 @@ from app.agent.registry import AgentStateField
 from sqlalchemy import select, text
 from sqlalchemy.exc import ProgrammingError
 from app.db.postgres.models.registry import ToolRegistry
+from app.services.mcp_client import call_mcp_tool
+from app.services.tool_function_registry import get_tool_function, run_tool_function
 
 logger = logging.getLogger(__name__)
 
 class ToolNodeExecutor(BaseNodeExecutor):
+    async def _mint_workload_token(
+        self,
+        grant_id: str | None,
+        scope_subset: list[str] | None = None,
+        audience: str = "talmudpedia-internal-api",
+    ) -> str | None:
+        if not grant_id:
+            return None
+        from uuid import UUID
+        from app.db.postgres.engine import sessionmaker as async_sessionmaker
+        from app.services.token_broker_service import TokenBrokerService
+        async with async_sessionmaker() as token_db:
+            broker = TokenBrokerService(token_db)
+            token, _payload = await broker.mint_workload_token(
+                grant_id=UUID(str(grant_id)),
+                audience=audience,
+                scope_subset=scope_subset,
+            )
+            await token_db.commit()
+            return token
+
+    async def _execute_http_tool(
+        self,
+        tool,
+        input_data: Dict[str, Any],
+        implementation_config: Dict[str, Any],
+        node_context: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        url = implementation_config.get("url")
+        method = implementation_config.get("method", "POST")
+        headers = dict(implementation_config.get("headers", {}) or {})
+        grant_id = (node_context or {}).get("grant_id")
+        scope_subset = implementation_config.get("scope_subset")
+        if implementation_config.get("use_workload_token") and not grant_id:
+            raise PermissionError("Tool requires workload token, but no delegation grant is available")
+        if grant_id and implementation_config.get("use_workload_token"):
+            workload_token = await self._mint_workload_token(
+                grant_id=str(grant_id),
+                scope_subset=scope_subset if isinstance(scope_subset, list) else None,
+                audience=implementation_config.get("audience", "talmudpedia-internal-api"),
+            )
+            if workload_token:
+                headers["Authorization"] = f"Bearer {workload_token}"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.request(method, url, json=input_data, headers=headers)
+            response.raise_for_status()
+            return response.json()
+
+    async def _execute_function_tool(
+        self,
+        tool,
+        input_data: Dict[str, Any],
+        implementation_config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        function_name = implementation_config.get("function_name")
+        if not function_name:
+            raise ValueError("Function tool is missing function_name in implementation_config")
+
+        fn = get_tool_function(function_name)
+        if not fn:
+            raise RuntimeError(f"Function tool '{function_name}' is not registered")
+
+        result = await run_tool_function(fn, input_data)
+        if isinstance(result, dict):
+            return result
+        return {"result": result}
+
+    async def _execute_mcp_tool(
+        self,
+        tool,
+        input_data: Dict[str, Any],
+        implementation_config: Dict[str, Any],
+        timeout_s: int | None,
+    ) -> Dict[str, Any]:
+        server_url = implementation_config.get("server_url")
+        tool_name = implementation_config.get("tool_name")
+        headers = implementation_config.get("headers")
+        return await call_mcp_tool(
+            server_url=server_url,
+            tool_name=tool_name,
+            arguments=input_data,
+            headers=headers,
+            timeout_s=timeout_s,
+        )
     def _resolve_input_data(self, state: Dict[str, Any], config: Dict[str, Any] = None) -> Dict[str, Any]:
         prefer_last = False
         if isinstance(config, dict):
@@ -97,7 +185,21 @@ class ToolNodeExecutor(BaseNodeExecutor):
             parsed = json.loads(text)
             return parsed if isinstance(parsed, dict) else {}
         except Exception:
-            return {}
+            logger.error(f"Failed to parse last message JSON: {text}")
+        return {}   
+
+    def _build_literal_input_mappings(self, input_data: Any) -> Dict[str, Any]:
+        if isinstance(input_data, Mapping):
+            if not isinstance(input_data, dict):
+                return dict(input_data)
+            return input_data
+        return {"payload": input_data}
+
+    def _sanitize_input_data(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        sanitized = dict(input_data or {})
+        for key in ("token", "bearer_token", "api_key", "authorization", "auth_token"):
+            sanitized.pop(key, None)
+        return sanitized
 
     async def _has_artifact_columns(self) -> bool:
         try:
@@ -192,6 +294,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         # Here we assume the input is in `state.get('context')` or passed in explicitly?
         # Let's assume input comes from `state['context']` or is passed in `runtime_input`.
         input_data = self._resolve_input_data(state, config)
+        input_data = self._sanitize_input_data(input_data)
 
         # Extract emitter from ContextVar (global implicit context)
         from app.agent.execution.emitter import active_emitter
@@ -220,9 +323,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
             except Exception:
                 config_schema = {}
         implementation_config = config_schema.get("implementation", {})
+        execution_config = config_schema.get("execution", {}) if isinstance(config_schema, dict) else {}
+        timeout_s = execution_config.get("timeout_s") if isinstance(execution_config, dict) else None
         impl_type = getattr(tool, "implementation_type", None) or implementation_config.get("type", "internal")
         if hasattr(impl_type, "value"):
             impl_type = impl_type.value
+        if isinstance(impl_type, str):
+            impl_type = impl_type.lower()
 
         # Check for Artifact linkage (Phase 4)
         if hasattr(tool, "artifact_id") and tool.artifact_id:
@@ -230,11 +337,15 @@ class ToolNodeExecutor(BaseNodeExecutor):
             from app.agent.executors.artifact import ArtifactNodeExecutor
             
             # Prepare config for artifact executor
+            input_mappings = self._build_literal_input_mappings(input_data)
             artifact_config = {
                 **config,
                 "_artifact_id": tool.artifact_id,
                 "_artifact_version": tool.artifact_version,
                 "label": tool.name,
+                "input_mappings": input_mappings,
+                "_strict_validation": True,
+                "_literal_inputs": True,
             }
             
             artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
@@ -248,11 +359,15 @@ class ToolNodeExecutor(BaseNodeExecutor):
              artifact_id = implementation_config.get("artifact_id")
              logger.info(f"Delegating tool execution to artifact (inline): {artifact_id}")
              from app.agent.executors.artifact import ArtifactNodeExecutor
+             input_mappings = self._build_literal_input_mappings(input_data)
              artifact_config = {
                 **config,
                 "_artifact_id": artifact_id,
                 "_artifact_version": implementation_config.get("artifact_version"),
                 "label": tool.name,
+                "input_mappings": input_mappings,
+                "_strict_validation": True,
+                "_literal_inputs": True,
              }
              artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
              result = await artifact_executor.execute(state, artifact_config, context)
@@ -264,20 +379,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         try:
             if impl_type == "http":
-                url = implementation_config.get("url")
-                method = implementation_config.get("method", "POST")
-                headers = implementation_config.get("headers", {})
-                
-                async with httpx.AsyncClient() as client:
-                    response = await client.request(method, url, json=input_data, headers=headers)
-                    response.raise_for_status()
-                    output_data = response.json()
-            
+                output_data = await self._execute_http_tool(tool, input_data, implementation_config, context)
+
             elif impl_type == "function":
-                 # TODO: Registry of internal functions
-                 output_data = {"error": "Function execution not fully implemented"}
+                output_data = await self._execute_function_tool(tool, input_data, implementation_config)
             elif impl_type == "mcp":
-                raise NotImplementedError("MCP tool execution is not implemented yet")
+                output_data = await self._execute_mcp_tool(tool, input_data, implementation_config, timeout_s)
             
             else:
                 # Stub for now

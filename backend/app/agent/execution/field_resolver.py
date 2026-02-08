@@ -50,13 +50,16 @@ class FieldResolver:
     - Direct value - Use as literal (no {{ }})
     """
     
-    def __init__(self, strict_mode: bool = False):
+    def __init__(self, strict_mode: bool = False, literal_strings: bool = False):
         """
         Args:
             strict_mode: If True, raise errors on missing required fields.
                         If False (default), log warnings and continue.
+            literal_strings: If True, treat all string inputs as literal values
+                             and skip template/interpolation resolution.
         """
         self.strict_mode = strict_mode
+        self.literal_strings = literal_strings
     
     def resolve_inputs(
         self, 
@@ -119,6 +122,10 @@ class FieldResolver:
         """
         if not isinstance(expression, str):
             # Literal value (int, bool, list, dict, etc.)
+            return expression
+
+        if self.literal_strings:
+            # Tool-supplied inputs are treated as literal strings (no templating).
             return expression
         
         # Check if it's a template expression
@@ -302,7 +309,8 @@ def resolve_artifact_inputs(
     Returns:
         Dictionary of resolved input values
     """
-    resolver = FieldResolver(strict_mode=strict)
+    literal_strings = bool(config.get("_literal_inputs"))
+    resolver = FieldResolver(strict_mode=strict, literal_strings=literal_strings)
     
     input_specs = None
     if artifact_inputs:
@@ -328,5 +336,9 @@ def resolve_artifact_inputs(
                 logger.warning(f"Field resolution: {err.message}")
             else:
                 logger.error(f"Field resolution: {err.message}")
+        if strict:
+            error_messages = [err.message for err in errors if err.severity == "error"]
+            if error_messages:
+                raise ValueError("Artifact input validation failed: " + "; ".join(error_messages))
     
     return resolved

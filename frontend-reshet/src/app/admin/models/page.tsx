@@ -2,15 +2,19 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useDirection } from "@/components/direction-provider"
-import { useTenant } from "@/contexts/TenantContext"
 import {
     modelsService,
+    credentialsService,
     LogicalModel,
     ModelCapabilityType,
     ModelProviderType,
     ModelStatus,
     CreateModelRequest,
     CreateProviderRequest,
+    UpdateModelRequest,
+    UpdateProviderRequest,
+    ModelProviderSummary,
+    IntegrationCredential,
 } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -25,7 +29,6 @@ import {
     Plus,
     RefreshCw,
     Trash2,
-    Settings,
     Loader2,
     Cpu,
     MessageSquare,
@@ -33,6 +36,7 @@ import {
     Mic,
     Search as SearchIcon,
     Bot,
+    Pencil,
 } from "lucide-react"
 import {
     Dialog,
@@ -59,6 +63,7 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import { Checkbox } from "@/components/ui/checkbox"
 
 const CAPABILITY_ICONS: Record<ModelCapabilityType, React.ElementType> = {
     chat: MessageSquare,
@@ -96,6 +101,14 @@ const PROVIDER_LABELS: Record<ModelProviderType, string> = {
     groq: "Groq",
     mistral: "Mistral",
     together: "Together AI",
+}
+
+const safeJsonStringify = (value: unknown) => {
+    try {
+        return JSON.stringify(value ?? {}, null, 2)
+    } catch {
+        return "{}"
+    }
 }
 
 function CapabilityBadge({ type }: { type: ModelCapabilityType }) {
@@ -216,7 +229,169 @@ function CreateModelDialog({ onCreated }: { onCreated: () => void }) {
     )
 }
 
-function AddProviderDialog({ model, onAdded }: { model: LogicalModel; onAdded: () => void }) {
+function EditModelDialog({ model, onUpdated }: { model: LogicalModel; onUpdated: () => void }) {
+    const { direction } = useDirection()
+    const isRTL = direction === "rtl"
+    const [open, setOpen] = useState(false)
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const [form, setForm] = useState<UpdateModelRequest>({
+        name: model.name,
+        description: model.description || "",
+        status: model.status,
+        is_active: model.is_active ?? true,
+        is_default: model.is_default ?? false,
+    })
+    const [metadataText, setMetadataText] = useState(safeJsonStringify(model.metadata))
+    const [policyText, setPolicyText] = useState(safeJsonStringify(model.default_resolution_policy))
+
+    useEffect(() => {
+        if (open) {
+            setForm({
+                name: model.name,
+                description: model.description || "",
+                status: model.status,
+                is_active: model.is_active ?? true,
+                is_default: model.is_default ?? false,
+            })
+            setMetadataText(safeJsonStringify(model.metadata))
+            setPolicyText(safeJsonStringify(model.default_resolution_policy))
+            setError(null)
+        }
+    }, [open, model])
+
+    const handleSave = async () => {
+        setLoading(true)
+        setError(null)
+        let metadata = {}
+        let policy = {}
+        try {
+            metadata = metadataText.trim() ? JSON.parse(metadataText) : {}
+        } catch {
+            setError("Metadata must be valid JSON.")
+            setLoading(false)
+            return
+        }
+        try {
+            policy = policyText.trim() ? JSON.parse(policyText) : {}
+        } catch {
+            setError("Resolution policy must be valid JSON.")
+            setLoading(false)
+            return
+        }
+
+        try {
+            await modelsService.updateModel(model.id, {
+                ...form,
+                metadata,
+                default_resolution_policy: policy,
+            })
+            setOpen(false)
+            onUpdated()
+        } catch (err) {
+            console.error("Failed to update model", err)
+            setError("Failed to update model.")
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button variant="ghost" size="icon" data-testid={`edit-model-${model.id}`}>
+                    <Pencil className="h-4 w-4" />
+                </Button>
+            </DialogTrigger>
+            <DialogContent dir={direction}>
+                <DialogHeader>
+                    <DialogTitle className={isRTL ? "text-right" : "text-left"}>Edit Model</DialogTitle>
+                    <DialogDescription className={isRTL ? "text-right" : "text-left"}>
+                        Update logical model settings and defaults.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                        <Label htmlFor={`name-${model.id}`}>Name</Label>
+                        <Input
+                            id={`name-${model.id}`}
+                            value={form.name || ""}
+                            onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor={`description-${model.id}`}>Description</Label>
+                        <Textarea
+                            id={`description-${model.id}`}
+                            value={form.description || ""}
+                            onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Status</Label>
+                        <Select
+                            value={form.status}
+                            onValueChange={(v) => setForm({ ...form, status: v as ModelStatus })}
+                        >
+                            <SelectTrigger className="w-full">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="active">Active</SelectItem>
+                                <SelectItem value="deprecated">Deprecated</SelectItem>
+                                <SelectItem value="disabled">Disabled</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Checkbox
+                            checked={!!form.is_active}
+                            onCheckedChange={(v) => setForm({ ...form, is_active: v === true })}
+                        />
+                        <Label>Active</Label>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Checkbox
+                            checked={!!form.is_default}
+                            onCheckedChange={(v) => setForm({ ...form, is_default: v === true })}
+                        />
+                        <Label>Default for Capability</Label>
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Metadata (JSON)</Label>
+                        <Textarea
+                            value={metadataText}
+                            onChange={(e) => setMetadataText(e.target.value)}
+                            className="font-mono text-xs"
+                            rows={6}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Default Resolution Policy (JSON)</Label>
+                        <Textarea
+                            value={policyText}
+                            onChange={(e) => setPolicyText(e.target.value)}
+                            className="font-mono text-xs"
+                            rows={6}
+                        />
+                    </div>
+                    {error && (
+                        <p className="text-sm text-destructive">{error}</p>
+                    )}
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+                    <Button onClick={handleSave} disabled={loading}>
+                        {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Save Changes
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+function AddProviderDialog({ model, credentials, onAdded }: { model: LogicalModel; credentials: IntegrationCredential[]; onAdded: () => void }) {
     const { direction } = useDirection()
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
@@ -224,13 +399,30 @@ function AddProviderDialog({ model, onAdded }: { model: LogicalModel; onAdded: (
         provider: "openai",
         provider_model_id: "",
         priority: 0,
+        credentials_ref: undefined,
     })
+    const providerCredentials = credentials.filter(
+        (cred) => cred.category === "llm_provider" && cred.provider_key === form.provider
+    )
+
+    useEffect(() => {
+        setForm((prev) => {
+            if (prev.credentials_ref && !providerCredentials.find((cred) => cred.id === prev.credentials_ref)) {
+                return { ...prev, credentials_ref: undefined }
+            }
+            return prev
+        })
+    }, [form.provider, credentials])
 
     const handleAdd = async () => {
         if (!form.provider_model_id) return
         setLoading(true)
         try {
-            await modelsService.addProvider(model.id, form)
+            const payload = {
+                ...form,
+                credentials_ref: form.credentials_ref || undefined,
+            }
+            await modelsService.addProvider(model.id, payload)
             setOpen(false)
             setForm({ provider: "openai", provider_model_id: "", priority: 0 })
             onAdded()
@@ -282,8 +474,30 @@ function AddProviderDialog({ model, onAdded }: { model: LogicalModel; onAdded: (
                         />
                     </div>
                     <div className="space-y-2">
-                        <Label>Priority (lower = higher priority)</Label>
+                        <Label>Credentials</Label>
+                        <Select
+                            value={form.credentials_ref || "none"}
+                            onValueChange={(v) =>
+                                setForm({ ...form, credentials_ref: v === "none" ? undefined : v })
+                            }
+                        >
+                            <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Select credentials" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="none">No credentials</SelectItem>
+                                {providerCredentials.map((cred) => (
+                                    <SelectItem key={cred.id} value={cred.id}>
+                                        {cred.display_name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="add-provider-priority">Priority (lower = higher priority)</Label>
                         <Input
+                            id="add-provider-priority"
                             type="number"
                             value={form.priority}
                             onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
@@ -302,12 +516,136 @@ function AddProviderDialog({ model, onAdded }: { model: LogicalModel; onAdded: (
     )
 }
 
+function EditProviderDialog({
+    model,
+    provider,
+    credentials,
+    onUpdated,
+}: {
+    model: LogicalModel;
+    provider: ModelProviderSummary;
+    credentials: IntegrationCredential[];
+    onUpdated: () => void;
+}) {
+    const { direction } = useDirection()
+    const [open, setOpen] = useState(false)
+    const [loading, setLoading] = useState(false)
+    const [form, setForm] = useState<UpdateProviderRequest>({
+        provider_model_id: provider.provider_model_id,
+        priority: provider.priority,
+        is_enabled: provider.is_enabled,
+        credentials_ref: provider.credentials_ref ?? undefined,
+    })
+    const providerCredentials = credentials.filter(
+        (cred) => cred.category === "llm_provider" && cred.provider_key === provider.provider
+    )
+
+    useEffect(() => {
+        if (open) {
+            setForm({
+                provider_model_id: provider.provider_model_id,
+                priority: provider.priority,
+                is_enabled: provider.is_enabled,
+                credentials_ref: provider.credentials_ref ?? undefined,
+            })
+        }
+    }, [open, provider])
+
+    const handleSave = async () => {
+        setLoading(true)
+        try {
+            await modelsService.updateProvider(model.id, provider.id, form)
+            setOpen(false)
+            onUpdated()
+        } catch (error) {
+            console.error("Failed to update provider", error)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button variant="ghost" size="icon" data-testid={`edit-provider-${provider.id}`}>
+                    <Pencil className="h-3 w-3" />
+                </Button>
+            </DialogTrigger>
+            <DialogContent dir={direction}>
+                <DialogHeader>
+                    <DialogTitle>Edit Provider Binding</DialogTitle>
+                    <DialogDescription>
+                        Update provider routing and credentials.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                        <Label>Provider</Label>
+                        <Input value={PROVIDER_LABELS[provider.provider] || provider.provider} disabled />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Provider Model ID</Label>
+                        <Input
+                            value={form.provider_model_id || ""}
+                            onChange={(e) => setForm({ ...form, provider_model_id: e.target.value })}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Credentials</Label>
+                        <Select
+                            value={form.credentials_ref || "none"}
+                            onValueChange={(v) =>
+                                setForm({ ...form, credentials_ref: v === "none" ? undefined : v })
+                            }
+                        >
+                            <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Select credentials" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="none">No credentials</SelectItem>
+                                {providerCredentials.map((cred) => (
+                                    <SelectItem key={cred.id} value={cred.id}>
+                                        {cred.display_name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="edit-provider-priority">Priority (lower = higher priority)</Label>
+                        <Input
+                            id="edit-provider-priority"
+                            type="number"
+                            value={form.priority ?? 0}
+                            onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
+                        />
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Checkbox
+                            checked={!!form.is_enabled}
+                            onCheckedChange={(v) => setForm({ ...form, is_enabled: v === true })}
+                        />
+                        <Label>Enabled</Label>
+                    </div>
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+                    <Button onClick={handleSave} disabled={loading}>
+                        {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Save
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
 export default function ModelsPage() {
-    const { currentTenant } = useTenant()
     const { direction } = useDirection()
     const isRTL = direction === "rtl"
     const [models, setModels] = useState<LogicalModel[]>([])
     const [loading, setLoading] = useState(true)
+    const [credentials, setCredentials] = useState<IntegrationCredential[]>([])
     const [filter, setFilter] = useState<ModelCapabilityType | "all">("all")
 
     const fetchModels = useCallback(async () => {
@@ -326,6 +664,19 @@ export default function ModelsPage() {
     useEffect(() => {
         fetchModels()
     }, [fetchModels])
+
+    const fetchCredentials = useCallback(async () => {
+        try {
+            const response = await credentialsService.listCredentials("llm_provider")
+            setCredentials(response)
+        } catch (error) {
+            console.error("Failed to fetch credentials", error)
+        }
+    }, [])
+
+    useEffect(() => {
+        fetchCredentials()
+    }, [fetchCredentials])
 
     const handleDelete = async (id: string) => {
         if (!confirm("Are you sure you want to delete this model?")) return
@@ -349,7 +700,7 @@ export default function ModelsPage() {
 
     return (
         <div className="flex flex-col h-full w-full" dir={direction}>
-            <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
                         <CustomBreadcrumb items={[
@@ -369,7 +720,15 @@ export default function ModelsPage() {
                             ))}
                         </SelectContent>
                     </Select>
-                    <Button variant="outline" size="sm" className="h-9" onClick={fetchModels}>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => {
+                            fetchModels()
+                            fetchCredentials()
+                        }}
+                    >
                         <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
                         Refresh
                     </Button>
@@ -413,6 +772,7 @@ export default function ModelsPage() {
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <CapabilityBadge type={model.capability_type} />
+                                            <EditModelDialog model={model} onUpdated={fetchModels} />
                                             <Button variant="ghost" size="icon" onClick={() => handleDelete(model.id)}>
                                                 <Trash2 className="h-4 w-4 text-destructive" />
                                             </Button>
@@ -423,7 +783,7 @@ export default function ModelsPage() {
                                     <div className="space-y-3">
                                         <div className="flex items-center justify-between">
                                             <h4 className="text-sm font-medium">Providers ({model.providers.length})</h4>
-                                            <AddProviderDialog model={model} onAdded={fetchModels} />
+                                            <AddProviderDialog model={model} credentials={credentials} onAdded={fetchModels} />
                                         </div>
                                         {model.providers.length > 0 ? (
                                             <Table>
@@ -432,6 +792,7 @@ export default function ModelsPage() {
                                                         <TableHead>Provider</TableHead>
                                                         <TableHead>Model ID</TableHead>
                                                         <TableHead>Priority</TableHead>
+                                                        <TableHead>Credentials</TableHead>
                                                         <TableHead>Status</TableHead>
                                                         <TableHead className="w-[50px]"></TableHead>
                                                     </TableRow>
@@ -446,19 +807,32 @@ export default function ModelsPage() {
                                                             </TableCell>
                                                             <TableCell className="font-mono text-sm">{provider.provider_model_id}</TableCell>
                                                             <TableCell>{provider.priority}</TableCell>
+                                                            <TableCell className="text-xs">
+                                                                {provider.credentials_ref
+                                                                    ? credentials.find((cred) => cred.id === provider.credentials_ref)?.display_name || "Linked"
+                                                                    : "None"}
+                                                            </TableCell>
                                                             <TableCell>
                                                                 <Badge variant={provider.is_enabled ? "default" : "outline"}>
                                                                     {provider.is_enabled ? "Enabled" : "Disabled"}
                                                                 </Badge>
                                                             </TableCell>
                                                             <TableCell>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon"
-                                                                    onClick={() => handleRemoveProvider(model.id, provider.id)}
-                                                                >
-                                                                    <Trash2 className="h-3 w-3 text-muted-foreground" />
-                                                                </Button>
+                                                                <div className="flex items-center gap-1">
+                                                                    <EditProviderDialog
+                                                                        model={model}
+                                                                        provider={provider}
+                                                                        credentials={credentials}
+                                                                        onUpdated={fetchModels}
+                                                                    />
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        onClick={() => handleRemoveProvider(model.id, provider.id)}
+                                                                    >
+                                                                        <Trash2 className="h-3 w-3 text-muted-foreground" />
+                                                                    </Button>
+                                                                </div>
                                                             </TableCell>
                                                         </TableRow>
                                                     ))}

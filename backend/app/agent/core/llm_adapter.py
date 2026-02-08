@@ -77,6 +77,24 @@ class LLMProviderAdapter(BaseChatModel):
         
         try:
             async for chunk in self.provider.stream(messages, system_prompt=system_prompt, **kwargs):
+                if isinstance(chunk, AIMessageChunk):
+                    msg_chunk = chunk
+                    content = msg_chunk.content
+
+                    if content and not isinstance(content, str):
+                        content = str(content)
+                        msg_chunk = msg_chunk.model_copy(update={"content": content})
+
+                    lc_chunk = ChatGenerationChunk(message=msg_chunk)
+                    if run_manager:
+                        if content:
+                            await run_manager.on_llm_new_token(content, chunk=lc_chunk)
+                    else:
+                        logger.debug("run_manager is None, skipping on_llm_new_token")
+
+                    yield lc_chunk
+                    continue
+
                 content = ""
                 
                 reasoning_content = ""

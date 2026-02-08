@@ -1,5 +1,5 @@
 import { httpClient } from "./http";
-import { LogicalModel, ModelsListResponse, ModelCapabilityType, ModelStatus, CreateModelRequest, UpdateModelRequest, ModelProviderSummary, CreateProviderRequest } from "./agent";
+import { LogicalModel, ModelsListResponse, ModelCapabilityType, ModelStatus, CreateModelRequest, UpdateModelRequest, ModelProviderSummary, CreateProviderRequest, UpdateProviderRequest } from "./agent";
 
 // We re-export types that were previously in agent-resources from agent.ts 
 // so we don't need to change imports in many places.
@@ -39,6 +39,10 @@ export const modelsService = {
 
   async addProvider(modelId: string, data: CreateProviderRequest): Promise<ModelProviderSummary> {
     return httpClient.post<ModelProviderSummary>(`/models/${modelId}/providers`, data);
+  },
+
+  async updateProvider(modelId: string, providerId: string, data: UpdateProviderRequest): Promise<ModelProviderSummary> {
+    return httpClient.patch<ModelProviderSummary>(`/models/${modelId}/providers/${providerId}`, data);
   },
 
   async removeProvider(modelId: string, providerId: string): Promise<void> {

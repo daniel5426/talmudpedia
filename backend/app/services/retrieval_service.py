@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.db.postgres.models import KnowledgeStore, RetrievalPolicy
 from app.rag.adapters import create_adapter, SearchResult, VectorBackendAdapter
 from app.services.model_resolver import ModelResolver
+from app.services.credentials_service import CredentialsService
 
 
 class RetrievalResult(BaseModel):
@@ -50,8 +51,18 @@ class RetrievalService:
     async def _get_adapter(self, store: KnowledgeStore) -> VectorBackendAdapter:
         """Get or create an adapter for the knowledge store."""
         if store.id not in self._adapter_cache:
-            self._adapter_cache[store.id] = create_adapter(store.backend, store.backend_config)
+            config = await self._resolve_backend_config(store)
+            self._adapter_cache[store.id] = create_adapter(store.backend, config)
         return self._adapter_cache[store.id]
+
+    async def _resolve_backend_config(self, store: KnowledgeStore) -> Dict[str, Any]:
+        """Merge backend config with credentials (if provided)."""
+        base_config = store.backend_config or {}
+        if not store.credentials_ref:
+            return dict(base_config)
+
+        credentials_service = CredentialsService(self._db, store.tenant_id)
+        return await credentials_service.resolve_backend_config(base_config, store.credentials_ref)
     
     async def _embed_query(self, query: str, embedding_model_id: str, tenant_id: UUID) -> List[float]:
         """Embed a query string using the store's configured embedding model."""

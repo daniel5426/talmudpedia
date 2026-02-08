@@ -133,6 +133,12 @@ const data = {
         },
       ],
     },
+    {
+      title: "Settings",
+      url: "/admin/settings",
+      icon: Settings,
+      items: [],
+    },
   ]
 };
 

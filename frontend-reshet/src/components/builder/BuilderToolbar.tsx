@@ -12,6 +12,7 @@ import {
     Play,
     Loader2,
     LayoutPanelLeft,
+    LayoutGrid,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -82,11 +83,13 @@ interface BuilderToolbarProps {
     onSave?: () => void
     onCompile?: () => void
     onRun?: () => void
+    onAutoLayout?: () => void
     onClear: () => void
 
     // Loading states
     isSaving?: boolean
     isCompiling?: boolean
+    autoLayoutDisabled?: boolean
 }
 
 /**
@@ -102,9 +105,11 @@ export function BuilderToolbar({
     onSave,
     onCompile,
     onRun,
+    onAutoLayout,
     onClear,
     isSaving,
     isCompiling,
+    autoLayoutDisabled,
 }: BuilderToolbarProps) {
     return (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-1.5 bg-background/90 backdrop-blur-md border rounded-2xl">
@@ -167,6 +172,15 @@ export function BuilderToolbar({
                     onClick={onRun}
                     variant="run"
                     title="Run"
+                />
+            )}
+
+            {onAutoLayout && (
+                <ToolbarButton
+                    icon={<LayoutGrid className="h-4 w-4" />}
+                    onClick={onAutoLayout}
+                    disabled={autoLayoutDisabled}
+                    title="Auto Layout"
                 />
             )}
 

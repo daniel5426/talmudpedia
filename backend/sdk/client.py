@@ -1,6 +1,6 @@
 import os
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 from .nodes import NodeFactory
 
 class Client:
@@ -14,13 +14,13 @@ class Client:
         api_key: Optional[str] = None,
         tenant_id: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
+        token_provider: Optional[Callable[[], Optional[str]]] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.token_provider = token_provider
         self.tenant_id = str(tenant_id) if tenant_id is not None else None
         self.headers = {}
-        if self.api_key:
-            self.headers["Authorization"] = f"Bearer {self.api_key}"
         if self.tenant_id:
             self.headers["X-Tenant-ID"] = self.tenant_id
         if extra_headers:
@@ -31,6 +31,20 @@ class Client:
             
         self._nodes = None
         self._agent_nodes = None
+
+    def _build_headers(self) -> Dict[str, str]:
+        headers = dict(self.headers)
+        token = self.api_key
+        if self.token_provider:
+            try:
+                provided = self.token_provider()
+                if provided:
+                    token = provided
+            except Exception:
+                pass
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
 
     @classmethod
     def from_env(
@@ -72,8 +86,9 @@ class Client:
         # 1. Fetch RAG Catalog
         try:
             # Prefix from main.py: /admin/pipelines
-            print(f"[sdk.client] fetching RAG catalog headers={self.headers} base_url={self.base_url}")
-            rag_resp = requests.get(f"{self.base_url}/admin/pipelines/catalog", headers=self.headers)
+            request_headers = self._build_headers()
+            print(f"[sdk.client] fetching RAG catalog headers={request_headers} base_url={self.base_url}")
+            rag_resp = requests.get(f"{self.base_url}/admin/pipelines/catalog", headers=request_headers)
             rag_resp.raise_for_status()
             rag_catalog = rag_resp.json()
         except Exception as e:
@@ -83,8 +98,9 @@ class Client:
         # 2. Fetch Agent Catalog
         try:
             # Prefix from main.py: /agents
-            print(f"[sdk.client] fetching Agent catalog headers={self.headers} base_url={self.base_url}")
-            agent_resp = requests.get(f"{self.base_url}/agents/operators", headers=self.headers)
+            request_headers = self._build_headers()
+            print(f"[sdk.client] fetching Agent catalog headers={request_headers} base_url={self.base_url}")
+            agent_resp = requests.get(f"{self.base_url}/agents/operators", headers=request_headers)
             agent_resp.raise_for_status()
             agent_catalog = agent_resp.json()
         except Exception as e:

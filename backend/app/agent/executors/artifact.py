@@ -130,6 +130,24 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
             )
             
             # Prepare execution context with both resolved inputs and full state
+            async def _mint_workload_token(scope_subset: Optional[list[str]] = None, audience: str = "talmudpedia-internal-api") -> Optional[str]:
+                grant_id = (context or {}).get("grant_id")
+                if not grant_id:
+                    raise PermissionError("Missing delegation grant context for workload token minting")
+                from uuid import UUID
+                from app.db.postgres.engine import sessionmaker as async_sessionmaker
+                from app.services.token_broker_service import TokenBrokerService
+
+                async with async_sessionmaker() as token_db:
+                    broker = TokenBrokerService(token_db)
+                    token, _payload = await broker.mint_workload_token(
+                        grant_id=UUID(str(grant_id)),
+                        audience=audience,
+                        scope_subset=scope_subset,
+                    )
+                    await token_db.commit()
+                    return token
+
             exec_context = {
                 **(context or {}),
                 "artifact_id": artifact_id,
@@ -137,6 +155,13 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
                 "emitter": emitter,
                 "tenant_id": self.tenant_id,
                 "inputs": resolved_inputs,  # Structured resolved inputs
+                "auth": {
+                    "grant_id": (context or {}).get("grant_id"),
+                    "principal_id": (context or {}).get("principal_id"),
+                    "initiator_user_id": (context or {}).get("initiator_user_id"),
+                    "run_id": (context or {}).get("run_id"),
+                    "mint_token": _mint_workload_token,
+                },
             }
             
             # Execute handler (support both sync and async)

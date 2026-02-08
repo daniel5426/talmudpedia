@@ -1,11 +1,15 @@
+import asyncio
 import logging
 import json
 import re
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.registry import AgentOperatorRegistry, AgentOperatorSpec, AgentStateField, AgentExecutorRegistry
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage, ToolMessage
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, create_model
 from app.services.model_resolver import ModelResolver
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.agent.cel_engine import evaluate_template
@@ -28,6 +32,18 @@ class StartNodeExecutor(BaseNodeExecutor):
         # Initialize state variables from config
         state_vars = config.get("state_variables", [])
         input_vars = config.get("input_variables", [])
+
+        from app.agent.execution.emitter import active_emitter
+        emitter = active_emitter.get()
+        node_id = context.get("node_id", "start") if context else "start"
+        node_name = context.get("node_name", "Start") if context else "Start"
+        if emitter:
+            emitter.emit_node_start(
+                node_id,
+                node_name,
+                "start",
+                {"state_variables": len(state_vars), "input_variables": len(input_vars)},
+            )
         
         initial_state = {}
         
@@ -41,9 +57,10 @@ class StartNodeExecutor(BaseNodeExecutor):
         # Input variables are expected to come from the user input
         # They're defined here for documentation/validation
         
-        if initial_state:
-            return {"state": initial_state}
-        return {}
+        result = {"state": initial_state} if initial_state else {}
+        if emitter:
+            emitter.emit_node_end(node_id, node_name, "start", {"keys": list(result.keys())})
+        return result
 
 
 class EndNodeExecutor(BaseNodeExecutor):
@@ -57,6 +74,18 @@ class EndNodeExecutor(BaseNodeExecutor):
         
         output_variable = config.get("output_variable")
         output_message = config.get("output_message")
+
+        from app.agent.execution.emitter import active_emitter
+        emitter = active_emitter.get()
+        node_id = context.get("node_id", "end") if context else "end"
+        node_name = context.get("node_name", "End") if context else "End"
+        if emitter:
+            emitter.emit_node_start(
+                node_id,
+                node_name,
+                "end",
+                {"output_variable": output_variable, "has_output_message": bool(output_message)},
+            )
         
         result = {}
         
@@ -77,6 +106,8 @@ class EndNodeExecutor(BaseNodeExecutor):
                 logger.warning(f"Failed to interpolate output message: {e}")
                 result["final_output"] = output_message
         
+        if emitter:
+            emitter.emit_node_end(node_id, node_name, "end", {"has_output": bool(result)})
         return result
 
 
@@ -198,6 +229,14 @@ class LLMNodeExecutor(BaseNodeExecutor):
             else:
                 formatted.append(HumanMessage(content=str(msg)))
         return formatted
+
+
+@dataclass
+class ToolExecutionPolicy:
+    is_pure: bool
+    concurrency_group: str
+    max_concurrency: int
+    timeout_s: Optional[int]
 
 
 class ReasoningNodeExecutor(BaseNodeExecutor):
@@ -323,6 +362,227 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             "input": input_data,
         }
 
+    def _parse_config_schema(self, config_schema: Any) -> Dict[str, Any]:
+        if isinstance(config_schema, dict):
+            return config_schema
+        if isinstance(config_schema, str):
+            try:
+                parsed = json.loads(config_schema)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    def _get_tool_execution_policy(self, tool: Any, default_timeout: Optional[int]) -> ToolExecutionPolicy:
+        config_schema = self._parse_config_schema(getattr(tool, "config_schema", {}) or {})
+        execution = config_schema.get("execution") if isinstance(config_schema, dict) else {}
+        if not isinstance(execution, dict):
+            execution = {}
+        is_pure = bool(execution.get("is_pure", False))
+        concurrency_group = execution.get("concurrency_group") or "default"
+        max_concurrency = execution.get("max_concurrency")
+        if max_concurrency is None or int(max_concurrency) < 1:
+            max_concurrency = 1
+        timeout_s = execution.get("timeout_s", None)
+        if timeout_s is None:
+            timeout_s = default_timeout
+        return ToolExecutionPolicy(
+            is_pure=is_pure,
+            concurrency_group=str(concurrency_group),
+            max_concurrency=int(max_concurrency),
+            timeout_s=timeout_s,
+        )
+
+    def _build_langchain_tool(self, tool: Any) -> BaseTool:
+        tool_name = getattr(tool, "slug", None) or getattr(tool, "name", "tool")
+        description = getattr(tool, "description", "") or ""
+        schema = getattr(tool, "schema", {}) or {}
+        if isinstance(schema, str):
+            try:
+                schema = json.loads(schema)
+            except Exception:
+                schema = {}
+        input_schema = schema.get("input", {}) if isinstance(schema, dict) else {}
+
+        args_schema: type[BaseModel]
+        if isinstance(input_schema, dict) and input_schema.get("properties"):
+            props = input_schema.get("properties", {}) or {}
+            required = set(input_schema.get("required", []) or [])
+            fields: Dict[str, Any] = {}
+            for prop_name in props.keys():
+                default = ... if prop_name in required else None
+                fields[prop_name] = (Any, default)
+            model_name = tool_name.title().replace("-", "_").replace(" ", "_")
+            args_schema = create_model(f"{model_name}Args", **fields)
+        else:
+            model_name = tool_name.title().replace("-", "_").replace(" ", "_")
+            args_schema = create_model(f"{model_name}Args", input=(Any, ...))
+
+        def _run(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("RegistryTool is for tool binding only")
+
+        async def _arun(*args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError("RegistryTool is for tool binding only")
+
+        registry_tool_cls = type(
+            f"{tool_name.title().replace('-', '_').replace(' ', '_')}Tool",
+            (BaseTool,),
+            {
+                "__annotations__": {
+                    "name": str,
+                    "description": str,
+                    "args_schema": type[BaseModel],
+                },
+                "__module__": __name__,
+                "name": tool_name,
+                "description": description,
+                "args_schema": args_schema,
+                "_run": _run,
+                "_arun": _arun,
+            },
+        )
+
+        return registry_tool_cls()
+
+    async def _load_tool_records(self, tool_ids: List[Any]) -> List[Any]:
+        if not self.db or not tool_ids:
+            return []
+
+        from uuid import UUID
+        from sqlalchemy import select
+        from app.db.postgres.models.registry import ToolRegistry
+
+        valid_ids = []
+        for raw in tool_ids:
+            try:
+                valid_ids.append(UUID(str(raw)))
+            except Exception:
+                continue
+
+        if not valid_ids:
+            return []
+
+        result = await self.db.execute(select(ToolRegistry).where(ToolRegistry.id.in_(valid_ids)))
+        return result.scalars().all()
+
+    def _buffer_tool_call_chunks(
+        self,
+        message: BaseMessage,
+        buffers: Dict[str, Dict[str, Any]],
+        order: List[str],
+    ) -> None:
+        tool_call_chunks = getattr(message, "tool_call_chunks", None)
+        if not tool_call_chunks:
+            return
+        for chunk in tool_call_chunks:
+            if isinstance(chunk, dict):
+                chunk_id = chunk.get("id")
+                chunk_name = chunk.get("name")
+                chunk_args = chunk.get("args")
+                chunk_index = chunk.get("index")
+            else:
+                chunk_id = getattr(chunk, "id", None)
+                chunk_name = getattr(chunk, "name", None)
+                chunk_args = getattr(chunk, "args", None)
+                chunk_index = getattr(chunk, "index", None)
+
+            key = chunk_id or (f"index:{chunk_index}" if chunk_index is not None else None)
+            if key is None:
+                key = f"pos:{len(order)}"
+            if key not in buffers:
+                buffers[key] = {"id": chunk_id, "name": chunk_name, "args": ""}
+                order.append(key)
+
+            buf = buffers[key]
+            if chunk_name:
+                buf["name"] = chunk_name
+            if chunk_args:
+                if not isinstance(chunk_args, str):
+                    try:
+                        chunk_args = json.dumps(chunk_args)
+                    except Exception:
+                        chunk_args = str(chunk_args)
+                buf["args"] += chunk_args
+
+    def _finalize_tool_calls(
+        self,
+        buffers: Dict[str, Dict[str, Any]],
+        order: List[str],
+        fallback_calls: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        tool_calls: List[Dict[str, Any]] = []
+        for key in order:
+            buf = buffers.get(key, {})
+            if not buf:
+                continue
+            args_raw = buf.get("args", "")
+            parsed_args: Any = {}
+            if isinstance(args_raw, str) and args_raw.strip():
+                try:
+                    parsed_args = json.loads(args_raw)
+                except Exception:
+                    parsed_args = {"value": args_raw}
+            elif isinstance(args_raw, dict):
+                parsed_args = args_raw
+            else:
+                parsed_args = {"value": args_raw}
+            tool_calls.append({
+                "id": buf.get("id"),
+                "name": buf.get("name"),
+                "args": parsed_args,
+            })
+
+        if tool_calls:
+            return tool_calls
+
+        if fallback_calls:
+            return fallback_calls
+
+        return []
+
+    def _extract_tool_output_payload(self, tool_result: Any) -> Any:
+        if isinstance(tool_result, dict):
+            if "context" in tool_result and tool_result.get("context") is not None:
+                return tool_result.get("context")
+            if "tool_outputs" in tool_result and tool_result.get("tool_outputs"):
+                outputs = tool_result.get("tool_outputs")
+                if isinstance(outputs, list) and outputs:
+                    return outputs[0]
+        return tool_result
+
+    def _build_tool_batches(
+        self,
+        calls: List[Dict[str, Any]],
+        max_parallel_tools: int,
+    ) -> List[List[Dict[str, Any]]]:
+        batches: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        group_counts: Dict[str, int] = {}
+
+        for call in calls:
+            policy: ToolExecutionPolicy = call["policy"]
+            if not policy.is_pure:
+                if current:
+                    batches.append(current)
+                    current = []
+                    group_counts = {}
+                batches.append([call])
+                continue
+
+            group_limit = policy.max_concurrency or 1
+            current_group_count = group_counts.get(policy.concurrency_group, 0)
+            if current and (len(current) >= max_parallel_tools or current_group_count >= group_limit):
+                batches.append(current)
+                current = []
+                group_counts = {}
+
+            current.append(call)
+            group_counts[policy.concurrency_group] = group_counts.get(policy.concurrency_group, 0) + 1
+
+        if current:
+            batches.append(current)
+        return batches
+
     async def _resolve_tool_id(self, tool_call: Dict[str, Any], configured_tools: List[Any]) -> Optional[str]:
         if not configured_tools:
             return None
@@ -381,8 +641,18 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         tool_state = dict(state or {})
         nested_state = dict(tool_state.get("state") or {})
         nested_state["last_agent_output"] = tool_input
+        # Preserve runtime/auth context in nested state for downstream executors.
+        if isinstance(state, dict) and isinstance(state.get("context"), dict):
+            merged_nested_ctx = dict(state.get("context") or {})
+            merged_nested_ctx.update(nested_state.get("context") or {})
+            nested_state["context"] = merged_nested_ctx
         tool_state["state"] = nested_state
-        tool_state["context"] = tool_input
+        # Keep existing context metadata (run/grant/tenant/token) while overlaying tool input.
+        base_context = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
+        merged_context = dict(base_context or {})
+        if isinstance(tool_input, dict):
+            merged_context.update(tool_input)
+        tool_state["context"] = merged_context
         return tool_state
 
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -395,6 +665,16 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         output_format = config.get("output_format", "text")
         output_schema = config.get("output_schema")
         tools = config.get("tools", [])  # Tool IDs to bind
+        tool_execution_mode = config.get("tool_execution_mode") or "sequential"
+        if tool_execution_mode not in ("sequential", "parallel_safe"):
+            tool_execution_mode = "sequential"
+        max_parallel_tools = int(config.get("max_parallel_tools", 4) or 4)
+        if max_parallel_tools < 1:
+            max_parallel_tools = 1
+        tool_timeout_s = int(config.get("tool_timeout_s", 60) or 60)
+        max_tool_iterations = int(config.get("max_tool_iterations", 10) or 10)
+        if max_tool_iterations < 1:
+            max_tool_iterations = 1
         
         # Extract emitter
         from app.agent.execution.emitter import active_emitter
@@ -437,100 +717,294 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         # Execute
         try:
             adapter = LLMProviderAdapter(provider)
-            full_content = ""
-            
+
             if emitter:
                 emitter.emit_node_start(node_id, node_name, "agent", {
                     "model": model_id,
                     "reasoning_effort": reasoning_effort,
-                    "tools_count": len(tools)
+                    "tools_count": len(tools),
+                    "tool_execution_mode": tool_execution_mode,
                 })
-            
-            # TODO: Tool binding - will be implemented when we have tool resolution
-            # For now, tools are just logged
-            if tools:
-                logger.info(f"Agent node has {len(tools)} tools configured (binding TBD)")
-            
-            # Stream tokens
-            try:
-                async for chunk in adapter._astream(formatted_messages, system_prompt=instructions):
-                    token_content = chunk.message.content if hasattr(chunk, 'message') else ""
-                    if token_content:
-                        full_content += token_content
-                        if emitter:
-                            emitter.emit_token(token_content, node_id)
-            except (NotImplementedError, Exception) as e:
-                logger.warning(f"Streaming failed/unsupported: {e}, using non-streaming")
-                response = await adapter.ainvoke(formatted_messages, system_prompt=instructions)
-                full_content = response.content
-                if emitter:
-                    emitter.emit_token(full_content, node_id)
-            
-            if emitter:
-                emitter.emit_node_end(node_id, node_name, "agent", {"content_length": len(full_content)})
-            
-            # Handle structured output
-            result_content = full_content
-            if output_format == "json":
-                try:
-                    result_content = json.loads(full_content)
-                except json.JSONDecodeError:
-                    logger.warning(f"Failed to parse JSON output, returning raw string")
 
-            state_update = {
-                "messages": [AIMessage(content=full_content)],
+            tool_records = await self._load_tool_records(tools)
+            tool_records_by_id = {str(t.id): t for t in tool_records if getattr(t, "id", None)}
+            langchain_tools = [self._build_langchain_tool(t) for t in tool_records] if tools else []
+            platform_sdk_defaulted_once = False
+
+            conversation_messages = list(formatted_messages)
+            emitted_messages: List[BaseMessage] = []
+            tool_outputs: List[Any] = []
+            last_context: Any = None
+            last_agent_output: Any = None
+
+            for iteration in range(max_tool_iterations):
+                full_content = ""
+                tool_call_buffers: Dict[str, Dict[str, Any]] = {}
+                tool_call_order: List[str] = []
+                last_message: Optional[BaseMessage] = None
+
+                # Stream tokens and buffer tool call chunks
+                try:
+                    async for chunk in adapter._astream(
+                        conversation_messages,
+                        system_prompt=instructions,
+                        tools=langchain_tools if tools else None,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    ):
+                        last_message = chunk.message if hasattr(chunk, "message") else None
+                        if last_message is not None:
+                            self._buffer_tool_call_chunks(last_message, tool_call_buffers, tool_call_order)
+                        token_content = chunk.message.content if hasattr(chunk, "message") else ""
+                        if token_content:
+                            full_content += token_content
+                            if emitter:
+                                emitter.emit_token(token_content, node_id)
+                except (NotImplementedError, Exception) as e:
+                    logger.warning(f"Streaming failed/unsupported: {e}, using non-streaming")
+                    response = await adapter.ainvoke(
+                        conversation_messages,
+                        system_prompt=instructions,
+                        tools=langchain_tools if tools else None,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    full_content = response.content
+                    if emitter:
+                        emitter.emit_token(full_content, node_id)
+                    last_message = response
+
+                if emitter:
+                    emitter.emit_node_end(node_id, node_name, "agent", {"content_length": len(full_content)})
+
+                # Handle structured output
+                result_content: Any = full_content
+                if output_format == "json":
+                    try:
+                        result_content = json.loads(full_content)
+                    except json.JSONDecodeError:
+                        logger.warning("Failed to parse JSON output, returning raw string")
+
+                last_agent_output = result_content
+
+                fallback_calls = None
+                if last_message is not None and getattr(last_message, "tool_calls", None):
+                    fallback_calls = list(getattr(last_message, "tool_calls", []))
+
+                tool_calls = self._finalize_tool_calls(tool_call_buffers, tool_call_order, fallback_calls=fallback_calls)
+                if not tool_calls:
+                    tool_payload = self._extract_json_payload(full_content)
+                    tool_call = self._normalize_tool_call(tool_payload)
+                    if not tool_call and isinstance(result_content, dict):
+                        tool_call = self._normalize_tool_call(result_content)
+                    if tool_call:
+                        tool_calls = [{
+                            "id": tool_call.get("tool_id") or tool_call.get("tool_name"),
+                            "tool_id": tool_call.get("tool_id"),
+                            "name": tool_call.get("tool_name"),
+                            "args": tool_call.get("input") or {},
+                        }]
+
+                tool_calls_for_message = None
+                if tool_calls:
+                    formatted_calls = []
+                    for idx, call in enumerate(tool_calls):
+                        if isinstance(call, dict):
+                            call_id = call.get("id")
+                            call_name = call.get("name") or call.get("tool_name")
+                            call_args = call.get("args") or call.get("input") or {}
+                            call_tool_id = call.get("tool_id")
+                        else:
+                            call_id = getattr(call, "id", None)
+                            call_name = getattr(call, "name", None) or getattr(call, "tool_name", None)
+                            call_args = getattr(call, "args", None) or getattr(call, "input", None) or {}
+                            call_tool_id = getattr(call, "tool_id", None)
+
+                        if not isinstance(call_args, dict):
+                            call_args = {"value": call_args}
+
+                        if not call_name and call_tool_id:
+                            tool_record = tool_records_by_id.get(str(call_tool_id))
+                            call_name = getattr(tool_record, "slug", None) or getattr(tool_record, "name", None)
+
+                        if not call_name:
+                            continue
+
+                        formatted_calls.append({
+                            "id": str(call_id or f"toolcall_{iteration}_{idx}"),
+                            "name": call_name,
+                            "args": call_args,
+                        })
+
+                    if formatted_calls:
+                        tool_calls_for_message = formatted_calls
+
+                if tool_calls_for_message:
+                    ai_message = AIMessage(content=full_content, tool_calls=tool_calls_for_message)
+                else:
+                    ai_message = AIMessage(content=full_content)
+
+                emitted_messages.append(ai_message)
+                conversation_messages.append(ai_message)
+
+                if not tool_calls:
+                    state_update = {
+                        "messages": emitted_messages,
+                        "state": {
+                            **(state.get("state", {})),
+                            "last_agent_output": last_agent_output,
+                        },
+                    }
+                    if tool_outputs:
+                        state_update["tool_outputs"] = tool_outputs
+                    if last_context is not None:
+                        state_update["context"] = last_context
+                    elif config.get("write_output_to_context") and isinstance(result_content, dict):
+                        state_update["context"] = result_content
+                    return state_update
+
+                resolved_calls: List[Dict[str, Any]] = []
+                for idx, call in enumerate(tool_calls):
+                    call_id = call.get("id") or f"toolcall_{iteration}_{idx}"
+                    tool_name = call.get("name")
+                    tool_id = call.get("tool_id")
+
+                    resolved_tool_id = None
+                    if tool_id:
+                        resolved_tool_id = str(tool_id)
+                    elif tool_name:
+                        resolved_tool_id = await self._resolve_tool_id(
+                            {"tool_name": tool_name},
+                            tools,
+                        )
+                    if not resolved_tool_id:
+                        logger.warning(f"Unresolved tool call: {tool_name or tool_id}")
+                        continue
+
+                    tool_input = call.get("args") or call.get("input") or {}
+                    if not isinstance(tool_input, dict):
+                        tool_input = {"value": tool_input}
+
+                    tool_record = tool_records_by_id.get(resolved_tool_id)
+                    if (not tool_input) and tool_record is not None:
+                        tool_slug = str(getattr(tool_record, "slug", "") or "").lower()
+                        tool_name_lower = str(getattr(tool_record, "name", "") or "").lower()
+                        artifact_id = str(getattr(tool_record, "artifact_id", "") or "")
+                        is_platform_sdk = (
+                            tool_slug == "platform-sdk"
+                            or tool_name_lower == "platform sdk"
+                            or artifact_id == "builtin/platform_sdk"
+                        )
+                        if is_platform_sdk:
+                            if not platform_sdk_defaulted_once:
+                                tool_input = {"action": "fetch_catalog"}
+                                platform_sdk_defaulted_once = True
+                                logger.info("Defaulted empty Platform SDK tool call to fetch_catalog")
+                            else:
+                                tool_input = {
+                                    "action": "respond",
+                                    "message": "Missing explicit Platform SDK action in tool call.",
+                                }
+                                logger.warning("Repeated empty Platform SDK tool call; forcing respond action")
+                    policy = self._get_tool_execution_policy(tool_record, tool_timeout_s)
+
+                    resolved_calls.append({
+                        "call_id": str(call_id),
+                        "tool_id": resolved_tool_id,
+                        "tool_name": tool_name,
+                        "input": tool_input,
+                        "policy": policy,
+                    })
+
+                if not resolved_calls:
+                    error_msg = "No resolvable tool calls"
+                    logger.warning(error_msg)
+                    if emitter:
+                        emitter.emit_error(error_msg, node_id)
+                    return {
+                        "messages": emitted_messages,
+                        "state": {
+                            **(state.get("state", {})),
+                            "last_agent_output": last_agent_output,
+                        },
+                        "error": error_msg,
+                    }
+
+                from app.agent.executors.tool import ToolNodeExecutor
+                tool_executor = ToolNodeExecutor(self.tenant_id, self.db)
+
+                async def _run_tool_call(call: Dict[str, Any]) -> Tuple[str, Any]:
+                    tool_state = self._build_tool_state(state, call["input"])
+                    tool_context = {
+                        **(context or {}),
+                        # Include per-call id so emitter span_id is unique for each tool invocation.
+                        "node_id": f"{node_id}::tool::{call['tool_id']}::{call['call_id']}",
+                        "node_name": f"Tool:{call['tool_id']}",
+                    }
+                    timeout = call["policy"].timeout_s
+                    try:
+                        result = await asyncio.wait_for(
+                            tool_executor.execute(tool_state, {"tool_id": call["tool_id"]}, tool_context),
+                            timeout=timeout,
+                        )
+                        return call["call_id"], result
+                    except asyncio.TimeoutError:
+                        return call["call_id"], {"error": f"Tool call timed out after {timeout}s"}
+                    except Exception as exc:
+                        return call["call_id"], {"error": str(exc)}
+
+                execution_results: Dict[str, Any] = {}
+                if tool_execution_mode == "parallel_safe":
+                    batches = self._build_tool_batches(resolved_calls, max_parallel_tools)
+                    for batch in batches:
+                        if len(batch) == 1:
+                            call_id, result = await _run_tool_call(batch[0])
+                            execution_results[call_id] = result
+                        else:
+                            results = await asyncio.gather(*[_run_tool_call(call) for call in batch])
+                            for call_id, result in results:
+                                execution_results[call_id] = result
+                else:
+                    for call in resolved_calls:
+                        call_id, result = await _run_tool_call(call)
+                        execution_results[call_id] = result
+
+                for call in resolved_calls:
+                    result = execution_results.get(call["call_id"])
+                    output_payload = self._extract_tool_output_payload(result)
+                    tool_outputs.append(output_payload)
+                    if output_payload is not None:
+                        last_context = output_payload
+                        last_agent_output = output_payload
+
+                    content = output_payload
+                    if isinstance(content, (dict, list)):
+                        try:
+                            content = json.dumps(content)
+                        except Exception:
+                            content = str(content)
+                    elif content is None:
+                        content = ""
+                    else:
+                        content = str(content)
+
+                    tool_message = ToolMessage(content=content, tool_call_id=call["call_id"])
+                    emitted_messages.append(tool_message)
+                    conversation_messages.append(tool_message)
+
+            error_msg = "Max tool iterations reached"
+            if emitter:
+                emitter.emit_error(error_msg, node_id)
+            return {
+                "messages": emitted_messages,
                 "state": {
                     **(state.get("state", {})),
-                    "last_agent_output": result_content
-                }
+                    "last_agent_output": last_agent_output,
+                },
+                "tool_outputs": tool_outputs or None,
+                "context": last_context,
+                "error": error_msg,
             }
-            if config.get("write_output_to_context") and isinstance(result_content, dict):
-                state_update["context"] = result_content
-
-            tool_output_payload = None
-            if tools:
-                tool_payload = self._extract_json_payload(full_content)
-                tool_call = self._normalize_tool_call(tool_payload)
-                if not tool_call and isinstance(result_content, dict):
-                    tool_call = self._normalize_tool_call(result_content)
-
-                if tool_call:
-                    resolved_tool_id = await self._resolve_tool_id(tool_call, tools)
-                    if resolved_tool_id:
-                        tool_input = tool_call.get("input") or {}
-                        if not isinstance(tool_input, dict):
-                            tool_input = {"value": tool_input}
-                        tool_state = self._build_tool_state(state, tool_input)
-
-                        from app.agent.executors.tool import ToolNodeExecutor
-                        tool_executor = ToolNodeExecutor(self.tenant_id, self.db)
-                        tool_context = {
-                            "node_id": f"{node_id}::tool::{resolved_tool_id}",
-                            "node_name": f"Tool:{resolved_tool_id}",
-                        }
-                        tool_result = await tool_executor.execute(
-                            tool_state,
-                            {"tool_id": resolved_tool_id},
-                            tool_context,
-                        )
-
-                        if isinstance(tool_result, dict):
-                            if "tool_outputs" in tool_result:
-                                state_update["tool_outputs"] = tool_result.get("tool_outputs")
-                            if "context" in tool_result:
-                                state_update["context"] = tool_result.get("context")
-                            tool_output_payload = tool_result.get("context")
-                            if tool_output_payload is None and tool_result.get("tool_outputs"):
-                                tool_outputs = tool_result.get("tool_outputs")
-                                if isinstance(tool_outputs, list) and tool_outputs:
-                                    tool_output_payload = tool_outputs[0]
-                        else:
-                            tool_output_payload = tool_result
-
-                        if tool_output_payload is not None:
-                            state_update["state"]["last_agent_output"] = tool_output_payload
-
-            return state_update
 
         except Exception as e:
             logger.error(f"Agent execution failed: {e}")
@@ -638,7 +1112,11 @@ def register_standard_operators():
                 "include_chat_history": {"type": "boolean", "title": "Include Chat History", "default": True},
                 "reasoning_effort": {"type": "string", "title": "Reasoning Effort", "enum": ["low", "medium", "high"]},
                 "output_format": {"type": "string", "title": "Output Format", "enum": ["text", "json"]},
-                "tools": {"type": "array", "items": {"type": "string"}, "title": "Tools"}
+                "tools": {"type": "array", "items": {"type": "string"}, "title": "Tools"},
+                "tool_execution_mode": {"type": "string", "title": "Tool Execution Mode", "enum": ["sequential", "parallel_safe"], "default": "sequential"},
+                "max_parallel_tools": {"type": "number", "title": "Max Parallel Tools", "default": 4},
+                "tool_timeout_s": {"type": "number", "title": "Tool Timeout (s)", "default": 60},
+                "max_tool_iterations": {"type": "number", "title": "Max Tool Iterations", "default": 10}
             },
             "required": ["model_id"]
         },
@@ -665,6 +1143,14 @@ def register_standard_operators():
                  ]},
                 {"name": "tools", "label": "Tools", "fieldType": "tool_list", "required": False, "description": "Attach tools to the agent"},
                 {"name": "temperature", "label": "Temperature", "fieldType": "number", "required": False, "description": "Override reasoning effort temperature"},
+                {"name": "tool_execution_mode", "label": "Tool Execution Mode", "fieldType": "select", "required": False, "default": "sequential",
+                 "options": [
+                    {"value": "sequential", "label": "Sequential"},
+                    {"value": "parallel_safe", "label": "Parallel (Safe)"}
+                 ]},
+                {"name": "max_parallel_tools", "label": "Max Parallel Tools", "fieldType": "number", "required": False, "default": 4},
+                {"name": "tool_timeout_s", "label": "Tool Timeout (s)", "fieldType": "number", "required": False, "default": 60},
+                {"name": "max_tool_iterations", "label": "Max Tool Iterations", "fieldType": "number", "required": False, "default": 10}
             ]
         }
     ))

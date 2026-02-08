@@ -236,6 +236,7 @@ class AgentService:
                 user_id=user_id,
                 background=False,
                 mode=ExecutionMode.PRODUCTION,
+                requested_scopes=(data.context or {}).get("requested_scopes") if isinstance(data.context, dict) else None,
             )
 
             async for _ in executor.run_and_stream(run_id, self.db, mode=ExecutionMode.PRODUCTION):

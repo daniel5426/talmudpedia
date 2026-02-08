@@ -66,7 +66,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <SidebarProvider className="h-full" dir={direction}>
-      <AppSidebar />
+      <AppSidebar  />
       <SidebarInset className="h-full overflow-hidden">
         <div className="flex h-full w-full min-w-0 overflow-hidden bg-background">
           {children}

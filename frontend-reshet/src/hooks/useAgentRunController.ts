@@ -64,6 +64,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   executionSteps: ExecutionStep[];
   currentRunId: string | null;
   isPaused: boolean;
+  pendingApproval: boolean;
   history: AgentChatHistoryItem[];
   startNewChat: () => void;
   loadHistoryChat: (item: AgentChatHistoryItem) => void;
@@ -80,6 +81,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [activeStreamingId, setActiveStreamingId] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState(false);
   const [history, setHistory] = useState<AgentChatHistoryItem[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -138,6 +140,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setActiveStreamingId(null);
     setCurrentRunId(null);
     setIsPaused(false);
+    setPendingApproval(false);
     setHistory([]);
     reasoningRef.current = [];
     thinkingDurationRef.current = null;
@@ -238,6 +241,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setActiveStreamingId(null);
     setCurrentRunId(null);
     setIsPaused(false);
+    setPendingApproval(false);
     reasoningRef.current = [];
     lastReasoningRef.current = [];
     thinkingDurationRef.current = null;
@@ -258,6 +262,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setActiveStreamingId(null);
     setCurrentRunId(null);
     setIsPaused(false);
+    setPendingApproval(false);
     reasoningRef.current = [];
     lastReasoningRef.current = [];
     thinkingDurationRef.current = null;
@@ -266,6 +271,9 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
 
   const handleSubmit = async (message: { text: string; files: any[] }) => {
     if (!message.text.trim() || !agentId) return;
+
+    const isApprovalResume = isPaused && pendingApproval;
+    const approvalDecision = isApprovalResume ? message.text.trim().toLowerCase() : null;
 
     commitStreamingMessage("new");
     handleStop();
@@ -290,17 +298,24 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     thinkingStartRef.current = Date.now();
 
     try {
-      const response = await agentService.streamAgent(agentId, { 
-        text: message.text,
-        runId: isPaused ? currentRunId || undefined : undefined
-      }, 'debug');
+      const response = await agentService.streamAgent(
+        agentId,
+        {
+          text: message.text,
+          runId: isPaused ? currentRunId || undefined : undefined,
+          context: isPaused && pendingApproval ? { approval: message.text } : undefined,
+        },
+        'debug'
+      );
       setIsPaused(false); // Reset pause state when starting/resuming
+      setPendingApproval(false);
       const reader = response.body?.getReader();
       if (!reader) return;
 
       const decoder = new TextDecoder();
       let buffer = "";
       let fullAiContent = "";
+      let terminalError: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -321,11 +336,16 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
             const event = JSON.parse(dataStr);
             
             if (event.type === "done") break;
+            if (event.type === "error" || event.event === "error") {
+              terminalError = event.error || event.data?.error || "Agent error";
+              break;
+            }
 
             // Handle unified reasoning events (Phase 3)
             if (event.type === "reasoning") {
               const stepData = event.data;
               const step = {
+                id: stepData.step_id || nanoid(),
                 label: stepData.step,
                 status: stepData.status,
                 icon: stepData.step.toLowerCase().includes("retrieval") ? SearchIcon : DotIcon,
@@ -377,8 +397,18 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
  else if (event.event === "run_id") {
               setCurrentRunId(event.run_id);
             } else if (event.event === "run_status") {
-              if (event.data?.status === "paused") {
+              const status = event.data?.status;
+              if (status === "paused") {
                 setIsPaused(true);
+                const nextNodes = Array.isArray(event.data?.next_nodes) ? event.data.next_nodes : [];
+                const next = event.data?.next;
+                const nextList = Array.isArray(next) ? next : [];
+                const nextTypes = nextNodes.map((node: any) => node?.type).filter(Boolean);
+                const hasApproval = nextTypes.includes("user_approval") || nextList.includes("user_approval");
+                setPendingApproval(hasApproval);
+              } else {
+                setIsPaused(false);
+                setPendingApproval(false);
               }
             } else if (event.event === "on_tool_start") {
               const stepId = event.span_id || event.run_id || nanoid();
@@ -422,23 +452,61 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
             console.error("Error parsing event:", e);
           }
         }
+        if (terminalError) break;
       }
 
       // Use the local newStreamingId to ensure it matches exactly what was used during the stream
+      if (terminalError) {
+        fullAiContent = `Error: ${terminalError}`;
+      }
       const resolvedContent = resolveArchitectResponse(fullAiContent);
-      const assistantMsg: ChatMessage = {
-        id: newStreamingId,
-        role: "assistant",
-        content: resolvedContent,
-        createdAt: new Date(),
-        reasoningSteps: lastReasoningRef.current && lastReasoningRef.current.length > 0 ? lastReasoningRef.current : undefined,
-        thinkingDurationMs: thinkingDurationRef.current || undefined,
-      };
-      setMessages(prev => {
-        const next = [...prev, assistantMsg];
-        persistHistory(next);
-        return next;
-      });
+      const hasAssistantPayload =
+        (resolvedContent && resolvedContent.trim().length > 0) ||
+        (lastReasoningRef.current && lastReasoningRef.current.length > 0);
+      if (hasAssistantPayload) {
+        const assistantMsg: ChatMessage = {
+          id: newStreamingId,
+          role: "assistant",
+          content: resolvedContent,
+          createdAt: new Date(),
+          reasoningSteps: lastReasoningRef.current && lastReasoningRef.current.length > 0 ? lastReasoningRef.current : undefined,
+          thinkingDurationMs: thinkingDurationRef.current || undefined,
+        };
+        setMessages(prev => {
+          const next = [...prev, assistantMsg];
+          persistHistory(next);
+          return next;
+        });
+      } else if (isApprovalResume) {
+        const approved =
+          approvalDecision === "approve" ||
+          approvalDecision === "approved" ||
+          approvalDecision === "true" ||
+          approvalDecision === "yes" ||
+          approvalDecision === "1";
+        const rejected =
+          approvalDecision === "reject" ||
+          approvalDecision === "rejected" ||
+          approvalDecision === "false" ||
+          approvalDecision === "no" ||
+          approvalDecision === "0";
+        const fallbackMessage = approved
+          ? "Approved."
+          : rejected
+          ? "Rejected."
+          : "Approval received.";
+        const assistantMsg: ChatMessage = {
+          id: newStreamingId,
+          role: "assistant",
+          content: fallbackMessage,
+          createdAt: new Date(),
+        };
+        setMessages(prev => {
+          const next = [...prev, assistantMsg];
+          persistHistory(next);
+          return next;
+        });
+      }
       setStreamingContent("");
       setCurrentReasoning([]);
       setActiveStreamingId(null);
@@ -500,6 +568,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     activeStreamingId,
     currentRunId,
     isPaused,
+    pendingApproval,
     history,
     startNewChat,
     loadHistoryChat,

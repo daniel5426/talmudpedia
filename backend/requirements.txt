@@ -14,6 +14,7 @@ google-genai
 requests
 langgraph>=0.2.0
 langchain-openai
+langchain-google-genai
 motor
 google-cloud-speech
 elasticsearch

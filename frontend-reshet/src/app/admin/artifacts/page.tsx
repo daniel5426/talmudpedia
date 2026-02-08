@@ -406,13 +406,8 @@ export default function ArtifactsPage() {
     }
 
     const renderHeader = () => (
-        <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+        <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
             <div className="flex items-center gap-3">
-                {viewMode !== "list" && (
-                    <Button variant="ghost" size="icon" onClick={handleBack} className="mr-1">
-                        <ArrowLeft className="h-4 w-4" />
-                    </Button>
-                )}
                 <CustomBreadcrumb
                     items={[
                         { label: "Admin", href: "/admin/dashboard" },

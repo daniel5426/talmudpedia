@@ -53,9 +53,11 @@ export function ExecutionTrace({ steps, className, showHeader = false, title = "
                             {/* Timeline line */}
                             <div className="absolute left-[11px] top-2 bottom-2 w-0.5 bg-border" />
 
-                            {steps.map((step, idx) => (
-                                <StepItem key={step.id || idx} step={step} />
-                            ))}
+                            {steps.map((step, idx) => {
+                                const timestamp = step.timestamp?.getTime?.() ?? 0;
+                                const key = `${step.id || "step"}-${timestamp}-${idx}`;
+                                return <StepItem key={key} step={step} />;
+                            })}
                         </div>
                     )}
                 </div>

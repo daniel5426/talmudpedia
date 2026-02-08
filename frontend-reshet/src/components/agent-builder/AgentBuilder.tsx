@@ -40,7 +40,7 @@ import {
     canConnect,
     getNodeSpec,
 } from "./types"
-import { normalizeBuilderNode } from "./graphspec"
+import { normalizeBuilderNode, normalizeBuilderEdges } from "./graphspec"
 
 interface AgentBuilderProps {
     agentId?: string
@@ -64,7 +64,7 @@ function AgentBuilderInner({
     isCompiling = false,
 }: AgentBuilderProps) {
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
-    const { screenToFlowPosition, getViewport, setViewport, getNodes } = useReactFlow()
+    const { screenToFlowPosition, getViewport, setViewport, getNodes, fitView } = useReactFlow()
 
     const normalizeNode = useCallback((node: Node) => normalizeBuilderNode(node), [])
 
@@ -77,8 +77,9 @@ function AgentBuilderInner({
         })
     }, [initialNodes, normalizeNode])
 
+    const normalizedInitialEdges = useMemo(() => normalizeBuilderEdges(initialEdges || []), [initialEdges])
     const [nodes, setNodes, onNodesChange] = useNodesState(normalizedInitialNodes)
-    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+    const [edges, setEdges, onEdgesChange] = useEdgesState(normalizedInitialEdges)
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [mode, setMode] = useState<"build" | "execute">("build")
     const [interactionMode, setInteractionMode] = useState<InteractionMode>("pan")
@@ -109,7 +110,7 @@ function AgentBuilderInner({
         takeSnapshot,
         undo,
         redo,
-    } = useBuilderHistory({ initialNodes, initialEdges })
+    } = useBuilderHistory({ initialNodes: normalizedInitialNodes, initialEdges: normalizedInitialEdges })
 
     // Handle undo
     const handleUndo = useCallback(() => {
@@ -372,6 +373,19 @@ function AgentBuilderInner({
         }
     }, [setNodes, setEdges, takeSnapshot])
 
+    const handleAutoLayout = useCallback(() => {
+        if (nodes.length === 0) return
+
+        const layoutedNodes = computeAutoLayout(nodes, edges)
+        setNodes(layoutedNodes)
+        setIsCatalogVisible(false)
+
+        setTimeout(() => {
+            takeSnapshot(layoutedNodes as Node<AgentNodeData>[], edges)
+            fitView({ padding: 0.2, duration: 300 })
+        }, 0)
+    }, [nodes, edges, setNodes, takeSnapshot, fitView])
+
 
 
     const handleCatalogToggle = useCallback(() => {
@@ -423,7 +437,7 @@ function AgentBuilderInner({
             />
 
             {/* Canvas */}
-            <div className="relative flex-1 bg-muted/40" ref={reactFlowWrapper}>
+            <div className="relative flex-1 bg-muted/40 rounded-2xl" ref={reactFlowWrapper}>
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
@@ -448,9 +462,9 @@ function AgentBuilderInner({
                     fitView
                     snapToGrid
                     snapGrid={[16, 16]}
-                    className="bg-transparent"
+                    className="bg-background"
                 >
-                    <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-100" />
+                    <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-0 " />
 
                     {/* Mode Toggle Pills */}
                     {agentId && (
@@ -484,6 +498,8 @@ function AgentBuilderInner({
                             onSave={onSave ? () => onSave(nodes as Node<AgentNodeData>[], edges) : undefined}
                             onCompile={onCompile}
                             onRun={onRun}
+                            onAutoLayout={handleAutoLayout}
+                            autoLayoutDisabled={nodes.length === 0}
                             onClear={handleClearCanvas}
                             isSaving={isSaving}
                             isCompiling={isCompiling}
@@ -532,4 +548,86 @@ export function AgentBuilder(props: AgentBuilderProps) {
             <AgentBuilderInner {...props} />
         </ReactFlowProvider>
     )
+}
+
+function computeAutoLayout<T extends Record<string, unknown>>(nodes: Node<T>[], edges: Edge[]) {
+    const nodeSpacing = 140
+    const rankSpacing = 280
+    const startX = 40
+    const startY = 40
+
+    const indegree = new Map<string, number>()
+    const outgoing = new Map<string, string[]>()
+
+    nodes.forEach((node) => {
+        indegree.set(node.id, 0)
+        outgoing.set(node.id, [])
+    })
+
+    edges.forEach((edge) => {
+        if (!edge.source || !edge.target) return
+        if (!indegree.has(edge.target)) return
+        indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1)
+        const list = outgoing.get(edge.source) || []
+        list.push(edge.target)
+        outgoing.set(edge.source, list)
+    })
+
+    const ranks = new Map<string, number>()
+    const queue: string[] = []
+
+    indegree.forEach((count, id) => {
+        if (count === 0) queue.push(id)
+    })
+
+    while (queue.length) {
+        const current = queue.shift()
+        if (!current) continue
+        const currentRank = ranks.get(current) ?? 0
+        const neighbors = outgoing.get(current) || []
+        neighbors.forEach((target) => {
+            const nextRank = currentRank + 1
+            const existing = ranks.get(target)
+            ranks.set(target, existing !== undefined ? Math.max(existing, nextRank) : nextRank)
+            const nextIndegree = (indegree.get(target) || 0) - 1
+            indegree.set(target, nextIndegree)
+            if (nextIndegree === 0) {
+                queue.push(target)
+            }
+        })
+    }
+
+    nodes.forEach((node) => {
+        if (!ranks.has(node.id)) {
+            ranks.set(node.id, 0)
+        }
+    })
+
+    const grouped = new Map<number, Node<T>[]>()
+    nodes.forEach((node) => {
+        const rank = ranks.get(node.id) ?? 0
+        const list = grouped.get(rank) || []
+        list.push(node)
+        grouped.set(rank, list)
+    })
+
+    const sortedRanks = Array.from(grouped.keys()).sort((a, b) => a - b)
+
+    const layoutedNodes: Node<T>[] = []
+    sortedRanks.forEach((rank) => {
+        const row = grouped.get(rank) || []
+        row.sort((a, b) => (a.position.y - b.position.y) || a.id.localeCompare(b.id))
+
+        row.forEach((node, index) => {
+            layoutedNodes.push({
+                ...node,
+                position: {
+                    x: startX + rank * rankSpacing,
+                    y: startY + index * nodeSpacing,
+                },
+            })
+        })
+    })
+
+    return layoutedNodes
 }

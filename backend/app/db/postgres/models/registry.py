@@ -165,12 +165,12 @@ class ModelProviderBinding(Base):
     
     provider = Column(SQLEnum(ModelProviderType), nullable=False)
     provider_model_id = Column(String, nullable=False) # e.g. "gpt-4o-2024-08-06"
+    credentials_ref = Column(UUID(as_uuid=True), ForeignKey("integration_credentials.id", ondelete="SET NULL"), nullable=True, index=True)
     
     priority = Column(Integer, default=0, nullable=False) # Lower is higher priority
     is_enabled = Column(Boolean, default=True, nullable=False)
     
     config = Column(JSONB, default={}, nullable=False) # Provider specific config
-    credentials_ref = Column(String, nullable=True) # Ref to vault/secret
     
     # Cost configuration for spend calculation (per 1K tokens in USD)
     cost_per_1k_input_tokens = Column(Float, nullable=True)
@@ -209,3 +209,57 @@ class ProviderConfig(Base):
 
     # Relationships
     tenant = relationship("Tenant")
+
+
+class IntegrationCredentialCategory(str, enum.Enum):
+    LLM_PROVIDER = "llm_provider"
+    VECTOR_STORE = "vector_store"
+    ARTIFACT_SECRET = "artifact_secret"
+    CUSTOM = "custom"
+
+
+class IntegrationCredential(Base):
+    """Tenant-scoped credentials for external integrations."""
+    __tablename__ = "integration_credentials"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    category = Column(
+        SQLEnum(
+            IntegrationCredentialCategory,
+            values_callable=lambda enum: [e.value for e in enum],
+        ),
+        nullable=False,
+    )
+    provider_key = Column(String, nullable=False, index=True)
+    provider_variant = Column(String, nullable=True)
+    display_name = Column(String, nullable=False)
+
+    credentials = Column(JSONB, default={}, nullable=False)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        Index(
+            "uq_integration_credentials_variant",
+            "tenant_id",
+            "category",
+            "provider_key",
+            "provider_variant",
+            unique=True,
+            postgresql_where=(provider_variant != None),
+        ),
+        Index(
+            "uq_integration_credentials_no_variant",
+            "tenant_id",
+            "category",
+            "provider_key",
+            unique=True,
+            postgresql_where=(provider_variant == None),
+        ),
+    )

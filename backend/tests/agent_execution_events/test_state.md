@@ -14,7 +14,7 @@ Execution event emission coverage for core nodes in debug streaming runs.
 **Last Run**
 - Command: `pytest -q backend/tests/agent_execution_events`
 - Date: 2026-02-05
-- Result: Skipped (real_db tests not executed)
+- Result: Fail (no node_start/node_end events emitted; events list empty)
 
 **Known Gaps / Follow-ups**
 - Extend to classify/if_else once handle-driven routing events are normalized

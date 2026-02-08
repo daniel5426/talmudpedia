@@ -128,12 +128,22 @@ class LangGraphAdapter(RuntimeAdapter):
     def _prepare_input(self, input_data: Dict[str, Any], config: Dict[str, Any]) -> Any:
         resume_payload = config.get("resume_payload")
         if resume_payload:
-            return Command(resume=resume_payload)
+            # For interrupt_before-based pauses, we need to update state on resume.
+            # `resume` is used with interrupt() calls, but we do not use interrupt(),
+            # so merge resume payload into state via `update`.
+            return Command(update=resume_payload)
         return input_data
 
     def _build_config(self, config: Dict[str, Any], emitter: Optional[EventEmitter] = None) -> Dict[str, Any]:
         configurable = {
             "thread_id": config.get("thread_id"),
+            "run_id": config.get("run_id"),
+            "grant_id": config.get("grant_id"),
+            "principal_id": config.get("principal_id"),
+            "initiator_user_id": config.get("initiator_user_id"),
+            "tenant_id": config.get("tenant_id"),
+            "user_id": config.get("user_id"),
+            "auth_token": config.get("auth_token"),
         }
         if emitter:
             configurable["emitter"] = emitter

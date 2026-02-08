@@ -392,10 +392,12 @@ class AgentCompiler:
         else:
             interrupt_before = []
             for node in graph.nodes:
-                if node.type == "user_approval" and "approval" not in input_params:
-                    interrupt_before.append(node.id)
-                elif node.type == "human_input" and "input" not in input_params and "message" not in input_params:
-                    interrupt_before.append(node.id)
+                if node.type == "user_approval":
+                    if "approval" not in input_params:
+                        interrupt_before.append(node.id)
+                elif node.type == "human_input":
+                    if "input" not in input_params and "message" not in input_params:
+                        interrupt_before.append(node.id)
 
         return GraphIR(
             schema_version=graph.spec_version or "1.0",

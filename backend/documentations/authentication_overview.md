@@ -1,126 +1,55 @@
 # Authentication Overview
 
-This document describes **all authentication types** supported by the platform today, how they are issued, and where they are accepted.
+Last Updated: 2026-02-08
 
-For identity and authorization model details, see `backend/documentations/authentication_v2.md`.
-
----
+This document describes authentication types currently used by the platform.
 
 ## Auth Types at a Glance
 
 | Auth Type | Token/Mechanism | Issuer | Where Used | Lifetime |
 | --- | --- | --- | --- | --- |
-| User Access Token | JWT (Bearer) | `/auth/login`, `/auth/register`, `/auth/google` | Most API routes | 90 days |
-| Google SSO | Google ID token -> JWT | `/auth/google` | Browser login | External (Google), then 90 days |
-| Service Token | JWT (Bearer) | `create_service_token` | Internal SDK calls | 5 minutes |
-| API Key Token | JWT (Bearer) stored in env | Set by ops | SDK client / internal tooling | Depends on token |
+| User Access Token | JWT (Bearer) | `/auth/login`, `/auth/register`, `/auth/google` | User-facing APIs | ~90 days |
+| Delegated Workload Token | JWT (Bearer, asymmetric) | `/internal/auth/workload-token` | Internal workload -> internal API | ~5 minutes |
+| Google SSO | Google ID token -> platform JWT | `/auth/google` | Browser login | External + platform TTL |
 
----
+## 1) User Access Tokens
+- Signed with `SECRET_KEY`.
+- Claims include `sub`, `tenant_id`, `org_role`, `exp`.
+- Used for normal user and admin API traffic.
 
-## 1) User Access Tokens (JWT)
+## 2) Delegated Workload Tokens
+- Signed with workload key material (JWKS published at `/.well-known/jwks.json`).
+- Issued only after delegation grant creation.
+- Claims include workload identity, grant identity, tenant, scope, and jti.
+- Used for internal service-to-service runtime actions.
 
-**How it works**
-- Users authenticate via email/password or Google SSO.
-- The backend issues a JWT signed with `SECRET_KEY` (HS256).
-- The token is sent as `Authorization: Bearer <token>`.
+## 3) Delegation Grants
+- Created by `/internal/auth/delegation-grants`.
+- Effective scopes are least-privilege intersection of user, approved workload policy, and requested scopes.
+- Grants are revocable and expire.
 
-**Claims**
-- `sub`: user UUID
-- `tenant_id`: primary tenant context
-- `org_unit_id`: org unit context
-- `org_role`: membership role
-- `exp`: expiration time
+## 4) Scope Enforcement
+Secure endpoints enforce scopes via principal dependency + `require_scopes(...)`.
+Current migrated write/read paths include Group A, B, and C endpoint groups:
+- Group A: catalog + create routes for pipelines/agents/tools/artifacts.
+- Group B: mutation routes (`PUT/DELETE/publish/promote/version/compile`) for agents/tools/artifacts/pipelines.
+- Group C: agent run/test/execute routes (`execute`, `stream`, `run`, `resume`, `validate`).
 
-**Endpoints**
-- `POST /auth/login`
-- `POST /auth/register`
-- `POST /auth/google`
-- `GET /auth/me`
+Sensitive mutation routes additionally require explicit approval decisions for workload principals.
 
-**Usage**
-```bash
-curl -H "Authorization: Bearer $ACCESS_TOKEN" \
-  http://localhost:8000/auth/me
-```
+## 5) Tenant Context
+- Secure workload flows require tenant context from signed token claims.
+- Fallback tenant inference is not used on migrated secure endpoints.
 
----
-
-## 2) Google SSO
-
-**How it works**
-- The client obtains a Google ID token.
-- The backend verifies it and issues a platform JWT.
-
-**Endpoint**
-- `POST /auth/google`
-
----
-
-## 3) Service Tokens (New)
-
-**Purpose**
-Service tokens enable **internal service-to-service** calls that require admin-level access without exposing user credentials.
-
-**Issuer**
-- `create_service_token(tenant_id)` in `backend/app/core/internal_token.py`
-- Signed with `PLATFORM_SERVICE_SECRET`
-
-**Claims**
-- `role = "platform-service"`
-- `tenant_id = <uuid>`
-- `exp = now + 5 minutes`
-
-**Accepted Endpoints**
-- `GET /admin/pipelines/catalog`
-- `POST /admin/pipelines/visual-pipelines`
-- `POST /agents`
-
----
-
-## 4) API Key Tokens (Environment)
-
-Some internal tools (including the SDK client) can use a token stored in environment variables:
-- `PLATFORM_API_KEY`
-- `API_KEY`
-
-These are expected to be **valid JWTs** signed with `SECRET_KEY`.
-
----
-
-## 5) Tenant Context Resolution
-
-Tenant scope is resolved in two ways:
-- From JWT claims (`tenant_id`)
-- From headers when needed (`X-Tenant-ID`)
-
-For admin endpoints, tenant scope is required unless the user is a system admin. Service tokens must always provide a tenant context.
-
----
-
-## 6) Authorization Model (High-Level)
-
-Authorization is handled by:
-- `User.role` (system-level)
-- `OrgMembership.role` (tenant-level)
-
-Admins can access global data; tenant owners/admins are scoped to their tenant. See `authentication_v2.md` for details.
-
----
-
-## Environment Variables
-
-**Required**
-- `SECRET_KEY` (JWT signing for user tokens)
-- `PLATFORM_SERVICE_SECRET` (JWT signing for service tokens)
-
-**Optional**
-- `PLATFORM_API_KEY`
-- `API_KEY`
-
----
+## 6) Governance
+Tenant admins can review and approve/reject workload scope policies via workload security admin endpoints.
 
 ## Common Failures
+- `401 Unauthorized`: token missing/invalid/revoked/jti inactive.
+- `403 Forbidden`: token valid but required scope missing.
+- `403 Forbidden (Sensitive action requires explicit approval)`: workload token has scope but approval decision is missing.
+- `Tenant context required`: no valid tenant context in principal.
 
-- `401 Unauthorized`: missing or invalid bearer token
-- `403 Forbidden`: valid token but insufficient permissions
-- `Tenant context required`: token missing tenant scope
+## Legacy Paths
+- Legacy service-token decode fallback is removed from secure dependencies.
+- Env-based privileged internal auth fallback is removed from Platform SDK artifact flow.

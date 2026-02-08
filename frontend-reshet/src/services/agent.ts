@@ -31,6 +31,8 @@ export interface LogicalModel {
   default_resolution_policy: Record<string, unknown>;
   version: number;
   status: ModelStatus;
+  is_active?: boolean;
+  is_default?: boolean;
   tenant_id: string;
   created_at: string;
   updated_at: string;
@@ -44,6 +46,7 @@ export interface ModelProviderSummary {
   priority: number;
   is_enabled: boolean;
   config?: Record<string, unknown>;
+  credentials_ref?: string | null;
 }
 
 export interface CreateModelRequest {
@@ -61,6 +64,8 @@ export interface UpdateModelRequest {
   metadata?: Record<string, unknown>;
   default_resolution_policy?: Record<string, unknown>;
   status?: ModelStatus;
+  is_active?: boolean;
+  is_default?: boolean;
 }
 
 export interface CreateProviderRequest {
@@ -69,6 +74,14 @@ export interface CreateProviderRequest {
   config?: Record<string, unknown>;
   credentials_ref?: string;
   priority?: number;
+}
+
+export interface UpdateProviderRequest {
+  provider_model_id?: string;
+  priority?: number;
+  is_enabled?: boolean;
+  config?: Record<string, unknown>;
+  credentials_ref?: string | null;
 }
 
 export interface ModelsListResponse {
@@ -214,7 +227,11 @@ export const agentService = {
     return httpClient.post(`/agents/${id}/execute`, { input_params: input });
   },
 
-  async streamAgent(id: string, input: { text?: string, messages?: any[], runId?: string }, mode: 'debug' | 'production' = 'production') {
+  async streamAgent(
+    id: string,
+    input: { text?: string; messages?: any[]; runId?: string; context?: Record<string, any> },
+    mode: 'debug' | 'production' = 'production'
+  ) {
     // CRITICAL: Bypass Next.js dev proxy for SSE streaming.
     // The Next.js rewrite proxy buffers responses, causing all tokens to appear at once.
     // We call the backend directly for streaming endpoints only.
@@ -249,7 +266,7 @@ export const agentService = {
       body: JSON.stringify({ 
         input: input.text, 
         messages: input.messages || [], 
-        context: {},
+        context: input.context || {},
         run_id: input.runId 
       }),
     });

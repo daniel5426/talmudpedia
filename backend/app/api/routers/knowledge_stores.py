@@ -47,12 +47,14 @@ class CreateKnowledgeStoreRequest(BaseModel):
     # Advanced (optional)
     backend: StorageBackend = StorageBackend.PGVECTOR
     backend_config: Dict[str, Any] = Field(default_factory=dict)
+    credentials_ref: Optional[UUID] = None
 
 
 class UpdateKnowledgeStoreRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     retrieval_policy: Optional[RetrievalPolicy] = None
+    credentials_ref: Optional[UUID] = None
     # Note: embedding_model_id and backend are immutable after creation
 
 
@@ -65,6 +67,7 @@ class KnowledgeStoreResponse(BaseModel):
     chunking_strategy: Dict[str, Any]
     retrieval_policy: str
     backend: str
+    credentials_ref: Optional[UUID]
     status: str
     document_count: int
     chunk_count: int
@@ -90,6 +93,7 @@ def store_to_response(store: KnowledgeStore) -> KnowledgeStoreResponse:
         chunking_strategy=store.chunking_strategy or {},
         retrieval_policy=store.retrieval_policy.value,
         backend=store.backend.value,
+        credentials_ref=store.credentials_ref,
         status=store.status.value,
         document_count=store.document_count,
         chunk_count=store.chunk_count,
@@ -178,6 +182,7 @@ async def create_knowledge_store(
         retrieval_policy=request.retrieval_policy,
         backend=request.backend,
         backend_config=backend_config,
+        credentials_ref=request.credentials_ref,
         status=KnowledgeStoreStatus.ACTIVE,
         created_by=current_user.id
     )
@@ -236,6 +241,8 @@ async def update_knowledge_store(
         store.description = request.description
     if request.retrieval_policy is not None:
         store.retrieval_policy = request.retrieval_policy
+    if request.credentials_ref is not None:
+        store.credentials_ref = request.credentials_ref
     
     await db.commit()
     await db.refresh(store)

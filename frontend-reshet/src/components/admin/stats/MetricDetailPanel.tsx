@@ -8,12 +8,22 @@ import {
   type AdminStatsRAG,
   type AdminStatsAgents,
   type AdminStatsResources,
+  type DailyDataPoint,
 } from "@/services"
 
 function formatDuration(ms?: number | null) {
   if (!ms && ms !== 0) return "—"
   if (ms < 1000) return `${Math.round(ms)}ms`
   return `${(ms / 1000).toFixed(1)}s`
+}
+
+function fillDailyRange(data: DailyDataPoint[], rangeDates?: string[]) {
+  if (!rangeDates?.length) return data
+  const lookup = new Map(data.map((item) => [item.date, item.value]))
+  return rangeDates.map((date) => ({
+    date,
+    value: lookup.get(date) ?? 0,
+  }))
 }
 
 function BreakdownList({
@@ -55,8 +65,8 @@ function SimpleTable({
       <h4 className="text-sm font-medium mb-3">{title}</h4>
       {rows.length ? (
         <div className="space-y-2 text-sm">
-          {rows.map((row) => (
-            <div key={row.label} className="flex items-center justify-between">
+          {rows.map((row, index) => (
+            <div key={`${row.label}-${index}`} className="flex items-center justify-between">
               <div className="flex flex-col">
                 <span className="font-medium">{row.label}</span>
                 {row.meta && <span className="text-xs text-muted-foreground">{row.meta}</span>}
@@ -79,6 +89,7 @@ export function MetricDetailPanel({
   rag,
   agents,
   resources,
+  rangeDates,
 }: {
   tab: StatsSection;
   detailId: string;
@@ -86,6 +97,7 @@ export function MetricDetailPanel({
   rag?: AdminStatsRAG | null;
   agents?: AdminStatsAgents | null;
   resources?: AdminStatsResources | null;
+  rangeDates?: string[];
 }) {
   if (tab === "overview" && overview) {
     if (detailId === "overview.users") {
@@ -93,7 +105,11 @@ export function MetricDetailPanel({
         <div className="space-y-6">
           <div className="border rounded-lg p-6">
             <h3 className="text-sm font-medium mb-4">Daily Active Users</h3>
-            <BarChart data={overview.daily_active_users} height={180} color="#10b981" />
+            <BarChart
+              data={fillDailyRange(overview.daily_active_users, rangeDates)}
+              height={180}
+              color="#10b981"
+            />
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <SimpleTable
@@ -131,7 +147,11 @@ export function MetricDetailPanel({
         <div className="space-y-6">
           <div className="border rounded-lg p-6">
             <h3 className="text-sm font-medium mb-4">Token Usage</h3>
-            <BarChart data={overview.tokens_by_day} height={200} color="#8b5cf6" />
+            <BarChart
+              data={fillDailyRange(overview.tokens_by_day, rangeDates)}
+              height={200}
+              color="#8b5cf6"
+            />
           </div>
           <SimpleTable
             title="Top Models"
@@ -150,7 +170,11 @@ export function MetricDetailPanel({
         <div className="space-y-6">
           <div className="border rounded-lg p-6">
             <h3 className="text-sm font-medium mb-4">Spend Trend</h3>
-            <BarChart data={overview.spend_by_day} height={200} color="#f59e0b" />
+            <BarChart
+              data={fillDailyRange(overview.spend_by_day, rangeDates)}
+              height={200}
+              color="#f59e0b"
+            />
           </div>
           <SimpleTable
             title="Top Models by Tokens"
@@ -179,6 +203,31 @@ export function MetricDetailPanel({
             rows={[
               { label: "Jobs", value: overview.pipeline_jobs },
               { label: "Failures", value: overview.pipeline_jobs_failed },
+            ]}
+          />
+        </div>
+      )
+    }
+
+    if (detailId === "overview.pipelineJobs") {
+      const failureRate = overview.pipeline_jobs
+        ? (overview.pipeline_jobs_failed / overview.pipeline_jobs) * 100
+        : 0
+      return (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <SimpleTable
+            title="Pipeline Jobs"
+            rows={[
+              { label: "Jobs", value: overview.pipeline_jobs },
+              { label: "Failures", value: overview.pipeline_jobs_failed },
+              { label: "Failure rate", value: `${failureRate.toFixed(1)}%` },
+            ]}
+          />
+          <SimpleTable
+            title="Agent Runs"
+            rows={[
+              { label: "Runs", value: overview.agent_runs },
+              { label: "Failures", value: overview.agent_runs_failed },
             ]}
           />
         </div>
@@ -224,7 +273,11 @@ export function MetricDetailPanel({
         <div className="space-y-6">
           <div className="border rounded-lg p-6">
             <h3 className="text-sm font-medium mb-4">Jobs Trend</h3>
-            <BarChart data={rag.jobs_by_day} height={180} color="#8b5cf6" />
+            <BarChart
+              data={fillDailyRange(rag.jobs_by_day, rangeDates)}
+              height={180}
+              color="#8b5cf6"
+            />
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <SimpleTable
@@ -281,7 +334,11 @@ export function MetricDetailPanel({
         <div className="space-y-6">
           <div className="border rounded-lg p-6">
             <h3 className="text-sm font-medium mb-4">Run Trend</h3>
-            <BarChart data={agents.runs_by_day} height={180} color="#8b5cf6" />
+            <BarChart
+              data={fillDailyRange(agents.runs_by_day, rangeDates)}
+              height={180}
+              color="#8b5cf6"
+            />
           </div>
           <BreakdownList title="Runs by Status" data={agents.runs_by_status} />
         </div>
@@ -329,7 +386,11 @@ export function MetricDetailPanel({
         <div className="space-y-6">
           <div className="border rounded-lg p-6">
             <h3 className="text-sm font-medium mb-4">Tokens by Day</h3>
-            <BarChart data={agents.tokens_by_day} height={180} color="#10b981" />
+            <BarChart
+              data={fillDailyRange(agents.tokens_by_day, rangeDates)}
+              height={180}
+              color="#10b981"
+            />
           </div>
           <SimpleTable
             title="Top Agents by Tokens"

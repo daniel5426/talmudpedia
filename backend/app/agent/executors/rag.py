@@ -39,22 +39,30 @@ class RetrievalNodeExecutor(BaseNodeExecutor):
             pipeline_id = UUID(pipeline_id_str)
             
             # 1. Resolve Executable Pipeline
-            stmt = select(ExecutablePipeline).where(
-                ExecutablePipeline.visual_pipeline_id == pipeline_id,
-                ExecutablePipeline.is_valid == True
-            ).order_by(ExecutablePipeline.version.desc()).limit(1)
-            
-            result = await self.db.execute(stmt)
-            exec_pipeline = result.scalar_one_or_none()
-            
+            exec_pipeline = None
+            # Accept both executable pipeline IDs and visual pipeline IDs.
+            exec_by_id = await self.db.execute(
+                select(ExecutablePipeline).where(ExecutablePipeline.id == pipeline_id)
+            )
+            exec_pipeline = exec_by_id.scalar_one_or_none()
+
             if not exec_pipeline:
-                    # Fallback to any version if no valid one marked?
-                    stmt = select(ExecutablePipeline).where(
-                    ExecutablePipeline.visual_pipeline_id == pipeline_id
-                    ).order_by(ExecutablePipeline.version.desc()).limit(1)
-                    result = await self.db.execute(stmt)
-                    exec_pipeline = result.scalar_one_or_none()
-            
+                stmt = select(ExecutablePipeline).where(
+                    ExecutablePipeline.visual_pipeline_id == pipeline_id,
+                    ExecutablePipeline.is_valid == True
+                ).order_by(ExecutablePipeline.version.desc()).limit(1)
+                
+                result = await self.db.execute(stmt)
+                exec_pipeline = result.scalar_one_or_none()
+                
+                if not exec_pipeline:
+                        # Fallback to any version if no valid one marked?
+                        stmt = select(ExecutablePipeline).where(
+                        ExecutablePipeline.visual_pipeline_id == pipeline_id
+                        ).order_by(ExecutablePipeline.version.desc()).limit(1)
+                        result = await self.db.execute(stmt)
+                        exec_pipeline = result.scalar_one_or_none()
+                
             if not exec_pipeline:
                     raise ValueError(f"No executable pipeline found for pipeline {pipeline_id_str}")
 
@@ -64,9 +72,9 @@ class RetrievalNodeExecutor(BaseNodeExecutor):
                 id=job_id,
                 tenant_id=self.tenant_id,
                 executable_pipeline_id=exec_pipeline.id,
-                status=PipelineJobStatus.PENDING,
+                status=PipelineJobStatus.QUEUED,
                 input_params={"query": query, "top_k": top_k}, 
-                triggered_by="agent"
+                triggered_by=None
             )
             self.db.add(job)
             await self.db.commit()

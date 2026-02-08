@@ -23,6 +23,7 @@ export function ExecutionPanel({ controller, className }: ExecutionPanelProps) {
     const historyItems = (controller as any).history || []
     const startNewChat = (controller as any).startNewChat as (() => void) | undefined
     const loadHistoryChat = (controller as any).loadHistoryChat as ((item: any) => void) | undefined
+    const pendingApproval = (controller as any).pendingApproval as boolean | undefined
 
     return (
         <div className={cn("flex flex-col h-full bg-background w-full overflow-hidden", className)}>

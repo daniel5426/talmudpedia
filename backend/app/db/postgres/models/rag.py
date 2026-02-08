@@ -88,6 +88,7 @@ class KnowledgeStore(Base):
     # Physical Binding (Implementation Detail - hidden from users)
     backend = Column(pg_enum(StorageBackend), default=StorageBackend.PGVECTOR, nullable=False)
     backend_config = Column(JSONB, default={}, nullable=False)
+    credentials_ref = Column(UUID(as_uuid=True), ForeignKey("integration_credentials.id", ondelete="SET NULL"), nullable=True, index=True)
     
     # Status & Metrics
     status = Column(pg_enum(KnowledgeStoreStatus), default=KnowledgeStoreStatus.ACTIVE, nullable=False)
@@ -246,5 +247,4 @@ class PipelineStepExecution(Base):
     # Relationships
     job = relationship("PipelineJob", backref="steps")
     tenant = relationship("Tenant")
-
 

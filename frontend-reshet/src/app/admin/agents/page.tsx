@@ -79,7 +79,7 @@ export default function AgentsPage() {
 
     return (
         <div className="flex w-full flex-col h-screen bg-background overflow-hidden">
-            <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
                         <CustomBreadcrumb items={[

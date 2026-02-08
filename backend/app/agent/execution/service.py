@@ -37,7 +37,8 @@ class AgentExecutorService:
         input_params: Dict[str, Any], 
         user_id: Optional[UUID] = None, 
         background: bool = True,
-        mode: ExecutionMode = ExecutionMode.DEBUG
+        mode: ExecutionMode = ExecutionMode.DEBUG,
+        requested_scopes: Optional[list[str]] = None,
     ) -> UUID:
         """
         Starts a new agent execution run.
@@ -49,10 +50,37 @@ class AgentExecutorService:
             raise ValueError(f"Agent {agent_id} not found")
 
         # Create Run record
+        runtime_context = {}
+        if isinstance(input_params, dict):
+            runtime_context = dict(input_params.get("context") or {})
+
+        delegation_grant_id = runtime_context.get("grant_id")
+        workload_principal_id = runtime_context.get("principal_id")
+        initiator_user_id = runtime_context.get("initiator_user_id")
+
+        parsed_grant_id = None
+        parsed_principal_id = None
+        parsed_initiator_id = None
+        try:
+            parsed_grant_id = UUID(str(delegation_grant_id)) if delegation_grant_id else None
+        except Exception:
+            parsed_grant_id = None
+        try:
+            parsed_principal_id = UUID(str(workload_principal_id)) if workload_principal_id else None
+        except Exception:
+            parsed_principal_id = None
+        try:
+            parsed_initiator_id = UUID(str(initiator_user_id)) if initiator_user_id else None
+        except Exception:
+            parsed_initiator_id = None
+
         run = AgentRun(
             agent_id=agent_id,
             tenant_id=agent.tenant_id,
-            user_id=user_id,
+            user_id=user_id or parsed_initiator_id,
+            initiator_user_id=user_id or parsed_initiator_id,
+            workload_principal_id=parsed_principal_id,
+            delegation_grant_id=parsed_grant_id,
             input_params=input_params,
             status=RunStatus.queued,
             started_at=None,
@@ -61,6 +89,24 @@ class AgentExecutorService:
         self.db.add(run)
         await self.db.commit()
         await self.db.refresh(run)
+
+        # Create delegation context for runs with an initiator user context.
+        # This covers both direct user-initiated runs and workload-initiated runs
+        # that propagate initiator_user_id in runtime context.
+        effective_initiator_id = user_id or parsed_initiator_id
+        if effective_initiator_id is not None and run.delegation_grant_id is None:
+            from app.services.delegation_service import DelegationService
+            delegation = DelegationService(self.db)
+            principal, grant, _approval_required = await delegation.create_agent_run_grant(
+                agent=agent,
+                initiator_user_id=effective_initiator_id,
+                run_id=run.id,
+                requested_scopes=requested_scopes or ((input_params.get("context") or {}).get("requested_scopes")),
+            )
+            run.workload_principal_id = principal.id
+            run.delegation_grant_id = grant.id
+            run.initiator_user_id = effective_initiator_id
+            await self.db.commit()
 
         # Trigger background execution if requested
         if background:
@@ -132,8 +178,54 @@ class AgentExecutorService:
         if not agent:
             raise ValueError(f"Agent {run.agent_id} not found")
 
+        # Self-heal legacy/incomplete runs: ensure delegation context exists
+        # before node execution so artifact workloads can mint scoped tokens.
+        if run.delegation_grant_id is None and (run.user_id is not None or run.initiator_user_id is not None):
+            from app.services.delegation_service import DelegationService
+            delegation = DelegationService(db)
+            effective_initiator_id = run.initiator_user_id or run.user_id
+            principal, grant, _approval_required = await delegation.create_agent_run_grant(
+                agent=agent,
+                initiator_user_id=effective_initiator_id,
+                run_id=run.id,
+            )
+            run.workload_principal_id = principal.id
+            run.delegation_grant_id = grant.id
+            run.initiator_user_id = effective_initiator_id
+            await db.commit()
+
         # Capture input params before commit to avoid async lazy-loads
         run_input_params = run.input_params
+
+        # Propagate delegation context into runtime state for node executors.
+        runtime_context = {}
+        if isinstance(run_input_params, dict):
+            runtime_context = dict(run_input_params.get("context") or {})
+        if run.delegation_grant_id:
+            runtime_context["grant_id"] = str(run.delegation_grant_id)
+        if run.workload_principal_id:
+            runtime_context["principal_id"] = str(run.workload_principal_id)
+        if run.initiator_user_id:
+            runtime_context["initiator_user_id"] = str(run.initiator_user_id)
+        runtime_context["run_id"] = str(run.id)
+        if run.tenant_id:
+            runtime_context["tenant_id"] = str(run.tenant_id)
+        if isinstance(run_input_params, dict):
+            run_input_params = dict(run_input_params)
+            run_input_params["context"] = runtime_context
+            # Keep auth/runtime context in persistent state bag too.
+            # Top-level `context` is used by workflow logic and may be overwritten.
+            existing_state = run_input_params.get("state")
+            if not isinstance(existing_state, dict):
+                existing_state = {}
+            existing_state = dict(existing_state)
+            existing_state["context"] = dict(runtime_context)
+            run_input_params["state"] = existing_state
+        else:
+            run_input_params = {
+                "context": runtime_context,
+                "state": {"context": dict(runtime_context)},
+            }
 
         # Update status
         run.status = RunStatus.running
@@ -144,7 +236,12 @@ class AgentExecutorService:
         # 2. Compile Graph to GraphIR
         compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
         graph_def = AgentGraph(**agent.graph_definition)
-        graph_ir = await compiler.compile(agent.id, agent.version, graph_def, input_params=run_input_params)
+        compile_input_params = run_input_params
+        if resume_payload and isinstance(resume_payload, dict):
+            if "approval" in resume_payload:
+                compile_input_params = dict(run_input_params or {})
+                compile_input_params["approval"] = resume_payload.get("approval")
+        graph_ir = await compiler.compile(agent.id, agent.version, graph_def, input_params=compile_input_params)
 
         # 3. Create Runtime Adapter + Executable
         adapter_cls = RuntimeAdapterRegistry.get_default()
@@ -157,6 +254,12 @@ class AgentExecutorService:
             "run_id": str(run_id),
             "mode": mode.value,
             "resume_payload": resume_payload,
+            "grant_id": str(run.delegation_grant_id) if run.delegation_grant_id else None,
+            "principal_id": str(run.workload_principal_id) if run.workload_principal_id else None,
+            "initiator_user_id": str(run.initiator_user_id) if run.initiator_user_id else None,
+            "tenant_id": str(run.tenant_id) if run.tenant_id else None,
+            "user_id": str(run.user_id) if run.user_id else None,
+            "auth_token": runtime_context.get("token"),
         }
 
         try:
@@ -187,9 +290,28 @@ class AgentExecutorService:
                 run.usage_tokens = 0
 
             # Emit final status event
+            next_nodes = []
+            if snapshot.next:
+                next_ids = snapshot.next if isinstance(snapshot.next, list) else [snapshot.next]
+                node_index = {n.id: n for n in graph_def.nodes}
+                for next_id in next_ids:
+                    node = node_index.get(next_id)
+                    if node:
+                        next_nodes.append({
+                            "id": next_id,
+                            "type": node.type,
+                            "name": node.config.get("label", next_id),
+                        })
+                    else:
+                        next_nodes.append({"id": next_id})
+
             yield ExecutionEvent(
                 event="run_status",
-                data={"status": final_status.value},
+                data={
+                    "status": final_status.value,
+                    "next": snapshot.next,
+                    "next_nodes": next_nodes or None,
+                },
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE,
                 metadata={"mode": mode.value}

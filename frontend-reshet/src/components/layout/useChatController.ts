@@ -33,9 +33,11 @@ export interface ChatMessage {
   content: string;
   createdAt: Date;
   isFinal?: boolean;
+  approvalRequest?: boolean;
   attachments?: FileUIPart[];
   citations?: Citation[];
   reasoningSteps?: Array<{
+    id?: string;
     label: string;
     status: "active" | "complete" | "pending";
     icon: LucideIcon;
@@ -78,7 +80,7 @@ export const mergeReasoningSteps = (
   const merged: ChatMessage["reasoningSteps"] = [];
   const indexMap = new Map<string, number>();
   steps.forEach((step) => {
-    const key = getReasoningLabelKey(step.label);
+    const key = step.id || getReasoningLabelKey(step.label);
     if (indexMap.has(key)) {
       const idx = indexMap.get(key)!;
       const incomingStatus = normalizeReasoningStatus(step.status);
@@ -733,4 +735,3 @@ export function useChatController(): ChatController {
     textareaRef,
   };
 }
-

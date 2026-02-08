@@ -1,7 +1,7 @@
 # Tools Overview
 
 Date: 2026-02-03
-Last Updated: 2026-02-04
+Last Updated: 2026-02-06
 
 This document describes the full Tools domain in the app: data model, APIs, execution flow, UI, and tests. It reflects the current architecture after the Tool taxonomy and Agent Tool Picker upgrades.
 
@@ -104,15 +104,36 @@ Computed by the Tools API:
 - Node executor: `ToolNodeExecutor`
 - Reads `implementation_type` column first
 - Falls back to `config_schema.implementation.type`
-- MCP execution is stubbed and raises NotImplemented
 
 ### Agent Node Tool Binding
-- When an Agent node is configured with `tools`, it can emit a JSON tool-call payload.
+- When an Agent node is configured with `tools`, it binds tool schemas to the model and accepts structured tool calls (with JSON fallback).
 - The Agent node executes matching tools internally via `ToolNodeExecutor`, writing `tool_outputs`, `context`, and `state.last_agent_output` with the tool result.
+- Execution supports `sequential` or `parallel_safe` modes, with deterministic ToolMessage ordering.
+
+### Tool Execution Metadata (config_schema.execution)
+Backend-only execution metadata used by the Agent tool loop:
+- `is_pure` (bool, default false)
+- `concurrency_group` (str, default "default")
+- `max_concurrency` (int, default 1)
+- `timeout_s` (int, optional)
 
 ### Artifact-backed Tools
 - If `artifact_id` is set on the tool, execution delegates to `ArtifactNodeExecutor`
 - Supports inline artifact config in `config_schema.implementation`
+- Tool-call args are mapped into artifact inputs by name (schema-driven); inputs are treated as literal values (no `{{ }}` interpolation)
+- Required artifact inputs are validated strictly; missing required fields fail execution
+
+### Function Tools
+- `implementation_type: function` executes allowlisted server-side functions
+- Function lookup uses the internal Tool Function Registry
+- `implementation_config.function_name` is required and must be registered
+- Sync functions run in a thread; async functions are awaited
+
+### MCP Tools
+- `implementation_type: mcp` executes MCP tools via HTTP JSON-RPC
+- Request method: `tools/call` with params `{ name, arguments }`
+- `implementation_config.server_url` and `implementation_config.tool_name` are required
+- Optional `implementation_config.headers` are passed through for auth
 
 ### Tool Resolver
 - Resolves tool metadata and returns the actual implementation type
@@ -181,11 +202,6 @@ Migration defaults:
 - `implementation_type` inferred from artifact/config_schema/is_system
 
 ---
-
-## 9) Known Gaps
-
-- MCP execution is not implemented; currently raises NotImplemented.
-- Tool execution for `function` subtype is stubbed.
 
 ---
 

@@ -210,12 +210,26 @@ async def seed_platform_sdk_tool(db):
     input_schema = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["fetch_catalog", "validate_plan", "execute_plan", "respond"]},
+            "action": {
+                "type": "string",
+                "enum": [
+                    "fetch_catalog",
+                    "validate_plan",
+                    "execute_plan",
+                    "create_artifact_draft",
+                    "promote_artifact",
+                    "create_tool",
+                    "run_agent",
+                    "run_tests",
+                    "respond",
+                ],
+            },
             "steps": {"type": "array", "items": {"type": "object"}},
+            "tests": {"type": "array", "items": {"type": "object"}},
             "dry_run": {"type": "boolean"},
             "payload": {"type": "object"},
         },
-        "required": [],
+        "required": ["action"],
         "additionalProperties": True,
     }
     output_schema = {
@@ -243,7 +257,7 @@ async def seed_platform_sdk_tool(db):
                 tenant_id=None,
                 name="Platform SDK",
                 slug=slug,
-                description="SDK-powered tool to fetch catalogs and execute platform build plans.",
+                description="SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.",
                 scope=ToolDefinitionScope.GLOBAL,
                 schema=schema,
                 config_schema=config_schema,
@@ -259,7 +273,7 @@ async def seed_platform_sdk_tool(db):
             db.add(tool)
         else:
             tool.name = "Platform SDK"
-            tool.description = "SDK-powered tool to fetch catalogs and execute platform build plans."
+            tool.description = "SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests."
             tool.scope = ToolDefinitionScope.GLOBAL
             tool.schema = schema
             tool.config_schema = config_schema
@@ -282,7 +296,7 @@ async def seed_platform_sdk_tool(db):
 
 async def seed_platform_architect_agent(db):
     """
-    Seeds a tenant-scoped Platform Architect agent with a linear tool-LLM-tool flow.
+    Seeds a tenant-scoped Platform Architect orchestrator and sub-agents (multi-agent flow).
     """
     # Prevent enum mismatches when loading tool references
     await _normalize_tool_status_values(db)
@@ -304,7 +318,15 @@ async def seed_platform_architect_agent(db):
         print("No chat model available; skipping Platform Architect agent seed.")
         return None
 
-    graph_definition = _build_architect_graph_definition(tool_id, model_id)
+    subagent_slugs = {
+        "catalog": "architect-catalog",
+        "planner": "architect-planner",
+        "builder": "architect-builder",
+        "coder": "architect-coder",
+        "tester": "architect-tester",
+    }
+
+    graph_definition = _build_architect_graph_definition(tool_id, model_id, subagent_slugs)
 
     agent_columns = await _get_table_columns(db, "agents")
     minimal_agent_cols = {"id", "tenant_id", "name", "slug", "description", "graph_definition"}
@@ -354,6 +376,7 @@ async def seed_platform_architect_agent(db):
             use_orm = False
 
     if use_orm:
+        await _seed_architect_subagents(db, tenant.id, model_id, tool_id, subagent_slugs)
         if agent is None:
             agent = Agent(
                 tenant_id=tenant.id,
@@ -419,62 +442,61 @@ async def _resolve_default_chat_model_id(db, tenant_id):
     return str(model.id) if model else None
 
 
-def _build_architect_graph_definition(tool_id: str, model_id: str) -> dict:
+def _build_architect_graph_definition(tool_id: str, model_id: str, subagent_slugs: dict | None = None) -> dict:
+    slugs = subagent_slugs or {
+        "catalog": "architect-catalog",
+        "planner": "architect-planner",
+        "builder": "architect-builder",
+        "coder": "architect-coder",
+        "tester": "architect-tester",
+    }
+
     instructions = (
-        "You are the Platform Architect. The previous tool node fetched a catalog summary; "
-        "use it if available, but proceed even if it's missing. Respond ONLY with JSON matching this schema:\n"
-        "{\n"
-        '  \"action\": \"execute_plan\" | \"validate_plan\" | \"respond\",\n'
-        "  \"steps\": [\n"
-        "    {\"action\": \"create_custom_node\", \"name\": str, \"python_code\": str, \"input_type\": str, \"output_type\": str, \"category\"?: str},\n"
-        "    {\"action\": \"deploy_rag_pipeline\", \"payload\": {\"nodes\": [...], \"edges\": [...]}},\n"
-        "    {\"action\": \"deploy_agent\", \"payload\": {\"nodes\": [...], \"edges\": [...]}}\n"
-        "  ],\n"
-        '  \"message\"?: str\n'
-        "}\n"
-        "Rules:\n"
-        "- Always include \"action\" at the top level.\n"
-        "- For build requests, set action=\"execute_plan\" and include steps with the exact keys above (do not nest under other keys).\n"
-        "- The platform validates plans before execution; you may optionally use action=\"validate_plan\" when explicitly asked to validate.\n"
-        "- For simple answers, use action=\"respond\" and include a \"message\" string.\n"
-        "- When creating nodes, make python_code minimal but valid Python.\n"
-        "- Prefer 5–10 nodes total in deploy payloads when assembling pipelines/agents."
+        "You are the Platform Architect Orchestrator. Coordinate sub-agents via the Platform SDK tool. "
+        f"Sub-agent slugs: catalog={slugs['catalog']}, planner={slugs['planner']}, builder={slugs['builder']}, "
+        f"coder={slugs['coder']}, tester={slugs['tester']}. "
+        "Strict execution policy: "
+        "(A) call fetch_catalog at most once per run, "
+        "(B) never repeat the same tool call with identical arguments, "
+        "(C) after any tool error, stop and return a final error JSON instead of retry loops, "
+        "(D) never ask for requirements if the user already gave enough detail for a minimal agent. "
+        "Workflow for build requests: "
+        "(1) fetch_catalog once, "
+        "(2) planner produces Plan JSON, "
+        "(3) execute_plan for draft-only creation, "
+        "(4) optional run_tests if tests were provided, "
+        "(5) return final JSON and stop. "
+        "Workflow for capability questions: "
+        "fetch_catalog once, summarize capabilities, return final JSON and stop. "
+        "Use tool calls with JSON arguments like: "
+        "{\"action\": \"run_agent\", \"payload\": {\"agent_slug\": \"...\", \"input\": {\"text\": \"...\", \"context\": {...}}}}. "
+        "All creations must stay in DRAFT status unless explicitly requested to publish/promote. "
+        "Return JSON only. Do not output prose outside JSON."
     )
 
     output_schema = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["execute_plan", "validate_plan", "respond"]},
-            "steps": {"type": "array", "items": {"type": "object"}},
-            "message": {"type": "string"},
+            "notes": {"type": "string"},
+            "capabilities": {"type": "object"},
+            "draft_assets": {"type": "object"},
+            "plan_validation": {"type": "object"},
+            "test_report": {"type": "object"},
+            "errors": {"type": "array", "items": {"type": "object"}},
         },
-        "required": ["action"],
+        "required": ["notes"],
         "additionalProperties": True,
     }
 
     return {
         "nodes": [
+            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
             {
-                "id": "start",
-                "type": "start",
-                "position": {"x": 0, "y": 0},
-                "config": {},
-            },
-            {
-                "id": "catalog_tool",
-                "type": "tool",
+                "id": "orchestrator",
+                "type": "agent",
                 "position": {"x": 200, "y": 0},
                 "config": {
-                    "tool_id": tool_id,
-                    "label": "Platform SDK (Catalog)",
-                },
-            },
-            {
-                "id": "planner",
-                "type": "agent",
-                "position": {"x": 400, "y": 0},
-                "config": {
-                    "name": "Platform Architect Planner",
+                    "name": "Platform Architect Orchestrator",
                     "model_id": model_id,
                     "instructions": instructions,
                     "include_chat_history": True,
@@ -482,32 +504,209 @@ def _build_architect_graph_definition(tool_id: str, model_id: str) -> dict:
                     "output_format": "json",
                     "output_schema": output_schema,
                     "write_output_to_context": True,
+                    "tools": [tool_id],
                 },
             },
-            {
-                "id": "execute_tool",
-                "type": "tool",
-                "position": {"x": 600, "y": 0},
-                "config": {
-                    "tool_id": tool_id,
-                    "label": "Platform SDK (Execute)",
-                    "input_source": "last_agent_output",
-                },
-            },
-            {
-                "id": "end",
-                "type": "end",
-                "position": {"x": 800, "y": 0},
-                "config": {"output_variable": "context"},
-            },
+            {"id": "end", "type": "end", "position": {"x": 400, "y": 0}, "config": {"output_variable": "context"}},
         ],
         "edges": [
-            {"id": "e1", "source": "start", "target": "catalog_tool", "type": "control"},
-            {"id": "e2", "source": "catalog_tool", "target": "planner", "type": "control"},
-            {"id": "e3", "source": "planner", "target": "execute_tool", "type": "control"},
-            {"id": "e4", "source": "execute_tool", "target": "end", "type": "control"},
+            {"id": "e1", "source": "start", "target": "orchestrator", "type": "control"},
+            {"id": "e2", "source": "orchestrator", "target": "end", "type": "control"},
         ],
     }
+
+
+def _build_architect_subagent_graph(
+    model_id: str,
+    instructions: str,
+    output_schema: dict | None = None,
+    tools: list | None = None,
+) -> dict:
+    config = {
+        "name": "Architect Sub-Agent",
+        "model_id": model_id,
+        "instructions": instructions,
+        "include_chat_history": True,
+        "reasoning_effort": "medium",
+        "output_format": "json",
+        "write_output_to_context": True,
+    }
+    if output_schema:
+        config["output_schema"] = output_schema
+    if tools:
+        config["tools"] = tools
+
+    return {
+        "nodes": [
+            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+            {"id": "agent", "type": "agent", "position": {"x": 200, "y": 0}, "config": config},
+            {"id": "end", "type": "end", "position": {"x": 400, "y": 0}, "config": {"output_variable": "context"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "agent", "type": "control"},
+            {"id": "e2", "source": "agent", "target": "end", "type": "control"},
+        ],
+    }
+
+
+def _build_architect_subagent_specs(tool_id: str, model_id: str, slugs: dict) -> list[dict]:
+    catalog_schema = {
+        "type": "object",
+        "properties": {"catalog": {"type": "object"}, "notes": {"type": "string"}},
+        "required": ["catalog"],
+        "additionalProperties": True,
+    }
+    planner_schema = {
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string"},
+            "actions": {"type": "array", "items": {"type": "object"}},
+            "tests": {"type": "array", "items": {"type": "object"}},
+        },
+        "required": ["actions"],
+        "additionalProperties": True,
+    }
+    builder_schema = {
+        "type": "object",
+        "properties": {
+            "actions": {"type": "array", "items": {"type": "object"}},
+            "notes": {"type": "string"},
+        },
+        "required": ["actions"],
+        "additionalProperties": True,
+    }
+    coder_schema = {
+        "type": "object",
+        "properties": {
+            "artifacts": {"type": "array", "items": {"type": "object"}},
+            "tools": {"type": "array", "items": {"type": "object"}},
+            "notes": {"type": "string"},
+        },
+        "additionalProperties": True,
+    }
+    tester_schema = {
+        "type": "object",
+        "properties": {
+            "tests": {"type": "array", "items": {"type": "object"}},
+            "summary": {"type": "object"},
+        },
+        "additionalProperties": True,
+    }
+
+    return [
+        {
+            "slug": slugs["catalog"],
+            "name": "Architect Catalog",
+            "description": "Catalog/Introspector sub-agent for the Platform Architect.",
+            "tools": [tool_id],
+            "graph_definition": _build_architect_subagent_graph(
+                model_id=model_id,
+                instructions=(
+                    "You are the Catalog/Introspector. Use the Platform SDK tool to call action \"fetch_catalog\" "
+                    "exactly once and summarize available RAG/Agent capabilities. Do not call fetch_catalog repeatedly. "
+                    "If fetch fails once, return an error JSON and stop. Return JSON with key \"catalog\" and optional notes. "
+                    "Output JSON only."
+                ),
+                output_schema=catalog_schema,
+                tools=[tool_id],
+            ),
+        },
+        {
+            "slug": slugs["planner"],
+            "name": "Architect Planner",
+            "description": "Planner sub-agent producing Plan JSON for the Platform Architect.",
+            "tools": [],
+            "graph_definition": _build_architect_subagent_graph(
+                model_id=model_id,
+                instructions=(
+                    "You are the Planner. Produce a strict Plan JSON with actions and tests. "
+                    "Use action types: create_artifact_draft, promote_artifact, create_tool, deploy_agent, deploy_rag_pipeline, run_tests. "
+                    "Output JSON only."
+                ),
+                output_schema=planner_schema,
+            ),
+        },
+        {
+            "slug": slugs["builder"],
+            "name": "Architect Builder",
+            "description": "Builder sub-agent producing deploy payloads for agents and pipelines.",
+            "tools": [],
+            "graph_definition": _build_architect_subagent_graph(
+                model_id=model_id,
+                instructions=(
+                    "You are the Builder. Convert Plan actions into executable payloads for deploy_agent and deploy_rag_pipeline. "
+                    "Return JSON with key \"actions\" containing ready-to-execute payloads. Output JSON only."
+                ),
+                output_schema=builder_schema,
+            ),
+        },
+        {
+            "slug": slugs["coder"],
+            "name": "Architect Coder",
+            "description": "Coder sub-agent drafting artifacts and tools for missing capabilities.",
+            "tools": [],
+            "graph_definition": _build_architect_subagent_graph(
+                model_id=model_id,
+                instructions=(
+                    "You are the Coder. Draft artifact/tool definitions for missing capabilities. "
+                    "Return JSON with keys \"artifacts\" and \"tools\". Output JSON only."
+                ),
+                output_schema=coder_schema,
+            ),
+        },
+        {
+            "slug": slugs["tester"],
+            "name": "Architect Tester",
+            "description": "Tester sub-agent executing multi-case tests via the Platform SDK tool.",
+            "tools": [tool_id],
+            "graph_definition": _build_architect_subagent_graph(
+                model_id=model_id,
+                instructions=(
+                    "You are the Tester. Use the Platform SDK tool action \"run_tests\" to execute the provided test suite. "
+                    "Return the test report JSON. Output JSON only."
+                ),
+                output_schema=tester_schema,
+                tools=[tool_id],
+            ),
+        },
+    ]
+
+
+async def _seed_architect_subagents(db, tenant_id, model_id, tool_id, slugs: dict) -> None:
+    specs = _build_architect_subagent_specs(tool_id, model_id, slugs)
+    for spec in specs:
+        slug = spec["slug"]
+        tools = spec.get("tools") or []
+        result = await db.execute(
+            select(Agent).where(Agent.slug == slug, Agent.tenant_id == tenant_id)
+        )
+        agent = result.scalar_one_or_none()
+        if agent is None:
+            agent = Agent(
+                tenant_id=tenant_id,
+                name=spec["name"],
+                slug=slug,
+                description=spec["description"],
+                graph_definition=spec["graph_definition"],
+                tools=tools,
+                referenced_tool_ids=tools,
+                status=AgentStatus.published,
+                is_active=True,
+                is_public=False,
+            )
+            db.add(agent)
+        else:
+            agent.name = spec["name"]
+            agent.description = spec["description"]
+            agent.graph_definition = spec["graph_definition"]
+            agent.tools = tools
+            agent.referenced_tool_ids = tools
+            agent.status = AgentStatus.published
+            agent.is_active = True
+            agent.is_public = False
+
+    await db.flush()
+    await db.commit()
 
 
 async def _get_table_columns(db, table_name: str) -> set:
@@ -542,7 +741,7 @@ async def _seed_platform_sdk_tool_legacy(db, schema: dict, config_schema: dict, 
         return None
     slug = "platform-sdk"
     name = "Platform SDK"
-    description = "SDK-powered tool to fetch catalogs and execute platform build plans."
+    description = "SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests."
     now = datetime.utcnow()
     tool_status_labels = await _get_enum_labels(db, "toolstatus")
     impl_labels = await _get_enum_labels(db, "toolimplementationtype")

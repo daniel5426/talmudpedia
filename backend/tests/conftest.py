@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sqlite3
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 USE_REAL_DB = os.getenv("TEST_USE_REAL_DB") == "1"
+sqlite3.register_adapter(UUID, lambda value: str(value))
 
 if USE_REAL_DB:
     try:

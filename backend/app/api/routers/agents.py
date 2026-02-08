@@ -9,14 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
+import logging
 
 from app.db.postgres.session import get_db
-from app.api.routers.auth import get_current_user
-from app.api.dependencies import get_current_user_or_service
+from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
 from app.db.postgres.models.identity import User, OrgMembership, OrgRole
 from typing import Dict, Any
-import jwt
-from app.core.security import SECRET_KEY, ALGORITHM, create_access_token
 from fastapi import Request
 
 from app.services.agent_service import (
@@ -52,7 +50,7 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 async def get_agent_context(
     request: Request,
-    context: Dict[str, Any] = Depends(get_current_user_or_service),
+    context: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
     """
@@ -60,11 +58,20 @@ async def get_agent_context(
     Users can manage agents if they are System Admins OR have an Org role.
     """
     token = context.get("auth_token")
-    if context.get("is_service"):
+    if context.get("type") == "workload":
         tenant_id = context.get("tenant_id")
         if not tenant_id:
             raise HTTPException(status_code=403, detail="Tenant context required")
-        return {"user": None, "tenant_id": tenant_id, "auth_token": token, "is_service": True}
+        return {
+            "user": None,
+            "tenant_id": tenant_id,
+            "auth_token": token,
+            "is_service": True,
+            "principal_id": context.get("principal_id"),
+            "grant_id": context.get("grant_id"),
+            "initiator_user_id": context.get("initiator_user_id"),
+            "scopes": context.get("scopes", []),
+        }
 
     current_user = context.get("user")
     if current_user is None:
@@ -82,33 +89,30 @@ async def get_agent_context(
 
     if membership:
         tenant_id = membership.tenant_id
-        org_unit_id = membership.org_unit_id
-        org_role = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
-        if token is None:
-            token = create_access_token(
-                subject=current_user.id,
-                tenant_id=tenant_id,
-                org_unit_id=org_unit_id,
-                org_role=org_role,
-            )
-        return {"user": current_user, "tenant_id": tenant_id, "auth_token": token, "is_service": False}
+        return {
+            "user": current_user,
+            "tenant_id": tenant_id,
+            "auth_token": token,
+            "is_service": False,
+            "scopes": context.get("scopes", []),
+        }
 
     # If admin and no membership (true system admin), they can see everything but creation might fail
+    tenant_id = context.get("tenant_id")
     # Try tenant from header if membership missing
     header_tenant = request.headers.get("X-Tenant-ID")
     if header_tenant:
          tenant_id = header_tenant
 
-    # Fallback: issue token even without membership so internal tool calls can auth
-    if token is None:
-         token = create_access_token(
-             subject=current_user.id,
-             tenant_id=tenant_id,
-             org_unit_id=org_unit_id,
-             org_role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
-         )
-
-    return {"user": current_user, "tenant_id": tenant_id, "auth_token": token, "is_service": False}
+    if tenant_id is None:
+        raise HTTPException(status_code=403, detail="Tenant context required")
+    return {
+        "user": current_user,
+        "tenant_id": tenant_id,
+        "auth_token": token,
+        "is_service": False,
+        "scopes": context.get("scopes", []),
+    }
         
     raise HTTPException(status_code=403, detail="Not authorized to manage agents")
 
@@ -198,6 +202,7 @@ async def list_agents(
 @router.post("", response_model=AgentResponse)
 async def create_agent(
     request: CreateAgentRequest,
+    _: Dict[str, Any] = Depends(require_scopes("agents.write")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -244,6 +249,7 @@ async def get_agent(
 async def update_agent(
     agent_id: UUID,
     request: UpdateAgentRequest,
+    _: Dict[str, Any] = Depends(require_scopes("agents.write")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -266,6 +272,7 @@ async def update_agent(
 async def update_graph(
     agent_id: UUID,
     request: GraphDefinitionSchema,
+    _: Dict[str, Any] = Depends(require_scopes("agents.write")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -282,14 +289,25 @@ async def update_graph(
 
 @router.delete("/{agent_id}")
 async def delete_agent(
-    agent_id: UUID, 
+    agent_id: UUID,
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("agents.write")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete or archive an agent."""
     tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
-    
+
+    await ensure_sensitive_action_approved(
+        principal=principal,
+        tenant_id=tenant_id,
+        subject_type="agent",
+        subject_id=str(agent_id),
+        action_scope="agents.delete",
+        db=db,
+    )
+
     try:
         return await service.delete_agent(agent_id)
     except AgentServiceError as e:
@@ -302,7 +320,8 @@ async def delete_agent(
 
 @router.post("/{agent_id}/validate")
 async def validate_agent(
-    agent_id: UUID, 
+    agent_id: UUID,
+    _: Dict[str, Any] = Depends(require_scopes("agents.run_tests")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -319,14 +338,25 @@ async def validate_agent(
 
 @router.post("/{agent_id}/publish", response_model=AgentResponse)
 async def publish_agent(
-    agent_id: UUID, 
+    agent_id: UUID,
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("agents.write")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db)
 ):
     """Publish an agent."""
     tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
-    
+
+    await ensure_sensitive_action_approved(
+        principal=principal,
+        tenant_id=tenant_id,
+        subject_type="agent",
+        subject_id=str(agent_id),
+        action_scope="agents.publish",
+        db=db,
+    )
+
     try:
         agent = await service.publish_agent(agent_id)
         return agent_to_response(agent)
@@ -380,6 +410,7 @@ async def get_version(
 async def execute_agent(
     agent_id: UUID,
     request: ExecuteAgentRequest,
+    _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -388,11 +419,22 @@ async def execute_agent(
     service = AgentService(db=db, tenant_id=tenant_id)
     
     try:
+        request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
+        request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
+        request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
+        request_context.setdefault("requested_scopes", context.get("scopes", []))
+        if context.get("grant_id"):
+            request_context.setdefault("grant_id", context.get("grant_id"))
+        if context.get("principal_id"):
+            request_context.setdefault("principal_id", context.get("principal_id"))
+        if context.get("initiator_user_id"):
+            request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
+
         result = await service.execute_agent(agent_id, ExecuteAgentData(
             input=request.input,
             messages=request.messages,
-            context=request.context,
-        ))
+            context=request_context,
+        ), user_id=context["user"].id if context.get("user") else None)
         # Convert LangChain messages to dicts for Pydantic validation
         serialized_messages = []
         for msg in result.messages:
@@ -421,6 +463,7 @@ async def stream_agent(
     agent_id: UUID,
     request: ExecuteAgentRequest,
     mode: Optional[str] = None, # "debug" or "production"
+    _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -477,11 +520,28 @@ async def stream_agent(
             "context": {
                 "token": context.get("auth_token"),
                 "tenant_id": str(tenant_id) if tenant_id is not None else None,
-                "user_id": str(context["user"].id),
+                "user_id": str(context["user"].id) if context.get("user") else context.get("initiator_user_id"),
+                "requested_scopes": context.get("scopes", []),
+                "grant_id": context.get("grant_id"),
+                "principal_id": context.get("principal_id"),
+                "initiator_user_id": context.get("initiator_user_id"),
             },
         }
         # Start run with explicit mode metadata
-        run_id = await executor.start_run(agent_id, input_params, user_id=context["user"].id, background=False, mode=execution_mode)
+        requested_scopes = None
+        if isinstance(request.context, dict):
+            maybe_scopes = request.context.get("requested_scopes")
+            if isinstance(maybe_scopes, list):
+                requested_scopes = maybe_scopes
+        initiating_user_id = context["user"].id if context.get("user") else None
+        run_id = await executor.start_run(
+            agent_id,
+            input_params,
+            user_id=initiating_user_id,
+            background=False,
+            mode=execution_mode,
+            requested_scopes=requested_scopes,
+        )
 
     async def event_generator():
         import time
@@ -520,6 +580,7 @@ async def stream_agent(
 async def start_run_v2(
     agent_id: UUID,
     request: ExecuteAgentRequest,
+    _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -527,19 +588,14 @@ async def start_run_v2(
     Start an agent execution using the new AgentExecutorService (Phase 4 engine).
     Returns the Run ID immediately.
     """
-    print(f"[DEBUG] start_run_v2 called for agent_id: {agent_id}")
-    print(f"[DEBUG] Request data: {request.model_dump()}")
-    
     from app.agent.execution.service import AgentExecutorService
     
     tenant_id = context["tenant_id"]
     # Ensure user has access
     service = AgentService(db=db, tenant_id=tenant_id)
     try:
-        agent = await service.get_agent(agent_id) # Validates existence and checks ownership implicitly
-        print(f"[DEBUG] Agent found: {agent.name}")
-    except Exception as e:
-        print(f"[DEBUG] Error finding/checking agent: {e}")
+        await service.get_agent(agent_id) # Validates existence and checks ownership implicitly
+    except Exception:
         raise
     
     executor = AgentExecutorService(db=db)
@@ -559,17 +615,29 @@ async def start_run_v2(
         "context": {
             "token": context.get("auth_token"),
             "tenant_id": str(tenant_id) if tenant_id is not None else None,
+            "user_id": str(context["user"].id) if context.get("user") else context.get("initiator_user_id"),
+            "requested_scopes": context.get("scopes", []),
+            "grant_id": context.get("grant_id"),
+            "principal_id": context.get("principal_id"),
+            "initiator_user_id": context.get("initiator_user_id"),
         },
     }
     
     try:
-        run_id = await executor.start_run(agent_id, input_params, user_id=context["user"].id)
-        print(f"[DEBUG] Run started successfully. Run ID: {run_id}")
+        requested_scopes = None
+        if isinstance(request.context, dict):
+            maybe_scopes = request.context.get("requested_scopes")
+            if isinstance(maybe_scopes, list):
+                requested_scopes = maybe_scopes
+        initiating_user_id = context["user"].id if context.get("user") else None
+        run_id = await executor.start_run(
+            agent_id,
+            input_params,
+            user_id=initiating_user_id,
+            requested_scopes=requested_scopes,
+        )
         return {"run_id": str(run_id)}
     except Exception as e:
-        print(f"[DEBUG] Error starting run in executor: {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -577,6 +645,7 @@ async def start_run_v2(
 async def resume_run_v2(
     run_id: UUID,
     request: Dict[str, Any], # Payload depends on what the node waits for
+    _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -595,6 +664,7 @@ async def resume_run_v2(
 @router.get("/runs/{run_id}", response_model=Dict[str, Any])
 async def get_run_status(
     run_id: UUID,
+    _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):

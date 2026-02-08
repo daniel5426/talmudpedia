@@ -17,11 +17,12 @@ from app.db.postgres.models.registry import (
     ModelProviderType,
     ModelProviderBinding,
     ModelCapabilityType,
-    ProviderConfig
+    ProviderConfig,
+    IntegrationCredentialCategory
 )
+from app.services.credentials_service import CredentialsService
 from app.agent.core.interfaces import LLMProvider
-from app.agent.components.llm.openai import OpenAILLM
-from app.agent.components.llm.gemini import GeminiLLM
+from app.agent.components.llm.langchain_provider import LangChainProviderAdapter
 from app.rag.interfaces.embedding import EmbeddingProvider
 from app.rag.providers.embedding.openai import OpenAIEmbeddingProvider
 from app.rag.providers.embedding.gemini import GeminiEmbeddingProvider
@@ -84,10 +85,16 @@ class ModelResolver:
         logger.info(f"Resolved logical model: {model.name} ({model.id})")
 
         # 2. Binding Resolution (Deterministic)
-        binding = await self._resolve_binding(model)
+        policy_data = model.default_resolution_policy or {}
+        policy = policy_override or ModelResolutionPolicy(
+            priority=policy_data.get("priority"),
+            fallback_enabled=policy_data.get("fallback_enabled", True),
+            cost_tier=policy_data.get("cost_tier"),
+        )
+
+        binding = await self._resolve_binding(model, policy)
         if not binding:
             # Policy-driven fallback
-            policy = policy_override or ModelResolutionPolicy()
             if policy.fallback_enabled:
                 logger.warning(f"No usable binding for {model.name}. Attempting fallback.")
                 fallback = await self._get_fallback_model(model)
@@ -104,7 +111,11 @@ class ModelResolver:
             logger.error(f"Failed to instantiate provider for {model.name}: {e}")
             raise ModelResolverError(f"Provider instantiation failed: {e}")
 
-    async def _resolve_binding(self, model: ModelRegistry) -> Optional[ModelProviderBinding]:
+    async def _resolve_binding(
+        self,
+        model: ModelRegistry,
+        policy: Optional[ModelResolutionPolicy] = None
+    ) -> Optional[ModelProviderBinding]:
         """
         Select the best binding for the current tenant.
         Rule: Tenant Binding > Global Binding.
@@ -121,9 +132,15 @@ class ModelResolver:
                 global_bindings.append(b)
 
         # 1. Check Tenant Bindings
+        def _sort_key(binding: ModelProviderBinding) -> tuple:
+            priority_order = [p.lower() for p in (policy.priority or [])] if policy else []
+            provider_key = binding.provider.value if hasattr(binding.provider, "value") else str(binding.provider)
+            provider_rank = priority_order.index(provider_key) if provider_key in priority_order else len(priority_order)
+            return (provider_rank, binding.priority)
+
         if tenant_bindings:
-            # Sort by priority (lowest first)
-            tenant_bindings.sort(key=lambda x: x.priority)
+            # Sort by policy priority (if provided), then binding priority
+            tenant_bindings.sort(key=_sort_key if policy and policy.priority else lambda x: x.priority)
             best = tenant_bindings[0]
             
             if not best.is_enabled:
@@ -135,7 +152,7 @@ class ModelResolver:
 
         # 2. Check Global Bindings
         if global_bindings:
-            global_bindings.sort(key=lambda x: x.priority)
+            global_bindings.sort(key=_sort_key if policy and policy.priority else lambda x: x.priority)
             best = global_bindings[0]
 
             if not best.is_enabled:
@@ -151,37 +168,28 @@ class ModelResolver:
         """
         Create provider with merged config (ProviderConfig + Binding.config).
         """
-        # 1. Fetch credentials (ProviderConfig)
-        provider_config = await self._get_provider_config(
-            binding.provider, 
-            binding.config.get("provider_variant")
+        # 1. Resolve credentials (IntegrationCredential -> ProviderConfig -> Binding.config)
+        credentials_payload, api_key, provider_variant = await self._resolve_provider_credentials(
+            binding,
+            IntegrationCredentialCategory.LLM_PROVIDER
         )
-        
+
         # 2. Merge configs
-        # Base: ProviderConfig credentials
-        final_config = {}
-        api_key = None
-        
-        if provider_config:
-            creds = provider_config.credentials or {}
-            api_key = creds.get("api_key")
-            final_config.update(creds)
-        
+        final_config = dict(credentials_payload or {})
+
         # Overlay: Binding config (runtime params like temp, max_tokens)
         # We explicitly exclude auth keys from binding config to prevent leakage/override confusion
-        # unless purely strictly needed for legacy (but user said legacy support only as fallback)
         binding_params = binding.config or {}
-        
-        # Legacy fallback: If no ProviderConfig found, check binding for key
+
         if not api_key:
-             api_key = binding_params.get("api_key")
+            api_key = binding_params.get("api_key")
 
         if not api_key and binding.provider != ModelProviderType.LOCAL:
-             raise ModelResolverError(f"Missing API Key for provider {binding.provider}")
+            raise ModelResolverError(f"Missing API Key for provider {binding.provider}")
 
         # Remove keys from final kwargs
         final_config.pop("api_key", None)
-        
+
         # Add runtime params
         for k, v in binding_params.items():
             if k not in ["api_key", "provider_variant"]:
@@ -189,16 +197,18 @@ class ModelResolver:
 
         # 3. Instantiate
         if binding.provider == ModelProviderType.OPENAI:
-            return OpenAILLM(
+            return LangChainProviderAdapter(
+                provider=binding.provider,
                 model=binding.provider_model_id,
                 api_key=api_key,
-                **final_config
+                **final_config,
             )
         elif binding.provider in (ModelProviderType.GOOGLE, ModelProviderType.GEMINI):
-            return GeminiLLM(
+            return LangChainProviderAdapter(
+                provider=binding.provider,
                 model=binding.provider_model_id,
-                api_key=api_key, # GeminiLLM usually takes api_key arg
-                **final_config
+                api_key=api_key,
+                **final_config,
             )
         # ... add others ...
         else:
@@ -243,6 +253,52 @@ class ModelResolver:
             return config
             
         return None
+
+    async def _resolve_provider_credentials(
+        self,
+        binding: ModelProviderBinding,
+        category: IntegrationCredentialCategory,
+    ) -> tuple[dict, Optional[str], Optional[str]]:
+        """
+        Resolve credentials for a provider binding.
+
+        Priority:
+        1) IntegrationCredential by credentials_ref
+        2) IntegrationCredential by (provider, variant)
+        3) ProviderConfig (legacy)
+        4) Binding.config.api_key (legacy)
+        """
+        provider_variant = (binding.config or {}).get("provider_variant")
+        credentials_service = CredentialsService(self.db, self.tenant_id)
+
+        credential = None
+        if binding.credentials_ref:
+            credential = await credentials_service.get_by_id(binding.credentials_ref)
+        if not credential:
+            credential = await credentials_service.get_by_provider(
+                category=category,
+                provider_key=binding.provider.value,
+                provider_variant=provider_variant,
+            )
+
+        if credential and not credential.is_enabled:
+            raise ModelResolverError(
+                f"Credentials disabled for provider {binding.provider} (ref={credential.id})"
+            )
+
+        credentials_payload: dict = credential.credentials if credential else {}
+        api_key = credentials_payload.get("api_key") if credentials_payload else None
+
+        if not credentials_payload:
+            provider_config = await self._get_provider_config(binding.provider, provider_variant)
+            if provider_config:
+                credentials_payload = provider_config.credentials or {}
+                api_key = credentials_payload.get("api_key")
+
+        if not api_key:
+            api_key = (binding.config or {}).get("api_key")
+
+        return credentials_payload, api_key, provider_variant
 
     # ... (Rest of resolver methods like resolve_with_fallback, etc. need corresponding updates or can reuse basics)
 
@@ -345,19 +401,45 @@ class ModelResolver:
         if not active_bindings:
             raise ModelResolverError(f"No active provider bindings for model: {model.name}")
         
-        binding = min(active_bindings, key=lambda x: x.priority)
+        policy_data = model.default_resolution_policy or {}
+        priority_order = [p.lower() for p in policy_data.get("priority", [])]
+        if priority_order:
+            def _sort_key(binding: ModelProviderBinding) -> tuple:
+                provider_key = binding.provider.value if hasattr(binding.provider, "value") else str(binding.provider)
+                provider_rank = priority_order.index(provider_key) if provider_key in priority_order else len(priority_order)
+                return (provider_rank, binding.priority)
+            active_bindings.sort(key=_sort_key)
+            binding = active_bindings[0]
+        else:
+            binding = min(active_bindings, key=lambda x: x.priority)
         logger.info(f"Using provider: {binding.provider} -> {binding.provider_model_id}")
-        
-        return self._create_embedding_provider_from_binding(binding, model)
+
+        credentials_payload, api_key, _ = await self._resolve_provider_credentials(
+            binding,
+            IntegrationCredentialCategory.LLM_PROVIDER,
+        )
+
+        merged_config = dict(binding.config or {})
+        return self._create_embedding_provider_from_binding(
+            binding,
+            model,
+            config=merged_config,
+            credentials_payload=credentials_payload,
+            api_key_override=api_key,
+        )
     
     def _create_embedding_provider_from_binding(
         self,
         binding: ModelProviderBinding,
-        model: ModelRegistry
+        model: ModelRegistry,
+        config: Optional[dict] = None,
+        credentials_payload: Optional[dict] = None,
+        api_key_override: Optional[str] = None,
     ) -> EmbeddingProvider:
         """Create an EmbeddingProvider instance from a provider binding."""
-        config = binding.config or {}
-        api_key = config.get("api_key")
+        config = config or binding.config or {}
+        credentials_payload = credentials_payload or {}
+        api_key = api_key_override or config.get("api_key") or credentials_payload.get("api_key")
         
         # Get dimension from model metadata
         metadata = model.metadata_ or {}
@@ -370,9 +452,11 @@ class ModelResolver:
                 dimensions=dimension,
             )
         elif binding.provider in (ModelProviderType.GOOGLE, ModelProviderType.GEMINI):
+            task_type = config.get("task_type") or credentials_payload.get("task_type")
             return GeminiEmbeddingProvider(
                 api_key=api_key,
                 model=binding.provider_model_id,
+                task_type=task_type or "QUESTION_ANSWERING",
             )
         elif binding.provider == ModelProviderType.HUGGINGFACE:
             return HuggingFaceEmbeddingProvider(
@@ -401,4 +485,3 @@ class ModelResolver:
             )
         
         return dimension
-

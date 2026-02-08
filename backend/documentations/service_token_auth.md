@@ -1,69 +1,72 @@
-# Service Token Authentication
+# Service and Workload Token Authentication
+
+Last Updated: 2026-02-08
 
 ## Purpose
-Service tokens enable **internal, platform-to-platform** calls that require admin-level access without exposing user credentials. They are short-lived JWTs scoped to a tenant and used by the Platform SDK and internal automation.
+The platform now uses **delegated workload tokens** for internal runtime actions (agents, artifacts, tools, workers) that call secured internal APIs.
 
-## When to Use
-Use service tokens for:
-- SDK calls from internal tools to admin endpoints
-- Background services that need scoped tenant access
-
-Do not use service tokens for:
-- End-user browser or client traffic
-- Third-party integrations (use user tokens)
+## Current Model
+1. A workload principal is defined per tenant workload.
+2. A delegation grant is created with requested scopes.
+3. Effective scopes are computed by least-privilege intersection:
+`initiator_user_scopes ∩ approved_workload_scopes ∩ requested_scopes`.
+4. The broker issues a short-lived workload JWT (default 5 minutes).
 
 ## Token Claims
-Service tokens include the following claims:
-- `role`: "platform-service"
-- `tenant_id`: UUID of the tenant
-- `sub`: "platform-service" (default)
-- `exp`: 5 minutes from issuance
+Delegated workload tokens contain:
+- `iss`
+- `aud`
+- `sub = wp:<principal_id>`
+- `tenant_id`
+- `grant_id`
+- `run_id` (optional)
+- `scope` (array)
+- `act = user:<initiator_user_id>` (optional)
+- `jti`
+- `iat`, `nbf`, `exp`
+- `token_use = workload_delegated`
 
-## Signing Secret
-Service tokens are signed with:
-- `PLATFORM_SERVICE_SECRET`
+## Validation Rules
+- Signature verified against workload key set (`/.well-known/jwks.json`).
+- `token_use` must be `workload_delegated`.
+- `tenant_id`, `grant_id`, `jti`, and scopes are required.
+- `jti` must be active in `token_jti_registry`.
+- Scope checks are enforced by endpoint (`require_scopes(...)`).
 
-If this environment variable is missing, service token minting will fail.
+## Endpoint Enforcement
+Delegated workload token scopes are enforced for:
+- `GET /admin/pipelines/catalog` -> `pipelines.catalog.read`
+- `POST /admin/pipelines/visual-pipelines` -> `pipelines.write`
+- `POST /agents` -> `agents.write`
+- `POST /tools` -> `tools.write`
+- `POST /admin/artifacts` -> `artifacts.write`
+- `PUT/PATCH/DELETE /agents/*` -> `agents.write`
+- `POST /agents/{id}/publish` -> `agents.write` + sensitive approval record
+- `POST /agents/{id}/validate` -> `agents.run_tests`
+- `POST /agents/{id}/execute|stream|run`, `POST /agents/runs/{id}/resume` -> `agents.execute`
+- `PUT /tools/{id}`, `POST /tools/{id}/publish|version`, `DELETE /tools/{id}` -> `tools.write`
+- `POST /tools/{id}/publish`, `DELETE /tools/{id}` require sensitive approval record
+- `PUT /admin/artifacts/{id}`, `DELETE /admin/artifacts/{id}`, `POST /admin/artifacts/{id}/promote` -> `artifacts.write`
+- `DELETE /admin/artifacts/{id}`, `POST /admin/artifacts/{id}/promote` require sensitive approval record
+- `PUT/DELETE /admin/pipelines/visual-pipelines/{id}`, `POST /admin/pipelines/visual-pipelines/{id}/compile` -> `pipelines.write`
+- `DELETE /admin/pipelines/visual-pipelines/{id}` requires sensitive approval record
 
-## Issuance
-The token issuer lives in `backend/app/core/internal_token.py`:
-- `create_service_token(tenant_id, subject="platform-service")`
+Legacy service/API-key auth is disabled for these migrated secure paths.
 
-Example payload:
-```json
-{
-  "sub": "platform-service",
-  "role": "platform-service",
-  "tenant_id": "<tenant_uuid>",
-  "exp": "<utc_timestamp>"
-}
-```
+## Runtime Propagation
+- `AgentRun` persists `delegation_grant_id`, `workload_principal_id`, and `initiator_user_id` for both user-initiated and workload-initiated runs.
+- Runtime context propagates grant/principal/initiator IDs into node execution context.
+- Artifact and tool executors mint scoped tokens only from an active delegation grant.
 
-## Validation
-Service tokens are validated by:
-- `decode_service_token(token)`
-- Dependency `get_current_service_caller`
-
-Validation rules:
-- Signature must match `PLATFORM_SERVICE_SECRET`
-- `role` must equal `platform-service`
-- `tenant_id` must be present
-
-## Accepted Endpoints
-Service tokens are accepted only for internal SDK flows:
-- `GET /admin/pipelines/catalog`
-- `POST /admin/pipelines/visual-pipelines`
-- `POST /agents`
-
-Endpoints that require a user or membership still enforce user auth.
-
-## Example Usage
-```bash
-curl -H "Authorization: Bearer $SERVICE_TOKEN" \
-  http://localhost:8000/admin/pipelines/catalog
-```
+## Tenant Governance
+Privileged workload scopes are governed by policy approval:
+- `pending` policies cannot mint privileged tokens.
+- tenant owner/admin approval moves policy to `approved` with explicit scope set.
+- policy changes invalidate active grants for that principal.
+- sensitive mutation routes can additionally require explicit action approvals via `/admin/security/workloads/approvals/*`.
 
 ## Security Notes
-- Tokens are **short-lived** (5 minutes)
-- Always include a tenant scope
-- Never expose service tokens to clients or UI
+- Do not expose workload signing keys or delegated tokens to browser clients.
+- Use short TTL and jti tracking for revocation.
+- Keep user and workload identities distinct in audit trails.
+- Legacy `decode_service_token` path is removed from secure request dependencies.

@@ -1,5 +1,7 @@
 # Agent Execution State Overview
 
+Last Updated: 2026-02-06
+
 This document outlines the architectural model of agent execution, following the **"Unified Engine, Divergent Observability"** pattern established in [ADR 001](./architecture/001_agent_execution_modes.md).
 
 ## Core Architecture
@@ -50,3 +52,12 @@ The `StreamAdapter` sits between the Engine and the API Response. It filters the
 1.  **Side-Effect Free Observation**: logging to the DB never awaits in the hot path.
 2.  **Auth-Scoped Enforcement**: Public tokens cannot request `DEBUG` mode.
 3.  **Stateless Hooks**: Frontend hooks (`useAgentExecution`) do not retain state between runs, preventing cross-run contamination.
+
+## Tool Loop Execution (Agent Node)
+- Agent nodes run an **iterative tool loop** when tools are configured: model → tool calls → tool execution → model, until no tool calls or `max_tool_iterations` is reached.
+- Tool calls are **streamed and buffered** (tool-call deltas), then executed deterministically.
+- Tool execution mode:
+- `sequential` (default)
+- `parallel_safe` (batch parallelism based on tool metadata)
+- Tool timeouts are enforced per tool via `config_schema.execution.timeout_s`, with an agent-node fallback `tool_timeout_s`.
+- For artifact-backed tools, tool-call args are mapped into artifact inputs by name and treated as literal values (no template interpolation). Required inputs are validated strictly.

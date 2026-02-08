@@ -2,15 +2,14 @@ id: builtin/platform_sdk
 version: "1.0.0"
 display_name: Platform SDK
 category: tool
-description: SDK-powered tool to fetch catalogs and execute platform build plans.
+description: SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.
 input_type: none
 output_type: none
 scope: tool
 inputs:
   - name: action
     type: string
-    required: false
-    default: fetch_catalog
+    required: true
   - name: steps
     type: array
     required: false
@@ -20,6 +19,9 @@ inputs:
     default: false
   - name: payload
     type: object
+    required: false
+  - name: tests
+    type: array
     required: false
 outputs:
   - name: result

@@ -30,6 +30,11 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { ReactArtifactPane } from "@/components/ai-elements/ReactArtifactPane"
+import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPanel"
+import { parseReactArtifact } from "@/lib/react-artifacts/parseReactArtifact"
+import { useTenant } from "@/contexts/TenantContext"
+import { useAuthStore } from "@/lib/store/useAuthStore"
 
 function PlaygroundContent() {
     const router = useRouter()
@@ -44,6 +49,22 @@ function PlaygroundContent() {
     const controller = useAgentRunController(agentId || undefined)
     const { executionSteps } = controller
     const { direction } = useDirection()
+    const { currentTenant } = useTenant()
+    const authUser = useAuthStore((state) => state.user)
+    const tenantKey = currentTenant?.slug ?? authUser?.tenant_id ?? "unknown-tenant"
+    const {
+        artifact,
+        openFromMessage,
+        updateCode,
+        persistCurrent,
+        resetToSaved,
+        closePanel,
+    } = useReactArtifactPanel({
+        messages: controller.messages,
+        tenantKey,
+        chatId: agentId ?? "agent-playground",
+    })
+    const isArtifactMessage = (content: string) => Boolean(parseReactArtifact(content))
 
     useEffect(() => {
         let isMounted = true;
@@ -108,7 +129,7 @@ function PlaygroundContent() {
     return (
         <div className="flex w-full flex-col h-screen bg-background overflow-hidden">
             {/* Header */}
-            <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
                         <CustomBreadcrumb items={[
@@ -184,18 +205,31 @@ function PlaygroundContent() {
                 ) : (
                     <div className="flex h-full overflow-hidden">
                         {/* Chat Area */}
-                        <Conversation
-                            dir={direction}
-                            className="flex-1 relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)"
-                            targetScrollTop={controller.isLoading ? (_target: number, { scrollElement }: any) => scrollElement?.scrollTop ?? 0 : undefined}
-                        >
-                            <ChatWorkspace
-                                noBackground={true}
-                                controller={controller}
-                                isVoiceModeActive={false}
-                                handleToggleVoiceMode={() => { }}
-                            />
-                        </Conversation>
+                        <div className="flex min-w-0 flex-1">
+                            <Conversation
+                                dir={direction}
+                                className="flex-1 relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)"
+                                targetScrollTop={controller.isLoading ? (_target: number, { scrollElement }: any) => scrollElement?.scrollTop ?? 0 : undefined}
+                            >
+                                <ChatWorkspace
+                                    noBackground={true}
+                                    controller={controller}
+                                    isVoiceModeActive={false}
+                                    handleToggleVoiceMode={() => { }}
+                                    onOpenArtifact={openFromMessage}
+                                    isArtifactMessage={isArtifactMessage}
+                                />
+                            </Conversation>
+                            {artifact && (
+                                <ReactArtifactPane
+                                    artifact={artifact}
+                                    onClose={closePanel}
+                                    onCodeChange={updateCode}
+                                    onRun={persistCurrent}
+                                    onReset={resetToSaved}
+                                />
+                            )}
+                        </div>
 
                         {/* Execution Sidebar */}
                         <ExecutionSidebar

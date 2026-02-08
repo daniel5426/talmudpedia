@@ -342,7 +342,7 @@ export default function PipelineEditorPage() {
     if (loading) {
         return (
             <div className="flex flex-col h-full w-full">
-                <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+                <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
                     <Skeleton className="h-6 w-48" />
                     <Skeleton className="h-9 w-32" />
                 </header>
@@ -360,7 +360,7 @@ export default function PipelineEditorPage() {
 
     return (
         <div className="flex flex-col h-full w-full">
-            <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-30 shrink-0">
+            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
                 <div className="flex items-center gap-3">
                     <CustomBreadcrumb
                         items={[

@@ -23,16 +23,15 @@ export function BarChart({
   const maxLabel = data[data.length - 1]?.date
 
   return (
-    <div className={cn("w-full", className)}>
-      <div className="flex items-end gap-[3px] w-full" style={{ height }}>
+    <div className={cn("w-full min-w-0", className)}>
+      <div className="flex items-end gap-[3px] w-full overflow-hidden" style={{ height }}>
         {data.map((d, i) => (
           <div
             key={i}
-            className="flex-1 rounded-sm transition-all hover:opacity-80"
+            className="flex-1 min-w-0 rounded-sm transition-all hover:opacity-80"
             style={{
               height: `${Math.max((d.value / (maxValue || 1)) * 100, 2)}%`,
               backgroundColor: color,
-              minWidth: 8,
             }}
           />
         ))}

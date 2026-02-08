@@ -16,9 +16,47 @@ from app.db.postgres.models.registry import (
     ToolImplementationType,
 )
 from app.db.postgres.session import get_db
-from app.api.dependencies import get_current_user, get_tenant_context
+from app.db.postgres.models.identity import Tenant
+from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
 
 router = APIRouter(prefix="/tools", tags=["tools"])
+
+
+async def get_tools_context(
+    context=Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    if context.get("type") == "workload":
+        tenant_id = context.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(status_code=403, detail="Tenant context required")
+        try:
+            tenant_uuid = uuid.UUID(str(tenant_id))
+        except Exception:
+            raise HTTPException(status_code=403, detail="Invalid tenant context")
+        result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
+        tenant = result.scalar_one_or_none()
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        return {"tenant_id": str(tenant.id), "tenant": tenant, "user": None, "is_service": True}
+
+    tenant_id = context.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant context required")
+    try:
+        tenant_uuid = uuid.UUID(str(tenant_id))
+    except Exception:
+        raise HTTPException(status_code=403, detail="Invalid tenant context")
+    result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return {
+        "tenant_id": str(tenant.id),
+        "tenant": tenant,
+        "user": context.get("user"),
+        "is_service": False,
+    }
 
 # ============================================================================
 # Request/Response Schemas
@@ -116,8 +154,7 @@ async def list_tools(
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    tenant_ctx=Depends(get_tools_context),
 ):
     """List all tools for the current tenant or global tools."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
@@ -266,9 +303,9 @@ async def list_tools(
 @router.post("", response_model=ToolResponse)
 async def create_tool(
     request: CreateToolRequest,
+    _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    tenant_ctx=Depends(get_tools_context),
 ):
     """Create a new tool definition."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
@@ -358,8 +395,7 @@ async def create_tool(
 async def get_tool(
     tool_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    tenant_ctx=Depends(get_tools_context),
 ):
     """Get a specific tool by ID."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
@@ -403,9 +439,9 @@ async def get_tool(
 async def update_tool(
     tool_id: uuid.UUID,
     request: UpdateToolRequest,
+    _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    tenant_ctx=Depends(get_tools_context),
 ):
     """Update a tool definition."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
@@ -468,14 +504,15 @@ async def update_tool(
     await db.commit()
     await db.refresh(tool)
     
-    return await get_tool(tool.id, db, tenant_ctx, current_user)
+    return await get_tool(tool.id, db, tenant_ctx)
 
 @router.post("/{tool_id}/publish", response_model=ToolResponse)
 async def publish_tool(
     tool_id: uuid.UUID,
+    principal: dict = Depends(get_current_principal),
+    _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    tenant_ctx=Depends(get_tools_context),
 ):
     """Publish a tool and snapshot its schema."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
@@ -491,6 +528,15 @@ async def publish_tool(
     if tool.is_system:
         raise HTTPException(status_code=400, detail="Cannot publish system tools")
 
+    await ensure_sensitive_action_approved(
+        principal=principal,
+        tenant_id=tid,
+        subject_type="tool",
+        subject_id=str(tool.id),
+        action_scope="tools.publish",
+        db=db,
+    )
+
     tool.status = ToolStatus.PUBLISHED
     tool.is_active = True
     tool.published_at = tool.published_at or datetime.utcnow()
@@ -501,25 +547,26 @@ async def publish_tool(
         "implementation_type": tool.implementation_type.value if tool.implementation_type else None,
         "version": tool.version,
     }
+    actor = tenant_ctx.get("user")
     version_entry = ToolVersion(
         tool_id=tool.id,
         version=tool.version,
         schema_snapshot=snapshot,
-        created_by=current_user.id if current_user else None,
+        created_by=actor.id if actor else None,
     )
     db.add(version_entry)
     await db.commit()
     await db.refresh(tool)
 
-    return await get_tool(tool.id, db, tenant_ctx, current_user)
+    return await get_tool(tool.id, db, tenant_ctx)
 
 @router.post("/{tool_id}/version", response_model=ToolResponse)
 async def create_tool_version(
     tool_id: uuid.UUID,
     new_version: str = Query(..., description="New semver version"),
+    _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    tenant_ctx=Depends(get_tools_context),
 ):
     """Create a new tool version snapshot and bump version in registry."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
@@ -544,25 +591,27 @@ async def create_tool_version(
         "implementation_type": tool.implementation_type.value if tool.implementation_type else None,
         "version": new_version,
     }
+    actor = tenant_ctx.get("user")
     version_entry = ToolVersion(
         tool_id=tool.id,
         version=new_version,
         schema_snapshot=snapshot,
-        created_by=current_user.id if current_user else None,
+        created_by=actor.id if actor else None,
     )
     db.add(version_entry)
     tool.version = new_version
     await db.commit()
     await db.refresh(tool)
 
-    return await get_tool(tool.id, db, tenant_ctx, current_user)
+    return await get_tool(tool.id, db, tenant_ctx)
 
 @router.delete("/{tool_id}")
 async def delete_tool(
     tool_id: uuid.UUID,
+    principal: dict = Depends(get_current_principal),
+    _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    tenant_ctx=Depends(get_tools_context),
 ):
     """Delete a tool (only custom tenant tools can be deleted)."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
@@ -578,6 +627,15 @@ async def delete_tool(
         
     if tool.is_system:
         raise HTTPException(status_code=400, detail="Cannot delete system tools")
+
+    await ensure_sensitive_action_approved(
+        principal=principal,
+        tenant_id=tid,
+        subject_type="tool",
+        subject_id=str(tool.id),
+        action_scope="tools.delete",
+        db=db,
+    )
         
     await db.delete(tool)
     await db.commit()

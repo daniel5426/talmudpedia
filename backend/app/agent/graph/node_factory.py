@@ -23,6 +23,16 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
     async def node_fn(state: Any, config: Any = None):
         configurable = config.get("configurable", {}) if config else {}
         emitter = configurable.get("emitter")
+        state_context = {}
+        if isinstance(state, dict):
+            raw_ctx = state.get("context")
+            if isinstance(raw_ctx, dict):
+                state_context = raw_ctx
+            nested_state = state.get("state")
+            if isinstance(nested_state, dict):
+                nested_ctx = nested_state.get("context")
+                if isinstance(nested_ctx, dict):
+                    state_context = {**nested_ctx, **state_context}
 
         context = {
             "langgraph_config": config,
@@ -30,6 +40,14 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             "node_id": node.id,
             "node_type": node.type,
             "node_name": node.config.get("label", node.id),
+            "run_id": configurable.get("run_id") or configurable.get("thread_id") or state_context.get("run_id"),
+            "grant_id": configurable.get("grant_id") or state_context.get("grant_id"),
+            "principal_id": configurable.get("principal_id") or state_context.get("principal_id"),
+            "initiator_user_id": configurable.get("initiator_user_id") or state_context.get("initiator_user_id"),
+            "tenant_id": configurable.get("tenant_id") or state_context.get("tenant_id"),
+            "user_id": configurable.get("user_id") or state_context.get("user_id"),
+            "token": configurable.get("auth_token") or state_context.get("token"),
+            "state_context": state_context,
         }
 
         if not await executor.can_execute(state, node.config, context):

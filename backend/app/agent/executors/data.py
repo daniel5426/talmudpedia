@@ -76,6 +76,13 @@ class TransformNodeExecutor(BaseNodeExecutor):
         """
         mappings = config.get("mappings", [])
         mode = config.get("mode", "expressions")
+
+        from app.agent.execution.emitter import active_emitter
+        emitter = active_emitter.get()
+        node_id = context.get("node_id", "transform") if context else "transform"
+        node_name = context.get("node_name", "Transform") if context else "Transform"
+        if emitter:
+            emitter.emit_node_start(node_id, node_name, "transform", {"mappings": len(mappings), "mode": mode})
         
         # Get current state variables
         current_state = state.get("state", {})
@@ -111,10 +118,13 @@ class TransformNodeExecutor(BaseNodeExecutor):
         # Merge results into state variables
         updated_state = {**current_state, **result}
         
-        return {
+        result_payload = {
             "state": updated_state,
             "transform_output": result
         }
+        if emitter:
+            emitter.emit_node_end(node_id, node_name, "transform", {"keys": list(result.keys())})
+        return result_payload
 
 
 class SetStateNodeExecutor(BaseNodeExecutor):
@@ -178,6 +188,13 @@ class SetStateNodeExecutor(BaseNodeExecutor):
         """
         assignments = config.get("assignments", [])
         is_expression = config.get("is_expression", True)
+
+        from app.agent.execution.emitter import active_emitter
+        emitter = active_emitter.get()
+        node_id = context.get("node_id", "set_state") if context else "set_state"
+        node_name = context.get("node_name", "Set State") if context else "Set State"
+        if emitter:
+            emitter.emit_node_start(node_id, node_name, "set_state", {"assignments": len(assignments)})
         
         # Get current state variables
         current_state = state.get("state", {})
@@ -215,6 +232,7 @@ class SetStateNodeExecutor(BaseNodeExecutor):
         # Merge results into state variables
         updated_state = {**current_state, **result}
         
-        return {
-            "state": updated_state
-        }
+        result_payload = {"state": updated_state}
+        if emitter:
+            emitter.emit_node_end(node_id, node_name, "set_state", {"keys": list(result.keys())})
+        return result_payload

@@ -100,6 +100,12 @@ const data = {
       ],
     },
     {
+      title: "Settings",
+      url: "/admin/settings",
+      icon: Settings,
+      items: [],
+    },
+    {
       title: "RAG Management",
       url: "/admin/rag",
       icon: Database,
@@ -176,10 +182,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const rawItems = isAdminPath ? data.adminNavMain : data.navMain;
     return rawItems.map(item => ({
       ...item,
-      isActive: pathname === item.url || (item.items?.some(sub => {
-        if (sub.title === "Playground" && pathname?.includes("/admin/agents/playground")) return true;
-        return pathname === sub.url;
-      }) ?? false),
+      // if the item has subitems, don't mark the parent as active
+      isActive: (item.items && item.items.length > 0) ? false : pathname === item.url,
       items: item.items?.map(sub => {
         const isPlayground = sub.title === "Playground";
         const isActive = isPlayground ? pathname?.includes("/admin/agents/playground") : pathname === sub.url;
@@ -298,7 +302,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
 
   return (
-    <Sidebar collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50 shadow-none border" {...props}>
+    <Sidebar variant="floating" collapsible="icon" side={direction === "rtl" ? "right" : "left"} className="z-50" {...props}>
       <SidebarHeader>
         <div dir={direction} className={`flex items-center gap-1 p-2 ${(isSidebarOpen || openMobile) ? "justify-between" : "justify-center"}`}>
           {(isSidebarOpen || openMobile) && user && (user.role === "admin" || isAdminPath) && (

@@ -1,15 +1,18 @@
-from typing import Dict, Any, Optional
-from fastapi import Depends, HTTPException, Header
+from typing import Dict, Any, Optional, Callable
+from fastapi import Depends, HTTPException, Header, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from .routers.auth import get_current_user, oauth2_scheme
+from .routers.auth import get_current_user
 from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgMembership
+from app.db.postgres.models.security import ApprovalDecision, ApprovalStatus
 from app.db.postgres.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import UUID
 import jwt
 from app.core.security import SECRET_KEY, ALGORITHM
-from app.core.internal_token import decode_service_token
+from app.core.workload_jwt import decode_workload_token
+from app.services.token_broker_service import TokenBrokerService
 
 class AuthContext(BaseModel):
     user: User
@@ -18,6 +21,23 @@ class AuthContext(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+
+SECURITY_SCOPES_ADMIN = {
+    "pipelines.catalog.read",
+    "pipelines.write",
+    "agents.write",
+    "tools.write",
+    "artifacts.write",
+    "agents.execute",
+    "agents.run_tests",
+}
+SECURITY_SCOPES_MEMBER = {
+    "pipelines.catalog.read",
+    "agents.execute",
+}
+WORKLOAD_JWT_AUDIENCE = "talmudpedia-internal-api"
+bearer_scheme = HTTPBearer(auto_error=False)
 
 async def get_tenant_context(
     db: AsyncSession = Depends(get_db),
@@ -84,52 +104,133 @@ async def get_auth_context(
     return AuthContext(user=user, tenant=tenant, org_unit=org_unit)
 
 
-async def get_current_service_caller(
-    authorization: Optional[str] = Header(None)
-) -> Dict[str, Any]:
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing authorization header")
-    token = authorization.split("Bearer")[-1].strip()
-    try:
-        payload = decode_service_token(token)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid service token")
+def _derive_user_scopes(payload: Dict[str, Any], user: User) -> set[str]:
+    user_role = str(getattr(user, "role", "")).lower()
+    if user_role == "admin":
+        return {"*"}
 
-    return {
-        "tenant_id": payload.get("tenant_id"),
-        "is_service": True,
-        "role": payload.get("role"),
-        "auth_token": token,
-    }
+    org_role = str(payload.get("org_role") or "").lower()
+    if org_role in {"owner", "admin"}:
+        return set(SECURITY_SCOPES_ADMIN)
+    return set(SECURITY_SCOPES_MEMBER)
 
 
-async def get_current_user_or_service(
-    token: str = Depends(oauth2_scheme),
+async def _extract_bearer_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> str:
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials.credentials
+
+
+async def get_current_principal(
+    token: str = Depends(_extract_bearer_token),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
+    """
+    Unified principal resolver for migrated secure endpoints.
+    Supports:
+    - user principals (existing JWT)
+    - delegated workload principals (workload JWT with jti validation)
+    """
     try:
         user = await get_current_user(token=token, db=db)
-        tenant_id = None
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            tenant_id = payload.get("tenant_id")
-        except Exception:
-            tenant_id = None
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        tenant_id = payload.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(status_code=403, detail="Tenant context required")
+        scopes = _derive_user_scopes(payload, user)
+        if isinstance(payload.get("scope"), list):
+            scopes.update(str(s) for s in payload.get("scope"))
         return {
+            "type": "user",
             "user": user,
-            "tenant_id": tenant_id,
-            "is_service": False,
+            "user_id": str(user.id),
+            "tenant_id": str(tenant_id),
+            "scopes": sorted(scopes),
             "auth_token": token,
         }
     except HTTPException:
-        try:
-            payload = decode_service_token(token)
-        except Exception:
-            raise HTTPException(status_code=401, detail="Could not validate credentials")
+        pass
+    except Exception:
+        pass
+
+    try:
+        payload = decode_workload_token(token, audience=WORKLOAD_JWT_AUDIENCE)
+        broker = TokenBrokerService(db)
+        if not await broker.is_jti_active(payload.get("jti")):
+            raise HTTPException(status_code=401, detail="Revoked or expired workload token")
         return {
-            "user": None,
-            "tenant_id": payload.get("tenant_id"),
-            "is_service": True,
-            "role": payload.get("role"),
+            "type": "workload",
+            "principal_id": str(payload["sub"]).replace("wp:", "", 1),
+            "tenant_id": str(payload["tenant_id"]),
+            "grant_id": str(payload["grant_id"]),
+            "initiator_user_id": str(payload.get("act", "")).replace("user:", "", 1) if payload.get("act") else None,
+            "run_id": str(payload.get("run_id")) if payload.get("run_id") else None,
+            "scopes": sorted(set(payload.get("scope", []))),
             "auth_token": token,
         }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Could not validate principal token")
+
+
+def require_scopes(*required_scopes: str) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
+    async def _dep(principal: Dict[str, Any] = Depends(get_current_principal)) -> Dict[str, Any]:
+        scopes = set(principal.get("scopes") or [])
+        if "*" in scopes:
+            return principal
+        missing = [scope for scope in required_scopes if scope not in scopes]
+        if missing:
+            raise HTTPException(status_code=403, detail=f"Missing required scopes: {', '.join(missing)}")
+        return principal
+
+    return _dep
+
+async def ensure_sensitive_action_approved(
+    *,
+    principal: Dict[str, Any],
+    tenant_id: UUID | str | None,
+    subject_type: str,
+    subject_id: str,
+    action_scope: str,
+    db: AsyncSession,
+) -> None:
+    """
+    Sensitive mutation guard:
+    workload principals must have an explicit APPROVED decision record
+    for (tenant, subject, action_scope). User principals are allowed directly.
+    """
+    if principal.get("type") != "workload":
+        return
+
+    if tenant_id is None:
+        raise HTTPException(status_code=403, detail="Tenant context required for sensitive action")
+
+    try:
+        tenant_uuid = UUID(str(tenant_id))
+    except Exception:
+        raise HTTPException(status_code=403, detail="Invalid tenant context for sensitive action")
+
+    result = await db.execute(
+        select(ApprovalDecision)
+        .where(
+            ApprovalDecision.tenant_id == tenant_uuid,
+            ApprovalDecision.subject_type == subject_type,
+            ApprovalDecision.subject_id == str(subject_id),
+            ApprovalDecision.action_scope == action_scope,
+        )
+        .order_by(ApprovalDecision.created_at.desc())
+        .limit(1)
+    )
+    decision = result.scalar_one_or_none()
+    if decision is None or decision.status != ApprovalStatus.APPROVED:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Sensitive action '{action_scope}' requires explicit approval",
+        )

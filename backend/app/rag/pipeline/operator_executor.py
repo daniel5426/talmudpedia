@@ -940,6 +940,7 @@ class KnowledgeStoreSinkExecutor(OperatorExecutor):
         from uuid import UUID
         from app.rag.adapters import create_adapter, VectorRecord
         from app.db.postgres.models import KnowledgeStore
+        from app.services.credentials_service import CredentialsService
         
         config_dict = {**context.config}
         
@@ -958,8 +959,13 @@ class KnowledgeStoreSinkExecutor(OperatorExecutor):
         if not store:
             raise ValueError(f"Knowledge store not found: {knowledge_store_id}")
         
-        # Create the adapter based on backend
-        adapter = create_adapter(store.backend, store.backend_config)
+        # Create the adapter based on backend with merged credentials
+        credentials_service = CredentialsService(db, store.tenant_id)
+        backend_config = await credentials_service.resolve_backend_config(
+            store.backend_config or {},
+            store.credentials_ref
+        )
+        adapter = create_adapter(store.backend, backend_config)
         
         # Prepare vectors
         documents = input_data.data
@@ -1022,6 +1028,7 @@ class VectorSearchExecutor(OperatorExecutor):
             from uuid import UUID
             from app.rag.adapters import create_adapter
             from app.db.postgres.models import KnowledgeStore
+            from app.services.credentials_service import CredentialsService
             
             db = getattr(context, "db", None)
             if not db:
@@ -1029,7 +1036,12 @@ class VectorSearchExecutor(OperatorExecutor):
             store = await db.get(KnowledgeStore, UUID(knowledge_store_id))
             if not store:
                 raise ValueError(f"Knowledge store not found: {knowledge_store_id}")
-            adapter = create_adapter(store.backend, store.backend_config)
+            credentials_service = CredentialsService(db, store.tenant_id)
+            backend_config = await credentials_service.resolve_backend_config(
+                store.backend_config or {},
+                store.credentials_ref
+            )
+            adapter = create_adapter(store.backend, backend_config)
             vector_store = adapter
         else:
             index_name = config_dict.get("index_name")

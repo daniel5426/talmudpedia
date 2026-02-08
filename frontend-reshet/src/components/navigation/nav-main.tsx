@@ -50,22 +50,23 @@ export function NavMain({
           const hasSubItems = item.items && item.items.length > 0;
 
           if (hasSubItems) {
+            const childActive = item.items?.some((s) => s.isActive);
             return (
               <Collapsible
                 key={item.title}
                 asChild
-                defaultOpen={item.isActive}
+                defaultOpen={!!childActive}
                 className="group/collapsible"
               >
                 <SidebarMenuItem>
                   <CollapsibleTrigger asChild>
-                    <SidebarMenuButton asChild tooltip={item.title} className="cursor-pointer" isActive={item.isActive}>
-                      <Link href={item.url}>
+                    <SidebarMenuButton asChild tooltip={item.title} className="cursor-pointer" isActive={!!item.isActive}>
+                      <div className="flex w-full items-center gap-2">
                         {item.icon && <item.icon />}
                         <span>{item.title}</span>
                         {!isRTL && <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />}
                         {isRTL && <ChevronLeft className="mr-auto transition-transform duration-200 group-data-[state=open]/collapsible:-rotate-90" />}
-                      </Link>
+                      </div>
                     </SidebarMenuButton>
                   </CollapsibleTrigger>
                   <CollapsibleContent>

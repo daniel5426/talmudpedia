@@ -49,6 +49,7 @@ class StreamAdapter:
                             "type": "reasoning",
                             "data": {
                                 "step": evt_name or "Tool",
+                                "step_id": chunk.get("span_id"),
                                 "status": "active",
                                 "message": chunk.get("data", {}).get("message") or f"Calling tool {evt_name}...",
                             }
@@ -59,6 +60,7 @@ class StreamAdapter:
                             "type": "reasoning",
                             "data": {
                                 "step": evt_name or "Tool",
+                                "step_id": chunk.get("span_id"),
                                 "status": "complete",
                                 "message": f"Tool {evt_name} completed",
                                 "output": data.get("output") if data else None
@@ -81,6 +83,7 @@ class StreamAdapter:
                             "type": "reasoning",
                             "data": {
                                 "step": chunk.name or "Tool",
+                                "step_id": chunk.span_id,
                                 "status": "active",
                                 "message": chunk.data.get("message") or f"Calling tool {chunk.name}...",
                             }
@@ -90,6 +93,7 @@ class StreamAdapter:
                             "type": "reasoning",
                             "data": {
                                 "step": chunk.name or "Tool",
+                                "step_id": chunk.span_id,
                                 "status": "complete",
                                 "message": f"Tool {chunk.name} completed",
                                 "output": chunk.data.get("output") if chunk.data else None

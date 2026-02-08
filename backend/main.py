@@ -111,6 +111,9 @@ from app.api.routers import models as models_router
 from app.api.routers import tools as tools_router
 from app.api.routers import artifacts as artifacts_router
 from app.api.routers import stats as stats_router
+from app.api.routers import settings as settings_router
+from app.api.routers import internal_auth as internal_auth_router
+from app.api.routers import workload_security as workload_security_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 from app.api.routers import agent_operators
@@ -122,6 +125,10 @@ app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=
 app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom-operators", tags=["rag-custom-operators"])
 app.include_router(artifacts_router.router, tags=["artifacts"])
 app.include_router(stats_router.router, prefix="/admin", tags=["stats"])
+app.include_router(settings_router.router, prefix="/admin/settings", tags=["settings"])
+app.include_router(workload_security_router.router)
+app.include_router(internal_auth_router.router)
+app.include_router(internal_auth_router.jwks_router)
 
 from app.api.routers import knowledge_stores as knowledge_stores_router
 app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stores", tags=["knowledge-stores"])
