@@ -2,6 +2,20 @@ import { Edge, Node } from "@xyflow/react"
 
 import { AgentNodeData, AgentNodeType, getNodeSpec } from "./types"
 
+const ORCHESTRATION_V2_NODE_TYPES = new Set<AgentNodeType>([
+    "spawn_run",
+    "spawn_group",
+    "join",
+    "router",
+    "judge",
+    "replan",
+    "cancel_subtree",
+])
+
+interface GraphSpecNormalizeOptions {
+    specVersion?: string
+}
+
 export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
     const raw: any = node as any
     const existing = (raw.data || {}) as Partial<AgentNodeData>
@@ -46,7 +60,8 @@ export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
 
 export function normalizeGraphSpecForSave(
     nodes: Node<AgentNodeData>[],
-    edges: Edge[]
+    edges: Edge[],
+    options: GraphSpecNormalizeOptions = {}
 ) {
     const normalizedNodes = nodes.map((node) => ({
         ...node,
@@ -60,7 +75,11 @@ export function normalizeGraphSpecForSave(
         source_handle: (edge as any).source_handle || (edge as any).sourceHandle,
         target_handle: (edge as any).target_handle || (edge as any).targetHandle,
     }))
-    return { spec_version: "1.0", nodes: normalizedNodes, edges: normalizedEdges }
+    return {
+        spec_version: resolveGraphSpecVersion(nodes, options.specVersion),
+        nodes: normalizedNodes,
+        edges: normalizedEdges,
+    }
 }
 
 export function normalizeBuilderEdge(edge: Edge): Edge {
@@ -75,4 +94,24 @@ export function normalizeBuilderEdge(edge: Edge): Edge {
 
 export function normalizeBuilderEdges(edges: Edge[]) {
     return edges.map(normalizeBuilderEdge)
+}
+
+export function resolveGraphSpecVersion(
+    nodes: Node<AgentNodeData>[],
+    incomingVersion?: string
+): string {
+    const hasOrchestrationV2Nodes = nodes.some((node) => {
+        const nodeType = (node.type || (node.data as AgentNodeData | undefined)?.nodeType) as AgentNodeType | undefined
+        return !!nodeType && ORCHESTRATION_V2_NODE_TYPES.has(nodeType)
+    })
+
+    if (hasOrchestrationV2Nodes) {
+        return "2.0"
+    }
+
+    if (incomingVersion) {
+        return incomingVersion
+    }
+
+    return "1.0"
 }

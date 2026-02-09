@@ -12,9 +12,16 @@ export interface Agent {
   description?: string;
   status: 'draft' | 'published' | 'deprecated' | 'archived';
   version: number;
+  graph_definition?: AgentGraphDefinition;
   created_at: string;
   updated_at: string;
   published_at?: string;
+}
+
+export interface AgentGraphDefinition {
+  spec_version?: string;
+  nodes: any[];
+  edges: any[];
 }
 
 export type ModelStatus = 'active' | 'deprecated' | 'disabled';
@@ -158,6 +165,64 @@ export interface AgentRunStatus {
   result?: any
   error?: string
   checkpoint?: any
+  run_tree?: AgentRunTreeResponse
+  lineage?: {
+    root_run_id?: string | null
+    parent_run_id?: string | null
+    parent_node_id?: string | null
+    depth?: number
+    spawn_key?: string | null
+    orchestration_group_id?: string | null
+  }
+}
+
+export interface AgentRunTreeGroupMember {
+  id: string
+  run_id: string
+  ordinal: number
+  status: string
+}
+
+export interface AgentRunTreeGroup {
+  group_id: string
+  status: string
+  failure_policy?: string | null
+  join_mode?: string | null
+  quorum_threshold?: number | null
+  timeout_s?: number | null
+  parent_node_id?: string | null
+  members: AgentRunTreeGroupMember[]
+}
+
+export interface AgentRunTreeNode {
+  run_id: string
+  agent_id: string
+  status: string
+  depth: number
+  parent_run_id?: string | null
+  parent_node_id?: string | null
+  spawn_key?: string | null
+  orchestration_group_id?: string | null
+  created_at?: string
+  children: AgentRunTreeNode[]
+  groups: AgentRunTreeGroup[]
+}
+
+export interface AgentRunTreeResponse {
+  root_run_id: string
+  tree: AgentRunTreeNode
+  node_count: number
+}
+
+export interface AgentExecutionEvent {
+  event?: string
+  type?: string
+  run_id?: string
+  span_id?: string
+  name?: string
+  data?: Record<string, any>
+  metadata?: Record<string, any>
+  received_at?: number
 }
 
 export interface AgentOperatorSpec {
@@ -223,8 +288,15 @@ export const agentService = {
     return httpClient.post<{ status: string }>(`/agents/runs/${runId}/resume`, payload);
   },
 
-  async getRunStatus(runId: string) {
-    return httpClient.get<AgentRunStatus>(`/agents/runs/${runId}`);
+  async getRunStatus(runId: string, includeTree = false) {
+    const path = includeTree
+      ? `/agents/runs/${runId}?include_tree=true`
+      : `/agents/runs/${runId}`;
+    return httpClient.get<AgentRunStatus>(path);
+  },
+
+  async getRunTree(runId: string) {
+    return httpClient.get<AgentRunTreeResponse>(`/agents/runs/${runId}/tree`);
   },
 
   async executeAgent(id: string, input: Record<string, any>) {

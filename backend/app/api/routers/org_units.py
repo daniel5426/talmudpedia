@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, delete
+from sqlalchemy import select, and_, delete, or_
 
 from app.db.postgres.models.identity import User, Tenant, TenantStatus, OrgUnit, OrgUnitType, OrgMembership, OrgRole, MembershipStatus
+from app.db.postgres.models.registry import ModelRegistry, ModelCapabilityType, ModelStatus
+from app.db.postgres.models.rag import RetrievalPolicy
 from app.db.postgres.session import get_db
 from app.api.routers.auth import get_current_user
 from app.core.rbac import get_tenant_context, check_permission, Permission, Action, ResourceType, parse_id
@@ -39,6 +41,21 @@ class TenantResponse(BaseModel):
     status: str
     created_at: datetime
 
+class UpdateTenantRequest(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    status: Optional[TenantStatus] = None
+
+class TenantSettingsResponse(BaseModel):
+    default_chat_model_id: Optional[str] = None
+    default_embedding_model_id: Optional[str] = None
+    default_retrieval_policy: Optional[RetrievalPolicy] = None
+
+class UpdateTenantSettingsRequest(BaseModel):
+    default_chat_model_id: Optional[str] = None
+    default_embedding_model_id: Optional[str] = None
+    default_retrieval_policy: Optional[RetrievalPolicy] = None
+
 class OrgUnitResponse(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID
@@ -56,6 +73,67 @@ class OrgUnitTreeResponse(BaseModel):
     children: List["OrgUnitTreeResponse"] = []
 
 OrgUnitTreeResponse.model_rebuild()
+
+
+def _tenant_status_value(status_value: TenantStatus | str) -> str:
+    return status_value.value if hasattr(status_value, "value") else str(status_value)
+
+
+async def _ensure_tenant_settings_editor(tenant: Tenant, user: User, db: AsyncSession) -> None:
+    """Allow mutations only for global admins or tenant owner/admin memberships."""
+    if user.role == "admin":
+        return
+
+    membership_stmt = select(OrgMembership).where(
+        and_(
+            OrgMembership.tenant_id == tenant.id,
+            OrgMembership.user_id == user.id,
+            OrgMembership.status == MembershipStatus.active,
+        )
+    )
+    membership = (await db.execute(membership_stmt)).scalar_one_or_none()
+    if not membership or membership.role not in {OrgRole.owner, OrgRole.admin}:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+
+def _normalize_tenant_settings(raw: Optional[Dict[str, Any]]) -> TenantSettingsResponse:
+    settings = raw or {}
+    return TenantSettingsResponse(
+        default_chat_model_id=settings.get("default_chat_model_id"),
+        default_embedding_model_id=settings.get("default_embedding_model_id"),
+        default_retrieval_policy=settings.get("default_retrieval_policy"),
+    )
+
+
+async def _validate_default_model_id(
+    *,
+    model_id: Optional[str],
+    capability: ModelCapabilityType,
+    tenant: Tenant,
+    db: AsyncSession,
+) -> Optional[str]:
+    if model_id is None:
+        return None
+
+    model_uuid = parse_id(model_id)
+    if model_uuid is None:
+        raise HTTPException(status_code=400, detail=f"Invalid model id: {model_id}")
+
+    stmt = select(ModelRegistry).where(
+        and_(
+            ModelRegistry.id == model_uuid,
+            or_(ModelRegistry.tenant_id == tenant.id, ModelRegistry.tenant_id == None),
+            ModelRegistry.capability_type == capability,
+            ModelRegistry.status == ModelStatus.ACTIVE,
+        )
+    )
+    model = (await db.execute(stmt)).scalar_one_or_none()
+    if not model:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model not found or invalid capability/status for {capability.value}",
+        )
+    return str(model.id)
 
 # Endpoints
 @router.post("/tenants", response_model=TenantResponse)
@@ -106,7 +184,7 @@ async def create_tenant(
         id=tenant.id,
         name=tenant.name,
         slug=tenant.slug,
-        status=tenant.status.value,
+        status=_tenant_status_value(tenant.status),
         created_at=tenant.created_at,
     )
 
@@ -141,9 +219,94 @@ async def get_tenant(
         id=tenant.id,
         name=tenant.name,
         slug=tenant.slug,
-        status=tenant.status.value,
+        status=_tenant_status_value(tenant.status),
         created_at=tenant.created_at,
     )
+
+
+@router.patch("/tenants/{tenant_slug}", response_model=TenantResponse)
+async def update_tenant(
+    tenant_slug: str,
+    request: UpdateTenantRequest,
+    ctx: tuple = Depends(get_tenant_context),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant, user = ctx
+    await _ensure_tenant_settings_editor(tenant=tenant, user=user, db=db)
+
+    if request.name is not None:
+        tenant.name = request.name
+
+    if request.slug is not None and request.slug != tenant.slug:
+        dup_stmt = select(Tenant).where(and_(Tenant.slug == request.slug, Tenant.id != tenant.id))
+        duplicate = (await db.execute(dup_stmt)).scalar_one_or_none()
+        if duplicate:
+            raise HTTPException(status_code=400, detail="Tenant slug already exists")
+        tenant.slug = request.slug
+
+    if request.status is not None:
+        tenant.status = request.status
+
+    await db.commit()
+    await db.refresh(tenant)
+    return TenantResponse(
+        id=tenant.id,
+        name=tenant.name,
+        slug=tenant.slug,
+        status=_tenant_status_value(tenant.status),
+        created_at=tenant.created_at,
+    )
+
+
+@router.get("/tenants/{tenant_slug}/settings", response_model=TenantSettingsResponse)
+async def get_tenant_settings(
+    tenant_slug: str,
+    ctx: tuple = Depends(get_tenant_context),
+):
+    tenant, _ = ctx
+    return _normalize_tenant_settings(tenant.settings)
+
+
+@router.patch("/tenants/{tenant_slug}/settings", response_model=TenantSettingsResponse)
+async def update_tenant_settings(
+    tenant_slug: str,
+    request: UpdateTenantSettingsRequest,
+    ctx: tuple = Depends(get_tenant_context),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant, user = ctx
+    await _ensure_tenant_settings_editor(tenant=tenant, user=user, db=db)
+
+    settings = dict(tenant.settings or {})
+    fields_set = request.model_fields_set
+
+    if "default_chat_model_id" in fields_set:
+        settings["default_chat_model_id"] = await _validate_default_model_id(
+            model_id=request.default_chat_model_id,
+            capability=ModelCapabilityType.CHAT,
+            tenant=tenant,
+            db=db,
+        )
+
+    if "default_embedding_model_id" in fields_set:
+        settings["default_embedding_model_id"] = await _validate_default_model_id(
+            model_id=request.default_embedding_model_id,
+            capability=ModelCapabilityType.EMBEDDING,
+            tenant=tenant,
+            db=db,
+        )
+
+    if "default_retrieval_policy" in fields_set:
+        settings["default_retrieval_policy"] = (
+            request.default_retrieval_policy.value
+            if request.default_retrieval_policy is not None
+            else None
+        )
+
+    tenant.settings = settings
+    await db.commit()
+    await db.refresh(tenant)
+    return _normalize_tenant_settings(tenant.settings)
 
 @router.get("/tenants/{tenant_slug}/org-units", response_model=List[OrgUnitResponse])
 async def list_org_units(

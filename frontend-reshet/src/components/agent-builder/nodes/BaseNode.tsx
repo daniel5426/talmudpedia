@@ -2,10 +2,10 @@
 
 import { memo } from "react"
 import { NodeProps, Position, Handle } from "@xyflow/react"
-import { Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, RefreshCw, Sparkles, Database, Bot, ListFilter } from "lucide-react"
+import { Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, RefreshCw, Sparkles, Database, Bot, ListFilter, GitMerge, Link, Route, Scale, Ban } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { BaseNode as SharedBaseNode, SharedNodeData, SharedNodeHandle } from "../../builder/nodes/BaseNode"
-import { AgentNodeData, CATEGORY_COLORS, getClassifyHandleIds, getHandleColor, AgentNodeType } from "../types"
+import { AgentNodeData, CATEGORY_COLORS, getClassifyHandleIds, getHandleColor, AgentNodeType, getNodeOutputHandles } from "../types"
 
 const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     start: Play,
@@ -19,6 +19,13 @@ const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     if_else: GitBranch,
     while: RefreshCw,
     parallel: GitFork,
+    spawn_run: GitBranch,
+    spawn_group: GitMerge,
+    join: Link,
+    router: Route,
+    judge: Scale,
+    replan: RefreshCw,
+    cancel_subtree: Ban,
     human_input: UserCheck,
     user_approval: UserCheck,
     transform: Sparkles,
@@ -75,7 +82,7 @@ function BaseNodeComponent(props: NodeProps) {
     const isStartNode = data.nodeType === "start"
     const isEndNode = data.nodeType === "end"
     const isConditional = data.nodeType === "conditional"
-    const isSpecialNode = ["if_else", "while", "user_approval", "classify"].includes(data.nodeType)
+    const isSpecialNode = ["if_else", "while", "user_approval", "classify", "join", "router", "judge", "replan"].includes(data.nodeType)
 
     // Prepare handles for shared node
     let outputHandles: SharedNodeHandle[] | undefined = undefined
@@ -87,18 +94,20 @@ function BaseNodeComponent(props: NodeProps) {
         ]
     }
 
-    // Specialized content for if_else, while, user_approval
+    // Specialized content for nodes with explicit branch handles
     let specializedContent: React.ReactNode = null
 
     if (data.nodeType === "if_else") {
         const conditions = (data.config?.conditions as any[]) || []
+        const handleIds = getNodeOutputHandles("if_else", data.config || {})
+        const conditionHandles = handleIds.filter((id) => id !== "else")
         specializedContent = (
             <div className="flex flex-col">
-                {conditions.map((c: any) => (
+                {conditionHandles.map((handleId: string, idx: number) => (
                     <NodeBranchRow
-                        key={c.name}
-                        label={c.name}
-                        handleId={c.name}
+                        key={handleId}
+                        label={conditions[idx]?.name || handleId}
+                        handleId={handleId}
                         handleColor="#3b82f6"
                     />
                 ))}
@@ -150,9 +159,49 @@ function BaseNodeComponent(props: NodeProps) {
                 {categories.map((c: any, idx: number) => (
                     <NodeBranchRow
                         key={handleIds[idx]}
-                        label={c.name}
+                        label={c.name || handleIds[idx]}
                         handleId={handleIds[idx]}
                         handleColor="#8b5cf6"
+                        isLast={idx === categories.length - 1}
+                    />
+                ))}
+            </div>
+        )
+    } else if (["join", "router", "judge", "replan"].includes(data.nodeType)) {
+        const handles = getNodeOutputHandles(data.nodeType, data.config || {})
+        const labels: Record<string, string> = {
+            completed: "Completed",
+            completed_with_errors: "Completed (Errors)",
+            failed: "Failed",
+            timed_out: "Timed Out",
+            pending: "Pending",
+            replan: "Replan",
+            continue: "Continue",
+            pass: "Pass",
+            fail: "Fail",
+            default: "Default",
+        }
+        const colors: Record<string, string> = {
+            completed: "#22c55e",
+            completed_with_errors: "#f59e0b",
+            failed: "#ef4444",
+            timed_out: "#f97316",
+            pending: "#6b7280",
+            replan: "#3b82f6",
+            continue: "#22c55e",
+            pass: "#22c55e",
+            fail: "#ef4444",
+            default: "#6b7280",
+        }
+        specializedContent = (
+            <div className="flex flex-col">
+                {handles.map((handleId, idx) => (
+                    <NodeBranchRow
+                        key={handleId}
+                        label={labels[handleId] || handleId}
+                        handleId={handleId}
+                        handleColor={colors[handleId] || "#3b82f6"}
+                        isLast={idx === handles.length - 1}
                     />
                 ))}
             </div>

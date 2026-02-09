@@ -1402,7 +1402,30 @@ def register_standard_operators():
                 "start_background": {"type": "boolean", "default": True},
             },
         },
-        ui={"icon": "GitBranch", "color": "#1f2937", "inputType": "context", "outputType": "context", "configFields": []},
+        ui={
+            "icon": "GitBranch",
+            "color": "#93c5fd",
+            "inputType": "context",
+            "outputType": "context",
+            "configFields": [
+                {"name": "target_agent_id", "label": "Target Agent ID", "fieldType": "string", "required": False},
+                {"name": "target_agent_slug", "label": "Target Agent Slug", "fieldType": "string", "required": False},
+                {"name": "idempotency_key", "label": "Idempotency Key", "fieldType": "string", "required": False},
+                {
+                    "name": "failure_policy",
+                    "label": "Failure Policy",
+                    "fieldType": "select",
+                    "required": False,
+                    "default": "best_effort",
+                    "options": [
+                        {"value": "best_effort", "label": "Best Effort"},
+                        {"value": "fail_fast", "label": "Fail Fast"},
+                    ],
+                },
+                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False},
+                {"name": "start_background", "label": "Start in Background", "fieldType": "boolean", "required": False, "default": True},
+            ],
+        },
     ))
     AgentExecutorRegistry.register("spawn_run", SpawnRunNodeExecutor)
 
@@ -1430,7 +1453,43 @@ def register_standard_operators():
                 "start_background": {"type": "boolean", "default": True},
             },
         },
-        ui={"icon": "GitMerge", "color": "#1f2937", "inputType": "context", "outputType": "context", "configFields": []},
+        ui={
+            "icon": "GitMerge",
+            "color": "#93c5fd",
+            "inputType": "context",
+            "outputType": "context",
+            "configFields": [
+                {
+                    "name": "join_mode",
+                    "label": "Join Mode",
+                    "fieldType": "select",
+                    "required": False,
+                    "default": "all",
+                    "options": [
+                        {"value": "all", "label": "All"},
+                        {"value": "best_effort", "label": "Best Effort"},
+                        {"value": "fail_fast", "label": "Fail Fast"},
+                        {"value": "quorum", "label": "Quorum"},
+                        {"value": "first_success", "label": "First Success"},
+                    ],
+                },
+                {"name": "quorum_threshold", "label": "Quorum Threshold", "fieldType": "number", "required": False},
+                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False},
+                {"name": "idempotency_key_prefix", "label": "Idempotency Key Prefix", "fieldType": "string", "required": False},
+                {
+                    "name": "failure_policy",
+                    "label": "Failure Policy",
+                    "fieldType": "select",
+                    "required": False,
+                    "default": "best_effort",
+                    "options": [
+                        {"value": "best_effort", "label": "Best Effort"},
+                        {"value": "fail_fast", "label": "Fail Fast"},
+                    ],
+                },
+                {"name": "start_background", "label": "Start in Background", "fieldType": "boolean", "required": False, "default": True},
+            ],
+        },
     ))
     AgentExecutorRegistry.register("spawn_group", SpawnGroupNodeExecutor)
 
@@ -1454,7 +1513,32 @@ def register_standard_operators():
                 "timeout_s": {"type": "number"},
             },
         },
-        ui={"icon": "Link", "color": "#1f2937", "inputType": "context", "outputType": "decision", "dynamicHandles": True, "configFields": []},
+        ui={
+            "icon": "Link",
+            "color": "#93c5fd",
+            "inputType": "context",
+            "outputType": "decision",
+            "dynamicHandles": True,
+            "configFields": [
+                {"name": "orchestration_group_id", "label": "Group ID", "fieldType": "string", "required": False},
+                {
+                    "name": "mode",
+                    "label": "Mode",
+                    "fieldType": "select",
+                    "required": False,
+                    "default": "all",
+                    "options": [
+                        {"value": "all", "label": "All"},
+                        {"value": "best_effort", "label": "Best Effort"},
+                        {"value": "fail_fast", "label": "Fail Fast"},
+                        {"value": "quorum", "label": "Quorum"},
+                        {"value": "first_success", "label": "First Success"},
+                    ],
+                },
+                {"name": "quorum_threshold", "label": "Quorum Threshold", "fieldType": "number", "required": False},
+                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False},
+            ],
+        },
     ))
     AgentExecutorRegistry.register("join", JoinNodeExecutor)
 
@@ -1465,7 +1549,16 @@ def register_standard_operators():
         description="Route orchestration payload to named branches",
         reads=[AgentStateField.CONTEXT],
         writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN],
-        ui={"icon": "Route", "color": "#1f2937", "inputType": "context", "outputType": "decision", "dynamicHandles": True, "configFields": []},
+        ui={
+            "icon": "Route",
+            "color": "#93c5fd",
+            "inputType": "context",
+            "outputType": "decision",
+            "dynamicHandles": True,
+            "configFields": [
+                {"name": "route_key", "label": "Route Key", "fieldType": "string", "required": False, "default": "status"},
+            ],
+        },
     ))
     AgentExecutorRegistry.register("router", RouterNodeExecutor)
 
@@ -1476,7 +1569,17 @@ def register_standard_operators():
         description="Decide orchestration pass/fail branches",
         reads=[AgentStateField.CONTEXT],
         writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN],
-        ui={"icon": "Scale", "color": "#1f2937", "inputType": "context", "outputType": "decision", "dynamicHandles": True, "configFields": []},
+        ui={
+            "icon": "Scale",
+            "color": "#93c5fd",
+            "inputType": "context",
+            "outputType": "decision",
+            "dynamicHandles": True,
+            "configFields": [
+                {"name": "pass_outcome", "label": "Pass Branch Label", "fieldType": "string", "required": False, "default": "pass"},
+                {"name": "fail_outcome", "label": "Fail Branch Label", "fieldType": "string", "required": False, "default": "fail"},
+            ],
+        },
     ))
     AgentExecutorRegistry.register("judge", JudgeNodeExecutor)
 
@@ -1487,7 +1590,16 @@ def register_standard_operators():
         description="Evaluate subtree and decide replan vs continue",
         reads=[AgentStateField.CONTEXT],
         writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN, AgentStateField.CONTEXT],
-        ui={"icon": "RefreshCw", "color": "#1f2937", "inputType": "context", "outputType": "decision", "dynamicHandles": True, "configFields": []},
+        ui={
+            "icon": "RefreshCw",
+            "color": "#93c5fd",
+            "inputType": "context",
+            "outputType": "decision",
+            "dynamicHandles": True,
+            "configFields": [
+                {"name": "run_id", "label": "Run ID", "fieldType": "string", "required": False},
+            ],
+        },
     ))
     AgentExecutorRegistry.register("replan", ReplanNodeExecutor)
 
@@ -1498,7 +1610,17 @@ def register_standard_operators():
         description="Cancel a child run subtree through the orchestration kernel",
         reads=[AgentStateField.CONTEXT],
         writes=[AgentStateField.CONTEXT],
-        ui={"icon": "Ban", "color": "#1f2937", "inputType": "context", "outputType": "context", "configFields": []},
+        ui={
+            "icon": "Ban",
+            "color": "#93c5fd",
+            "inputType": "context",
+            "outputType": "context",
+            "configFields": [
+                {"name": "run_id", "label": "Run ID", "fieldType": "string", "required": False},
+                {"name": "include_root", "label": "Include Root Run", "fieldType": "boolean", "required": False, "default": True},
+                {"name": "reason", "label": "Reason", "fieldType": "string", "required": False},
+            ],
+        },
     ))
     AgentExecutorRegistry.register("cancel_subtree", CancelSubtreeNodeExecutor)
 

@@ -22,6 +22,11 @@ import {
     Bot,
     ListFilter,
     Check,
+    GitMerge,
+    Link,
+    Route,
+    Scale,
+    Ban,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -55,6 +60,7 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
     reasoning: Brain,
     action: Wrench,
     logic: GitBranch,
+    orchestration: Route,
     interaction: UserCheck,
     data: Database,
     start: Play,
@@ -67,6 +73,13 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
     if_else: GitBranch,
     while: RefreshCw,
     parallel: GitFork,
+    spawn_run: GitBranch,
+    spawn_group: GitMerge,
+    join: Link,
+    router: Route,
+    judge: Scale,
+    replan: RefreshCw,
+    cancel_subtree: Ban,
     human_input: UserCheck,
     user_approval: UserCheck,
     transform: Sparkles,
@@ -1079,7 +1092,9 @@ export function ConfigPanel({
             inputType: (dynamicSpec.ui?.inputType as AgentNodeSpec["inputType"]) || "any",
             outputType: (dynamicSpec.ui?.outputType as AgentNodeSpec["outputType"]) || "any",
             icon: (dynamicSpec.ui?.icon as string) || "Circle",
-            configFields: (dynamicSpec.ui?.configFields as ConfigFieldSpec[]) || [],
+            configFields: ((dynamicSpec.ui?.configFields as ConfigFieldSpec[]) || []).length > 0
+                ? (dynamicSpec.ui?.configFields as ConfigFieldSpec[])
+                : (getNodeSpec(data.nodeType)?.configFields || []),
         }
         : undefined
 

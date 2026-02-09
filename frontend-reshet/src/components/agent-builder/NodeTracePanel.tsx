@@ -10,10 +10,15 @@ interface NodeTracePanelProps {
     nodeId: string
     nodeName: string
     steps: ExecutionStep[]
+    nodeStatus?: "pending" | "running" | "completed" | "failed" | "skipped"
     onClose: () => void
 }
 
-export function NodeTracePanel({ nodeId, nodeName, steps, onClose }: NodeTracePanelProps) {
+export function NodeTracePanel({ nodeId, nodeName, steps, nodeStatus, onClose }: NodeTracePanelProps) {
+    const traceStatus = nodeStatus
+        ? nodeStatus.toUpperCase()
+        : (steps.length > 0 ? steps[steps.length - 1].status.toUpperCase() : "IDLE")
+
     return (
         <div className="flex flex-col max-w-[320px]">
             <div className="p-3.5 flex items-center justify-between shrink-0">
@@ -66,7 +71,7 @@ export function NodeTracePanel({ nodeId, nodeName, steps, onClose }: NodeTracePa
                         Status
                     </span>
                     <span className="text-[10px] font-mono text-primary font-bold">
-                        {steps.length > 0 ? steps[steps.length - 1].status.toUpperCase() : "IDLE"}
+                        {traceStatus}
                     </span>
                 </div>
             </div>

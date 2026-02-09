@@ -37,7 +37,7 @@ export type {
 } from "./source";
 
 export { orgUnitsService } from "./org-units";
-export type { Tenant, OrgUnit, OrgUnitTree, OrgMember } from "./org-units";
+export type { Tenant, TenantStatus, RetrievalPolicy, TenantSettings, OrgUnit, OrgUnitTree, OrgMember } from "./org-units";
 
 export { rbacService } from "./rbac";
 export type { Permission, Role, RoleAssignment, UserPermissions } from "./rbac";
@@ -55,7 +55,13 @@ export { credentialsService } from "./credentials";
 
 export type {
   Agent,
+  AgentGraphDefinition,
   AgentRunStatus,
+  AgentRunTreeResponse,
+  AgentRunTreeNode,
+  AgentRunTreeGroup,
+  AgentRunTreeGroupMember,
+  AgentExecutionEvent,
   AgentOperatorSpec,
   LogicalModel,
   ModelCapabilityType,

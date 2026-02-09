@@ -144,6 +144,7 @@
   --agent-reasoning: #ede9fe;
   --agent-action: #dbeafe;
   --agent-logic: #fef3c7;
+  --agent-orchestration: #bfdbfe;
   --agent-interaction: #d1fae5;
 }
 
@@ -195,6 +196,7 @@
   --agent-reasoning: #4c1d95;
   --agent-action: #1e3a8a;
   --agent-logic: #78350f;
+  --agent-orchestration: #2563eb;
   --agent-interaction: #064e3b;
 }
 

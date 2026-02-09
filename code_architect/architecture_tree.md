@@ -1,6 +1,6 @@
 # Architecture Tree
 
-Last Updated: 2026-02-08
+Last Updated: 2026-02-09
 
 ```
 backend
@@ -48,6 +48,7 @@ backend/documentations/summary/agent_builder_tests_creation_notes.md
 backend/documentations/summary/agent_tool_agents_tests_creation_notes.md
 backend/documentations/summary/orchestration_kernel_phase1_phase2_implementation_status.md
 backend/documentations/summary/multi_agent_orchestration_v2_phase1_phase2_handoff_prompt.md
+backend/documentations/summary/agent_builder_v2_frontend_refactor_handoff.md
 backend/documentations/agent_management_state.md
 backend/documentations/voice_mode_architecture.md
 backend/documentations/react_artifacts_live_preview.md
@@ -433,6 +434,10 @@ backend/tests/tool_execution
 backend/tests/tool_execution/test_function_tool_execution.py
 backend/tests/tool_execution/test_mcp_tool_execution.py
 backend/tests/tool_execution/test_state.md
+backend/tests/settings_hub
+backend/tests/settings_hub/test_tenant_profile_update.py
+backend/tests/settings_hub/test_tenant_defaults_settings.py
+backend/tests/settings_hub/test_state.md
 backend/google-stt.json
 backend/library_chunks
 backend/library_chunks/talmud.json
@@ -618,16 +623,43 @@ backend/tests_legacy/test_platform_sdk_tool.py
 frontend-reshet
 frontend-reshet/src
 frontend-reshet/src/__tests__
+frontend-reshet/src/__tests__/agent_builder
+frontend-reshet/src/__tests__/agent_builder/branch_handles.test.tsx
+frontend-reshet/src/__tests__/agent_builder/graphspec_serialization.test.tsx
+frontend-reshet/src/__tests__/agent_builder/test_state.md
+frontend-reshet/src/__tests__/agent_builder_v2
+frontend-reshet/src/__tests__/agent_builder_v2/graphspec_v2_serialization.test.ts
+frontend-reshet/src/__tests__/agent_builder_v2/orchestration_node_rendering.test.tsx
+frontend-reshet/src/__tests__/agent_builder_v2/runtime_overlay_reducer.test.ts
+frontend-reshet/src/__tests__/agent_builder_v2/run_tree_reconcile.test.ts
+frontend-reshet/src/__tests__/agent_builder_v2/execute_mode_merge_graph.test.tsx
+frontend-reshet/src/__tests__/agent_builder_v2/test_state.md
 frontend-reshet/src/__tests__/models_registry
+frontend-reshet/src/__tests__/settings_hub
+frontend-reshet/src/__tests__/settings_hub/settings_hub.test.tsx
+frontend-reshet/src/__tests__/settings_hub/tenant_profile_tab.test.tsx
+frontend-reshet/src/__tests__/settings_hub/defaults_tab.test.tsx
+frontend-reshet/src/__tests__/settings_hub/test_state.md
 frontend-reshet/src/app
 frontend-reshet/src/app/admin
 frontend-reshet/src/app/admin/agents
+frontend-reshet/src/app/admin/agents/[id]/builder/page.tsx
 frontend-reshet/src/app/admin/agents/playground/page.tsx
 frontend-reshet/src/app/admin/settings
 frontend-reshet/src/app/admin/settings/page.tsx
 frontend-reshet/src/app/admin/stats
 frontend-reshet/src/app/admin/stats/page.tsx
 frontend-reshet/src/components
+frontend-reshet/src/components/agent-builder
+frontend-reshet/src/components/agent-builder/AgentBuilder.tsx
+frontend-reshet/src/components/agent-builder/ConfigPanel.tsx
+frontend-reshet/src/components/agent-builder/NodeCatalog.tsx
+frontend-reshet/src/components/agent-builder/graphspec.ts
+frontend-reshet/src/components/agent-builder/runtime-merge.ts
+frontend-reshet/src/components/agent-builder/types.ts
+frontend-reshet/src/components/agent-builder/nodes
+frontend-reshet/src/components/agent-builder/nodes/BaseNode.tsx
+frontend-reshet/src/components/agent-builder/nodes/index.ts
 frontend-reshet/src/components/ai-elements
 frontend-reshet/src/components/ai-elements/ReactArtifactPane.tsx
 frontend-reshet/src/components/admin
@@ -636,6 +668,9 @@ frontend-reshet/src/components/admin/stats/BarChart.tsx
 frontend-reshet/src/components/admin/stats/MetricBlock.tsx
 frontend-reshet/src/components/admin/stats/MetricDetailPanel.tsx
 frontend-reshet/src/components/admin/stats/StatsBreadcrumb.tsx
+frontend-reshet/src/hooks
+frontend-reshet/src/hooks/useAgentRunController.ts
+frontend-reshet/src/hooks/useAgentRuntimeGraph.ts
 frontend-reshet/src/components/layout
 frontend-reshet/src/components/layout/ChatPane.tsx
 frontend-reshet/src/lib
@@ -647,5 +682,8 @@ frontend-reshet/src/lib/react-artifacts/storage.ts
 frontend-reshet/src/lib/react-artifacts/types.ts
 frontend-reshet/src/lib/react-artifacts/useReactArtifactPanel.ts
 frontend-reshet/src/services
+frontend-reshet/src/services/agent.ts
+frontend-reshet/src/services/agent-runtime-graph.ts
 frontend-reshet/src/services/credentials.ts
+frontend-reshet/src/services/index.ts
 frontend-reshet/src/services/workload-security.ts

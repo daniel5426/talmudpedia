@@ -1,6 +1,6 @@
 # TalmudPedia: Platform Current State & Overview
 
-Last Updated: 2026-02-08
+Last Updated: 2026-02-09
 
 TalmudPedia is a foundational **Enterprise AI Agent & RAG Platform** designed as a unified control plane for models, tools, data, and reasoning workflows. It is vendor-agnostic, modular, and enterprise-ready, supporting both API-based and self-hosted models. Data ingestion (RAG) and reasoning (Agents) are decoupled through the **Knowledge Store** bridge.
 
@@ -30,7 +30,7 @@ The platform is organized into independent domains communicating through stable 
 - **Engine**: `AgentCompiler` turns declarative GraphSpec v1 JSON into executable LangGraph workflows.
 - **Observability**: **Unified Engine, Divergent Observability** (ADR 001). `StreamAdapter` filters events by `ExecutionMode`: Debug = full firehose (inputs, tool calls, thoughts, tokens); Production = clean stream (final tokens and client-safe events only). Auth-scoped: public tokens cannot request Debug.
 - **Features**: Cyclic workflows, CEL (If/Else, While), User Approval (HITL), Transform/Set State, artifact field mapping, versioning, `AgentRun`/`AgentTrace` persistence. Tool execution: HTTP, artifact, MCP, and function tools supported. Tool invocation in agent nodes supports structured tool calls with JSON fallback (native LLM tool calling is still a roadmap item).
-- **UI**: Visual Builder (xyflow, BaseNode, ConfigPanel) and Agent Playground (streaming, execution sidebar, same chat components as production). Memory: short-term active; long-term/vector in development.
+- **UI**: Visual Builder (xyflow, BaseNode, ConfigPanel) and Agent Playground (streaming, execution sidebar, same chat components as production). Builder Execute mode now overlays runtime topology (orchestration decisions + child runs) from SSE with periodic `/agents/runs/{run_id}/tree` reconciliation; overlay is ephemeral per run and never persisted into draft `graph_definition`. Memory: short-term active; long-term/vector in development.
 - **Platform Architect v2**: Multi-agent orchestrator seeded with sub-agents (Catalog, Planner, Builder, Coder, Tester). The seed now uses a GraphSpec v2 orchestration graph (`spawn_run`, `spawn_group`, `join`, `router`, `judge`, `replan`, `cancel_subtree`) and auto-seeds orchestrator policy/target allowlist rows for those sub-agents. Platform SDK tool supports draft asset creation and multi-case tests; secure internal API flows use delegated workload tokens with scope enforcement (legacy service/API-key fallback removed on migrated secure paths).
 
 ### B. RAG Domain
@@ -50,7 +50,7 @@ The platform is organized into independent domains communicating through stable 
 - **Stack**: FastAPI (async), PostgreSQL (metadata, pgvector), MongoDB (Sefaria), Redis/Celery for workers.
 - **Auth**: Hybrid (User + Tenant + OrgMembership); JWT with tenant_id/org_role; admin routes tenant-scoped; Postgres for auth/admin data.
 - **Voice**: WebSocket entry (`voice_ws.py`), provider registry, Gemini session; tool calling to RetrievalService; persistence in Chats/Messages.
-- **Settings**: Tenant-scoped Integration Credentials (LLM providers, vector stores, artifact secrets, custom); write-only in UI; Model bindings and Knowledge Stores reference credentials by ref.
+- **Settings**: Tenant-centric settings hub with tenant profile (name/slug/status), tenant default pointers (chat model, embedding model, retrieval policy in `Tenant.settings`), and tenant-scoped Integration Credentials (LLM providers, vector stores, artifact secrets, custom). Credential values are write-only; model bindings and knowledge stores reference credentials by ref.
 
 ### E. Admin & Observability
 

@@ -56,8 +56,8 @@ export function FloatingPanel({
             style={style}
         >
             <div className={cn(
-                "relative bg-background/95 backdrop-blur-md flex flex-col overflow-hidden h-full",
-                !fullHeight ? "rounded-2xl border" : "border-l",
+                "relative shadow-xs bg-background/95 backdrop-blur-md flex flex-col overflow-hidden h-full",
+                !fullHeight ? "rounded-2xl " : "",
                 autoHeight && "h-auto"
             )}>
                 {children}

@@ -11,6 +11,7 @@ import {
     Connection,
     Edge,
     Node,
+    NodeChange,
     ReactFlowProvider,
     useReactFlow,
     BackgroundVariant,
@@ -24,10 +25,12 @@ import { NodeCatalog } from "./NodeCatalog"
 import { ConfigPanel } from "./ConfigPanel"
 import { ExecutionPanel } from "./ExecutionPanel"
 import { NodeTracePanel } from "./NodeTracePanel"
-import { useAgentRunController } from "@/hooks/useAgentRunController"
+import { useAgentRunController, ExecutionStep } from "@/hooks/useAgentRunController"
+import { useAgentRuntimeGraph } from "@/hooks/useAgentRuntimeGraph"
 import {
     FloatingPanel,
     BuilderToolbar,
+    ToolbarButton,
     CatalogToggleButton,
     useBuilderHistory,
     InteractionMode,
@@ -41,6 +44,9 @@ import {
     getNodeSpec,
 } from "./types"
 import { normalizeBuilderNode, normalizeBuilderEdges } from "./graphspec"
+import { getRenderGraphForMode } from "./runtime-merge"
+import { AgentExecutionEvent } from "@/services"
+import { LayoutGrid, Trash2 } from "lucide-react"
 
 interface AgentBuilderProps {
     agentId?: string
@@ -51,6 +57,93 @@ interface AgentBuilderProps {
     onRun?: () => void
     isSaving?: boolean
     isCompiling?: boolean
+}
+
+function matchesStepToNode(step: ExecutionStep, node: Node<AgentNodeData>, data: AgentNodeData): boolean {
+    return (
+        step.name === data.displayName ||
+        step.name.toLowerCase() === data.nodeType.toLowerCase() ||
+        step.id.includes(node.id) ||
+        step.name === node.id
+    )
+}
+
+function isRuntimeNodeId(nodeId: string): boolean {
+    return nodeId.startsWith("runtime-run:") || nodeId.startsWith("runtime-group:") || nodeId.startsWith("runtime-event:")
+}
+
+function mapOrchestrationEventToExecutionStep(event: AgentExecutionEvent, index: number): ExecutionStep {
+    const eventName = event.event || event.type || "event"
+    const lifecycleStatus = String(event.data?.status || "")
+    const joinStatus = String(event.data?.status || "")
+    let status: ExecutionStep["status"] = "pending"
+
+    if (eventName === "orchestration.child_lifecycle") {
+        if (["failed", "cancelled", "timed_out", "error", "denied"].includes(lifecycleStatus)) {
+            status = "error"
+        } else if (["running", "queued", "paused", "pending"].includes(lifecycleStatus)) {
+            status = "running"
+        } else if (["completed", "completed_with_errors"].includes(lifecycleStatus)) {
+            status = "completed"
+        }
+    } else if (eventName === "orchestration.join_decision") {
+        if (!Boolean(event.data?.complete)) {
+            status = "running"
+        } else if (["failed", "timed_out", "cancelled", "error"].includes(joinStatus)) {
+            status = "error"
+        } else {
+            status = "completed"
+        }
+    } else if (eventName === "orchestration.policy_deny") {
+        status = "error"
+    } else if (eventName === "orchestration.spawn_decision" || eventName === "orchestration.cancellation_propagation" || eventName === "node_end") {
+        status = "completed"
+    }
+
+    return {
+        id: `${eventName}:${event.span_id || event.run_id || "event"}:${index}`,
+        name: event.name || eventName.replace("orchestration.", "").replaceAll("_", " "),
+        type: "node",
+        status,
+        output: event.data,
+        timestamp: new Date((event.received_at || Date.now()) + index),
+    }
+}
+
+function matchesEventToNode(event: AgentExecutionEvent, node: Node<AgentNodeData>, data: AgentNodeData): boolean {
+    const config = (data.config || {}) as Record<string, unknown>
+    const runtimeRunId = typeof config.run_id === "string" ? config.run_id : null
+    const runtimeGroupId = typeof config.group_id === "string" ? config.group_id : null
+    const sourceNodeId = typeof config.source_node_id === "string" ? config.source_node_id : null
+    const eventData = event.data || {}
+
+    if (event.span_id === node.id || (sourceNodeId && event.span_id === sourceNodeId)) {
+        return true
+    }
+
+    if (runtimeRunId) {
+        if (event.run_id === runtimeRunId) {
+            return true
+        }
+        if (eventData.child_run_id === runtimeRunId) {
+            return true
+        }
+        if (Array.isArray(eventData.cancelled_run_ids) && eventData.cancelled_run_ids.includes(runtimeRunId)) {
+            return true
+        }
+    }
+
+    if (runtimeGroupId) {
+        if (eventData.group_id === runtimeGroupId || eventData.orchestration_group_id === runtimeGroupId) {
+            return true
+        }
+    }
+
+    if (typeof eventData.source_node_id === "string" && eventData.source_node_id === node.id) {
+        return true
+    }
+
+    return false
 }
 
 function AgentBuilderInner({
@@ -101,7 +194,14 @@ function AgentBuilderInner({
 
     // Dedicated controller for execution (chat) mode
     const controller = useAgentRunController(agentId)
-    const { executionSteps } = controller
+    const { executionSteps, executionEvents, currentRunId, currentRunStatus } = controller
+    const runtimeOverlay = useAgentRuntimeGraph({
+        staticNodes: nodes as Node<AgentNodeData>[],
+        staticEdges: edges,
+        runId: currentRunId,
+        executionEvents,
+        runStatus: currentRunStatus,
+    })
 
     // History management using shared hook
     const {
@@ -129,13 +229,6 @@ function AgentBuilderInner({
             setEdges(state.edges)
         }
     }, [redo, setNodes, setEdges])
-
-    // Auto-toggle catalog on mode change (force close in execute mode)
-    useEffect(() => {
-        if (mode === "execute") {
-            setIsCatalogVisible(false)
-        }
-    }, [mode])
 
     // Handle "push" animation when entering execute mode
     useEffect(() => {
@@ -182,7 +275,8 @@ function AgentBuilderInner({
                 nds.map((node) => {
                     if (!node.data) return node
                     if (node.data.executionStatus) {
-                        const { executionStatus, ...rest } = node.data
+                        const rest = { ...node.data }
+                        delete (rest as Record<string, unknown>).executionStatus
                         return { ...node, data: rest }
                     }
                     return node
@@ -199,13 +293,7 @@ function AgentBuilderInner({
                 const data = node.data as AgentNodeData
                 // Find steps matching this node by name or ID
                 // Note: LangGraph nodes usually match the display name or a simplified version of it
-                const nodeSteps = executionSteps.filter(s => {
-                    // console.log(`[AgentBuilder] Checking node ${node.id} (${data.displayName}) against step ${s.name} (${s.id})`)
-                    return s.name === data.displayName ||
-                        (s.name ?? "").toLowerCase() === (data.nodeType ?? "").toLowerCase() ||
-                        (s.id ?? "").includes(node.id) ||
-                        s.name === node.id
-                })
+                const nodeSteps = executionSteps.filter((step) => matchesStepToNode(step, node as Node<AgentNodeData>, data))
 
                 if (nodeSteps.length === 0) return node
 
@@ -233,12 +321,109 @@ function AgentBuilderInner({
         )
     }, [mode, executionSteps, setNodes])
 
-    const selectedNode = nodes.find((n) => n.id === selectedNodeId) as
+    const renderNodes = useMemo(() => {
+        return getRenderGraphForMode(
+            mode,
+            nodes as Node<AgentNodeData>[],
+            edges,
+            {
+                runtimeNodes: runtimeOverlay.runtimeNodes,
+                runtimeEdges: runtimeOverlay.runtimeEdges,
+                runtimeStatusByNodeId: runtimeOverlay.runtimeStatusByNodeId,
+                runtimeNotesByNodeId: runtimeOverlay.runtimeNotesByNodeId,
+                takenStaticEdgeIds: runtimeOverlay.takenStaticEdgeIds,
+            }
+        ).nodes
+    }, [mode, nodes, edges, runtimeOverlay.runtimeNodes, runtimeOverlay.runtimeEdges, runtimeOverlay.runtimeStatusByNodeId, runtimeOverlay.runtimeNotesByNodeId, runtimeOverlay.takenStaticEdgeIds])
+
+    const renderEdges = useMemo(() => {
+        return getRenderGraphForMode(
+            mode,
+            nodes as Node<AgentNodeData>[],
+            edges,
+            {
+                runtimeNodes: runtimeOverlay.runtimeNodes,
+                runtimeEdges: runtimeOverlay.runtimeEdges,
+                runtimeStatusByNodeId: runtimeOverlay.runtimeStatusByNodeId,
+                runtimeNotesByNodeId: runtimeOverlay.runtimeNotesByNodeId,
+                takenStaticEdgeIds: runtimeOverlay.takenStaticEdgeIds,
+            }
+        ).edges
+    }, [mode, nodes, edges, runtimeOverlay.runtimeNodes, runtimeOverlay.runtimeEdges, runtimeOverlay.runtimeStatusByNodeId, runtimeOverlay.runtimeNotesByNodeId, runtimeOverlay.takenStaticEdgeIds])
+
+    const selectedNode = renderNodes.find((n) => n.id === selectedNodeId) as
         | Node<AgentNodeData>
         | undefined
 
     const selectedNodeData: AgentNodeData | undefined = selectedNode?.data as AgentNodeData | undefined
     const safeSelectedNodeData: AgentNodeData | undefined = selectedNodeData ?? (selectedNode ? normalizeNode(selectedNode).data : undefined)
+    const selectedNodeTraceSteps = useMemo(() => {
+        if (!selectedNode || !safeSelectedNodeData) {
+            return [] as ExecutionStep[]
+        }
+
+        const baseSteps = executionSteps.filter((step) =>
+            matchesStepToNode(step, selectedNode as Node<AgentNodeData>, safeSelectedNodeData)
+        )
+        const orchestrationSteps = executionEvents
+            .filter((event) => matchesEventToNode(event, selectedNode as Node<AgentNodeData>, safeSelectedNodeData))
+            .map((event, index) => mapOrchestrationEventToExecutionStep(event, index))
+
+        const sortedSteps = [...baseSteps, ...orchestrationSteps].sort(
+            (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
+        )
+        const nodeStatus = safeSelectedNodeData.executionStatus
+        const terminalNodeStatus =
+            nodeStatus === "completed" || nodeStatus === "failed"
+                ? nodeStatus
+                : null
+        if (!terminalNodeStatus) {
+            return sortedSteps
+        }
+        const expectedFinalStepStatus: ExecutionStep["status"] =
+            terminalNodeStatus === "completed" ? "completed" : "error"
+        const lastStep = sortedSteps[sortedSteps.length - 1]
+        if (lastStep && lastStep.status === expectedFinalStepStatus) {
+            return sortedSteps
+        }
+        const baseTime = lastStep?.timestamp?.getTime?.() || Date.now()
+        return [
+            ...sortedSteps,
+            {
+                id: `runtime-status:${selectedNode.id}:${terminalNodeStatus}`,
+                name: "Runtime Status",
+                type: "node",
+                status: expectedFinalStepStatus,
+                output: { status: terminalNodeStatus },
+                timestamp: new Date(baseTime + 1),
+            },
+        ]
+    }, [selectedNode, safeSelectedNodeData, executionSteps, executionEvents])
+
+    const handleNodesChange = useCallback((changes: NodeChange[]) => {
+        if (mode !== "execute") {
+            onNodesChange(changes)
+            return
+        }
+
+        const staticChanges: NodeChange[] = []
+        const runtimeChanges: NodeChange[] = []
+
+        changes.forEach((change) => {
+            if (change.id && isRuntimeNodeId(change.id)) {
+                runtimeChanges.push(change)
+                return
+            }
+            staticChanges.push(change)
+        })
+
+        if (staticChanges.length > 0) {
+            onNodesChange(staticChanges)
+        }
+        if (runtimeChanges.length > 0) {
+            runtimeOverlay.applyRuntimeNodeChanges(runtimeChanges)
+        }
+    }, [mode, onNodesChange, runtimeOverlay])
 
     const isValidConnection = useCallback(
         (connection: Edge | Connection) => {
@@ -285,7 +470,7 @@ function AgentBuilderInner({
 
             if (!nodeType || !category) return
 
-            let spec = specString ? JSON.parse(specString) as AgentNodeSpec : getNodeSpec(nodeType)
+            const spec = specString ? JSON.parse(specString) as AgentNodeSpec : getNodeSpec(nodeType)
             if (!spec) return
 
             const position = screenToFlowPosition({
@@ -386,6 +571,34 @@ function AgentBuilderInner({
         }, 0)
     }, [nodes, edges, setNodes, takeSnapshot, fitView])
 
+    const handleOrganizeRuntime = useCallback(() => {
+        if (runtimeOverlay.runtimeNodes.length === 0) return
+        const layouted = computeAutoLayout(runtimeOverlay.runtimeNodes, runtimeOverlay.runtimeEdges)
+        if (layouted.length === 0) return
+
+        const currentMinX = Math.min(...runtimeOverlay.runtimeNodes.map((node) => node.position.x))
+        const currentMinY = Math.min(...runtimeOverlay.runtimeNodes.map((node) => node.position.y))
+        const layoutMinX = Math.min(...layouted.map((node) => node.position.x))
+        const layoutMinY = Math.min(...layouted.map((node) => node.position.y))
+        const offsetX = currentMinX - layoutMinX
+        const offsetY = currentMinY - layoutMinY
+
+        runtimeOverlay.setRuntimeNodes(
+            layouted.map((node) => ({
+                ...node,
+                position: {
+                    x: node.position.x + offsetX,
+                    y: node.position.y + offsetY,
+                },
+                draggable: true,
+                selectable: true,
+                connectable: false,
+            }))
+        )
+
+        setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 0)
+    }, [runtimeOverlay, fitView])
+
 
 
     const handleCatalogToggle = useCallback(() => {
@@ -397,6 +610,29 @@ function AgentBuilderInner({
 
     return (
         <div className="relative flex h-full w-full overflow-hidden bg-background">
+            {/* Header Center: Build/Execute Tabs */}
+            {agentId && (
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-background/95 backdrop-blur-md border rounded-xl p-1">
+                    <button
+                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${mode === "build" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                            }`}
+                        onClick={() => setMode("build")}
+                    >
+                        Build
+                    </button>
+                    <button
+                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${mode === "execute" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                            }`}
+                        onClick={() => {
+                            setMode("execute")
+                            setIsCatalogVisible(false)
+                        }}
+                    >
+                        Execute
+                    </button>
+                </div>
+            )}
+
             {/* Left Side Panels */}
 
             {/* 1. Build Mode: Catalog */}
@@ -418,12 +654,8 @@ function AgentBuilderInner({
                     <NodeTracePanel
                         nodeId={selectedNode.id}
                         nodeName={safeSelectedNodeData.displayName}
-                        steps={executionSteps.filter(s =>
-                            s.name === safeSelectedNodeData.displayName ||
-                            s.name.toLowerCase() === safeSelectedNodeData.nodeType.toLowerCase() ||
-                            s.id.includes(selectedNode.id) ||
-                            s.name === selectedNode.id
-                        )}
+                        steps={selectedNodeTraceSteps}
+                        nodeStatus={safeSelectedNodeData.executionStatus}
                         onClose={() => setSelectedNodeId(null)}
                     />
                 </FloatingPanel>
@@ -439,17 +671,19 @@ function AgentBuilderInner({
             {/* Canvas */}
             <div className="relative flex-1 bg-muted/40 rounded-2xl" ref={reactFlowWrapper}>
                 <ReactFlow
-                    nodes={nodes}
-                    edges={edges}
-                    onNodesChange={onNodesChange}
+                    nodes={renderNodes}
+                    edges={renderEdges}
+                    onNodesChange={handleNodesChange}
                     onEdgesChange={onEdgesChange}
-                    onConnect={onConnect}
-                    onDrop={onDrop}
-                    onDragOver={onDragOver}
+                    onConnect={mode === "build" ? onConnect : undefined}
+                    onDrop={mode === "build" ? onDrop : undefined}
+                    onDragOver={mode === "build" ? onDragOver : undefined}
                     onNodeClick={handleNodeClick}
                     onPaneClick={handlePaneClick}
                     isValidConnection={isValidConnection}
                     nodeTypes={nodeTypes}
+                    nodesDraggable={true}
+                    nodesConnectable={mode === "build"}
                     defaultEdgeOptions={{
                         animated: true,
                         style: { stroke: "#6b7280", strokeWidth: 2 },
@@ -458,33 +692,13 @@ function AgentBuilderInner({
                     selectionOnDrag={interactionMode === "select"}
                     selectionMode={SelectionMode.Partial}
                     panOnScroll={interactionMode === "select"}
-                    onNodeDragStop={() => setTimeout(() => takeSnapshot(nodes as Node<AgentNodeData>[], edges), 0)}
+                    onNodeDragStop={mode === "build" ? () => setTimeout(() => takeSnapshot(nodes as Node<AgentNodeData>[], edges), 0) : undefined}
                     fitView
                     snapToGrid
                     snapGrid={[16, 16]}
                     className="bg-background"
                 >
                     <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-0 " />
-
-                    {/* Mode Toggle Pills */}
-                    {agentId && (
-                        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-background/90 backdrop-blur-md border rounded-xl p-1">
-                            <button
-                                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${mode === "build" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-                                    }`}
-                                onClick={() => setMode("build")}
-                            >
-                                Build
-                            </button>
-                            <button
-                                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${mode === "execute" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-                                    }`}
-                                onClick={() => setMode("execute")}
-                            >
-                                Execute
-                            </button>
-                        </div>
-                    )}
 
                     {/* Toolbar - only in build mode */}
                     {mode === "build" && (
@@ -504,6 +718,25 @@ function AgentBuilderInner({
                             isSaving={isSaving}
                             isCompiling={isCompiling}
                         />
+                    )}
+
+                    {/* Execute toolbar */}
+                    {mode === "execute" && (
+                        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-1.5 bg-background/90 backdrop-blur-md border rounded-2xl">
+                            <ToolbarButton
+                                icon={<LayoutGrid className="h-4 w-4" />}
+                                onClick={handleOrganizeRuntime}
+                                disabled={runtimeOverlay.runtimeNodes.length === 0}
+                                title="Organize Overlay"
+                            />
+                            <ToolbarButton
+                                icon={<Trash2 className="h-4 w-4" />}
+                                onClick={() => runtimeOverlay.clearRuntimeOverlay()}
+                                variant="destructive"
+                                disabled={runtimeOverlay.runtimeNodes.length === 0 && runtimeOverlay.runtimeEdges.length === 0}
+                                title="Clear Overlay"
+                            />
+                        </div>
                     )}
 
                     <div className="absolute bottom-6 right-6">

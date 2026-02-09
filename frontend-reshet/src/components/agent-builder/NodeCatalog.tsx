@@ -3,7 +3,7 @@
 import { useMemo, useEffect, useState } from "react"
 import {
     Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle,
-    GripVertical, PanelLeftClose, Database, Bot, Sparkles, RefreshCw, ListFilter
+    GripVertical, PanelLeftClose, Database, Bot, Sparkles, RefreshCw, ListFilter, GitMerge, Link, Route, Scale, Ban
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -18,18 +18,9 @@ import {
 } from "./types"
 import { agentService, AgentOperatorSpec } from "@/services/agent"
 
-const CATEGORY_ICONS: Record<AgentNodeCategory, React.ElementType> = {
-    control: Play,
-    reasoning: Brain,
-    action: Wrench,
-    logic: GitBranch,
-    interaction: UserCheck,
-    data: Database,
-}
-
 const ICON_MAP: Record<string, React.ElementType> = {
     Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle,
-    Database, Bot, Sparkles, RefreshCw, ListFilter,
+    Database, Bot, Sparkles, RefreshCw, ListFilter, GitMerge, Link, Route, Scale, Ban,
     // Lowercase mappings for types
     start: Play,
     end: Square,
@@ -41,6 +32,13 @@ const ICON_MAP: Record<string, React.ElementType> = {
     if_else: GitBranch,
     while: RefreshCw,
     parallel: GitFork,
+    spawn_run: GitBranch,
+    spawn_group: GitMerge,
+    join: Link,
+    router: Route,
+    judge: Scale,
+    replan: RefreshCw,
+    cancel_subtree: Ban,
     human_input: UserCheck,
     user_approval: UserCheck,
     transform: Sparkles,
@@ -58,6 +56,11 @@ const getIcon = (iconName: string) => {
     return Circle
 }
 
+const renderCatalogIcon = (iconName: string) => {
+    const IconComponent = getIcon(iconName) || Circle
+    return <IconComponent className="h-3.5 w-3.5 text-foreground" />
+}
+
 interface NodeCatalogProps {
     onDragStart: (event: React.DragEvent, spec: AgentNodeSpec) => void
     onClose?: () => void
@@ -70,7 +73,6 @@ function CatalogItem({
     spec: AgentNodeSpec
     onDragStart: (event: React.DragEvent) => void
 }) {
-    const Icon = getIcon(spec.icon) || Circle
     const color = CATEGORY_COLORS[spec.category]
 
     return (
@@ -88,7 +90,7 @@ function CatalogItem({
                 className="shrink-0 p-1.5 rounded-md transition-transform group-hover:scale-105"
                 style={{ backgroundColor: color }}
             >
-                <Icon className="h-3.5 w-3.5 text-foreground" />
+                {renderCatalogIcon(spec.icon)}
             </div>
             <div className="flex-1 min-w-0">
                 <span className="text-[13px] font-medium text-foreground/80 truncate block">
@@ -182,7 +184,9 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
                     inputType: op.ui.inputType || "any",
                     outputType: op.ui.outputType || "any",
                     icon: op.ui.icon || "Circle",
-                    configFields: op.ui.configFields || [],
+                    configFields: (op.ui.configFields && op.ui.configFields.length > 0)
+                        ? op.ui.configFields
+                        : (AGENT_NODE_SPECS.find((spec) => spec.nodeType === (op.type as AgentNodeType))?.configFields || []),
                     inputs: op.ui.inputs || [],
                     outputs: op.ui.outputs || [],
                     isArtifact: op.ui.isArtifact || false,
@@ -208,6 +212,7 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
             reasoning: [],
             action: [],
             logic: [],
+            orchestration: [],
             interaction: [],
             data: [],
         }
@@ -221,7 +226,7 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
         return groups
     }, [filteredSpecs])
 
-    const categories: AgentNodeCategory[] = ["control", "reasoning", "action", "logic", "interaction", "data"]
+    const categories: AgentNodeCategory[] = ["control", "reasoning", "action", "logic", "orchestration", "interaction", "data"]
 
     return (
         <div className="flex flex-col">

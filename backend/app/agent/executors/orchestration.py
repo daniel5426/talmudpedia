@@ -495,8 +495,10 @@ class JudgeNodeExecutor(_BaseOrchestrationExecutor):
         payload = self._latest_orchestration_payload(state)
         outcomes = config.get("outcomes")
         outcomes = [o for o in outcomes if isinstance(o, str) and o.strip()] if isinstance(outcomes, list) else []
-        pass_outcome = outcomes[0] if outcomes else "pass"
-        fail_outcome = outcomes[1] if len(outcomes) > 1 else "fail"
+        configured_pass = self._as_text(config.get("pass_outcome"))
+        configured_fail = self._as_text(config.get("fail_outcome"))
+        pass_outcome = outcomes[0] if outcomes else (configured_pass or "pass")
+        fail_outcome = outcomes[1] if len(outcomes) > 1 else (configured_fail or "fail")
 
         suggested_action = self._as_text(payload.get("suggested_action"))
         status = self._as_text(payload.get("status"))

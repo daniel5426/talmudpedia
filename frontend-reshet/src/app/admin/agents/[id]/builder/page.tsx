@@ -16,39 +16,21 @@ import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { agentService } from "@/services"
+import { agentService, Agent, AgentGraphDefinition } from "@/services"
 import { AgentBuilder, AgentNodeData } from "@/components/agent-builder"
 import { normalizeGraphSpecForSave } from "@/components/agent-builder/graphspec"
-
-interface AgentWithGraph {
-    id: string
-    tenant_id: string
-    name: string
-    slug: string
-    description?: string
-    status: 'draft' | 'published' | 'deprecated' | 'archived'
-    version: number
-    graph_definition?: {
-        spec_version?: string
-        nodes: Node<AgentNodeData>[]
-        edges: Edge[]
-    }
-    created_at: string
-    updated_at: string
-    published_at?: string
-}
 
 export default function AgentBuilderPage() {
     const { id } = useParams()
     const router = useRouter()
-    const [agent, setAgent] = useState<AgentWithGraph | null>(null)
+    const [agent, setAgent] = useState<Agent | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [isSaving, setIsSaving] = useState(false)
     const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
     const [error, setError] = useState<string | null>(null)
 
     // Store current graph state for saving
-    const graphRef = useRef<{ spec_version: string; nodes: Node<AgentNodeData>[]; edges: Edge[] }>({ spec_version: "1.0", nodes: [], edges: [] })
+    const graphRef = useRef<AgentGraphDefinition>({ spec_version: "1.0", nodes: [], edges: [] })
 
     useEffect(() => {
         if (id) {
@@ -59,7 +41,7 @@ export default function AgentBuilderPage() {
     const loadAgent = async () => {
         try {
             setIsLoading(true)
-            const data = await agentService.getAgent(id as string) as AgentWithGraph
+            const data = await agentService.getAgent(id as string)
             setAgent(data)
             // Initialize graph ref with loaded data
             if (data.graph_definition) {
@@ -78,7 +60,7 @@ export default function AgentBuilderPage() {
     }
 
     const handleGraphChange = useCallback((nodes: Node<AgentNodeData>[], edges: Edge[]) => {
-        graphRef.current = normalizeGraphSpecForSave(nodes, edges)
+        graphRef.current = normalizeGraphSpecForSave(nodes, edges, { specVersion: graphRef.current.spec_version })
         // Mark as unsaved when changes are made
         if (saveStatus === "saved") {
             setSaveStatus("idle")
@@ -93,7 +75,6 @@ export default function AgentBuilderPage() {
             setSaveStatus("saving")
 
             await agentService.updateAgent(agent.id, {
-                // @ts-ignore - graph_definition exists on the backend
                 graph_definition: graphRef.current
             })
 
@@ -114,7 +95,6 @@ export default function AgentBuilderPage() {
             setIsSaving(true)
             // Save first, then publish
             await agentService.updateAgent(agent.id, {
-                // @ts-ignore
                 graph_definition: graphRef.current
             })
             await agentService.publishAgent(agent.id)

@@ -6,6 +6,7 @@ export type AgentNodeCategory =
   | "reasoning"   // Agent, LLM
   | "action"      // Tool, RAG
   | "logic"       // If/Else, While, Parallel
+  | "orchestration" // GraphSpec v2 orchestration nodes
   | "interaction" // User Approval
   | "data"        // Transform, Set State
 
@@ -33,6 +34,14 @@ export type AgentNodeType =
   | "while"
   | "conditional"
   | "parallel"
+  // Orchestration
+  | "spawn_run"
+  | "spawn_group"
+  | "join"
+  | "router"
+  | "judge"
+  | "replan"
+  | "cancel_subtree"
   // Interaction
   | "user_approval"
   | "human_input"
@@ -147,6 +156,7 @@ export const CATEGORY_COLORS: Record<AgentNodeCategory, string> = {
   reasoning: "var(--agent-reasoning)",
   action: "var(--agent-action)",
   logic: "var(--agent-logic)",
+  orchestration: "var(--agent-orchestration, #bfdbfe)",
   interaction: "var(--agent-interaction)",
   data: "var(--agent-data, #06b6d4)",
 }
@@ -156,6 +166,7 @@ export const CATEGORY_LABELS: Record<AgentNodeCategory, string> = {
   reasoning: "Reasoning",
   action: "Actions",
   logic: "Logic",
+  orchestration: "Orchestration",
   interaction: "Interaction",
   data: "Data",
 }
@@ -394,6 +405,160 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
       { name: "wait_all", label: "Wait for All", fieldType: "boolean", required: false, default: true, description: "Wait for all branches" },
     ],
   },
+
+  // ==========================================================================
+  // Orchestration (GraphSpec v2)
+  // ==========================================================================
+  {
+    nodeType: "spawn_run",
+    displayName: "Spawn Run",
+    description: "Spawn a single child run through the orchestration kernel.",
+    category: "orchestration",
+    inputType: "context",
+    outputType: "context",
+    icon: "GitBranch",
+    configFields: [
+      { name: "target_agent_id", label: "Target Agent ID", fieldType: "string", required: false },
+      { name: "target_agent_slug", label: "Target Agent Slug", fieldType: "string", required: false },
+      { name: "idempotency_key", label: "Idempotency Key", fieldType: "string", required: false },
+      {
+        name: "failure_policy",
+        label: "Failure Policy",
+        fieldType: "select",
+        required: false,
+        default: "best_effort",
+        options: [
+          { value: "best_effort", label: "Best Effort" },
+          { value: "fail_fast", label: "Fail Fast" },
+        ],
+      },
+      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false },
+      { name: "start_background", label: "Start in Background", fieldType: "boolean", required: false, default: true },
+    ],
+  },
+  {
+    nodeType: "spawn_group",
+    displayName: "Spawn Group",
+    description: "Spawn a fanout group of child runs through the orchestration kernel.",
+    category: "orchestration",
+    inputType: "context",
+    outputType: "context",
+    icon: "GitMerge",
+    configFields: [
+      {
+        name: "join_mode",
+        label: "Join Mode",
+        fieldType: "select",
+        required: false,
+        default: "all",
+        options: [
+          { value: "all", label: "All" },
+          { value: "best_effort", label: "Best Effort" },
+          { value: "fail_fast", label: "Fail Fast" },
+          { value: "quorum", label: "Quorum" },
+          { value: "first_success", label: "First Success" },
+        ],
+      },
+      { name: "quorum_threshold", label: "Quorum Threshold", fieldType: "number", required: false },
+      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false },
+      { name: "idempotency_key_prefix", label: "Idempotency Key Prefix", fieldType: "string", required: false },
+      {
+        name: "failure_policy",
+        label: "Failure Policy",
+        fieldType: "select",
+        required: false,
+        default: "best_effort",
+        options: [
+          { value: "best_effort", label: "Best Effort" },
+          { value: "fail_fast", label: "Fail Fast" },
+        ],
+      },
+      { name: "start_background", label: "Start in Background", fieldType: "boolean", required: false, default: true },
+    ],
+  },
+  {
+    nodeType: "join",
+    displayName: "Join",
+    description: "Join an orchestration group and route by completion status.",
+    category: "orchestration",
+    inputType: "context",
+    outputType: "decision",
+    icon: "Link",
+    dynamicHandles: true,
+    configFields: [
+      { name: "orchestration_group_id", label: "Group ID", fieldType: "string", required: false },
+      {
+        name: "mode",
+        label: "Mode",
+        fieldType: "select",
+        required: false,
+        default: "all",
+        options: [
+          { value: "all", label: "All" },
+          { value: "best_effort", label: "Best Effort" },
+          { value: "fail_fast", label: "Fail Fast" },
+          { value: "quorum", label: "Quorum" },
+          { value: "first_success", label: "First Success" },
+        ],
+      },
+      { name: "quorum_threshold", label: "Quorum Threshold", fieldType: "number", required: false },
+      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false },
+    ],
+  },
+  {
+    nodeType: "router",
+    displayName: "Router",
+    description: "Route orchestration payload to named branches.",
+    category: "orchestration",
+    inputType: "context",
+    outputType: "decision",
+    icon: "Route",
+    dynamicHandles: true,
+    configFields: [
+      { name: "route_key", label: "Route Key", fieldType: "string", required: false, default: "status" },
+    ],
+  },
+  {
+    nodeType: "judge",
+    displayName: "Judge",
+    description: "Decide orchestration pass/fail branches.",
+    category: "orchestration",
+    inputType: "context",
+    outputType: "decision",
+    icon: "Scale",
+    dynamicHandles: true,
+    configFields: [
+      { name: "pass_outcome", label: "Pass Branch Label", fieldType: "string", required: false, default: "pass" },
+      { name: "fail_outcome", label: "Fail Branch Label", fieldType: "string", required: false, default: "fail" },
+    ],
+  },
+  {
+    nodeType: "replan",
+    displayName: "Replan",
+    description: "Evaluate subtree and decide replan vs continue.",
+    category: "orchestration",
+    inputType: "context",
+    outputType: "decision",
+    icon: "RefreshCw",
+    dynamicHandles: true,
+    configFields: [
+      { name: "run_id", label: "Run ID", fieldType: "string", required: false },
+    ],
+  },
+  {
+    nodeType: "cancel_subtree",
+    displayName: "Cancel Subtree",
+    description: "Cancel a child run subtree through the orchestration kernel.",
+    category: "orchestration",
+    inputType: "context",
+    outputType: "context",
+    icon: "Ban",
+    configFields: [
+      { name: "run_id", label: "Run ID", fieldType: "string", required: false },
+      { name: "include_root", label: "Include Root Run", fieldType: "boolean", required: false, default: true },
+      { name: "reason", label: "Reason", fieldType: "string", required: false },
+    ],
+  },
   
   // ==========================================================================
   // Interaction
@@ -459,10 +624,14 @@ export function getNodeSpec(nodeType: AgentNodeType): AgentNodeSpec | undefined 
 }
 
 export function getClassifyHandleIds(categories: Array<{ name?: string }>): string[] {
+  return dedupeNamedHandles(categories, "category")
+}
+
+function dedupeNamedHandles(items: Array<{ name?: string }>, fallbackPrefix: string): string[] {
   const used = new Set<string>()
-  return (categories || []).map((c, i) => {
+  return (items || []).map((c, i) => {
     const base = (c?.name ?? "").trim()
-    const fallback = `category_${i}`
+    const fallback = `${fallbackPrefix}_${i}`
     const rawId = base || fallback
     let uniqueId = rawId
     let suffix = 1
@@ -473,6 +642,32 @@ export function getClassifyHandleIds(categories: Array<{ name?: string }>): stri
     used.add(uniqueId)
     return uniqueId
   })
+}
+
+function getRouterHandleIds(routes: unknown): string[] {
+  const used = new Set<string>()
+  const handles = (Array.isArray(routes) ? routes : []).map((route, idx) => {
+    let candidate = ""
+    if (typeof route === "string") {
+      candidate = route.trim()
+    } else if (route && typeof route === "object") {
+      const routeObj = route as Record<string, unknown>
+      candidate = String(routeObj.name || routeObj.key || routeObj.handle || "").trim()
+    }
+    const rawId = candidate || `route_${idx}`
+    let uniqueId = rawId
+    let suffix = 1
+    while (used.has(uniqueId)) {
+      uniqueId = `${rawId}_${suffix}`
+      suffix += 1
+    }
+    used.add(uniqueId)
+    return uniqueId
+  })
+  if (!used.has("default")) {
+    handles.push("default")
+  }
+  return handles
 }
 
 // Helper to get output handles for a node based on its config
@@ -487,7 +682,7 @@ export function getNodeOutputHandles(nodeType: AgentNodeType, config: Record<str
   // Dynamic handles from config (If/Else)
   if (spec?.dynamicHandles && nodeType === "if_else") {
     const conditions = (config.conditions as Array<{ name?: string }>) || []
-    const handles = conditions.map((c, i) => c.name || `condition_${i}`)
+    const handles = dedupeNamedHandles(conditions, "condition")
     handles.push("else") // Always have else
     return handles
   }
@@ -495,6 +690,34 @@ export function getNodeOutputHandles(nodeType: AgentNodeType, config: Record<str
   if (spec?.dynamicHandles && nodeType === "classify") {
     const categories = (config.categories as Array<{ name?: string }>) || []
     return getClassifyHandleIds(categories)
+  }
+
+  if (nodeType === "join") {
+    return ["completed", "completed_with_errors", "failed", "timed_out", "pending"]
+  }
+
+  if (nodeType === "replan") {
+    return ["replan", "continue"]
+  }
+
+  if (nodeType === "judge") {
+    const outcomes = Array.isArray(config.outcomes)
+      ? config.outcomes.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : []
+    if (outcomes.length > 0) {
+      return outcomes
+    }
+    const passOutcome = typeof config.pass_outcome === "string" && config.pass_outcome.trim()
+      ? config.pass_outcome.trim()
+      : "pass"
+    const failOutcome = typeof config.fail_outcome === "string" && config.fail_outcome.trim()
+      ? config.fail_outcome.trim()
+      : "fail"
+    return [passOutcome, failOutcome]
+  }
+
+  if (nodeType === "router") {
+    return getRouterHandleIds(config.routes)
   }
   
   // Default: single output

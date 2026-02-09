@@ -1,59 +1,73 @@
-# Settings Page Spec (Credentials & Integrations)
+# Settings Hub Spec (Tenant-Centric)
 
-Last Updated: 2026-02-05
+Last Updated: 2026-02-09
 
 ## Purpose
-Define a tenant-scoped Settings page for managing external integration credentials, including LLM providers, vector stores, and artifact secrets. This page centralizes secrets away from Model Registry bindings and Knowledge Store configs.
+Define `/admin/settings` as a tenant-centric hub for real settings, without duplicating analytics or activity surfaces that already exist elsewhere.
 
 ## Scope
-- Tenant-only credential management (no global credentials UI).
-- CRUD for integration credentials with category grouping.
-- Credentials are write-only in the UI (values are never read back).
+- Tenant profile management (name, slug, status).
+- Tenant default pointers (chat model, embedding model, retrieval policy) stored in `Tenant.settings`.
+- Existing credentials CRUD (integrations) remains in settings.
+- Security and Organization are linked modules, not duplicated UIs.
 
 ## UI Sections
-### 1. LLM Providers
-- Stores API keys, base URLs, org IDs, and variants (e.g., `azure`, `org_abc`).
-- Used by Model Registry bindings for chat, completion, embedding, and rerank.
+### 1. Tenant Profile
+- Editable: `name`, `slug`, `status`.
+- Slug-change warning shown in UI.
+- Mutations restricted to tenant owner/admin and global admin.
 
-### 2. Vector Stores
-- Stores API keys, URLs, environment, and region for vector DBs (Pinecone, Qdrant, pgvector where applicable).
-- Used by Knowledge Stores at runtime to configure adapters.
+### 2. Integrations
+- Existing credential categories:
+  - `llm_provider`
+  - `vector_store`
+  - `artifact_secret`
+  - `custom`
+- Credentials stay write-only.
 
-### 3. Artifact Secrets
-- Stores secrets for custom artifacts or external handlers.
-- Referenced by artifact config via credential IDs.
+### 3. Defaults
+- `default_chat_model_id`
+- `default_embedding_model_id`
+- `default_retrieval_policy`
+- Validation:
+  - Chat default must resolve to active chat model in tenant/global scope.
+  - Embedding default must resolve to active embedding model in tenant/global scope.
+  - Retrieval policy must be enum-valid.
 
-### 4. Custom Credentials
-- Tenant-specific credentials for bespoke integrations.
+### 4. Security & Organization
+- Link cards only to existing pages:
+  - `/admin/organization`
+  - `/admin/security`
+- No embedded management duplication in settings.
 
 ## Data Model Mapping
+### Tenant
+- `tenants.settings` (JSONB) keys used by settings hub:
+  - `default_chat_model_id`
+  - `default_embedding_model_id`
+  - `default_retrieval_policy`
+
 ### IntegrationCredential
-- `category`: `llm_provider` | `vector_store` | `artifact_secret` | `custom`
-- `provider_key`: canonical provider identifier (e.g., `openai`, `pinecone`)
-- `provider_variant`: optional (e.g., `azure`, `org_abc`)
-- `credentials`: JSON (write-only)
-- `is_enabled`: toggles runtime availability
-
-### Model Registry Binding
-- `ModelProviderBinding.credentials_ref` points to IntegrationCredential.
-- Resolver priority: `credentials_ref` → provider+variant → legacy ProviderConfig → binding config fallback.
-
-### Knowledge Store
-- `KnowledgeStore.credentials_ref` points to IntegrationCredential (vector store category).
-- Backend adapter merges credentials at runtime.
+- Unchanged:
+  - `category`, `provider_key`, `provider_variant`, `credentials`, `is_enabled`.
 
 ## Security Requirements
-- Secrets are never returned in GET responses.
-- UI shows credential keys only (e.g., `api_key`, `base_url`).
-- Delete is blocked if a credential is referenced by a model binding or knowledge store.
+- Credentials are never returned as values (keys only).
+- Tenant settings/profile mutation endpoints enforce owner/admin/global-admin permissions.
+- Credential delete remains blocked when referenced by model bindings or knowledge stores.
 
 ## API Surface
-- `GET /admin/settings/credentials`
-- `POST /admin/settings/credentials`
-- `PATCH /admin/settings/credentials/{id}`
-- `DELETE /admin/settings/credentials/{id}`
-- `GET /admin/settings/credentials/status`
+- Existing credentials APIs:
+  - `GET /admin/settings/credentials`
+  - `POST /admin/settings/credentials`
+  - `PATCH /admin/settings/credentials/{id}`
+  - `DELETE /admin/settings/credentials/{id}`
+  - `GET /admin/settings/credentials/status`
+- New tenant settings/profile APIs:
+  - `PATCH /api/tenants/{tenant_slug}`
+  - `GET /api/tenants/{tenant_slug}/settings`
+  - `PATCH /api/tenants/{tenant_slug}/settings`
 
 ## Notes
-- ProviderConfig remains as legacy fallback only.
-- Credentials should be tenant scoped; super-admin global management is out of scope.
+- No DB migration required for v1; defaults are new keys in existing JSONB.
+- Activity/stats remain in dedicated stats/audit pages, not in settings hub.

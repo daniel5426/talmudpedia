@@ -1,6 +1,6 @@
 # Agent Builder Runtime-Adapter Implementation Summary
 
-Date: 2026-02-04
+Last Updated: 2026-02-09
 
 ## Overview
 This document summarizes the implementation of the runtime‑agnostic agent builder architecture with LangGraph as **one adapter**, the introduction of GraphSpec v1, and the migration to a GraphIR‑based compiler and execution flow.
@@ -20,12 +20,15 @@ Key files:
 - `backend/app/agent/runtime/langgraph_adapter.py`
 - `backend/app/agent/graph/node_factory.py`
 
-### 2) GraphSpec v1 (Canonical)
+### 2) GraphSpec Versioning (Baseline + v2 Extension)
 - Backend now accepts `spec_version` and normalizes legacy fields:
   - `sourceHandle` → `source_handle`
   - `targetHandle` → `target_handle`
   - `inputMappings` → `input_mappings`
-- GraphSpec v1 is now documented and intended to be the canonical spec across FE/BE/SDK.
+- GraphSpec v1 remains the baseline contract across FE/BE/SDK.
+- GraphSpec v2 orchestration is now a supported extension for node types:
+  - `spawn_run`, `spawn_group`, `join`, `router`, `judge`, `replan`, `cancel_subtree`
+- Version rule: orchestration v2 nodes require `spec_version="2.0"` and must never be downgraded on save.
 
 Key files:
 - `backend/app/agent/graph/schema.py`
@@ -57,9 +60,14 @@ Key files:
 Key files:
 - `backend/app/services/agent_service.py`
 
-### 6) Frontend Serialization & Artifact Mapping
-- Graph save now forces GraphSpec v1 shape and preserves handles.
+### 6) Frontend Serialization, Runtime Overlay, and Artifact Mapping
+- Graph save normalization is now version-aware:
+  - preserve incoming `spec_version` where possible
+  - force `2.0` when v2 orchestration nodes exist
+- Graph save still normalizes legacy handles/mappings.
 - Artifact input mappings are now rendered and stored in config.
+- Builder Execute mode now renders an ephemeral runtime topology overlay from orchestration SSE events plus `/agents/runs/{run_id}/tree` reconciliation.
+- Runtime topology is execute-only and excluded from persisted `graph_definition`.
 
 Key files:
 - `frontend/src/app/admin/agents/[id]/builder/page.tsx`
@@ -93,7 +101,7 @@ Key files:
 ## Architectural Outcome
 - **LangGraph is now only an adapter**, not the core execution engine.
 - The compiler and execution service are runtime‑agnostic.
-- GraphSpec v1 is now the canonical data contract.
+- GraphSpec v1 is the baseline data contract, with GraphSpec v2 orchestration as an explicit extension.
 
 ## Next Possible Steps
 

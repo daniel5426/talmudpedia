@@ -8,6 +8,15 @@ export interface Tenant {
   created_at: string
 }
 
+export type TenantStatus = "active" | "suspended" | "pending"
+export type RetrievalPolicy = "semantic_only" | "hybrid" | "keyword_only" | "recency_boosted"
+
+export interface TenantSettings {
+  default_chat_model_id: string | null
+  default_embedding_model_id: string | null
+  default_retrieval_policy: RetrievalPolicy | null
+}
+
 export interface OrgUnit {
   id: string
   tenant_id: string
@@ -46,6 +55,28 @@ class OrgUnitsService {
 
   async getTenant(tenantSlug: string): Promise<Tenant> {
     return httpClient.get(`/api/tenants/${tenantSlug}`)
+  }
+
+  async updateTenant(
+    tenantSlug: string,
+    data: { name?: string; slug?: string; status?: TenantStatus }
+  ): Promise<Tenant> {
+    return httpClient.patch(`/api/tenants/${tenantSlug}`, data)
+  }
+
+  async getTenantSettings(tenantSlug: string): Promise<TenantSettings> {
+    return httpClient.get(`/api/tenants/${tenantSlug}/settings`)
+  }
+
+  async updateTenantSettings(
+    tenantSlug: string,
+    data: {
+      default_chat_model_id?: string | null
+      default_embedding_model_id?: string | null
+      default_retrieval_policy?: RetrievalPolicy | null
+    }
+  ): Promise<TenantSettings> {
+    return httpClient.patch(`/api/tenants/${tenantSlug}/settings`, data)
   }
 
   async listOrgUnits(tenantSlug: string): Promise<OrgUnit[]> {

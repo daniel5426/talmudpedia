@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import { nanoid } from "nanoid";
 import { SearchIcon, DotIcon, Terminal } from "lucide-react";
 import { agentService } from "@/services";
+import type { AgentExecutionEvent, AgentRunStatus } from "@/services";
 import { ChatController, ChatMessage, Citation, mergeReasoningSteps } from "@/components/layout/useChatController";
 
 export interface AgentChatHistoryItem {
@@ -62,7 +63,9 @@ const resolveArchitectResponse = (content: string) => {
 
 export function useAgentRunController(agentId: string | undefined): ChatController & {
   executionSteps: ExecutionStep[];
+  executionEvents: AgentExecutionEvent[];
   currentRunId: string | null;
+  currentRunStatus: AgentRunStatus["status"] | null;
   isPaused: boolean;
   pendingApproval: boolean;
   history: AgentChatHistoryItem[];
@@ -80,9 +83,11 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [lastThinkingDurationMs, setLastThinkingDurationMs] = useState<number | null>(null);
   const [activeStreamingId, setActiveStreamingId] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  const [currentRunStatus, setCurrentRunStatus] = useState<AgentRunStatus["status"] | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [pendingApproval, setPendingApproval] = useState(false);
   const [history, setHistory] = useState<AgentChatHistoryItem[]>([]);
+  const [executionEvents, setExecutionEvents] = useState<AgentExecutionEvent[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -139,9 +144,11 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setLastThinkingDurationMs(null);
     setActiveStreamingId(null);
     setCurrentRunId(null);
+    setCurrentRunStatus(null);
     setIsPaused(false);
     setPendingApproval(false);
     setHistory([]);
+    setExecutionEvents([]);
     reasoningRef.current = [];
     thinkingDurationRef.current = null;
     if (abortControllerRef.current) {
@@ -237,9 +244,11 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setStreamingContent("");
     setCurrentReasoning([]);
     setExecutionSteps([]);
+    setExecutionEvents([]);
     setLastThinkingDurationMs(null);
     setActiveStreamingId(null);
     setCurrentRunId(null);
+    setCurrentRunStatus(null);
     setIsPaused(false);
     setPendingApproval(false);
     reasoningRef.current = [];
@@ -258,9 +267,11 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setStreamingContent("");
     setCurrentReasoning([]);
     setExecutionSteps([]);
+    setExecutionEvents([]);
     setLastThinkingDurationMs(null);
     setActiveStreamingId(null);
     setCurrentRunId(null);
+    setCurrentRunStatus(null);
     setIsPaused(false);
     setPendingApproval(false);
     reasoningRef.current = [];
@@ -292,6 +303,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setStreamingContent("");
     setCurrentReasoning([]);
     setExecutionSteps([]);
+    setExecutionEvents([]);
+    setCurrentRunStatus("running");
     setLastThinkingDurationMs(null);
     const newStreamingId = nanoid();
     setActiveStreamingId(newStreamingId);
@@ -334,10 +347,20 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
 
           try {
             const event = JSON.parse(dataStr);
+            const eventName =
+              typeof event.event === "string"
+                ? event.event
+                : typeof event.type === "string"
+                ? event.type
+                : "";
+            if (eventName.startsWith("orchestration.") || eventName === "node_end") {
+              setExecutionEvents((prev) => [...prev, { ...(event as AgentExecutionEvent), received_at: Date.now() }]);
+            }
             
             if (event.type === "done") break;
             if (event.type === "error" || event.event === "error") {
               terminalError = event.error || event.data?.error || "Agent error";
+              setCurrentRunStatus("failed");
               break;
             }
 
@@ -398,6 +421,9 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               setCurrentRunId(event.run_id);
             } else if (event.event === "run_status") {
               const status = event.data?.status;
+              if (typeof status === "string") {
+                setCurrentRunStatus(status as AgentRunStatus["status"]);
+              }
               if (status === "paused") {
                 setIsPaused(true);
                 const nextNodes = Array.isArray(event.data?.next_nodes) ? event.data.next_nodes : [];
@@ -561,12 +587,14 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     streamingContent,
     currentReasoning,
     executionSteps,
+    executionEvents,
     liked,
     disliked,
     copiedMessageId,
     lastThinkingDurationMs,
     activeStreamingId,
     currentRunId,
+    currentRunStatus,
     isPaused,
     pendingApproval,
     history,
