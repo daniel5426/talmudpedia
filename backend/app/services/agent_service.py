@@ -5,11 +5,11 @@ from typing import Any, Optional, Tuple, List, Dict
 from uuid import UUID
 from dataclasses import dataclass, field
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentStatus, RunStatus
+from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrace, AgentStatus, RunStatus
 # from ..agent.graph.compiler import AgentCompiler # Mocking compiler for now if not ready, or use it
 # from ..agent.graph.schema import AgentGraph
 
@@ -163,8 +163,21 @@ class AgentService:
 
     async def delete_agent(self, agent_id: UUID) -> bool:
         """Delete an agent."""
-        agent = await self.get_agent(agent_id)
-        await self.db.delete(agent)
+        await self.get_agent(agent_id)
+
+        # Use explicit SQL deletes to avoid ORM relationship-loading on agent_runs.
+        # This keeps deletion compatible with DBs that are missing newer run-lineage columns.
+        run_ids_subquery = select(AgentRun.id).where(
+            and_(
+                AgentRun.agent_id == agent_id,
+                AgentRun.tenant_id == self.tenant_id,
+            )
+        )
+
+        await self.db.execute(delete(AgentVersion).where(AgentVersion.agent_id == agent_id))
+        await self.db.execute(delete(AgentTrace).where(AgentTrace.run_id.in_(run_ids_subquery)))
+        await self.db.execute(delete(AgentRun).where(AgentRun.id.in_(run_ids_subquery)))
+        await self.db.execute(delete(Agent).where(and_(Agent.id == agent_id, Agent.tenant_id == self.tenant_id)))
         await self.db.commit()
         return True
 

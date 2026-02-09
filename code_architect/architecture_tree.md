@@ -1,6 +1,6 @@
 # Architecture Tree
 
-Last Updated: 2026-02-07
+Last Updated: 2026-02-08
 
 ```
 backend
@@ -46,6 +46,8 @@ backend/documentations/summary/agent_builder_tests_sdk_summary.md
 backend/documentations/summary/agent_sota_architecture_gap_overview.md
 backend/documentations/summary/agent_builder_tests_creation_notes.md
 backend/documentations/summary/agent_tool_agents_tests_creation_notes.md
+backend/documentations/summary/orchestration_kernel_phase1_phase2_implementation_status.md
+backend/documentations/summary/multi_agent_orchestration_v2_phase1_phase2_handoff_prompt.md
 backend/documentations/agent_management_state.md
 backend/documentations/voice_mode_architecture.md
 backend/documentations/react_artifacts_live_preview.md
@@ -181,6 +183,7 @@ backend/app/agent/executors/tool.py
 backend/app/agent/executors/base.py
 backend/app/agent/executors/data.py
 backend/app/agent/executors/classify_executor.py
+backend/app/agent/executors/orchestration.py
 backend/app/agent/execution
 backend/app/agent/execution/service.py
 backend/app/agent/execution/adapter.py
@@ -250,6 +253,7 @@ backend/app/db/postgres/models/rag.py
 backend/app/db/postgres/models/operators.py
 backend/app/db/postgres/models/identity.py
 backend/app/db/postgres/models/security.py
+backend/app/db/postgres/models/orchestration.py
 backend/app/db/postgres/engine.py
 backend/app/db/postgres/seeds
 backend/app/db/postgres/seeds/models.json
@@ -278,6 +282,7 @@ backend/app/api/routers/agent.py
 backend/app/api/routers/search.py
 backend/app/api/routers/artifacts.py
 backend/app/api/routers/internal_auth.py
+backend/app/api/routers/orchestration_internal.py
 backend/app/api/routers/org_units.py
 backend/app/api/routers/general.py
 backend/app/api/routers/rag_custom_operators.py
@@ -311,6 +316,9 @@ backend/app/services/registry_seeding.py
 backend/app/services/workload_identity_service.py
 backend/app/services/delegation_service.py
 backend/app/services/token_broker_service.py
+backend/app/services/orchestration_policy_service.py
+backend/app/services/orchestration_lineage_service.py
+backend/app/services/orchestration_kernel_service.py
 backend/app/services/voice
 backend/app/services/voice/registry.py
 backend/app/services/voice/session_manager.py
@@ -394,7 +402,23 @@ backend/tests/agent_tool_artifact_loop/test_state.md
 backend/tests/platform_sdk_tool
 backend/tests/platform_sdk_tool/test_platform_sdk_actions.py
 backend/tests/platform_sdk_tool/test_platform_sdk_integration.py
+backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py
 backend/tests/platform_sdk_tool/test_state.md
+backend/tests/orchestration_kernel
+backend/tests/orchestration_kernel/test_kernel_spawn_and_tree.py
+backend/tests/orchestration_kernel/test_state.md
+backend/tests/orchestration_graphspec_v2
+backend/tests/orchestration_graphspec_v2/test_graphspec_v2_orchestration.py
+backend/tests/orchestration_graphspec_v2/test_state.md
+backend/tests/orchestration_runtime_primitives
+backend/tests/orchestration_runtime_primitives/test_runtime_events_and_flags.py
+backend/tests/orchestration_runtime_primitives/test_state.md
+backend/tests/orchestration_join_policies
+backend/tests/orchestration_join_policies/test_join_policies.py
+backend/tests/orchestration_join_policies/test_state.md
+backend/tests/orchestration_limits_and_cancellation
+backend/tests/orchestration_limits_and_cancellation/test_limits_and_cancellation.py
+backend/tests/orchestration_limits_and_cancellation/test_state.md
 backend/tests/workload_delegation_auth
 backend/tests/workload_delegation_auth/test_token_broker_jwt_claims.py
 backend/tests/workload_delegation_auth/test_scope_intersection_policy.py
@@ -561,6 +585,7 @@ backend/alembic/versions/c3a8d1e2f4a6_add_tool_status_and_types.py
 backend/alembic/versions/a13fc6223d86_add_paused_runstatus.py
 backend/alembic/versions/6206ad312420_normalize_tool_registry_enums.py
 backend/alembic/versions/7c9f1c2d3e4f_add_cost_columns_to_model_provider_bindings.py
+backend/alembic/versions/e6f1a9b4c2d0_add_orchestration_kernel_tables_and_lineage.py
 backend/alembic/README
 backend/COMPLEX_TEXT_SUPPORT.md
 backend/Procfile

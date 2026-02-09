@@ -5,7 +5,7 @@ Routers should only: Validate, Authenticate, Dispatch.
 All business logic lives in AgentService.
 """
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
@@ -77,33 +77,47 @@ async def get_agent_context(
     if current_user is None:
         raise HTTPException(status_code=403, detail="Not authorized to manage agents")
 
-    # Identify tenant via membership
-    result = await db.execute(
-        select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
-    )
-    membership = result.scalar_one_or_none()
+    # Prefer explicit tenant header so multi-tenant users can target the selected tenant.
+    header_tenant = request.headers.get("X-Tenant-ID")
+    if header_tenant:
+        try:
+            header_tenant_uuid = UUID(str(header_tenant))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header")
 
-    tenant_id = None
-    org_unit_id = None
-    org_role = None
-
-    if membership:
-        tenant_id = membership.tenant_id
+        membership_res = await db.execute(
+            select(OrgMembership).where(
+                OrgMembership.user_id == current_user.id,
+                OrgMembership.tenant_id == header_tenant_uuid,
+            ).limit(1)
+        )
+        membership = membership_res.scalar_one_or_none()
+        if membership is None and current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="Not a member of the requested tenant")
         return {
             "user": current_user,
-            "tenant_id": tenant_id,
+            "tenant_id": header_tenant_uuid,
             "auth_token": token,
             "is_service": False,
             "scopes": context.get("scopes", []),
         }
 
-    # If admin and no membership (true system admin), they can see everything but creation might fail
-    tenant_id = context.get("tenant_id")
-    # Try tenant from header if membership missing
-    header_tenant = request.headers.get("X-Tenant-ID")
-    if header_tenant:
-         tenant_id = header_tenant
+    # Fallback: first membership tenant for users that do not pass X-Tenant-ID.
+    result = await db.execute(
+        select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
+    )
+    membership = result.scalar_one_or_none()
+    if membership:
+        return {
+            "user": current_user,
+            "tenant_id": membership.tenant_id,
+            "auth_token": token,
+            "is_service": False,
+            "scopes": context.get("scopes", []),
+        }
 
+    # System admin fallback without membership.
+    tenant_id = context.get("tenant_id")
     if tenant_id is None:
         raise HTTPException(status_code=403, detail="Tenant context required")
     return {
@@ -664,6 +678,7 @@ async def resume_run_v2(
 @router.get("/runs/{run_id}", response_model=Dict[str, Any])
 async def get_run_status(
     run_id: UUID,
+    include_tree: bool = Query(False, description="Include orchestration run tree for debug UIs"),
     _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
@@ -678,13 +693,44 @@ async def get_run_status(
     
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-        
-    # TODO: Check tenant
-    
-    return {
+
+    if str(run.tenant_id) != str(context.get("tenant_id")):
+        raise HTTPException(status_code=403, detail="Tenant mismatch")
+
+    payload = {
         "id": str(run.id),
         "status": run.status.value if hasattr(run.status, "value") else run.status,
         "result": run.output_result,
         "error": run.error_message,
-        "checkpoint": run.checkpoint # Debugging
+        "checkpoint": run.checkpoint,  # Debugging
+        "lineage": {
+            "root_run_id": str(run.root_run_id) if run.root_run_id else None,
+            "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+            "parent_node_id": run.parent_node_id,
+            "depth": int(run.depth or 0),
+            "spawn_key": run.spawn_key,
+            "orchestration_group_id": str(run.orchestration_group_id) if run.orchestration_group_id else None,
+        },
     }
+    if include_tree:
+        from app.services.orchestration_kernel_service import OrchestrationKernelService
+        payload["run_tree"] = await OrchestrationKernelService(db).query_tree(run_id=run.id)
+    return payload
+
+
+@router.get("/runs/{run_id}/tree", response_model=Dict[str, Any])
+async def get_run_tree(
+    run_id: UUID,
+    _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.orchestration_kernel_service import OrchestrationKernelService
+    from app.db.postgres.models.agents import AgentRun
+
+    run = await db.scalar(select(AgentRun).where(AgentRun.id == run_id))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if str(run.tenant_id) != str(context.get("tenant_id")):
+        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    return await OrchestrationKernelService(db).query_tree(run_id=run_id)

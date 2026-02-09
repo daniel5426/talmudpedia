@@ -39,6 +39,12 @@ class AgentExecutorService:
         background: bool = True,
         mode: ExecutionMode = ExecutionMode.DEBUG,
         requested_scopes: Optional[list[str]] = None,
+        root_run_id: Optional[UUID] = None,
+        parent_run_id: Optional[UUID] = None,
+        parent_node_id: Optional[str] = None,
+        depth: int = 0,
+        spawn_key: Optional[str] = None,
+        orchestration_group_id: Optional[UUID] = None,
     ) -> UUID:
         """
         Starts a new agent execution run.
@@ -83,12 +89,24 @@ class AgentExecutorService:
             delegation_grant_id=parsed_grant_id,
             input_params=input_params,
             status=RunStatus.queued,
+            root_run_id=root_run_id,
+            parent_run_id=parent_run_id,
+            parent_node_id=parent_node_id,
+            depth=depth,
+            spawn_key=spawn_key,
+            orchestration_group_id=orchestration_group_id,
             started_at=None,
             completed_at=None
         )
         self.db.add(run)
         await self.db.commit()
         await self.db.refresh(run)
+
+        # Root runs self-reference for efficient run-tree queries.
+        if run.root_run_id is None:
+            run.root_run_id = run.id
+            await self.db.commit()
+            await self.db.refresh(run)
 
         # Create delegation context for runs with an initiator user context.
         # This covers both direct user-initiated runs and workload-initiated runs
@@ -208,8 +226,20 @@ class AgentExecutorService:
         if run.initiator_user_id:
             runtime_context["initiator_user_id"] = str(run.initiator_user_id)
         runtime_context["run_id"] = str(run.id)
+        if run.root_run_id:
+            runtime_context["root_run_id"] = str(run.root_run_id)
+        if run.parent_run_id:
+            runtime_context["parent_run_id"] = str(run.parent_run_id)
+        if run.parent_node_id:
+            runtime_context["parent_node_id"] = str(run.parent_node_id)
+        runtime_context["depth"] = int(run.depth or 0)
+        if run.spawn_key:
+            runtime_context["spawn_key"] = run.spawn_key
+        if run.orchestration_group_id:
+            runtime_context["orchestration_group_id"] = str(run.orchestration_group_id)
         if run.tenant_id:
             runtime_context["tenant_id"] = str(run.tenant_id)
+        runtime_context["orchestration_surface"] = "option_a_graphspec_v2"
         if isinstance(run_input_params, dict):
             run_input_params = dict(run_input_params)
             run_input_params["context"] = runtime_context
@@ -260,6 +290,13 @@ class AgentExecutorService:
             "tenant_id": str(run.tenant_id) if run.tenant_id else None,
             "user_id": str(run.user_id) if run.user_id else None,
             "auth_token": runtime_context.get("token"),
+            "root_run_id": str(run.root_run_id) if run.root_run_id else None,
+            "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+            "parent_node_id": run.parent_node_id,
+            "depth": int(run.depth or 0),
+            "spawn_key": run.spawn_key,
+            "orchestration_group_id": str(run.orchestration_group_id) if run.orchestration_group_id else None,
+            "orchestration_surface": runtime_context.get("orchestration_surface"),
         }
 
         try:

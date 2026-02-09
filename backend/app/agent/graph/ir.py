@@ -1,6 +1,19 @@
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
+GRAPH_SPEC_V1 = "1.0"
+GRAPH_SPEC_V2 = "2.0"
+
+ORCHESTRATION_V2_NODE_TYPES = {
+    "spawn_run",
+    "spawn_group",
+    "join",
+    "router",
+    "judge",
+    "replan",
+    "cancel_subtree",
+}
+
 
 class GraphIRNode(BaseModel):
     id: str

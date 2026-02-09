@@ -8,7 +8,6 @@ All methods are non-blocking and swallow errors.
 import asyncio
 import logging
 from typing import Any, Optional
-from uuid import UUID
 
 from .types import ExecutionEvent, EventVisibility
 
@@ -32,11 +31,18 @@ class EventEmitter:
     - All emit_* methods never affect control flow.
     """
     
-    def __init__(self, queue: asyncio.Queue, run_id: str, mode: str = "debug"):
+    def __init__(
+        self,
+        queue: asyncio.Queue,
+        run_id: str,
+        mode: str = "debug",
+        orchestration_surface: str = "option_a_graphspec_v2",
+    ):
         self._queue = queue
         self._run_id = run_id
         self._mode = mode
-    
+        self._orchestration_surface = orchestration_surface
+
     def emit_token(self, content: str, node_id: str, span_id: Optional[str] = None) -> None:
         """Emit a token (streaming content) event."""
         self._emit(ExecutionEvent(
@@ -46,7 +52,7 @@ class EventEmitter:
             span_id=span_id,
             name=node_id,
             visibility=EventVisibility.CLIENT_SAFE,
-            metadata={"mode": self._mode}
+            metadata=self._metadata()
         ))
     
     def emit_node_start(self, node_id: str, name: str, node_type: str, input_data: Any = None) -> None:
@@ -58,7 +64,7 @@ class EventEmitter:
             span_id=node_id,
             name=name,
             visibility=EventVisibility.INTERNAL,
-            metadata={"mode": self._mode}
+            metadata=self._metadata()
         ))
     
     def emit_tool_start(self, tool_name: str, input_data: Any = None, node_id: Optional[str] = None) -> None:
@@ -75,7 +81,7 @@ class EventEmitter:
             span_id=node_id,
             name=tool_name,
             visibility=EventVisibility.INTERNAL,
-            metadata={"mode": self._mode}
+            metadata=self._metadata()
         ))
 
     def emit_tool_end(self, tool_name: str, output_data: Any = None, node_id: Optional[str] = None) -> None:
@@ -87,7 +93,7 @@ class EventEmitter:
             span_id=node_id,
             name=tool_name,
             visibility=EventVisibility.INTERNAL,
-            metadata={"mode": self._mode}
+            metadata=self._metadata()
         ))
     
     def emit_node_end(self, node_id: str, name: str, node_type: str, output_data: Any = None) -> None:
@@ -99,7 +105,7 @@ class EventEmitter:
             span_id=node_id,
             name=name,
             visibility=EventVisibility.INTERNAL,
-            metadata={"mode": self._mode}
+            metadata=self._metadata()
         ))
 
     def emit_retrieval(self, results: Any, node_id: Optional[str] = None) -> None:
@@ -110,7 +116,7 @@ class EventEmitter:
             run_id=self._run_id,
             span_id=node_id,
             visibility=EventVisibility.INTERNAL,
-            metadata={"mode": self._mode}
+            metadata=self._metadata()
         ))
     
     def emit_error(self, error: str, node_id: Optional[str] = None) -> None:
@@ -121,9 +127,131 @@ class EventEmitter:
             run_id=self._run_id,
             span_id=node_id,
             visibility=EventVisibility.CLIENT_SAFE,
-            metadata={"mode": self._mode}
+            metadata=self._metadata()
         ))
-    
+
+    def emit_orchestration_spawn_decision(
+        self,
+        *,
+        node_id: str,
+        target_agent_id: Optional[str],
+        target_agent_slug: Optional[str],
+        spawned_run_ids: list[str],
+        idempotent: bool,
+    ) -> None:
+        self._emit(ExecutionEvent(
+            event="orchestration.spawn_decision",
+            data={
+                "target_agent_id": target_agent_id,
+                "target_agent_slug": target_agent_slug,
+                "spawned_run_ids": list(spawned_run_ids),
+                "idempotent": bool(idempotent),
+            },
+            run_id=self._run_id,
+            span_id=node_id,
+            visibility=EventVisibility.INTERNAL,
+            metadata=self._metadata({"category": "orchestration"}),
+        ))
+
+    def emit_orchestration_child_lifecycle(
+        self,
+        *,
+        node_id: str,
+        child_run_id: str,
+        lifecycle_status: str,
+        orchestration_group_id: Optional[str] = None,
+    ) -> None:
+        self._emit(ExecutionEvent(
+            event="orchestration.child_lifecycle",
+            data={
+                "child_run_id": child_run_id,
+                "status": lifecycle_status,
+                "orchestration_group_id": orchestration_group_id,
+            },
+            run_id=self._run_id,
+            span_id=node_id,
+            visibility=EventVisibility.INTERNAL,
+            metadata=self._metadata({"category": "orchestration"}),
+        ))
+
+    def emit_orchestration_join_decision(
+        self,
+        *,
+        node_id: str,
+        group_id: str,
+        mode: str,
+        status: str,
+        complete: bool,
+        success_count: int,
+        failure_count: int,
+        running_count: int,
+    ) -> None:
+        self._emit(ExecutionEvent(
+            event="orchestration.join_decision",
+            data={
+                "group_id": group_id,
+                "mode": mode,
+                "status": status,
+                "complete": bool(complete),
+                "success_count": int(success_count),
+                "failure_count": int(failure_count),
+                "running_count": int(running_count),
+            },
+            run_id=self._run_id,
+            span_id=node_id,
+            visibility=EventVisibility.INTERNAL,
+            metadata=self._metadata({"category": "orchestration"}),
+        ))
+
+    def emit_orchestration_policy_deny(
+        self,
+        *,
+        node_id: str,
+        action: str,
+        reason: str,
+    ) -> None:
+        self._emit(ExecutionEvent(
+            event="orchestration.policy_deny",
+            data={"action": action, "reason": reason},
+            run_id=self._run_id,
+            span_id=node_id,
+            visibility=EventVisibility.CLIENT_SAFE,
+            metadata=self._metadata({"category": "orchestration"}),
+        ))
+
+    def emit_orchestration_cancellation_propagation(
+        self,
+        *,
+        node_id: str,
+        reason: Optional[str],
+        cancelled_run_ids: list[str],
+        include_root: Optional[bool] = None,
+    ) -> None:
+        payload = {
+            "reason": reason,
+            "cancelled_run_ids": list(cancelled_run_ids),
+            "count": len(cancelled_run_ids),
+        }
+        if include_root is not None:
+            payload["include_root"] = bool(include_root)
+        self._emit(ExecutionEvent(
+            event="orchestration.cancellation_propagation",
+            data=payload,
+            run_id=self._run_id,
+            span_id=node_id,
+            visibility=EventVisibility.INTERNAL,
+            metadata=self._metadata({"category": "orchestration"}),
+        ))
+
+    def _metadata(self, extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        metadata = {
+            "mode": self._mode,
+            "surface": self._orchestration_surface,
+        }
+        if isinstance(extra, dict):
+            metadata.update(extra)
+        return metadata
+
     def _emit(self, event: ExecutionEvent) -> None:
         """
         Fire-and-forget event emission.

@@ -1,6 +1,6 @@
 # TalmudPedia: Platform Current State & Overview
 
-Last Updated: 2026-02-07
+Last Updated: 2026-02-08
 
 TalmudPedia is a foundational **Enterprise AI Agent & RAG Platform** designed as a unified control plane for models, tools, data, and reasoning workflows. It is vendor-agnostic, modular, and enterprise-ready, supporting both API-based and self-hosted models. Data ingestion (RAG) and reasoning (Agents) are decoupled through the **Knowledge Store** bridge.
 
@@ -31,7 +31,7 @@ The platform is organized into independent domains communicating through stable 
 - **Observability**: **Unified Engine, Divergent Observability** (ADR 001). `StreamAdapter` filters events by `ExecutionMode`: Debug = full firehose (inputs, tool calls, thoughts, tokens); Production = clean stream (final tokens and client-safe events only). Auth-scoped: public tokens cannot request Debug.
 - **Features**: Cyclic workflows, CEL (If/Else, While), User Approval (HITL), Transform/Set State, artifact field mapping, versioning, `AgentRun`/`AgentTrace` persistence. Tool execution: HTTP, artifact, MCP, and function tools supported. Tool invocation in agent nodes supports structured tool calls with JSON fallback (native LLM tool calling is still a roadmap item).
 - **UI**: Visual Builder (xyflow, BaseNode, ConfigPanel) and Agent Playground (streaming, execution sidebar, same chat components as production). Memory: short-term active; long-term/vector in development.
-- **Platform Architect v2**: Multi-agent orchestrator seeded with sub-agents (Catalog, Planner, Builder, Coder, Tester). Platform SDK tool supports draft asset creation and multi-case tests; secure internal API flows use delegated workload tokens with scope enforcement (legacy service/API-key fallback removed on migrated secure paths).
+- **Platform Architect v2**: Multi-agent orchestrator seeded with sub-agents (Catalog, Planner, Builder, Coder, Tester). The seed now uses a GraphSpec v2 orchestration graph (`spawn_run`, `spawn_group`, `join`, `router`, `judge`, `replan`, `cancel_subtree`) and auto-seeds orchestrator policy/target allowlist rows for those sub-agents. Platform SDK tool supports draft asset creation and multi-case tests; secure internal API flows use delegated workload tokens with scope enforcement (legacy service/API-key fallback removed on migrated secure paths).
 
 ### B. RAG Domain
 
@@ -63,7 +63,7 @@ The platform is organized into independent domains communicating through stable 
 
 | Feature | Description |
 | :--- | :--- |
-| **DAG orchestration** | RAG and Agents use declarative graphs (GraphSpec v1 for agents). |
+| **DAG orchestration** | RAG and Agents use declarative graphs (GraphSpec v1 baseline, plus GraphSpec v2 orchestration node surface for agents). |
 | **Vendor agnostic** | Models and vector stores behind Model Registry and Knowledge Store. |
 | **Service layer** | Clear separation: AgentService, RetrievalService, pipeline executor, etc. |
 | **Custom code** | Custom Python operators (DB) and Artifact operators (filesystem) in restricted environments. |

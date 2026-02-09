@@ -113,6 +113,7 @@ from app.api.routers import artifacts as artifacts_router
 from app.api.routers import stats as stats_router
 from app.api.routers import settings as settings_router
 from app.api.routers import internal_auth as internal_auth_router
+from app.api.routers import orchestration_internal as orchestration_internal_router
 from app.api.routers import workload_security as workload_security_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -129,6 +130,7 @@ app.include_router(settings_router.router, prefix="/admin/settings", tags=["sett
 app.include_router(workload_security_router.router)
 app.include_router(internal_auth_router.router)
 app.include_router(internal_auth_router.jwks_router)
+app.include_router(orchestration_internal_router.router)
 
 from app.api.routers import knowledge_stores as knowledge_stores_router
 app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stores", tags=["knowledge-stores"])

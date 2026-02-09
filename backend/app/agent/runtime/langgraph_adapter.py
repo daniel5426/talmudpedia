@@ -83,7 +83,12 @@ class LangGraphAdapter(RuntimeAdapter):
         config: Dict[str, Any],
     ) -> AsyncGenerator[ExecutionEvent, None]:
         event_queue: asyncio.Queue[ExecutionEvent] = asyncio.Queue(maxsize=1000)
-        emitter = EventEmitter(event_queue, config.get("run_id", "unknown"), config.get("mode", "debug"))
+        emitter = EventEmitter(
+            event_queue,
+            config.get("run_id", "unknown"),
+            config.get("mode", "debug"),
+            orchestration_surface=config.get("orchestration_surface", "option_a_graphspec_v2"),
+        )
         token = active_emitter.set(emitter)
 
         runtime_config = self._build_config(config, emitter=emitter)
@@ -138,12 +143,19 @@ class LangGraphAdapter(RuntimeAdapter):
         configurable = {
             "thread_id": config.get("thread_id"),
             "run_id": config.get("run_id"),
+            "root_run_id": config.get("root_run_id"),
+            "parent_run_id": config.get("parent_run_id"),
+            "parent_node_id": config.get("parent_node_id"),
+            "depth": config.get("depth"),
+            "spawn_key": config.get("spawn_key"),
+            "orchestration_group_id": config.get("orchestration_group_id"),
             "grant_id": config.get("grant_id"),
             "principal_id": config.get("principal_id"),
             "initiator_user_id": config.get("initiator_user_id"),
             "tenant_id": config.get("tenant_id"),
             "user_id": config.get("user_id"),
             "auth_token": config.get("auth_token"),
+            "orchestration_surface": config.get("orchestration_surface"),
         }
         if emitter:
             configurable["emitter"] = emitter

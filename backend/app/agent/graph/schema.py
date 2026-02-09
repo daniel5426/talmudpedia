@@ -21,6 +21,13 @@ class NodeType(str, Enum):
     TRANSFORM = "transform"
     RAG_RETRIEVAL = "rag_retrieval"
     HUMAN_INPUT = "human_input"
+    SPAWN_RUN = "spawn_run"
+    SPAWN_GROUP = "spawn_group"
+    JOIN = "join"
+    ROUTER = "router"
+    JUDGE = "judge"
+    REPLAN = "replan"
+    CANCEL_SUBTREE = "cancel_subtree"
 
 
 class EdgeType(str, Enum):

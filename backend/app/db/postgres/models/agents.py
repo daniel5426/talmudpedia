@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -126,6 +126,14 @@ class AgentRun(Base):
     workload_principal_id = Column(UUID(as_uuid=True), ForeignKey("workload_principals.id", ondelete="SET NULL"), nullable=True, index=True)
     delegation_grant_id = Column(UUID(as_uuid=True), ForeignKey("delegation_grants.id", ondelete="SET NULL"), nullable=True, index=True)
     initiator_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Orchestration lineage and idempotency
+    root_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    parent_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    parent_node_id = Column(String, nullable=True)
+    depth = Column(Integer, nullable=False, default=0)
+    spawn_key = Column(String, nullable=True)
+    orchestration_group_id = Column(UUID(as_uuid=True), ForeignKey("orchestration_groups.id", ondelete="SET NULL"), nullable=True, index=True)
     
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -136,7 +144,16 @@ class AgentRun(Base):
     agent = relationship("Agent", back_populates="runs")
     user = relationship("User", foreign_keys=[user_id])
     initiator_user = relationship("User", foreign_keys=[initiator_user_id])
+    root_run = relationship("AgentRun", remote_side=[id], foreign_keys=[root_run_id], post_update=True)
+    parent_run = relationship("AgentRun", remote_side=[id], foreign_keys=[parent_run_id], backref="child_runs")
+    orchestration_group = relationship("OrchestrationGroup", foreign_keys=[orchestration_group_id])
     traces = relationship("AgentTrace", back_populates="run", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("parent_run_id", "spawn_key", name="uq_agent_runs_parent_spawn_key"),
+        Index("ix_agent_runs_root_created_at", "root_run_id", "created_at"),
+        Index("ix_agent_runs_parent_created_at", "parent_run_id", "created_at"),
+    )
 
 
 class AgentTrace(Base):

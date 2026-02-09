@@ -25,6 +25,10 @@ from sdk import Client, ArtifactBuilder
 from app.agent.graph.schema import AgentGraph, NodeType
 from app.agent.graph.compiler import AgentCompiler
 from app.rag.pipeline.compiler import PipelineCompiler
+from app.services.orchestration_policy_service import (
+    ORCHESTRATION_SURFACE_OPTION_B,
+    is_orchestration_surface_enabled,
+)
 
 
 PRIVILEGED_ACTION_SCOPES = {
@@ -34,6 +38,12 @@ PRIVILEGED_ACTION_SCOPES = {
     "create_tool": ["tools.write"],
     "run_agent": ["agents.execute"],
     "run_tests": ["agents.run_tests"],
+    "spawn_run": ["agents.execute"],
+    "spawn_group": ["agents.execute"],
+    "join": ["agents.execute"],
+    "cancel_subtree": ["agents.execute"],
+    "evaluate_and_replan": ["agents.execute"],
+    "query_tree": ["agents.execute"],
 }
 
 PLAN_ACTION_SCOPES = {
@@ -44,6 +54,21 @@ PLAN_ACTION_SCOPES = {
     "create_tool": ["tools.write"],
     "run_agent": ["agents.execute"],
     "run_tests": ["agents.run_tests"],
+    "spawn_run": ["agents.execute"],
+    "spawn_group": ["agents.execute"],
+    "join": ["agents.execute"],
+    "cancel_subtree": ["agents.execute"],
+    "evaluate_and_replan": ["agents.execute"],
+    "query_tree": ["agents.execute"],
+}
+
+ORCHESTRATION_PRIMITIVE_ACTIONS = {
+    "spawn_run",
+    "spawn_group",
+    "join",
+    "cancel_subtree",
+    "evaluate_and_replan",
+    "query_tree",
 }
 
 
@@ -66,6 +91,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     dry_run = bool(inputs.get("dry_run") or payload.get("dry_run", False))
     explicit_action = _extract_explicit_action(inputs, payload)
     action = _resolve_action(explicit_action, inputs, payload, steps, tests)
+    tenant_for_flags = _resolve_effective_tenant_id(inputs, payload, state, context)
 
     if action == "noop":
         output = {
@@ -76,6 +102,37 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             },
             "errors": [{"error": "missing_action"}],
             "action": "noop",
+            "dry_run": dry_run,
+        }
+        return {
+            "context": output,
+            "tool_outputs": [output],
+        }
+
+    gated_actions = set()
+    if action in ORCHESTRATION_PRIMITIVE_ACTIONS:
+        gated_actions.add(action)
+    elif action in {"validate_plan", "execute_plan"}:
+        gated_actions.update(_extract_orchestration_actions_from_steps(steps))
+
+    if gated_actions and not is_orchestration_surface_enabled(
+        surface=ORCHESTRATION_SURFACE_OPTION_B,
+        tenant_id=tenant_for_flags,
+    ):
+        disabled_actions = sorted(gated_actions)
+        output = {
+            "result": {
+                "status": "feature_disabled",
+                "surface": ORCHESTRATION_SURFACE_OPTION_B,
+                "actions": disabled_actions,
+                "tenant_id": tenant_for_flags,
+            },
+            "errors": [{
+                "error": "feature_disabled",
+                "surface": ORCHESTRATION_SURFACE_OPTION_B,
+                "actions": disabled_actions,
+            }],
+            "action": action,
             "dry_run": dry_run,
         }
         return {
@@ -99,9 +156,9 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     if action == "fetch_catalog":
         result = _fetch_catalog(client, payload)
     elif action == "validate_plan":
-        result, errors = _validate_plan(client, steps)
+        result, errors = _validate_plan(client, steps, tenant_id=tenant_for_flags)
     elif action == "execute_plan":
-        validation, validation_errors = _validate_plan(client, steps)
+        validation, validation_errors = _validate_plan(client, steps, tenant_id=tenant_for_flags)
         if validation_errors:
             result = {
                 "status": "validation_failed",
@@ -120,10 +177,22 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         result, errors = _run_agent(client, payload, dry_run)
     elif action == "run_tests":
         result, errors = _run_tests(client, tests, dry_run)
+    elif action == "spawn_run":
+        result, errors = _orchestration_spawn_run(client, inputs, payload, dry_run)
+    elif action == "spawn_group":
+        result, errors = _orchestration_spawn_group(client, inputs, payload, dry_run)
+    elif action == "join":
+        result, errors = _orchestration_join(client, inputs, payload, dry_run)
+    elif action == "cancel_subtree":
+        result, errors = _orchestration_cancel_subtree(client, inputs, payload, dry_run)
+    elif action == "evaluate_and_replan":
+        result, errors = _orchestration_evaluate_and_replan(client, inputs, payload, dry_run)
+    elif action == "query_tree":
+        result, errors = _orchestration_query_tree(client, inputs, payload, dry_run)
     elif action == "respond":
         result = {"message": payload.get("message") or inputs.get("message") or ""}
     else:
-        result = {"message": f"Unknown action '{action}'. Supported: fetch_catalog, validate_plan, execute_plan, create_artifact_draft, promote_artifact, create_tool, run_agent, run_tests, respond."}
+        result = {"message": f"Unknown action '{action}'. Supported: fetch_catalog, validate_plan, execute_plan, create_artifact_draft, promote_artifact, create_tool, run_agent, run_tests, spawn_run, spawn_group, join, cancel_subtree, evaluate_and_replan, query_tree, respond."}
         errors.append({"error": "unknown_action", "action": action})
 
     output = {
@@ -167,6 +236,36 @@ def _resolve_action(
     if _is_non_action_invocation(inputs, payload):
         return "noop"
     return "noop"
+
+
+def _extract_orchestration_actions_from_steps(steps: List[Dict[str, Any]]) -> set[str]:
+    actions: set[str] = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        action = step.get("action") or step.get("type")
+        if action in ORCHESTRATION_PRIMITIVE_ACTIONS:
+            actions.add(action)
+    return actions
+
+
+def _resolve_effective_tenant_id(
+    inputs: Dict[str, Any],
+    payload: Dict[str, Any],
+    state: Optional[Dict[str, Any]],
+    context: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
+    tool_ctx = context if isinstance(context, dict) else {}
+    tenant_id = (
+        payload.get("tenant_id")
+        or inputs.get("tenant_id")
+        or state_ctx.get("tenant_id")
+        or tool_ctx.get("tenant_id")
+    )
+    if tenant_id is None:
+        return None
+    return str(tenant_id)
 
 
 def _is_non_action_invocation(inputs: Dict[str, Any], payload: Dict[str, Any]) -> bool:
@@ -327,6 +426,48 @@ def _normalize_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             normalized.append(norm)
             continue
 
+        if "spawn_run" in step and isinstance(step["spawn_run"], dict):
+            data = step["spawn_run"]
+            norm = {"action": "spawn_run"}
+            norm.update(data)
+            normalized.append(norm)
+            continue
+
+        if "spawn_group" in step and isinstance(step["spawn_group"], dict):
+            data = step["spawn_group"]
+            norm = {"action": "spawn_group"}
+            norm.update(data)
+            normalized.append(norm)
+            continue
+
+        if "join" in step and isinstance(step["join"], dict):
+            data = step["join"]
+            norm = {"action": "join"}
+            norm.update(data)
+            normalized.append(norm)
+            continue
+
+        if "cancel_subtree" in step and isinstance(step["cancel_subtree"], dict):
+            data = step["cancel_subtree"]
+            norm = {"action": "cancel_subtree"}
+            norm.update(data)
+            normalized.append(norm)
+            continue
+
+        if "evaluate_and_replan" in step and isinstance(step["evaluate_and_replan"], dict):
+            data = step["evaluate_and_replan"]
+            norm = {"action": "evaluate_and_replan"}
+            norm.update(data)
+            normalized.append(norm)
+            continue
+
+        if "query_tree" in step and isinstance(step["query_tree"], dict):
+            data = step["query_tree"]
+            norm = {"action": "query_tree"}
+            norm.update(data)
+            normalized.append(norm)
+            continue
+
         normalized.append(step)
 
     return normalized
@@ -448,7 +589,11 @@ def _collect_step_ids(steps: List[Dict[str, Any]]) -> set:
     return step_ids
 
 
-def _validate_plan(client: Client, steps: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+def _validate_plan(
+    client: Client,
+    steps: List[Dict[str, Any]],
+    tenant_id: Optional[str] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     errors: List[Dict[str, Any]] = []
 
     try:
@@ -486,6 +631,21 @@ def _validate_plan(client: Client, steps: List[Dict[str, Any]]) -> Tuple[Dict[st
         step_type = step.get("action") or step.get("type")
         if not step_type:
             errors.append({"step": idx, "error": "missing_action"})
+            continue
+
+        if (
+            step_type in ORCHESTRATION_PRIMITIVE_ACTIONS
+            and not is_orchestration_surface_enabled(
+                surface=ORCHESTRATION_SURFACE_OPTION_B,
+                tenant_id=tenant_id,
+            )
+        ):
+            errors.append({
+                "step": idx,
+                "error": "feature_disabled",
+                "action": step_type,
+                "surface": ORCHESTRATION_SURFACE_OPTION_B,
+            })
             continue
 
         depends_on = step.get("depends_on")
@@ -543,6 +703,72 @@ def _validate_plan(client: Client, steps: List[Dict[str, Any]]) -> Tuple[Dict[st
             tests = payload.get("tests") if isinstance(payload.get("tests"), list) else None
             if not tests:
                 errors.append({"step": idx, "error": "missing_fields", "fields": ["tests"]})
+            continue
+
+        if step_type == "spawn_run":
+            payload = _extract_step_payload(step)
+            missing = []
+            if not payload.get("caller_run_id"):
+                missing.append("caller_run_id")
+            if not payload.get("idempotency_key"):
+                missing.append("idempotency_key")
+            if not payload.get("target_agent_id") and not payload.get("target_agent_slug"):
+                missing.append("target_agent_id or target_agent_slug")
+            if missing:
+                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
+            continue
+
+        if step_type == "spawn_group":
+            payload = _extract_step_payload(step)
+            missing = []
+            if not payload.get("caller_run_id"):
+                missing.append("caller_run_id")
+            if not payload.get("idempotency_key_prefix"):
+                missing.append("idempotency_key_prefix")
+            targets = payload.get("targets")
+            if not isinstance(targets, list) or not targets:
+                missing.append("targets")
+            if missing:
+                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
+            continue
+
+        if step_type == "join":
+            payload = _extract_step_payload(step)
+            missing = []
+            if not payload.get("caller_run_id"):
+                missing.append("caller_run_id")
+            if not payload.get("orchestration_group_id"):
+                missing.append("orchestration_group_id")
+            if missing:
+                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
+            continue
+
+        if step_type == "cancel_subtree":
+            payload = _extract_step_payload(step)
+            missing = []
+            if not payload.get("caller_run_id"):
+                missing.append("caller_run_id")
+            if not payload.get("run_id"):
+                missing.append("run_id")
+            if missing:
+                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
+            continue
+
+        if step_type == "evaluate_and_replan":
+            payload = _extract_step_payload(step)
+            missing = []
+            if not payload.get("caller_run_id"):
+                missing.append("caller_run_id")
+            if not payload.get("run_id"):
+                missing.append("run_id")
+            if missing:
+                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
+            continue
+
+        if step_type == "query_tree":
+            payload = _extract_step_payload(step)
+            if not payload.get("run_id"):
+                errors.append({"step": idx, "error": "missing_fields", "fields": ["run_id"]})
             continue
 
         if step_type == "deploy_rag_pipeline":
@@ -707,6 +933,18 @@ def _execute_plan(client: Client, steps: List[Dict[str, Any]], dry_run: bool) ->
             result, err = _step_run_agent(client, step, dry_run)
         elif step_type == "run_tests":
             result, err = _step_run_tests(client, step, dry_run)
+        elif step_type == "spawn_run":
+            result, err = _step_spawn_run(client, step, dry_run)
+        elif step_type == "spawn_group":
+            result, err = _step_spawn_group(client, step, dry_run)
+        elif step_type == "join":
+            result, err = _step_join(client, step, dry_run)
+        elif step_type == "cancel_subtree":
+            result, err = _step_cancel_subtree(client, step, dry_run)
+        elif step_type == "evaluate_and_replan":
+            result, err = _step_evaluate_and_replan(client, step, dry_run)
+        elif step_type == "query_tree":
+            result, err = _step_query_tree(client, step, dry_run)
         elif step_type == "deploy_rag_pipeline":
             result, err = _step_deploy_rag_pipeline(client, step, dry_run)
         elif step_type == "deploy_agent":
@@ -828,6 +1066,280 @@ def _step_run_tests(client: Client, step: Dict[str, Any], dry_run: bool) -> Tupl
     if errors:
         return result, {"error": "run_tests_failed", "details": errors}
     return result, None
+
+
+def _step_spawn_run(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload = _extract_step_payload(step)
+    result, errors = _orchestration_spawn_run(client, payload, payload, dry_run)
+    if errors:
+        return result, {"error": "spawn_run_failed", "details": errors}
+    return result, None
+
+
+def _step_spawn_group(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload = _extract_step_payload(step)
+    result, errors = _orchestration_spawn_group(client, payload, payload, dry_run)
+    if errors:
+        return result, {"error": "spawn_group_failed", "details": errors}
+    return result, None
+
+
+def _step_join(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload = _extract_step_payload(step)
+    result, errors = _orchestration_join(client, payload, payload, dry_run)
+    if errors:
+        return result, {"error": "join_failed", "details": errors}
+    return result, None
+
+
+def _step_cancel_subtree(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload = _extract_step_payload(step)
+    result, errors = _orchestration_cancel_subtree(client, payload, payload, dry_run)
+    if errors:
+        return result, {"error": "cancel_subtree_failed", "details": errors}
+    return result, None
+
+
+def _step_evaluate_and_replan(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload = _extract_step_payload(step)
+    result, errors = _orchestration_evaluate_and_replan(client, payload, payload, dry_run)
+    if errors:
+        return result, {"error": "evaluate_and_replan_failed", "details": errors}
+    return result, None
+
+
+def _step_query_tree(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload = _extract_step_payload(step)
+    result, errors = _orchestration_query_tree(client, payload, payload, dry_run)
+    if errors:
+        return result, {"error": "query_tree_failed", "details": errors}
+    return result, None
+
+
+def _resolve_caller_run_id(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
+    caller_run_id = payload.get("caller_run_id") or inputs.get("caller_run_id")
+    if caller_run_id:
+        return str(caller_run_id)
+    context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+    if not context and isinstance(inputs.get("context"), dict):
+        context = inputs.get("context")
+    run_id = context.get("run_id")
+    if run_id:
+        return str(run_id)
+    return None
+
+
+def _orchestration_spawn_run(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    errors: List[Dict[str, Any]] = []
+    caller_run_id = _resolve_caller_run_id(inputs, payload)
+    target_agent_id = payload.get("target_agent_id") or inputs.get("target_agent_id")
+    target_agent_slug = payload.get("target_agent_slug") or payload.get("target_slug") or inputs.get("target_agent_slug")
+    scope_subset = payload.get("scope_subset") or inputs.get("scope_subset") or payload.get("requested_scopes") or inputs.get("requested_scopes") or []
+    if not isinstance(scope_subset, list):
+        scope_subset = []
+    idempotency_key = payload.get("idempotency_key") or inputs.get("idempotency_key")
+    mapped_input_payload = payload.get("mapped_input_payload") if isinstance(payload.get("mapped_input_payload"), dict) else {}
+    if not mapped_input_payload and isinstance(payload.get("input"), dict):
+        mapped_input_payload = payload.get("input")
+
+    missing = []
+    if not caller_run_id:
+        missing.append("caller_run_id")
+    if not idempotency_key:
+        missing.append("idempotency_key")
+    if not target_agent_id and not target_agent_slug:
+        missing.append("target_agent_id or target_agent_slug")
+    if not scope_subset:
+        missing.append("scope_subset")
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+
+    request_payload = {
+        "caller_run_id": caller_run_id,
+        "parent_node_id": payload.get("parent_node_id") or inputs.get("parent_node_id"),
+        "target_agent_id": target_agent_id,
+        "target_agent_slug": target_agent_slug,
+        "mapped_input_payload": mapped_input_payload,
+        "failure_policy": payload.get("failure_policy"),
+        "timeout_s": payload.get("timeout_s"),
+        "scope_subset": scope_subset,
+        "idempotency_key": idempotency_key,
+        "start_background": payload.get("start_background", True),
+    }
+
+    if dry_run:
+        request_payload["dry_run"] = True
+        return {"status": "skipped", "dry_run": True, "request": request_payload}, errors
+
+    try:
+        data = _orchestration_post(client, "/internal/orchestration/spawn-run", request_payload)
+        return data, errors
+    except Exception as exc:
+        return None, [{"error": "spawn_run_failed", "detail": str(exc)}]
+
+
+def _orchestration_spawn_group(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    errors: List[Dict[str, Any]] = []
+    caller_run_id = _resolve_caller_run_id(inputs, payload)
+    targets = payload.get("targets") if isinstance(payload.get("targets"), list) else []
+    scope_subset = payload.get("scope_subset") or inputs.get("scope_subset") or payload.get("requested_scopes") or inputs.get("requested_scopes") or []
+    if not isinstance(scope_subset, list):
+        scope_subset = []
+    idempotency_key_prefix = payload.get("idempotency_key_prefix") or inputs.get("idempotency_key_prefix")
+
+    missing = []
+    if not caller_run_id:
+        missing.append("caller_run_id")
+    if not idempotency_key_prefix:
+        missing.append("idempotency_key_prefix")
+    if not targets:
+        missing.append("targets")
+    if not scope_subset:
+        missing.append("scope_subset")
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+
+    request_payload = {
+        "caller_run_id": caller_run_id,
+        "parent_node_id": payload.get("parent_node_id") or inputs.get("parent_node_id"),
+        "targets": targets,
+        "failure_policy": payload.get("failure_policy"),
+        "join_mode": payload.get("join_mode", "all"),
+        "quorum_threshold": payload.get("quorum_threshold"),
+        "timeout_s": payload.get("timeout_s"),
+        "scope_subset": scope_subset,
+        "idempotency_key_prefix": idempotency_key_prefix,
+        "start_background": payload.get("start_background", True),
+    }
+
+    if dry_run:
+        request_payload["dry_run"] = True
+        return {"status": "skipped", "dry_run": True, "request": request_payload}, errors
+
+    try:
+        data = _orchestration_post(client, "/internal/orchestration/spawn-group", request_payload)
+        return data, errors
+    except Exception as exc:
+        return None, [{"error": "spawn_group_failed", "detail": str(exc)}]
+
+
+def _orchestration_join(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    caller_run_id = _resolve_caller_run_id(inputs, payload)
+    group_id = payload.get("orchestration_group_id") or inputs.get("orchestration_group_id") or payload.get("group_id")
+    missing = []
+    if not caller_run_id:
+        missing.append("caller_run_id")
+    if not group_id:
+        missing.append("orchestration_group_id")
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+
+    request_payload = {
+        "caller_run_id": caller_run_id,
+        "orchestration_group_id": group_id,
+        "mode": payload.get("mode"),
+        "quorum_threshold": payload.get("quorum_threshold"),
+        "timeout_s": payload.get("timeout_s"),
+    }
+
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "request": request_payload}, []
+
+    try:
+        data = _orchestration_post(client, "/internal/orchestration/join", request_payload)
+        return data, []
+    except Exception as exc:
+        return None, [{"error": "join_failed", "detail": str(exc)}]
+
+
+def _orchestration_cancel_subtree(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    caller_run_id = _resolve_caller_run_id(inputs, payload)
+    run_id = payload.get("run_id") or inputs.get("run_id")
+    missing = []
+    if not caller_run_id:
+        missing.append("caller_run_id")
+    if not run_id:
+        missing.append("run_id")
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+
+    request_payload = {
+        "caller_run_id": caller_run_id,
+        "run_id": run_id,
+        "include_root": bool(payload.get("include_root", True)),
+        "reason": payload.get("reason"),
+    }
+
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "request": request_payload}, []
+
+    try:
+        data = _orchestration_post(client, "/internal/orchestration/cancel-subtree", request_payload)
+        return data, []
+    except Exception as exc:
+        return None, [{"error": "cancel_subtree_failed", "detail": str(exc)}]
+
+
+def _orchestration_evaluate_and_replan(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    caller_run_id = _resolve_caller_run_id(inputs, payload)
+    run_id = payload.get("run_id") or inputs.get("run_id")
+    missing = []
+    if not caller_run_id:
+        missing.append("caller_run_id")
+    if not run_id:
+        missing.append("run_id")
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+
+    request_payload = {
+        "caller_run_id": caller_run_id,
+        "run_id": run_id,
+    }
+
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "request": request_payload}, []
+
+    try:
+        data = _orchestration_post(client, "/internal/orchestration/evaluate-and-replan", request_payload)
+        return data, []
+    except Exception as exc:
+        return None, [{"error": "evaluate_and_replan_failed", "detail": str(exc)}]
+
+
+def _orchestration_query_tree(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    run_id = payload.get("run_id") or inputs.get("run_id") or _resolve_caller_run_id(inputs, payload)
+    if not run_id:
+        return None, [{"error": "missing_fields", "fields": ["run_id"]}]
+
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "request": {"run_id": run_id}}, []
+
+    try:
+        data = _orchestration_get(client, f"/internal/orchestration/runs/{run_id}/tree")
+        return data, []
+    except Exception as exc:
+        return None, [{"error": "query_tree_failed", "detail": str(exc)}]
+
+
+def _orchestration_post(client: Client, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    resp = requests.post(
+        f"{client.base_url}{path}",
+        json=payload,
+        headers=client.headers,
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _orchestration_get(client: Client, path: str) -> Dict[str, Any]:
+    resp = requests.get(
+        f"{client.base_url}{path}",
+        headers=client.headers,
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _create_artifact_draft(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:

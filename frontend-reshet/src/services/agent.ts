@@ -207,6 +207,10 @@ export const agentService = {
     return httpClient.post<Agent>(`/agents/${id}/publish`, {});
   },
 
+  async deleteAgent(id: string) {
+    return httpClient.delete<{ success?: boolean }>(`/agents/${id}`);
+  },
+
   // Execution
   async startRun(agentId: string, input: string) {
     return httpClient.post<{ run_id: string }>(`/agents/${agentId}/run`, {

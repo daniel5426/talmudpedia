@@ -40,6 +40,7 @@ export default function AgentsPage() {
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState("")
+    const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
 
     useEffect(() => {
         loadAgents()
@@ -74,6 +75,20 @@ export default function AgentsPage() {
                 return <Badge variant="outline">Archived</Badge>
             default:
                 return <Badge variant="outline">{status}</Badge>
+        }
+    }
+
+    const handleDelete = async (agent: Agent) => {
+        if (!window.confirm(`Delete agent "${agent.name}"? This cannot be undone.`)) return
+        try {
+            setDeletingAgentId(agent.id)
+            await agentService.deleteAgent(agent.id)
+            await loadAgents()
+        } catch (err) {
+            console.error("Failed to delete agent:", err)
+            setError("Failed to delete agent. Please try again.")
+        } finally {
+            setDeletingAgentId(null)
         }
     }
 
@@ -153,7 +168,12 @@ export default function AgentsPage() {
                                             </div>
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild>
-                                                    <Button variant="ghost" size="icon" className="absolute top-2 right-2 h-8 w-8">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="absolute top-2 right-2 h-8 w-8"
+                                                        aria-label={`Open actions for ${agent.name}`}
+                                                    >
                                                         <MoreVertical className="h-4 w-4" />
                                                     </Button>
                                                 </DropdownMenuTrigger>
@@ -162,7 +182,13 @@ export default function AgentsPage() {
                                                         Edit Builder
                                                     </DropdownMenuItem>
                                                     <DropdownMenuItem>Settings</DropdownMenuItem>
-                                                    <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+                                                    <DropdownMenuItem
+                                                        className="text-destructive"
+                                                        onClick={() => handleDelete(agent)}
+                                                        disabled={deletingAgentId === agent.id}
+                                                    >
+                                                        {deletingAgentId === agent.id ? "Deleting..." : "Delete"}
+                                                    </DropdownMenuItem>
                                                 </DropdownMenuContent>
                                             </DropdownMenu>
                                         </div>

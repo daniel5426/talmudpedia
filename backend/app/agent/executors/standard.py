@@ -1369,6 +1369,140 @@ def register_standard_operators():
     AgentExecutorRegistry.register("parallel", ParallelNodeExecutor)
 
     # =========================================================================
+    # Orchestration (GraphSpec v2)
+    # =========================================================================
+
+    from app.agent.executors.orchestration import (
+        CancelSubtreeNodeExecutor,
+        JudgeNodeExecutor,
+        JoinNodeExecutor,
+        ReplanNodeExecutor,
+        RouterNodeExecutor,
+        SpawnGroupNodeExecutor,
+        SpawnRunNodeExecutor,
+    )
+
+    AgentOperatorRegistry.register(AgentOperatorSpec(
+        type="spawn_run",
+        category="orchestration",
+        display_name="Spawn Run",
+        description="Spawn a single child run through the orchestration kernel",
+        reads=[AgentStateField.STATE_VARIABLES, AgentStateField.CONTEXT],
+        writes=[AgentStateField.CONTEXT],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "target_agent_id": {"type": "string"},
+                "target_agent_slug": {"type": "string"},
+                "mapped_input_payload": {"type": "object"},
+                "scope_subset": {"type": "array", "items": {"type": "string"}},
+                "idempotency_key": {"type": "string"},
+                "failure_policy": {"type": "string"},
+                "timeout_s": {"type": "number"},
+                "start_background": {"type": "boolean", "default": True},
+            },
+        },
+        ui={"icon": "GitBranch", "color": "#1f2937", "inputType": "context", "outputType": "context", "configFields": []},
+    ))
+    AgentExecutorRegistry.register("spawn_run", SpawnRunNodeExecutor)
+
+    AgentOperatorRegistry.register(AgentOperatorSpec(
+        type="spawn_group",
+        category="orchestration",
+        display_name="Spawn Group",
+        description="Spawn a fanout group of child runs through the orchestration kernel",
+        reads=[AgentStateField.STATE_VARIABLES, AgentStateField.CONTEXT],
+        writes=[AgentStateField.CONTEXT],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "targets": {"type": "array", "items": {"type": "object"}},
+                "scope_subset": {"type": "array", "items": {"type": "string"}},
+                "idempotency_key_prefix": {"type": "string"},
+                "failure_policy": {"type": "string"},
+                "join_mode": {
+                    "type": "string",
+                    "enum": ["all", "best_effort", "fail_fast", "quorum", "first_success"],
+                    "default": "all",
+                },
+                "quorum_threshold": {"type": "number"},
+                "timeout_s": {"type": "number"},
+                "start_background": {"type": "boolean", "default": True},
+            },
+        },
+        ui={"icon": "GitMerge", "color": "#1f2937", "inputType": "context", "outputType": "context", "configFields": []},
+    ))
+    AgentExecutorRegistry.register("spawn_group", SpawnGroupNodeExecutor)
+
+    AgentOperatorRegistry.register(AgentOperatorSpec(
+        type="join",
+        category="orchestration",
+        display_name="Join",
+        description="Join an orchestration group and route by completion status",
+        reads=[AgentStateField.CONTEXT],
+        writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN, AgentStateField.CONTEXT],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "orchestration_group_id": {"type": "string"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["all", "best_effort", "fail_fast", "quorum", "first_success"],
+                    "default": "all",
+                },
+                "quorum_threshold": {"type": "number"},
+                "timeout_s": {"type": "number"},
+            },
+        },
+        ui={"icon": "Link", "color": "#1f2937", "inputType": "context", "outputType": "decision", "dynamicHandles": True, "configFields": []},
+    ))
+    AgentExecutorRegistry.register("join", JoinNodeExecutor)
+
+    AgentOperatorRegistry.register(AgentOperatorSpec(
+        type="router",
+        category="orchestration",
+        display_name="Router",
+        description="Route orchestration payload to named branches",
+        reads=[AgentStateField.CONTEXT],
+        writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN],
+        ui={"icon": "Route", "color": "#1f2937", "inputType": "context", "outputType": "decision", "dynamicHandles": True, "configFields": []},
+    ))
+    AgentExecutorRegistry.register("router", RouterNodeExecutor)
+
+    AgentOperatorRegistry.register(AgentOperatorSpec(
+        type="judge",
+        category="orchestration",
+        display_name="Judge",
+        description="Decide orchestration pass/fail branches",
+        reads=[AgentStateField.CONTEXT],
+        writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN],
+        ui={"icon": "Scale", "color": "#1f2937", "inputType": "context", "outputType": "decision", "dynamicHandles": True, "configFields": []},
+    ))
+    AgentExecutorRegistry.register("judge", JudgeNodeExecutor)
+
+    AgentOperatorRegistry.register(AgentOperatorSpec(
+        type="replan",
+        category="orchestration",
+        display_name="Replan",
+        description="Evaluate subtree and decide replan vs continue",
+        reads=[AgentStateField.CONTEXT],
+        writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN, AgentStateField.CONTEXT],
+        ui={"icon": "RefreshCw", "color": "#1f2937", "inputType": "context", "outputType": "decision", "dynamicHandles": True, "configFields": []},
+    ))
+    AgentExecutorRegistry.register("replan", ReplanNodeExecutor)
+
+    AgentOperatorRegistry.register(AgentOperatorSpec(
+        type="cancel_subtree",
+        category="orchestration",
+        display_name="Cancel Subtree",
+        description="Cancel a child run subtree through the orchestration kernel",
+        reads=[AgentStateField.CONTEXT],
+        writes=[AgentStateField.CONTEXT],
+        ui={"icon": "Ban", "color": "#1f2937", "inputType": "context", "outputType": "context", "configFields": []},
+    ))
+    AgentExecutorRegistry.register("cancel_subtree", CancelSubtreeNodeExecutor)
+
+    # =========================================================================
     # Actions
     # =========================================================================
     
