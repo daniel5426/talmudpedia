@@ -212,9 +212,9 @@ export function CatalogToggleButton({ visible, onClick, isExecutionMode }: Catal
     return (
         <div className="absolute left-3 top-3 z-50">
             <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
-                className="h-10 w-10 rounded-xl shadow-none backdrop-blur-md border hover:bg-muted"
+        className="h-10 w-10 rounded-xl shadow-xs bg-background hover:bg-muted"
                 onClick={onClick}
                 title={isExecutionMode ? "Exit Execution Mode" : "Show Catalog"}
             >

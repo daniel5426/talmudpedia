@@ -46,7 +46,7 @@ import {
 import { normalizeBuilderNode, normalizeBuilderEdges } from "./graphspec"
 import { getRenderGraphForMode } from "./runtime-merge"
 import { AgentExecutionEvent } from "@/services"
-import { LayoutGrid, Trash2 } from "lucide-react"
+import { AlertTriangle, LayoutGrid, Trash2 } from "lucide-react"
 
 interface AgentBuilderProps {
     agentId?: string
@@ -108,6 +108,59 @@ function mapOrchestrationEventToExecutionStep(event: AgentExecutionEvent, index:
         output: event.data,
         timestamp: new Date((event.received_at || Date.now()) + index),
     }
+}
+
+function isOrchestrationNodeType(nodeType: string): boolean {
+    return ["spawn_run", "spawn_group", "join", "router", "judge", "replan", "cancel_subtree"].includes(nodeType)
+}
+
+function toStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) return []
+    return value
+        .map((item) => String(item ?? "").trim())
+        .filter((item) => item.length > 0)
+}
+
+function validateNodePreflight(node: Node<AgentNodeData>): string[] {
+    const config = ((node.data?.config || {}) as Record<string, unknown>)
+    const nodeType = node.data?.nodeType || node.type
+    const issues: string[] = []
+    if (!isOrchestrationNodeType(String(nodeType || ""))) return issues
+
+    if (nodeType === "spawn_run") {
+        const hasTarget = Boolean(String(config.target_agent_slug || "").trim()) || Boolean(String(config.target_agent_id || "").trim())
+        if (!hasTarget) issues.push("requires target agent")
+        if (toStringList(config.scope_subset).length === 0) issues.push("requires scope subset")
+    }
+    if (nodeType === "spawn_group") {
+        const targets = Array.isArray(config.targets) ? config.targets : []
+        if (targets.length === 0) issues.push("requires at least one target")
+        if (toStringList(config.scope_subset).length === 0) issues.push("requires scope subset")
+        const joinMode = String(config.join_mode || "all")
+        if (joinMode === "quorum") {
+            const quorum = Number(config.quorum_threshold || 0)
+            if (!Number.isInteger(quorum) || quorum < 1) issues.push("quorum threshold must be >= 1")
+        }
+    }
+    if (nodeType === "join") {
+        const mode = String(config.mode || "all")
+        if (mode === "quorum") {
+            const quorum = Number(config.quorum_threshold || 0)
+            if (!Number.isInteger(quorum) || quorum < 1) issues.push("quorum threshold must be >= 1")
+        }
+    }
+    if (nodeType === "judge") {
+        const tableOutcomes = Array.isArray(config.route_table)
+            ? config.route_table
+                .map((item) => (item && typeof item === "object" ? String((item as Record<string, unknown>).name || "").trim() : ""))
+                .filter(Boolean)
+            : []
+        const outcomes = tableOutcomes.length > 0
+            ? tableOutcomes
+            : (Array.isArray(config.outcomes) ? config.outcomes.filter((item) => typeof item === "string" && item.trim()) : [])
+        if (outcomes.length < 2) issues.push("should define at least two outcomes")
+    }
+    return issues
 }
 
 function matchesEventToNode(event: AgentExecutionEvent, node: Node<AgentNodeData>, data: AgentNodeData): boolean {
@@ -351,6 +404,14 @@ function AgentBuilderInner({
         ).edges
     }, [mode, nodes, edges, runtimeOverlay.runtimeNodes, runtimeOverlay.runtimeEdges, runtimeOverlay.runtimeStatusByNodeId, runtimeOverlay.runtimeNotesByNodeId, runtimeOverlay.takenStaticEdgeIds])
 
+    const orchestrationPreflight = useMemo(() => {
+        if (mode !== "build") return []
+        return (nodes as Node<AgentNodeData>[])
+            .filter((node) => isOrchestrationNodeType(String(node.data?.nodeType || node.type || "")))
+            .map((node) => ({ node, issues: validateNodePreflight(node) }))
+            .filter((item) => item.issues.length > 0)
+    }, [mode, nodes])
+
     const selectedNode = renderNodes.find((n) => n.id === selectedNodeId) as
         | Node<AgentNodeData>
         | undefined
@@ -531,6 +592,9 @@ function AgentBuilderInner({
                         const requiredFields = spec?.configFields.filter(f => f.required) || []
                         const isConfigured = requiredFields.every((f) => {
                             const val = config[f.name]
+                            if (Array.isArray(val)) {
+                                return val.length > 0
+                            }
                             return val !== undefined && val !== ""
                         })
 
@@ -655,7 +719,7 @@ function AgentBuilderInner({
                         nodeId={selectedNode.id}
                         nodeName={safeSelectedNodeData.displayName}
                         steps={selectedNodeTraceSteps}
-                        nodeStatus={safeSelectedNodeData.executionStatus}
+                        nodeStatus={safeSelectedNodeData.executionStatus as "pending" | "running" | "completed" | "failed" | "skipped" | undefined}
                         onClose={() => setSelectedNodeId(null)}
                     />
                 </FloatingPanel>
@@ -670,6 +734,26 @@ function AgentBuilderInner({
 
             {/* Canvas */}
             <div className="relative flex-1 bg-muted/40 rounded-2xl" ref={reactFlowWrapper}>
+                {mode === "build" && orchestrationPreflight.length > 0 && (
+                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[55] w-[560px] max-w-[90%] rounded-xl border border-amber-300 bg-amber-50/95 backdrop-blur p-2">
+                        <div className="flex items-center gap-1.5 text-[12px] font-semibold text-amber-800 mb-1">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            Orchestration preflight checks
+                        </div>
+                        <div className="space-y-1 max-h-[140px] overflow-auto">
+                            {orchestrationPreflight.map(({ node, issues }) => (
+                                <button
+                                    key={`preflight-${node.id}`}
+                                    className="w-full text-left text-[11px] text-amber-900 hover:bg-amber-100 rounded px-1.5 py-1"
+                                    onClick={() => setSelectedNodeId(node.id)}
+                                >
+                                    <span className="font-semibold mr-1">{node.data?.displayName || node.id}:</span>
+                                    {issues.join(", ")}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
                 <ReactFlow
                     nodes={renderNodes}
                     edges={renderEdges}

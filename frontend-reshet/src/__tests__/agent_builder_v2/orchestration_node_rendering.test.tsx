@@ -71,4 +71,25 @@ describe("orchestration node rendering", () => {
     const replan = renderNode(buildNodeData({ nodeType: "replan", config: {} }))
     expect(collectSourceHandleIds(replan.container)).toEqual(["replan", "continue"])
   })
+
+  it("derives router/judge handles from route_table authoring config", () => {
+    const router = renderNode(buildNodeData({
+      nodeType: "router",
+      config: {
+        route_table: [
+          { name: "retry", match: "retry" },
+          { name: "done", match: "done" },
+        ],
+      },
+    }))
+    expect(collectSourceHandleIds(router.container)).toEqual(["retry", "done", "default"])
+
+    const judge = renderNode(buildNodeData({
+      nodeType: "judge",
+      config: {
+        route_table: [{ name: "approve" }, { name: "reject" }],
+      },
+    }))
+    expect(collectSourceHandleIds(judge.container)).toEqual(["approve", "reject"])
+  })
 })

@@ -1,6 +1,6 @@
 # Agent Builder Runtime-Adapter Implementation Summary
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-10
 
 ## Overview
 This document summarizes the implementation of the runtime‑agnostic agent builder architecture with LangGraph as **one adapter**, the introduction of GraphSpec v1, and the migration to a GraphIR‑based compiler and execution flow.
@@ -68,13 +68,14 @@ Key files:
 - Artifact input mappings are now rendered and stored in config.
 - Builder Execute mode now renders an ephemeral runtime topology overlay from orchestration SSE events plus `/agents/runs/{run_id}/tree` reconciliation.
 - Runtime topology is execute-only and excluded from persisted `graph_definition`.
+- Orchestration config UX now supports Simple/Advanced authoring with preflight validation, structured `scope_subset` and `targets` editing, and route-table authoring for `router`/`judge`.
 
 Key files:
-- `frontend/src/app/admin/agents/[id]/builder/page.tsx`
-- `frontend/src/components/agent-builder/AgentBuilder.tsx`
-- `frontend/src/components/agent-builder/ConfigPanel.tsx`
-- `frontend/src/components/agent-builder/NodeCatalog.tsx`
-- `frontend/src/components/agent-builder/types.ts`
+- `frontend-reshet/src/app/admin/agents/[id]/builder/page.tsx`
+- `frontend-reshet/src/components/agent-builder/AgentBuilder.tsx`
+- `frontend-reshet/src/components/agent-builder/ConfigPanel.tsx`
+- `frontend-reshet/src/components/agent-builder/NodeCatalog.tsx`
+- `frontend-reshet/src/components/agent-builder/types.ts`
 
 ### 7) Event Normalization & Trace Persistence
 - Platform emits and persists `node_start` / `node_end` events (not LangGraph events).

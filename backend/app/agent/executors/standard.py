@@ -1408,22 +1408,26 @@ def register_standard_operators():
             "inputType": "context",
             "outputType": "context",
             "configFields": [
-                {"name": "target_agent_id", "label": "Target Agent ID", "fieldType": "string", "required": False},
-                {"name": "target_agent_slug", "label": "Target Agent Slug", "fieldType": "string", "required": False},
-                {"name": "idempotency_key", "label": "Idempotency Key", "fieldType": "string", "required": False},
+                {"name": "target_agent_slug", "label": "Target Agent", "fieldType": "agent_select", "required": False, "visibility": "simple", "group": "what_to_run"},
+                {"name": "target_agent_id", "label": "Target Agent (ID)", "fieldType": "agent_select", "required": False, "visibility": "advanced", "group": "what_to_run", "helpKind": "runtime-internal"},
+                {"name": "scope_subset", "label": "Scope Subset", "fieldType": "scope_subset", "required": True, "visibility": "simple", "group": "permissions", "helpKind": "required-for-compile"},
+                {"name": "idempotency_key", "label": "Idempotency Key", "fieldType": "string", "required": False, "visibility": "advanced", "group": "reliability", "helpKind": "runtime-internal"},
                 {
                     "name": "failure_policy",
                     "label": "Failure Policy",
                     "fieldType": "select",
                     "required": False,
                     "default": "best_effort",
+                    "visibility": "advanced",
+                    "group": "reliability",
+                    "helpKind": "runtime-internal",
                     "options": [
                         {"value": "best_effort", "label": "Best Effort"},
                         {"value": "fail_fast", "label": "Fail Fast"},
                     ],
                 },
-                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False},
-                {"name": "start_background", "label": "Start in Background", "fieldType": "boolean", "required": False, "default": True},
+                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False, "visibility": "advanced", "group": "reliability"},
+                {"name": "start_background", "label": "Start in Background", "fieldType": "boolean", "required": False, "default": True, "visibility": "advanced", "group": "reliability", "helpKind": "runtime-internal"},
             ],
         },
     ))
@@ -1459,12 +1463,16 @@ def register_standard_operators():
             "inputType": "context",
             "outputType": "context",
             "configFields": [
+                {"name": "targets", "label": "Targets", "fieldType": "spawn_targets", "required": True, "visibility": "simple", "group": "what_to_run", "helpKind": "required-for-compile"},
+                {"name": "scope_subset", "label": "Scope Subset", "fieldType": "scope_subset", "required": True, "visibility": "simple", "group": "permissions", "helpKind": "required-for-compile"},
                 {
                     "name": "join_mode",
                     "label": "Join Mode",
                     "fieldType": "select",
                     "required": False,
                     "default": "all",
+                    "visibility": "simple",
+                    "group": "routing",
                     "options": [
                         {"value": "all", "label": "All"},
                         {"value": "best_effort", "label": "Best Effort"},
@@ -1473,21 +1481,24 @@ def register_standard_operators():
                         {"value": "first_success", "label": "First Success"},
                     ],
                 },
-                {"name": "quorum_threshold", "label": "Quorum Threshold", "fieldType": "number", "required": False},
-                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False},
-                {"name": "idempotency_key_prefix", "label": "Idempotency Key Prefix", "fieldType": "string", "required": False},
+                {"name": "quorum_threshold", "label": "Quorum Threshold", "fieldType": "number", "required": False, "visibility": "simple", "group": "routing", "dependsOn": {"field": "join_mode", "equals": "quorum"}},
+                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False, "visibility": "advanced", "group": "reliability"},
+                {"name": "idempotency_key_prefix", "label": "Idempotency Key Prefix", "fieldType": "string", "required": False, "visibility": "advanced", "group": "reliability", "helpKind": "runtime-internal"},
                 {
                     "name": "failure_policy",
                     "label": "Failure Policy",
                     "fieldType": "select",
                     "required": False,
                     "default": "best_effort",
+                    "visibility": "advanced",
+                    "group": "reliability",
+                    "helpKind": "runtime-internal",
                     "options": [
                         {"value": "best_effort", "label": "Best Effort"},
                         {"value": "fail_fast", "label": "Fail Fast"},
                     ],
                 },
-                {"name": "start_background", "label": "Start in Background", "fieldType": "boolean", "required": False, "default": True},
+                {"name": "start_background", "label": "Start in Background", "fieldType": "boolean", "required": False, "default": True, "visibility": "advanced", "group": "reliability", "helpKind": "runtime-internal"},
             ],
         },
     ))
@@ -1520,13 +1531,15 @@ def register_standard_operators():
             "outputType": "decision",
             "dynamicHandles": True,
             "configFields": [
-                {"name": "orchestration_group_id", "label": "Group ID", "fieldType": "string", "required": False},
+                {"name": "orchestration_group_id", "label": "Group ID", "fieldType": "string", "required": False, "visibility": "advanced", "group": "what_to_run", "helpKind": "runtime-internal"},
                 {
                     "name": "mode",
                     "label": "Mode",
                     "fieldType": "select",
                     "required": False,
                     "default": "all",
+                    "visibility": "simple",
+                    "group": "routing",
                     "options": [
                         {"value": "all", "label": "All"},
                         {"value": "best_effort", "label": "Best Effort"},
@@ -1535,8 +1548,8 @@ def register_standard_operators():
                         {"value": "first_success", "label": "First Success"},
                     ],
                 },
-                {"name": "quorum_threshold", "label": "Quorum Threshold", "fieldType": "number", "required": False},
-                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False},
+                {"name": "quorum_threshold", "label": "Quorum Threshold", "fieldType": "number", "required": False, "visibility": "simple", "group": "routing", "dependsOn": {"field": "mode", "equals": "quorum"}},
+                {"name": "timeout_s", "label": "Timeout (seconds)", "fieldType": "number", "required": False, "visibility": "advanced", "group": "reliability"},
             ],
         },
     ))
@@ -1556,7 +1569,8 @@ def register_standard_operators():
             "outputType": "decision",
             "dynamicHandles": True,
             "configFields": [
-                {"name": "route_key", "label": "Route Key", "fieldType": "string", "required": False, "default": "status"},
+                {"name": "route_key", "label": "Route Key", "fieldType": "string", "required": False, "default": "status", "visibility": "simple", "group": "routing"},
+                {"name": "routes", "label": "Routes", "fieldType": "route_table", "required": False, "visibility": "simple", "group": "routing"},
             ],
         },
     ))
@@ -1576,8 +1590,9 @@ def register_standard_operators():
             "outputType": "decision",
             "dynamicHandles": True,
             "configFields": [
-                {"name": "pass_outcome", "label": "Pass Branch Label", "fieldType": "string", "required": False, "default": "pass"},
-                {"name": "fail_outcome", "label": "Fail Branch Label", "fieldType": "string", "required": False, "default": "fail"},
+                {"name": "outcomes", "label": "Outcomes", "fieldType": "route_table", "required": False, "visibility": "simple", "group": "routing"},
+                {"name": "pass_outcome", "label": "Pass Branch Label", "fieldType": "string", "required": False, "default": "pass", "visibility": "advanced", "group": "routing", "helpKind": "runtime-internal"},
+                {"name": "fail_outcome", "label": "Fail Branch Label", "fieldType": "string", "required": False, "default": "fail", "visibility": "advanced", "group": "routing", "helpKind": "runtime-internal"},
             ],
         },
     ))
@@ -1597,7 +1612,7 @@ def register_standard_operators():
             "outputType": "decision",
             "dynamicHandles": True,
             "configFields": [
-                {"name": "run_id", "label": "Run ID", "fieldType": "string", "required": False},
+                {"name": "run_id", "label": "Run ID", "fieldType": "string", "required": False, "visibility": "advanced", "group": "what_to_run", "helpKind": "runtime-internal"},
             ],
         },
     ))
@@ -1616,9 +1631,9 @@ def register_standard_operators():
             "inputType": "context",
             "outputType": "context",
             "configFields": [
-                {"name": "run_id", "label": "Run ID", "fieldType": "string", "required": False},
-                {"name": "include_root", "label": "Include Root Run", "fieldType": "boolean", "required": False, "default": True},
-                {"name": "reason", "label": "Reason", "fieldType": "string", "required": False},
+                {"name": "run_id", "label": "Run ID", "fieldType": "string", "required": False, "visibility": "advanced", "group": "what_to_run", "helpKind": "runtime-internal"},
+                {"name": "include_root", "label": "Include Root Run", "fieldType": "boolean", "required": False, "default": True, "visibility": "advanced", "group": "reliability", "helpKind": "runtime-internal"},
+                {"name": "reason", "label": "Reason", "fieldType": "string", "required": False, "visibility": "advanced", "group": "reliability"},
             ],
         },
     ))

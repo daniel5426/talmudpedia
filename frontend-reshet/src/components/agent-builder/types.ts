@@ -125,6 +125,7 @@ export interface ConfigFieldSpec {
     | "model" 
     | "tool" 
     | "rag"
+    | "agent_select"
     | "knowledge_store"
     | "knowledge_store_select"
     | "retrieval_pipeline_select"
@@ -139,10 +140,22 @@ export interface ConfigFieldSpec {
     | "tool_list"          // Multi-select for tools
     | "category_list"      // Categories for Classify
     | "field_mapping"      // Field mapping editor for artifacts
+    | "scope_subset"       // Orchestration scope subset list
+    | "spawn_targets"      // Orchestration spawn-group targets
+    | "route_table"        // Router/Judge visual branch rows
+    | "advanced_toggle"    // Optional advanced UX toggle
   required: boolean
   default?: unknown
   description?: string
   options?: Array<{ value: string; label: string }>
+  visibility?: "simple" | "advanced" | "both"
+  dependsOn?: {
+    field: string
+    equals?: unknown
+    notEquals?: unknown
+  }
+  helpKind?: "runtime-internal" | "required-for-compile" | "recommended"
+  group?: "what_to_run" | "permissions" | "routing" | "reliability"
   // Artifact-specific metadata for field mapping UI
   artifactInputs?: ArtifactInputField[]
 }
@@ -418,22 +431,26 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     outputType: "context",
     icon: "GitBranch",
     configFields: [
-      { name: "target_agent_id", label: "Target Agent ID", fieldType: "string", required: false },
-      { name: "target_agent_slug", label: "Target Agent Slug", fieldType: "string", required: false },
-      { name: "idempotency_key", label: "Idempotency Key", fieldType: "string", required: false },
+      { name: "target_agent_slug", label: "Target Agent", fieldType: "agent_select", required: false, visibility: "simple", group: "what_to_run" },
+      { name: "target_agent_id", label: "Target Agent (ID)", fieldType: "agent_select", required: false, visibility: "advanced", group: "what_to_run", helpKind: "runtime-internal" },
+      { name: "scope_subset", label: "Scope Subset", fieldType: "scope_subset", required: true, visibility: "simple", group: "permissions", helpKind: "required-for-compile", description: "Scopes delegated to spawned child run(s)." },
+      { name: "idempotency_key", label: "Idempotency Key", fieldType: "string", required: false, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
       {
         name: "failure_policy",
         label: "Failure Policy",
         fieldType: "select",
         required: false,
         default: "best_effort",
+        visibility: "advanced",
+        group: "reliability",
+        helpKind: "runtime-internal",
         options: [
           { value: "best_effort", label: "Best Effort" },
           { value: "fail_fast", label: "Fail Fast" },
         ],
       },
-      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false },
-      { name: "start_background", label: "Start in Background", fieldType: "boolean", required: false, default: true },
+      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false, visibility: "advanced", group: "reliability" },
+      { name: "start_background", label: "Start in Background", fieldType: "boolean", required: false, default: true, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
     ],
   },
   {
@@ -445,12 +462,16 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     outputType: "context",
     icon: "GitMerge",
     configFields: [
+      { name: "targets", label: "Targets", fieldType: "spawn_targets", required: true, visibility: "simple", group: "what_to_run", helpKind: "required-for-compile", description: "One or more target agents and optional payload mappings." },
+      { name: "scope_subset", label: "Scope Subset", fieldType: "scope_subset", required: true, visibility: "simple", group: "permissions", helpKind: "required-for-compile", description: "Scopes delegated to all spawned child runs." },
       {
         name: "join_mode",
         label: "Join Mode",
         fieldType: "select",
         required: false,
         default: "all",
+        visibility: "simple",
+        group: "routing",
         options: [
           { value: "all", label: "All" },
           { value: "best_effort", label: "Best Effort" },
@@ -459,21 +480,32 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
           { value: "first_success", label: "First Success" },
         ],
       },
-      { name: "quorum_threshold", label: "Quorum Threshold", fieldType: "number", required: false },
-      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false },
-      { name: "idempotency_key_prefix", label: "Idempotency Key Prefix", fieldType: "string", required: false },
+      {
+        name: "quorum_threshold",
+        label: "Quorum Threshold",
+        fieldType: "number",
+        required: false,
+        visibility: "simple",
+        group: "routing",
+        dependsOn: { field: "join_mode", equals: "quorum" },
+      },
+      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false, visibility: "advanced", group: "reliability" },
+      { name: "idempotency_key_prefix", label: "Idempotency Key Prefix", fieldType: "string", required: false, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
       {
         name: "failure_policy",
         label: "Failure Policy",
         fieldType: "select",
         required: false,
         default: "best_effort",
+        visibility: "advanced",
+        group: "reliability",
+        helpKind: "runtime-internal",
         options: [
           { value: "best_effort", label: "Best Effort" },
           { value: "fail_fast", label: "Fail Fast" },
         ],
       },
-      { name: "start_background", label: "Start in Background", fieldType: "boolean", required: false, default: true },
+      { name: "start_background", label: "Start in Background", fieldType: "boolean", required: false, default: true, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
     ],
   },
   {
@@ -486,13 +518,15 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     icon: "Link",
     dynamicHandles: true,
     configFields: [
-      { name: "orchestration_group_id", label: "Group ID", fieldType: "string", required: false },
+      { name: "orchestration_group_id", label: "Group ID", fieldType: "string", required: false, visibility: "advanced", group: "what_to_run", helpKind: "runtime-internal" },
       {
         name: "mode",
         label: "Mode",
         fieldType: "select",
         required: false,
         default: "all",
+        visibility: "simple",
+        group: "routing",
         options: [
           { value: "all", label: "All" },
           { value: "best_effort", label: "Best Effort" },
@@ -501,8 +535,16 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
           { value: "first_success", label: "First Success" },
         ],
       },
-      { name: "quorum_threshold", label: "Quorum Threshold", fieldType: "number", required: false },
-      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false },
+      {
+        name: "quorum_threshold",
+        label: "Quorum Threshold",
+        fieldType: "number",
+        required: false,
+        visibility: "simple",
+        group: "routing",
+        dependsOn: { field: "mode", equals: "quorum" },
+      },
+      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false, visibility: "advanced", group: "reliability" },
     ],
   },
   {
@@ -515,7 +557,8 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     icon: "Route",
     dynamicHandles: true,
     configFields: [
-      { name: "route_key", label: "Route Key", fieldType: "string", required: false, default: "status" },
+      { name: "route_key", label: "Route Key", fieldType: "string", required: false, default: "status", visibility: "simple", group: "routing" },
+      { name: "routes", label: "Routes", fieldType: "route_table", required: false, visibility: "simple", group: "routing", description: "Named branch routes and match values." },
     ],
   },
   {
@@ -528,8 +571,9 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     icon: "Scale",
     dynamicHandles: true,
     configFields: [
-      { name: "pass_outcome", label: "Pass Branch Label", fieldType: "string", required: false, default: "pass" },
-      { name: "fail_outcome", label: "Fail Branch Label", fieldType: "string", required: false, default: "fail" },
+      { name: "outcomes", label: "Outcomes", fieldType: "route_table", required: false, visibility: "simple", group: "routing", description: "Outcome branch names (pass/fail by default)." },
+      { name: "pass_outcome", label: "Pass Branch Label", fieldType: "string", required: false, default: "pass", visibility: "advanced", group: "routing", helpKind: "runtime-internal" },
+      { name: "fail_outcome", label: "Fail Branch Label", fieldType: "string", required: false, default: "fail", visibility: "advanced", group: "routing", helpKind: "runtime-internal" },
     ],
   },
   {
@@ -542,7 +586,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     icon: "RefreshCw",
     dynamicHandles: true,
     configFields: [
-      { name: "run_id", label: "Run ID", fieldType: "string", required: false },
+      { name: "run_id", label: "Run ID", fieldType: "string", required: false, visibility: "advanced", group: "what_to_run", helpKind: "runtime-internal" },
     ],
   },
   {
@@ -554,9 +598,9 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     outputType: "context",
     icon: "Ban",
     configFields: [
-      { name: "run_id", label: "Run ID", fieldType: "string", required: false },
-      { name: "include_root", label: "Include Root Run", fieldType: "boolean", required: false, default: true },
-      { name: "reason", label: "Reason", fieldType: "string", required: false },
+      { name: "run_id", label: "Run ID", fieldType: "string", required: false, visibility: "advanced", group: "what_to_run", helpKind: "runtime-internal" },
+      { name: "include_root", label: "Include Root Run", fieldType: "boolean", required: false, default: true, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
+      { name: "reason", label: "Reason", fieldType: "string", required: false, visibility: "advanced", group: "reliability" },
     ],
   },
   
@@ -625,6 +669,55 @@ export function getNodeSpec(nodeType: AgentNodeType): AgentNodeSpec | undefined 
 
 export function getClassifyHandleIds(categories: Array<{ name?: string }>): string[] {
   return dedupeNamedHandles(categories, "category")
+}
+
+type RouteTableRow = {
+  name?: string
+  match?: string
+}
+
+function toCleanRouteName(raw: unknown): string {
+  if (typeof raw !== "string") return ""
+  return raw.trim()
+}
+
+export function normalizeRouteTableRows(rows: unknown): RouteTableRow[] {
+  if (!Array.isArray(rows)) return []
+  const used = new Set<string>()
+  const normalized: RouteTableRow[] = []
+  rows.forEach((item, idx) => {
+    const rawName =
+      typeof item === "string"
+        ? item
+        : (item && typeof item === "object" ? String((item as Record<string, unknown>).name || "") : "")
+    const base = toCleanRouteName(rawName) || `route_${idx}`
+    let unique = base
+    let suffix = 1
+    while (used.has(unique)) {
+      unique = `${base}_${suffix}`
+      suffix += 1
+    }
+    used.add(unique)
+    const match =
+      item && typeof item === "object" && "match" in (item as Record<string, unknown>)
+        ? String((item as Record<string, unknown>).match ?? "")
+        : unique
+    normalized.push({ name: unique, match })
+  })
+  return normalized
+}
+
+export function routeTableRowsToRouterRoutes(rows: unknown): Array<{ name: string; match: string }> {
+  return normalizeRouteTableRows(rows).map((row) => ({
+    name: row.name || "",
+    match: row.match ?? "",
+  }))
+}
+
+export function routeTableRowsToOutcomes(rows: unknown): string[] {
+  return normalizeRouteTableRows(rows)
+    .map((row) => row.name || "")
+    .filter((name) => name.length > 0)
 }
 
 function dedupeNamedHandles(items: Array<{ name?: string }>, fallbackPrefix: string): string[] {
@@ -701,7 +794,10 @@ export function getNodeOutputHandles(nodeType: AgentNodeType, config: Record<str
   }
 
   if (nodeType === "judge") {
-    const outcomes = Array.isArray(config.outcomes)
+    const outcomesFromTable = routeTableRowsToOutcomes(config.route_table)
+    const outcomes = outcomesFromTable.length > 0
+      ? outcomesFromTable
+      : Array.isArray(config.outcomes)
       ? config.outcomes.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
       : []
     if (outcomes.length > 0) {
@@ -717,7 +813,10 @@ export function getNodeOutputHandles(nodeType: AgentNodeType, config: Record<str
   }
 
   if (nodeType === "router") {
-    return getRouterHandleIds(config.routes)
+    const routes = Array.isArray(config.route_table)
+      ? routeTableRowsToRouterRoutes(config.route_table)
+      : config.routes
+    return getRouterHandleIds(routes)
   }
   
   // Default: single output

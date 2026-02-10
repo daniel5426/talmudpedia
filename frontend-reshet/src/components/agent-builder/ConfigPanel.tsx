@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
     X,
     FolderInput,
@@ -27,6 +27,9 @@ import {
     Route,
     Scale,
     Ban,
+    AlertTriangle,
+    ChevronDown,
+    ChevronUp,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -39,7 +42,10 @@ import {
     AgentNodeSpec,
     ConfigFieldSpec,
     CATEGORY_COLORS,
-    getNodeSpec
+    getNodeSpec,
+    normalizeRouteTableRows,
+    routeTableRowsToOutcomes,
+    routeTableRowsToRouterRoutes,
 } from "./types"
 import {
     Select,
@@ -100,6 +106,108 @@ interface ResourceOption {
     label: string
     providerInfo?: string
     slug?: string
+}
+
+type ValidationIssue = {
+    field?: string
+    message: string
+}
+
+function isOrchestrationNode(nodeType: string): boolean {
+    return ["spawn_run", "spawn_group", "join", "router", "judge", "replan", "cancel_subtree"].includes(nodeType)
+}
+
+function toStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) return []
+    return value
+        .map((item) => String(item ?? "").trim())
+        .filter((item) => item.length > 0)
+}
+
+function validateOrchestrationNodeConfig(nodeType: string, config: Record<string, unknown>): ValidationIssue[] {
+    const issues: ValidationIssue[] = []
+    if (!isOrchestrationNode(nodeType)) {
+        return issues
+    }
+
+    if (nodeType === "spawn_run") {
+        const hasTarget = Boolean(String(config.target_agent_slug || "").trim()) || Boolean(String(config.target_agent_id || "").trim())
+        if (!hasTarget) {
+            issues.push({ field: "target_agent_slug", message: "Spawn Run requires a target agent (slug or ID)." })
+        }
+        if (toStringList(config.scope_subset).length === 0) {
+            issues.push({ field: "scope_subset", message: "Scope subset is required for orchestration spawn nodes." })
+        }
+    }
+
+    if (nodeType === "spawn_group") {
+        if (toStringList(config.scope_subset).length === 0) {
+            issues.push({ field: "scope_subset", message: "Scope subset is required for orchestration spawn nodes." })
+        }
+        const targets = Array.isArray(config.targets) ? config.targets : []
+        if (targets.length === 0) {
+            issues.push({ field: "targets", message: "Spawn Group requires at least one target." })
+        } else {
+            targets.forEach((target, idx) => {
+                const item = target && typeof target === "object" ? target as Record<string, unknown> : {}
+                const hasTarget = Boolean(String(item.target_agent_slug || "").trim()) || Boolean(String(item.target_agent_id || "").trim())
+                if (!hasTarget) {
+                    issues.push({
+                        field: "targets",
+                        message: `Target #${idx + 1} requires target agent slug or ID.`,
+                    })
+                }
+            })
+        }
+        const joinMode = String(config.join_mode || "all")
+        if (joinMode === "quorum") {
+            const quorum = Number(config.quorum_threshold || 0)
+            if (!Number.isInteger(quorum) || quorum < 1) {
+                issues.push({ field: "quorum_threshold", message: "Quorum threshold must be >= 1 when join mode is quorum." })
+            }
+        }
+    }
+
+    if (nodeType === "join") {
+        const mode = String(config.mode || "all")
+        if (mode === "quorum") {
+            const quorum = Number(config.quorum_threshold || 0)
+            if (!Number.isInteger(quorum) || quorum < 1) {
+                issues.push({ field: "quorum_threshold", message: "Quorum threshold must be >= 1 when mode is quorum." })
+            }
+        }
+    }
+
+    if (nodeType === "router") {
+        const routes = config.routes
+        if (routes != null && !Array.isArray(routes)) {
+            issues.push({ field: "routes", message: "Router routes must be a list." })
+        }
+    }
+
+    if (nodeType === "judge") {
+        const outcomes = routeTableRowsToOutcomes(config.route_table || config.outcomes)
+        if (outcomes.length < 2) {
+            issues.push({ field: "outcomes", message: "Judge should define at least two outcomes (pass/fail)." })
+        }
+    }
+
+    return issues
+}
+
+function shouldShowField(field: ConfigFieldSpec, config: Record<string, unknown>, isAdvanced: boolean): boolean {
+    const visibility = field.visibility || "both"
+    if (!isAdvanced && visibility === "advanced") return false
+
+    if (!field.dependsOn) return true
+    const current = config[field.dependsOn.field]
+    if (Object.prototype.hasOwnProperty.call(field.dependsOn, "equals")) {
+        return current === field.dependsOn.equals
+    }
+    if (Object.prototype.hasOwnProperty.call(field.dependsOn, "notEquals")) {
+        return current !== field.dependsOn.notEquals
+    }
+    return true
 }
 
 const EXPRESSION_OPERATORS = [
@@ -622,24 +730,276 @@ function ToolListField({
     )
 }
 
+function ScopeSubsetField({
+    value,
+    onChange,
+}: {
+    value: string[]
+    onChange: (value: string[]) => void
+}) {
+    const [draft, setDraft] = useState("")
+
+    const addScope = (scope: string) => {
+        const normalized = scope.trim()
+        if (!normalized) return
+        if (value.includes(normalized)) return
+        onChange([...value, normalized])
+        setDraft("")
+    }
+
+    return (
+        <div className="space-y-2">
+            <div className="flex flex-wrap gap-1">
+                {value.length === 0 ? (
+                    <span className="text-[11px] text-muted-foreground">No scopes added</span>
+                ) : value.map((scope) => (
+                    <Badge key={scope} variant="secondary" className="text-[11px] flex items-center gap-1">
+                        {scope}
+                        <button
+                            type="button"
+                            className="ml-1 text-muted-foreground/70 hover:text-foreground"
+                            onClick={() => onChange(value.filter((item) => item !== scope))}
+                            aria-label={`Remove ${scope}`}
+                        >
+                            <X className="h-3 w-3" />
+                        </button>
+                    </Badge>
+                ))}
+            </div>
+            <div className="flex gap-2">
+                <Input
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                            e.preventDefault()
+                            addScope(draft)
+                        }
+                    }}
+                    placeholder="agents.read"
+                    className="h-8 px-2 text-[11px] bg-background/50 font-mono"
+                />
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => addScope(draft)}
+                >
+                    Add
+                </Button>
+            </div>
+        </div>
+    )
+}
+
+type SpawnTargetRow = {
+    target_agent_slug?: string
+    target_agent_id?: string
+    mapped_input_payload?: Record<string, unknown>
+}
+
+function SpawnTargetsField({
+    value,
+    onChange,
+    agents,
+}: {
+    value: SpawnTargetRow[]
+    onChange: (value: SpawnTargetRow[]) => void
+    agents: ResourceOption[]
+}) {
+    const targets = Array.isArray(value) ? value : []
+    const [payloadDrafts, setPayloadDrafts] = useState<Record<number, string>>({})
+
+    useEffect(() => {
+        setPayloadDrafts((prev) => {
+            const next: Record<number, string> = {}
+            targets.forEach((target, idx) => {
+                const existing = prev[idx]
+                next[idx] = existing ?? JSON.stringify(target.mapped_input_payload || {}, null, 2)
+            })
+            return next
+        })
+    }, [targets])
+
+    const addRow = () => onChange([...(targets || []), { target_agent_slug: "", mapped_input_payload: {} }])
+    const removeRow = (idx: number) => onChange(targets.filter((_, i) => i !== idx))
+    const updateRow = (idx: number, patch: Partial<SpawnTargetRow>) => {
+        const next = [...targets]
+        next[idx] = { ...next[idx], ...patch }
+        onChange(next)
+    }
+    const moveRow = (idx: number, dir: -1 | 1) => {
+        const to = idx + dir
+        if (to < 0 || to >= targets.length) return
+        const next = [...targets]
+        const [item] = next.splice(idx, 1)
+        next.splice(to, 0, item)
+        onChange(next)
+    }
+
+    return (
+        <div className="space-y-2">
+            {targets.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground">No targets configured</div>
+            ) : targets.map((target, idx) => (
+                <div key={`target-${idx}`} className="space-y-2 rounded-lg border border-border/60 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+                            Target {idx + 1}
+                        </span>
+                        <div className="flex items-center gap-1">
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveRow(idx, -1)} disabled={idx === 0}>
+                                <ChevronUp className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveRow(idx, 1)} disabled={idx === targets.length - 1}>
+                                <ChevronDown className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => removeRow(idx)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                        </div>
+                    </div>
+                    <SearchableResourceInput
+                        value={target.target_agent_slug || ""}
+                        onChange={(val) => updateRow(idx, { target_agent_slug: val, target_agent_id: "" })}
+                        placeholder="Target agent slug..."
+                        className="h-8 px-2 text-[11px] bg-background/50"
+                        resources={agents.map((agent) => ({
+                            value: agent.slug || agent.value,
+                            label: agent.label,
+                            info: agent.slug || agent.value,
+                        }))}
+                    />
+                    <SmartInput
+                        value={payloadDrafts[idx] ?? JSON.stringify(target.mapped_input_payload || {}, null, 2)}
+                        onChange={(val) => {
+                            setPayloadDrafts((prev) => ({ ...prev, [idx]: val }))
+                            try {
+                                const parsed = val.trim() ? JSON.parse(val) : {}
+                                updateRow(idx, {
+                                    mapped_input_payload: parsed && typeof parsed === "object" ? parsed : {},
+                                })
+                            } catch {
+                                // allow partial JSON while typing
+                            }
+                        }}
+                        placeholder="Optional mapped input payload JSON"
+                        className="min-h-[70px] text-[11px] bg-background/50 font-mono"
+                        multiline={true}
+                        mode="template"
+                    />
+                </div>
+            ))}
+            <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addRow}
+                className="w-full h-8 text-xs border-dashed text-muted-foreground hover:text-foreground"
+            >
+                <Plus className="h-3 w-3 mr-1.5" />
+                Add Target
+            </Button>
+        </div>
+    )
+}
+
+type RouteTableRow = {
+    name?: string
+    match?: string
+}
+
+function RouteTableField({
+    value,
+    onChange,
+    mode,
+}: {
+    value: RouteTableRow[]
+    onChange: (value: RouteTableRow[]) => void
+    mode: "router" | "judge"
+}) {
+    const rows = normalizeRouteTableRows(value)
+    const addRow = () => onChange([...(rows || []), { name: "", match: "" }])
+    const removeRow = (idx: number) => onChange(rows.filter((_, i) => i !== idx))
+    const updateRow = (idx: number, patch: Partial<RouteTableRow>) => {
+        const next = [...rows]
+        next[idx] = { ...next[idx], ...patch }
+        onChange(next)
+    }
+
+    const showMatch = mode === "router"
+    return (
+        <div className="space-y-2">
+            {rows.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground">
+                    {mode === "router" ? "No routes configured (default handle still exists)." : "No outcomes configured."}
+                </div>
+            ) : rows.map((row, idx) => (
+                <div key={`route-row-${idx}`} className="flex items-center gap-2">
+                    <Input
+                        value={row.name || ""}
+                        onChange={(e) => updateRow(idx, { name: e.target.value })}
+                        placeholder={mode === "router" ? "branch_name" : idx === 0 ? "pass" : "fail"}
+                        className="h-8 px-2 text-[11px] bg-background/50 font-mono"
+                    />
+                    {showMatch && (
+                        <Input
+                            value={row.match || ""}
+                            onChange={(e) => updateRow(idx, { match: e.target.value })}
+                            placeholder="match_value"
+                            className="h-8 px-2 text-[11px] bg-background/50 font-mono"
+                        />
+                    )}
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeRow(idx)}
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                </div>
+            ))}
+            <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addRow}
+                className="w-full h-8 text-xs border-dashed text-muted-foreground hover:text-foreground"
+            >
+                <Plus className="h-3 w-3 mr-1.5" />
+                {mode === "router" ? "Add Route" : "Add Outcome"}
+            </Button>
+        </div>
+    )
+}
+
 function ConfigField({
     field,
     value,
     onChange,
+    nodeType,
     models,
     tools,
     namespaces,
+    agentOptions,
     availableVariables,
-    toolCatalog
+    toolCatalog,
+    fieldError,
 }: {
     field: ConfigFieldSpec
     value: unknown
     onChange: (value: unknown) => void
+    nodeType: string
     models: ResourceOption[]
     tools: ResourceOption[]
     namespaces: ResourceOption[]
+    agentOptions: ResourceOption[]
     availableVariables?: any[]
     toolCatalog: ToolDefinition[]
+    fieldError?: string
 }) {
     const isNumber = field.fieldType === "number"
     const isBoolean = field.fieldType === "boolean"
@@ -648,6 +1008,7 @@ function ConfigField({
     const isModel = field.fieldType === "model"
     const isTool = field.fieldType === "tool"
     const isRag = field.fieldType === "rag"
+    const isAgentSelect = field.fieldType === "agent_select"
     const isKnowledgeStore = field.fieldType === "knowledge_store" || field.fieldType === "knowledge_store_select"
     const isRetrievalPipelineSelect = field.fieldType === "retrieval_pipeline_select"
 
@@ -660,6 +1021,9 @@ function ConfigField({
     const isAssignmentList = field.fieldType === "assignment_list"
     const isToolList = field.fieldType === "tool_list"
     const isVariableSelector = field.fieldType === "variable_selector"
+    const isScopeSubset = field.fieldType === "scope_subset"
+    const isSpawnTargets = field.fieldType === "spawn_targets"
+    const isRouteTable = field.fieldType === "route_table"
 
     const renderInput = () => {
         if (isSelect && field.options) {
@@ -730,6 +1094,23 @@ function ConfigField({
                         )}
                     </SelectContent>
                 </Select>
+            )
+        }
+
+        if (isAgentSelect) {
+            const preferId = field.name.endsWith("_id")
+            return (
+                <SearchableResourceInput
+                    value={(value as string) || ""}
+                    onChange={onChange}
+                    placeholder={preferId ? "Select target agent (ID)..." : "Select target agent..."}
+                    className="h-9 px-3 bg-muted/40 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
+                    resources={agentOptions.map((agent) => ({
+                        value: preferId ? agent.value : (agent.slug || agent.value),
+                        label: agent.label,
+                        info: `${agent.slug || agent.value}`,
+                    }))}
+                />
             )
         }
 
@@ -906,6 +1287,41 @@ function ConfigField({
             )
         }
 
+        if (isScopeSubset) {
+            return (
+                <ScopeSubsetField
+                    value={toStringList(value)}
+                    onChange={(next) => onChange(next)}
+                />
+            )
+        }
+
+        if (isSpawnTargets) {
+            return (
+                <SpawnTargetsField
+                    value={Array.isArray(value) ? value as SpawnTargetRow[] : []}
+                    onChange={(next) => onChange(next)}
+                    agents={agentOptions}
+                />
+            )
+        }
+
+        if (isRouteTable) {
+            const routeMode = nodeType === "judge" ? "judge" : "router"
+            const sourceRows = Array.isArray(value)
+                ? value as RouteTableRow[]
+                : routeMode === "judge"
+                    ? [{ name: "pass", match: "pass" }, { name: "fail", match: "fail" }]
+                    : []
+            return (
+                <RouteTableField
+                    value={sourceRows}
+                    onChange={(next) => onChange(next)}
+                    mode={routeMode}
+                />
+            )
+        }
+
         // Field mapping editor for artifacts
         if (field.fieldType === "field_mapping") {
             const mappings = (value as Record<string, string>) || {}
@@ -970,16 +1386,28 @@ function ConfigField({
                 <span className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">
                     {field.label}
                 </span>
-                {field.required && (
-                    <span className="text-[9px] font-medium text-foreground/30 px-1 border border-foreground/10 rounded uppercase tracking-wider">
-                        Required
-                    </span>
-                )}
+                <div className="flex items-center gap-1">
+                    {field.helpKind === "runtime-internal" && (
+                        <span className="text-[9px] font-medium text-foreground/30 px-1 border border-foreground/10 rounded uppercase tracking-wider">
+                            Advanced
+                        </span>
+                    )}
+                    {field.required && (
+                        <span className="text-[9px] font-medium text-foreground/30 px-1 border border-foreground/10 rounded uppercase tracking-wider">
+                            Required
+                        </span>
+                    )}
+                </div>
             </Label>
             {renderInput()}
             {field.description && (
                 <p className="text-[10px] text-muted-foreground/60 leading-tight px-1">
                     {field.description}
+                </p>
+            )}
+            {fieldError && (
+                <p className="text-[10px] text-red-600 leading-tight px-1">
+                    {fieldError}
                 </p>
             )}
         </div>
@@ -999,25 +1427,42 @@ export function ConfigPanel({
     const [models, setModels] = useState<ResourceOption[]>([])
     const [toolOptions, setToolOptions] = useState<ResourceOption[]>([])
     const [toolCatalog, setToolCatalog] = useState<ToolDefinition[]>([])
+    const [agentOptions, setAgentOptions] = useState<ResourceOption[]>([])
     const [namespaces, setNamespaces] = useState<ResourceOption[]>([])
     const [operatorSpecs, setOperatorSpecs] = useState<AgentOperatorSpec[]>([])
     const [loading, setLoading] = useState(true)
+    const [advancedMode, setAdvancedMode] = useState(false)
 
     const { currentTenant } = useTenant()
 
     useEffect(() => {
-        setLocalConfig(data.config || {})
-    }, [nodeId, data.config])
+        const initialConfig = { ...(data.config || {}) } as Record<string, unknown>
+        if (data.nodeType === "router") {
+            if (!Array.isArray(initialConfig.route_table) && Array.isArray(initialConfig.routes)) {
+                initialConfig.route_table = normalizeRouteTableRows(initialConfig.routes)
+            }
+        }
+        if (data.nodeType === "judge") {
+            if (!Array.isArray(initialConfig.route_table) && Array.isArray(initialConfig.outcomes)) {
+                initialConfig.route_table = normalizeRouteTableRows(
+                    (initialConfig.outcomes as unknown[]).map((item) => ({ name: String(item || "") }))
+                )
+            }
+        }
+        setLocalConfig(initialConfig)
+        setAdvancedMode(false)
+    }, [nodeId, data.config, data.nodeType])
 
     // Load available models and tools
     useEffect(() => {
         async function loadResources() {
             setLoading(true)
             try {
-                const [modelsRes, toolsRes, pipelinesRes] = await Promise.all([
+                const [modelsRes, toolsRes, pipelinesRes, agentsRes] = await Promise.all([
                     modelsService.listModels("chat", "active", 0, 100),
                     toolsService.listTools(undefined, "published", undefined, 0, 100),
-                    ragAdminService.listVisualPipelines(currentTenant?.slug)
+                    ragAdminService.listVisualPipelines(currentTenant?.slug),
+                    agentService.listAgents({ skip: 0, limit: 500 }),
                 ])
 
                 setModels(modelsRes.models.map(m => ({
@@ -1038,6 +1483,11 @@ export function ConfigPanel({
                         value: p.id,
                         label: p.name || (p as any).slug || "Unnamed Pipeline"
                     })))
+                setAgentOptions((agentsRes.agents || []).map((agent) => ({
+                    value: agent.id,
+                    label: agent.name,
+                    slug: agent.slug,
+                })))
             } catch (error) {
                 console.error("Failed to load resources:", error)
             } finally {
@@ -1074,7 +1524,20 @@ export function ConfigPanel({
     }, [localConfig, models, nodeId, onConfigChange])
 
     const handleFieldChange = (fieldName: string, value: unknown) => {
-        const newConfig = { ...localConfig, [fieldName]: value }
+        const newConfig = { ...localConfig, [fieldName]: value } as Record<string, unknown>
+        if (data.nodeType === "router" && fieldName === "routes") {
+            const rows = normalizeRouteTableRows(value)
+            newConfig.route_table = rows
+            newConfig.routes = routeTableRowsToRouterRoutes(rows)
+        }
+        if (data.nodeType === "judge" && fieldName === "outcomes") {
+            const rows = normalizeRouteTableRows(value)
+            newConfig.route_table = rows
+            newConfig.outcomes = routeTableRowsToOutcomes(rows)
+        }
+        if (fieldName === "scope_subset") {
+            newConfig.scope_subset = toStringList(value)
+        }
         setLocalConfig(newConfig)
         onConfigChange(nodeId, newConfig)
     }
@@ -1114,6 +1577,41 @@ export function ConfigPanel({
         ]
     }
 
+    const validationIssues = useMemo(
+        () => validateOrchestrationNodeConfig(data.nodeType, localConfig),
+        [data.nodeType, localConfig]
+    )
+    const fieldErrors = useMemo(() => {
+        const mapped: Record<string, string> = {}
+        validationIssues.forEach((issue) => {
+            if (issue.field && !mapped[issue.field]) {
+                mapped[issue.field] = issue.message
+            }
+        })
+        return mapped
+    }, [validationIssues])
+
+    const visibleConfigFields = useMemo(
+        () => configFields.filter((field) => shouldShowField(field, localConfig, advancedMode)),
+        [configFields, localConfig, advancedMode]
+    )
+
+    const groupedFields = useMemo(() => {
+        const sections: Record<string, ConfigFieldSpec[]> = {
+            what_to_run: [],
+            permissions: [],
+            routing: [],
+            reliability: [],
+            other: [],
+        }
+        visibleConfigFields.forEach((field) => {
+            const group = field.group || "other"
+            sections[group] = sections[group] || []
+            sections[group].push(field)
+        })
+        return sections
+    }, [visibleConfigFields])
+
     const displayName = data.displayName || nodeSpec?.displayName || data.nodeType
     const category = data.category || nodeSpec?.category || "data"
 
@@ -1137,6 +1635,16 @@ export function ConfigPanel({
                         </p>
                     </div>
                 </div>
+                {isOrchestrationNode(data.nodeType) && (
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAdvancedMode((prev) => !prev)}
+                        className="h-7 text-[11px] mr-2"
+                    >
+                        {advancedMode ? "Simple" : "Advanced"}
+                    </Button>
+                )}
                 <Button
                     variant="ghost"
                     size="icon"
@@ -1148,28 +1656,67 @@ export function ConfigPanel({
             </div>
 
             <div className="flex-1 overflow-y-auto px-3.5 pb-6 space-y-4 max-h-[60vh] scrollbar-none">
+                {validationIssues.length > 0 && (
+                    <div className="rounded-lg border border-red-200 bg-red-50/80 p-2 space-y-1">
+                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-red-700">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            Preflight checks
+                        </div>
+                        {validationIssues.map((issue, idx) => (
+                            <p key={`issue-${idx}`} className="text-[11px] text-red-700 leading-snug">
+                                {issue.message}
+                            </p>
+                        ))}
+                    </div>
+                )}
                 {loading ? (
                     <p className="text-[11px] text-muted-foreground text-center py-8">
                         Loading resources...
                     </p>
-                ) : configFields.length === 0 ? (
+                ) : visibleConfigFields.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-8 text-center bg-muted/20 rounded-xl border border-dashed border-border/50">
                         <p className="text-[11px] text-muted-foreground font-medium">No parameters to configure</p>
                     </div>
                 ) : (
-                    configFields.map((field) => (
-                        <ConfigField
-                            key={field.name}
-                            field={field}
-                            value={localConfig[field.name]}
-                            onChange={(value) => handleFieldChange(field.name, value)}
-                            models={models}
-                            tools={toolOptions}
-                            namespaces={namespaces}
-                            availableVariables={availableVariables}
-                            toolCatalog={toolCatalog}
-                        />
-                    ))
+                    <>
+                        {[
+                            { key: "what_to_run", title: "What to Run" },
+                            { key: "permissions", title: "Permissions" },
+                            { key: "routing", title: "Routing" },
+                            { key: "reliability", title: "Reliability" },
+                            { key: "other", title: "Settings" },
+                        ].map((section) => (
+                            groupedFields[section.key] && groupedFields[section.key].length > 0 ? (
+                                <div key={section.key} className="space-y-3">
+                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold px-0.5">
+                                        {section.title}
+                                    </p>
+                                    {groupedFields[section.key].map((field) => (
+                                        <ConfigField
+                                            key={field.name}
+                                            field={field}
+                                            value={
+                                                field.fieldType === "route_table" && data.nodeType === "router" && field.name === "routes"
+                                                    ? (localConfig.route_table || localConfig.routes)
+                                                    : field.fieldType === "route_table" && data.nodeType === "judge" && field.name === "outcomes"
+                                                        ? (localConfig.route_table || localConfig.outcomes)
+                                                        : localConfig[field.name]
+                                            }
+                                            onChange={(value) => handleFieldChange(field.name, value)}
+                                            nodeType={data.nodeType}
+                                            models={models}
+                                            tools={toolOptions}
+                                            namespaces={namespaces}
+                                            agentOptions={agentOptions}
+                                            availableVariables={availableVariables}
+                                            toolCatalog={toolCatalog}
+                                            fieldError={fieldErrors[field.name]}
+                                        />
+                                    ))}
+                                </div>
+                            ) : null
+                        ))}
+                    </>
                 )}
             </div>
 
