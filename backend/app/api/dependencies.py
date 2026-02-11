@@ -14,7 +14,7 @@ from uuid import UUID
 import jwt
 from app.core.security import SECRET_KEY, ALGORITHM
 from app.core.workload_jwt import decode_workload_token
-from app.core.security import decode_published_app_session_token
+from app.core.security import decode_published_app_preview_token, decode_published_app_session_token
 from app.services.token_broker_service import TokenBrokerService
 
 class AuthContext(BaseModel):
@@ -304,6 +304,39 @@ async def get_current_published_app_principal(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return principal
+
+
+async def get_optional_published_app_preview_principal(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> Optional[Dict[str, Any]]:
+    if credentials is None or not credentials.credentials:
+        return None
+    token = credentials.credentials
+    try:
+        payload = decode_published_app_preview_token(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid published app preview token")
+    return {
+        "type": "published_app_preview",
+        "tenant_id": str(payload["tenant_id"]),
+        "app_id": str(payload["app_id"]),
+        "revision_id": str(payload["revision_id"]),
+        "user_id": str(payload.get("sub")),
+        "scopes": payload.get("scope", []),
+        "auth_token": token,
+    }
+
+
+async def get_current_published_app_preview_principal(
+    principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_preview_principal),
+) -> Dict[str, Any]:
+    if principal is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Preview authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return principal

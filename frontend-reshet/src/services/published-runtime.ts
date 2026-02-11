@@ -12,6 +12,18 @@ export interface PublishedRuntimeConfig {
   auth_enabled: boolean;
   auth_providers: PublishedRuntimeAuthProvider[];
   published_url?: string | null;
+  has_custom_ui?: boolean;
+  published_revision_id?: string | null;
+  ui_runtime_mode?: "legacy_template" | "custom_bundle";
+}
+
+export interface PublishedRuntimeUI {
+  app_id: string;
+  revision_id: string;
+  template_key: string;
+  entry_file: string;
+  files: Record<string, string>;
+  compiled_bundle?: string | null;
 }
 
 export interface PublishedRuntimeUser {
@@ -87,6 +99,10 @@ export const publishedRuntimeService = {
 
   async getConfig(appSlug: string): Promise<PublishedRuntimeConfig> {
     return runtimeRequest<PublishedRuntimeConfig>(`/public/apps/${encodeURIComponent(appSlug)}/config`);
+  },
+
+  async getUI(appSlug: string): Promise<PublishedRuntimeUI> {
+    return runtimeRequest<PublishedRuntimeUI>(`/public/apps/${encodeURIComponent(appSlug)}/ui`);
   },
 
   async signup(appSlug: string, payload: { email: string; password: string; full_name?: string }): Promise<PublicAuthResponse> {

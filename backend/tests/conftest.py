@@ -117,6 +117,20 @@ async def db_session(test_engine):
 
 @pytest_asyncio.fixture
 async def client(db_session):
+    import vector_store as vector_store_module
+
+    class _TestVectorStore:
+        def __init__(self, *args, **kwargs):
+            self.index = None
+
+        def similarity_search(self, *args, **kwargs):
+            return []
+
+        def add_documents(self, *args, **kwargs):
+            return []
+
+    vector_store_module.VectorStore = _TestVectorStore
+
     from main import app
 
     async def override_get_db():

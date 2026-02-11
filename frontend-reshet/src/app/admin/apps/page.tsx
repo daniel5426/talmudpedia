@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   ExternalLink,
@@ -36,7 +37,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchableResourceInput } from "@/components/shared/SearchableResourceInput";
 import { agentService, publishedAppsService } from "@/services";
-import type { Agent, PublishedApp, PublishedAppAuthProvider } from "@/services";
+import type { Agent, PublishedApp, PublishedAppAuthProvider, PublishedAppTemplate } from "@/services";
 
 const DEFAULT_PROVIDERS: PublishedAppAuthProvider[] = ["password"];
 
@@ -82,7 +83,9 @@ function AppRowSkeleton() {
 }
 
 export default function AppsPage() {
+  const router = useRouter();
   const [apps, setApps] = useState<PublishedApp[]>([]);
+  const [templates, setTemplates] = useState<PublishedAppTemplate[]>([]);
   const [publishedAgents, setPublishedAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -91,8 +94,8 @@ export default function AppsPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
   const [agentId, setAgentId] = useState("");
+  const [templateKey, setTemplateKey] = useState("");
   const [authEnabled, setAuthEnabled] = useState(true);
   const [providerPassword, setProviderPassword] = useState(true);
   const [providerGoogle, setProviderGoogle] = useState(false);
@@ -117,17 +120,22 @@ export default function AppsPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [appsResponse, agentsResponse] = await Promise.all([
+      const [appsResponse, agentsResponse, templatesResponse] = await Promise.all([
         publishedAppsService.list(),
         agentService.listAgents({ limit: 500 }),
+        publishedAppsService.listTemplates(),
       ]);
       const publishedOnly = (agentsResponse.agents || []).filter(
         (agent) => String(agent.status).toLowerCase() === "published"
       );
       setApps(appsResponse);
+      setTemplates(templatesResponse);
       setPublishedAgents(publishedOnly);
       if (!agentId && publishedOnly.length > 0) {
         setAgentId(publishedOnly[0].id);
+      }
+      if (!templateKey && templatesResponse.length > 0) {
+        setTemplateKey(templatesResponse[0].key);
       }
     } catch (err) {
       console.error(err);
@@ -144,7 +152,7 @@ export default function AppsPage() {
 
   function resetCreateForm() {
     setName("");
-    setSlug("");
+    setTemplateKey((prev) => prev || templates[0]?.key || "");
     setProviderPassword(true);
     setProviderGoogle(false);
     setError(null);
@@ -152,9 +160,8 @@ export default function AppsPage() {
 
   async function handleCreate() {
     const nextName = name.trim();
-    const nextSlug = slug.trim().toLowerCase();
-    if (!nextName || !nextSlug || !agentId) {
-      setError("Name, slug, and published agent are required");
+    if (!nextName || !agentId || !templateKey) {
+      setError("Name, template, and published agent are required");
       return;
     }
 
@@ -171,14 +178,15 @@ export default function AppsPage() {
     try {
       const created = await publishedAppsService.create({
         name: nextName,
-        slug: nextSlug,
         agent_id: agentId,
+        template_key: templateKey,
         auth_enabled: authEnabled,
         auth_providers: providers,
       });
       setApps((prev) => [created, ...prev]);
       resetCreateForm();
       setCreateDialogOpen(false);
+      router.push(`/admin/apps/${created.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create app");
     } finally {
@@ -194,6 +202,10 @@ export default function AppsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete app");
     }
+  }
+
+  function appRuntimeHref(app: PublishedApp): string {
+    return app.published_url || `/published/${app.slug}`;
   }
 
   return (
@@ -354,11 +366,13 @@ export default function AppsPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-40">
-                        <DropdownMenuItem asChild>
-                          <Link href={`/admin/apps/${app.id}`}>
-                            <ExternalLink className="mr-2 h-3.5 w-3.5" />
-                            Open
-                          </Link>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            window.open(appRuntimeHref(app), "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                          Open App
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
@@ -386,7 +400,7 @@ export default function AppsPage() {
           if (!open) resetCreateForm();
         }}
       >
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[980px]">
           <DialogHeader>
             <DialogTitle>Create App</DialogTitle>
             <DialogDescription>
@@ -394,8 +408,9 @@ export default function AppsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
+          <div className="grid gap-5 py-2 md:grid-cols-[1.1fr_1fr]">
+            <div className="space-y-4">
+              <div className="space-y-2">
               <Label htmlFor="create-app-name" className="text-xs font-medium text-muted-foreground">
                 App Name
               </Label>
@@ -408,63 +423,75 @@ export default function AppsPage() {
               />
             </div>
 
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-muted-foreground">Published Agent</Label>
+                <SearchableResourceInput
+                  value={agentId}
+                  onChange={setAgentId}
+                  placeholder="Select published agent..."
+                  resources={publishedAgents.map((agent) => ({
+                    value: agent.id,
+                    label: agent.name,
+                    info: agent.slug,
+                  }))}
+                />
+              </div>
+
+              <div className="space-y-3">
+                <Label className="text-xs font-medium text-muted-foreground">Authentication</Label>
+                <div className="rounded-lg border border-border/60 divide-y divide-border/40">
+                  <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
+                    <span className="text-sm">Require authentication</span>
+                    <Checkbox
+                      checked={authEnabled}
+                      onCheckedChange={(checked) => setAuthEnabled(checked === true)}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
+                    <span className="text-sm">Password provider</span>
+                    <Checkbox
+                      checked={providerPassword}
+                      onCheckedChange={(checked) => setProviderPassword(checked === true)}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
+                    <span className="text-sm">Google provider</span>
+                    <Checkbox
+                      checked={providerGoogle}
+                      onCheckedChange={(checked) => setProviderGoogle(checked === true)}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {error && (
+                <p className="text-sm text-destructive">{error}</p>
+              )}
+            </div>
+
             <div className="space-y-2">
-              <Label htmlFor="create-app-slug" className="text-xs font-medium text-muted-foreground">
-                Slug
+              <Label className="text-xs font-medium text-muted-foreground">
+                Frontend Template
               </Label>
-              <Input
-                id="create-app-slug"
-                value={slug}
-                onChange={(e) => setSlug(e.target.value)}
-                placeholder="support-assistant"
-                className="h-9 font-mono text-sm"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-muted-foreground">Published Agent</Label>
-              <SearchableResourceInput
-                value={agentId}
-                onChange={setAgentId}
-                placeholder="Select published agent..."
-                resources={publishedAgents.map((agent) => ({
-                  value: agent.id,
-                  label: agent.name,
-                  info: agent.slug,
-                }))}
-              />
-            </div>
-
-            <div className="space-y-3">
-              <Label className="text-xs font-medium text-muted-foreground">Authentication</Label>
-              <div className="rounded-lg border border-border/60 divide-y divide-border/40">
-                <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
-                  <span className="text-sm">Require authentication</span>
-                  <Checkbox
-                    checked={authEnabled}
-                    onCheckedChange={(checked) => setAuthEnabled(checked === true)}
-                  />
-                </label>
-                <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
-                  <span className="text-sm">Password provider</span>
-                  <Checkbox
-                    checked={providerPassword}
-                    onCheckedChange={(checked) => setProviderPassword(checked === true)}
-                  />
-                </label>
-                <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
-                  <span className="text-sm">Google provider</span>
-                  <Checkbox
-                    checked={providerGoogle}
-                    onCheckedChange={(checked) => setProviderGoogle(checked === true)}
-                  />
-                </label>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {templates.map((template) => {
+                  const active = template.key === templateKey;
+                  return (
+                    <button
+                      key={template.key}
+                      type="button"
+                      onClick={() => setTemplateKey(template.key)}
+                      className={`rounded-lg border p-3 text-left transition-colors ${
+                        active ? "border-primary bg-primary/5" : "border-border/70 hover:border-border"
+                      }`}
+                    >
+                      <div className="mb-1.5 text-sm font-semibold">{template.name}</div>
+                      <div className="text-xs text-muted-foreground">{template.description}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
-
-            {error && (
-              <p className="text-sm text-destructive">{error}</p>
-            )}
           </div>
 
           <DialogFooter>
@@ -477,7 +504,7 @@ export default function AppsPage() {
             </Button>
             <Button
               onClick={handleCreate}
-              disabled={isCreating || isLoading || publishedAgents.length === 0}
+              disabled={isCreating || isLoading || publishedAgents.length === 0 || !templateKey}
             >
               {isCreating && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
               Create App

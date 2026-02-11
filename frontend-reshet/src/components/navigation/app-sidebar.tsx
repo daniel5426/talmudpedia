@@ -158,13 +158,7 @@ const data = {
       title: "Apps",
       url: "/admin/apps",
       icon: Globe,
-      items: [
-        {
-          title: "All Apps",
-          url: "/admin/apps",
-          icon: Globe,
-        },
-      ],
+      items: [],
     },
   ]
 };
@@ -195,7 +189,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     return rawItems.map(item => ({
       ...item,
       // if the item has subitems, don't mark the parent as active
-      isActive: (item.items && item.items.length > 0) ? false : pathname === item.url,
+      isActive: (item.items && item.items.length > 0)
+        ? false
+        : item.url === "/admin/apps"
+          ? pathname?.startsWith("/admin/apps")
+          : pathname === item.url,
       items: item.items?.map(sub => {
         const isPlayground = sub.title === "Playground";
         const isApps = sub.url === "/admin/apps";

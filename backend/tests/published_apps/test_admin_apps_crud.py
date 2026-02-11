@@ -13,8 +13,8 @@ async def test_admin_apps_crud(client, db_session):
         headers=headers,
         json={
             "name": "Support App",
-            "slug": "support-app",
             "agent_id": str(agent.id),
+            "template_key": "chat-classic",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },
@@ -22,6 +22,7 @@ async def test_admin_apps_crud(client, db_session):
     assert create_resp.status_code == 200
     created = create_resp.json()
     assert created["slug"] == "support-app"
+    assert created["template_key"] == "chat-classic"
     app_id = created["id"]
 
     list_resp = await client.get("/admin/apps", headers=headers)

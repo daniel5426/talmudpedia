@@ -2,6 +2,7 @@ import { httpClient } from "./http";
 
 export type PublishedAppStatus = "draft" | "published" | "paused" | "archived";
 export type PublishedAppAuthProvider = "password" | "google";
+export type PublishedAppRevisionKind = "draft" | "published";
 
 export interface PublishedApp {
   id: string;
@@ -12,6 +13,9 @@ export interface PublishedApp {
   status: PublishedAppStatus;
   auth_enabled: boolean;
   auth_providers: PublishedAppAuthProvider[];
+  template_key: string;
+  current_draft_revision_id?: string | null;
+  current_published_revision_id?: string | null;
   published_url?: string | null;
   created_by?: string | null;
   created_at: string;
@@ -19,10 +23,56 @@ export interface PublishedApp {
   published_at?: string | null;
 }
 
+export interface PublishedAppTemplate {
+  key: string;
+  name: string;
+  description: string;
+  thumbnail: string;
+  tags: string[];
+  entry_file: string;
+  style_tokens: Record<string, string>;
+}
+
+export interface PublishedAppRevision {
+  id: string;
+  published_app_id: string;
+  kind: PublishedAppRevisionKind;
+  template_key: string;
+  entry_file: string;
+  files: Record<string, string>;
+  compiled_bundle?: string | null;
+  bundle_hash?: string | null;
+  source_revision_id?: string | null;
+  created_by?: string | null;
+  created_at: string;
+}
+
+export interface RevisionConflictResponse {
+  code: "REVISION_CONFLICT";
+  latest_revision_id: string;
+  latest_updated_at: string;
+  message: string;
+}
+
+export type BuilderPatchOp =
+  | { op: "upsert_file"; path: string; content: string }
+  | { op: "delete_file"; path: string }
+  | { op: "rename_file"; from_path: string; to_path: string }
+  | { op: "set_entry_file"; entry_file: string };
+
+export interface BuilderStateResponse {
+  app: PublishedApp;
+  templates: PublishedAppTemplate[];
+  current_draft_revision?: PublishedAppRevision | null;
+  current_published_revision?: PublishedAppRevision | null;
+  preview_token?: string | null;
+}
+
 export interface CreatePublishedAppRequest {
   name: string;
-  slug: string;
+  slug?: string;
   agent_id: string;
+  template_key: string;
   auth_enabled?: boolean;
   auth_providers?: PublishedAppAuthProvider[];
 }
@@ -36,13 +86,55 @@ export interface UpdatePublishedAppRequest {
   status?: PublishedAppStatus;
 }
 
+export interface CreateBuilderRevisionRequest {
+  base_revision_id?: string;
+  operations?: BuilderPatchOp[];
+  files?: Record<string, string>;
+  entry_file?: string;
+}
+
+export interface BuilderValidationResponse {
+  ok: boolean;
+  entry_file: string;
+  file_count: number;
+  diagnostics: Array<{ path?: string; message: string }>;
+}
+
+export interface BuilderChatEvent {
+  event?: string;
+  type?: string;
+  stage?: string;
+  request_id?: string;
+  diagnostics?: Array<{ path?: string; message: string }>;
+  data?: {
+    content?: string;
+    operations?: BuilderPatchOp[];
+    base_revision_id?: string;
+    summary?: string;
+    rationale?: string;
+    assumptions?: string[];
+    tool?: string;
+    status?: string;
+    result?: Record<string, unknown>;
+    iteration?: number;
+  };
+}
+
 export const publishedAppsService = {
   async list(): Promise<PublishedApp[]> {
     return httpClient.get<PublishedApp[]>("/admin/apps");
   },
 
+  async listTemplates(): Promise<PublishedAppTemplate[]> {
+    return httpClient.get<PublishedAppTemplate[]>("/admin/apps/templates");
+  },
+
   async get(appId: string): Promise<PublishedApp> {
     return httpClient.get<PublishedApp>(`/admin/apps/${appId}`);
+  },
+
+  async getBuilderState(appId: string): Promise<BuilderStateResponse> {
+    return httpClient.get<BuilderStateResponse>(`/admin/apps/${appId}/builder/state`);
   },
 
   async create(payload: CreatePublishedAppRequest): Promise<PublishedApp> {
@@ -67,5 +159,29 @@ export const publishedAppsService = {
 
   async runtimePreview(appId: string): Promise<{ app_id: string; slug: string; status: string; runtime_url: string }> {
     return httpClient.get<{ app_id: string; slug: string; status: string; runtime_url: string }>(`/admin/apps/${appId}/runtime-preview`);
+  },
+
+  async createRevision(appId: string, payload: CreateBuilderRevisionRequest): Promise<PublishedAppRevision> {
+    return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/builder/revisions`, payload);
+  },
+
+  async validateRevision(appId: string, payload: CreateBuilderRevisionRequest): Promise<BuilderValidationResponse> {
+    return httpClient.post<BuilderValidationResponse>(`/admin/apps/${appId}/builder/validate`, payload);
+  },
+
+  async resetTemplate(appId: string, templateKey: string): Promise<PublishedAppRevision> {
+    return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/builder/template-reset`, {
+      template_key: templateKey,
+    });
+  },
+
+  async streamBuilderChat(appId: string, payload: { input: string; base_revision_id?: string }): Promise<Response> {
+    return httpClient.requestRaw(`/admin/apps/${appId}/builder/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
   },
 };

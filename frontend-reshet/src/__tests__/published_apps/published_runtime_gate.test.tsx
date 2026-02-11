@@ -10,6 +10,10 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: replaceMock }),
 }));
 
+jest.mock("@/lib/react-artifacts/compiler", () => ({
+  compileReactArtifactProject: jest.fn(async () => ({ ok: true, output: "console.log('ok')" })),
+}));
+
 jest.mock("@/services", () => ({
   publishedRuntimeService: {
     getConfig: jest.fn(),

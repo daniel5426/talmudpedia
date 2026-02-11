@@ -12,6 +12,7 @@ interface CodeEditorProps {
     height?: string | number
     className?: string
     readOnly?: boolean
+    framed?: boolean
 }
 
 export function CodeEditor({
@@ -21,6 +22,7 @@ export function CodeEditor({
     height = "100%",
     className,
     readOnly = false,
+    framed = true,
 }: CodeEditorProps) {
     const { resolvedTheme } = useTheme()
     const [mounted, setMounted] = useState(false)
@@ -40,7 +42,7 @@ export function CodeEditor({
     if (!mounted) return <div className={cn("bg-muted/10", className)} style={{ height }} />
 
     return (
-        <div className={cn("relative overflow-hidden rounded-md border", className)}>
+        <div className={cn("relative overflow-hidden", framed && "rounded-md border", className)}>
             <Editor
                 height={height}
                 language={language}

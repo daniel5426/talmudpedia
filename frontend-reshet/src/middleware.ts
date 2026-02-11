@@ -7,6 +7,7 @@ function shouldSkipPath(pathname: string): boolean {
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api") ||
     pathname.startsWith("/favicon.ico") ||
+    pathname.startsWith("/published") ||
     pathname.startsWith("/admin") ||
     pathname.startsWith("/auth") ||
     pathname.startsWith("/canva")

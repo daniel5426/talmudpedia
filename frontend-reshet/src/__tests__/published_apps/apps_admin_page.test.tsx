@@ -3,15 +3,26 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import AppsPage from "@/app/admin/apps/page";
 import { agentService, publishedAppsService } from "@/services";
 
+const pushMock = jest.fn();
+
 jest.mock("@/services", () => ({
   agentService: {
     listAgents: jest.fn(),
   },
   publishedAppsService: {
     list: jest.fn(),
+    listTemplates: jest.fn(),
     create: jest.fn(),
     remove: jest.fn(),
   },
+}));
+
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock }),
+}));
+
+jest.mock("@/components/direction-provider", () => ({
+  useDirection: () => ({ direction: "ltr" }),
 }));
 
 jest.mock("next/link", () => {
@@ -49,6 +60,26 @@ describe("Apps admin page", () => {
       ],
       total: 1,
     });
+    (publishedAppsService.listTemplates as jest.Mock).mockResolvedValue([
+      {
+        key: "chat-classic",
+        name: "Classic Dialogue",
+        description: "Classic",
+        thumbnail: "classic",
+        tags: ["chat"],
+        entry_file: "src/main.tsx",
+        style_tokens: {},
+      },
+      {
+        key: "chat-neon",
+        name: "Neon Console",
+        description: "Neon",
+        thumbnail: "neon",
+        tags: ["chat"],
+        entry_file: "src/main.tsx",
+        style_tokens: {},
+      },
+    ]);
     (publishedAppsService.create as jest.Mock).mockResolvedValue({
       id: "app-new",
       tenant_id: "tenant-1",
@@ -56,6 +87,7 @@ describe("Apps admin page", () => {
       name: "New App",
       slug: "new-app",
       status: "draft",
+      template_key: "chat-neon",
       auth_enabled: true,
       auth_providers: ["password"],
       created_at: new Date().toISOString(),
@@ -73,18 +105,20 @@ describe("Apps admin page", () => {
     await waitFor(() => expect(publishedAppsService.list).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByText("Loading apps...")).not.toBeInTheDocument());
 
+    fireEvent.click(screen.getByRole("button", { name: /add new/i }));
     fireEvent.change(screen.getByLabelText("App Name"), { target: { value: "New App" } });
-    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "new-app" } });
+    fireEvent.click(screen.getByRole("button", { name: /neon console/i }));
     fireEvent.click(screen.getByRole("button", { name: "Create App" }));
 
     await waitFor(() => {
       expect(publishedAppsService.create).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "New App",
-          slug: "new-app",
+          template_key: "chat-neon",
           agent_id: "agent-1",
         })
       );
     });
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/admin/apps/app-new"));
   });
 });

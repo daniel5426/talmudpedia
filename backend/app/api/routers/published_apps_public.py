@@ -15,11 +15,12 @@ from app.agent.execution.adapter import StreamAdapter
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
 from app.api.dependencies import (
+    get_current_published_app_preview_principal,
     get_current_published_app_principal,
     get_optional_published_app_principal,
 )
 from app.db.postgres.models.chat import Chat, Message, MessageRole
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppStatus
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision, PublishedAppStatus
 from app.db.postgres.session import get_db
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 
@@ -37,6 +38,18 @@ class PublicAppConfigResponse(BaseModel):
     auth_enabled: bool
     auth_providers: List[str]
     published_url: Optional[str] = None
+    has_custom_ui: bool = False
+    published_revision_id: Optional[str] = None
+    ui_runtime_mode: str = "legacy_template"
+
+
+class PublicAppUIResponse(BaseModel):
+    app_id: str
+    revision_id: str
+    template_key: str
+    entry_file: str
+    files: Dict[str, str]
+    compiled_bundle: Optional[str] = None
 
 
 class PublicAuthRequest(BaseModel):
@@ -71,6 +84,9 @@ def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
         auth_enabled=bool(app.auth_enabled),
         auth_providers=list(app.auth_providers or []),
         published_url=app.published_url,
+        has_custom_ui=bool(app.current_published_revision_id),
+        published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
+        ui_runtime_mode="custom_bundle" if app.current_published_revision_id else "legacy_template",
     )
 
 
@@ -87,6 +103,23 @@ async def _assert_published(db: AsyncSession, app_slug: str) -> PublishedApp:
     if app.status != PublishedAppStatus.published:
         raise HTTPException(status_code=404, detail="Published app is unavailable")
     return app
+
+
+async def _get_published_ui_revision(db: AsyncSession, app: PublishedApp) -> PublishedAppRevision:
+    if not app.current_published_revision_id:
+        raise HTTPException(status_code=404, detail="Published app UI snapshot not found")
+    result = await db.execute(
+        select(PublishedAppRevision).where(
+            and_(
+                PublishedAppRevision.id == app.current_published_revision_id,
+                PublishedAppRevision.published_app_id == app.id,
+            )
+        ).limit(1)
+    )
+    revision = result.scalar_one_or_none()
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Published app UI snapshot not found")
+    return revision
 
 
 def _normalize_return_to(request: Request, value: Optional[str], app_slug: str) -> str:
@@ -146,6 +179,60 @@ async def get_app_config(
 ):
     app = await _get_app_by_slug(db, app_slug)
     return _to_public_config(app)
+
+
+@router.get("/{app_slug}/ui", response_model=PublicAppUIResponse)
+async def get_published_ui(
+    app_slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    app = await _assert_published(db, app_slug)
+    revision = await _get_published_ui_revision(db, app)
+    return PublicAppUIResponse(
+        app_id=str(app.id),
+        revision_id=str(revision.id),
+        template_key=revision.template_key,
+        entry_file=revision.entry_file,
+        files=dict(revision.files or {}),
+        compiled_bundle=revision.compiled_bundle,
+    )
+
+
+@router.get("/preview/ui/{revision_id}", response_model=PublicAppUIResponse)
+async def get_preview_ui(
+    revision_id: UUID,
+    principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    app_id = UUID(principal["app_id"])
+    if str(principal["revision_id"]) != str(revision_id):
+        raise HTTPException(status_code=403, detail="Preview token does not match requested revision")
+
+    app_result = await db.execute(select(PublishedApp).where(PublishedApp.id == app_id).limit(1))
+    app = app_result.scalar_one_or_none()
+    if app is None:
+        raise HTTPException(status_code=404, detail="Published app not found")
+
+    revision_result = await db.execute(
+        select(PublishedAppRevision).where(
+            and_(
+                PublishedAppRevision.id == revision_id,
+                PublishedAppRevision.published_app_id == app.id,
+            )
+        ).limit(1)
+    )
+    revision = revision_result.scalar_one_or_none()
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Preview revision not found")
+
+    return PublicAppUIResponse(
+        app_id=str(app.id),
+        revision_id=str(revision.id),
+        template_key=revision.template_key,
+        entry_file=revision.entry_file,
+        files=dict(revision.files or {}),
+        compiled_bundle=revision.compiled_bundle,
+    )
 
 
 @router.post("/{app_slug}/auth/signup")

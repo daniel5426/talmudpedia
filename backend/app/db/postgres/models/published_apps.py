@@ -20,6 +20,11 @@ class PublishedAppStatus(str, enum.Enum):
     archived = "archived"
 
 
+class PublishedAppRevisionKind(str, enum.Enum):
+    draft = "draft"
+    published = "published"
+
+
 class PublishedAppUserMembershipStatus(str, enum.Enum):
     active = "active"
     blocked = "blocked"
@@ -43,6 +48,9 @@ class PublishedApp(Base):
     auth_enabled = Column(Boolean, nullable=False, default=True)
     auth_providers = Column(JSONB, nullable=False, default=lambda: ["password"])
     published_url = Column(String, nullable=True)
+    template_key = Column(String, nullable=False, default="chat-classic")
+    current_draft_revision_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    current_published_revision_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -54,6 +62,7 @@ class PublishedApp(Base):
     creator = relationship("User")
     memberships = relationship("PublishedAppUserMembership", back_populates="published_app", cascade="all, delete-orphan")
     sessions = relationship("PublishedAppSession", back_populates="published_app", cascade="all, delete-orphan")
+    revisions = relationship("PublishedAppRevision", back_populates="published_app", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_published_apps_tenant_name"),
@@ -104,3 +113,36 @@ class PublishedAppSession(Base):
     __table_args__ = (
         Index("ix_published_app_sessions_app_user", "published_app_id", "user_id"),
     )
+
+
+class PublishedAppRevision(Base):
+    __tablename__ = "published_app_revisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind = Column(
+        SQLEnum(PublishedAppRevisionKind, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppRevisionKind.draft,
+    )
+    template_key = Column(String, nullable=False, default="chat-classic")
+    entry_file = Column(String, nullable=False, default="src/main.tsx")
+    files = Column(JSONB, nullable=False, default=dict)
+    compiled_bundle = Column(String, nullable=True)
+    bundle_hash = Column(String, nullable=True, index=True)
+    source_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="revisions")
+    creator = relationship("User")

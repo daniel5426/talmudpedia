@@ -1,9 +1,10 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-02-10
+Last Updated: 2026-02-11
 
 ## Scope of the feature
 - Admin control plane CRUD and publish lifecycle for tenant published apps.
+- Builder revisions/templates/snapshot publishing flow for apps.
 - Public runtime app resolution/config retrieval.
 - End-user auth flows (email/password, Google OAuth callback path).
 - Public chat streaming and chat persistence scoping by `published_app_id`.
@@ -11,6 +12,7 @@ Last Updated: 2026-02-10
 ## Test files present
 - `backend/tests/published_apps/test_admin_apps_crud.py`
 - `backend/tests/published_apps/test_admin_apps_publish_rules.py`
+- `backend/tests/published_apps/test_builder_revisions.py`
 - `backend/tests/published_apps/test_public_app_resolve_and_config.py`
 - `backend/tests/published_apps/test_public_auth_email_password.py`
 - `backend/tests/published_apps/test_public_auth_google_oauth.py`
@@ -18,8 +20,22 @@ Last Updated: 2026-02-10
 
 ## Key scenarios covered
 - Tenant admin can create/list/update/delete apps.
+- Create accepts `template_key`, auto-generates slug, and seeds initial draft revision.
 - Only published agents can be attached/published.
 - Publish and unpublish lifecycle updates URL/status.
+- Builder state returns app/templates/current draft/current published revision snapshot info.
+- Revision writes enforce optimistic concurrency with `REVISION_CONFLICT` 409 contract.
+- Builder revision writes enforce patch policy guardrails (path normalization, root/extension restrictions, operation and size limits).
+- Builder revision writes reject invalid rename operations (missing source/duplicate target).
+- Builder revision writes reject oversized payloads by file-byte limits.
+- Builder revision writes enforce server-side compile-style validation rules (import allowlist, no network/absolute imports, local import resolution).
+- Template reset overwrites draft from selected template baseline.
+- `chat-grid` template metadata resolves to premium LayoutShell-style identity in templates catalog.
+- Template reset to `chat-grid` returns multi-file shell layout assets (`LayoutShell`, `ChatPane`, `SourceListPane`, `SourceViewerPane`).
+- Builder validate endpoint (`POST /admin/apps/{app_id}/builder/validate`) returns compile diagnostics for dry-run checks.
+- Builder chat stream emits richer envelopes with `stage` and `request_id`.
+- Publish clones draft into immutable published revision snapshot.
+- Public `/public/apps/{slug}/ui` only serves published snapshot payload.
 - Hostname resolve and app config retrieval for public runtime.
 - Signup/login/logout and auth-me using published app session tokens.
 - Google OAuth start and callback issuance path with tenant credentials.
@@ -27,11 +43,12 @@ Last Updated: 2026-02-10
 - Public mode chat is ephemeral and does not persist chat rows.
 
 ## Last run command + date/time + result
-- Command: `pytest backend/tests/published_apps -q`
-- Date: 2026-02-10 14:39 UTC
-- Result: PASS (11 passed)
+- Command: `pytest backend/tests/published_apps/test_builder_revisions.py -q`
+- Date: 2026-02-11 21:26 UTC
+- Result: PASS (7 passed)
+- Notes: targeted run after implementing richer builder stream envelopes and additional builder policy negative tests.
 
 ## Known gaps or follow-ups
 - Add negative tests for cross-app token replay attempts.
 - Add coverage for revoked-session rejection on chat endpoints.
-- Add non-ASCII or very-long message streaming persistence tests.
+- Add preview-token invalid-claim and expiration-path tests for builder preview UI endpoints.

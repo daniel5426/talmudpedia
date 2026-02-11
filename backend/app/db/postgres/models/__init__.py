@@ -36,6 +36,8 @@ from .orchestration import (
 )
 from .published_apps import (
     PublishedApp,
+    PublishedAppRevision,
+    PublishedAppRevisionKind,
     PublishedAppSession,
     PublishedAppStatus,
     PublishedAppUserMembership,

@@ -89,9 +89,16 @@ export type {
 
 export type {
   PublishedApp,
+  PublishedAppTemplate,
+  PublishedAppRevision,
   PublishedAppStatus,
   PublishedAppAuthProvider,
+  BuilderPatchOp,
+  BuilderStateResponse,
+  BuilderValidationResponse,
+  RevisionConflictResponse,
   CreatePublishedAppRequest,
+  CreateBuilderRevisionRequest,
   UpdatePublishedAppRequest,
 } from "./published-apps";
 
@@ -102,6 +109,7 @@ export type {
   PublicAuthResponse,
   PublicChatHistory,
   PublicChatItem,
+  PublishedRuntimeUI,
 } from "./published-runtime";
 
 export type {

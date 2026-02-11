@@ -4,13 +4,14 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/navigation/app-sidebar"
 import { useDirection } from "@/components/direction-provider"
 import { useAuthStore } from "@/lib/store/useAuthStore"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { direction } = useDirection()
   const { user, isAuthenticated } = useAuthStore()
   const router = useRouter()
+  const pathname = usePathname()
   const [isAuthorized, setIsAuthorized] = useState(false)
 
   const [isHydrated, setIsHydrated] = useState(false)
@@ -62,6 +63,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (!isAuthorized) {
     return null // Or a loading spinner
+  }
+
+  const isAppsBuilderRoute =
+    !!pathname &&
+    pathname.startsWith("/admin/apps/") &&
+    pathname !== "/admin/apps";
+
+  if (isAppsBuilderRoute) {
+    return (
+      <SidebarProvider className="h-full" dir={direction}>
+        <div className="flex h-full w-full min-w-0 overflow-hidden bg-background">
+          {children}
+        </div>
+      </SidebarProvider>
+    )
   }
 
   return (
