@@ -319,6 +319,8 @@ backend/app/services/registry_seeding.py
 backend/app/services/builtin_tools.py
 backend/app/services/web_search.py
 backend/app/services/workload_identity_service.py
+backend/app/services/apps_builder_dependency_policy.py
+backend/app/services/published_app_bundle_storage.py
 backend/app/services/delegation_service.py
 backend/app/services/token_broker_service.py
 backend/app/services/orchestration_policy_service.py
@@ -338,6 +340,8 @@ backend/app/services/stt
 backend/app/services/stt/google.py
 backend/app/services/stt/factory.py
 backend/app/services/stt/base.py
+backend/app/templates
+backend/app/templates/published_apps
 backend/frontend
 backend/frontend/package-lock.json
 backend/frontend/package.json
@@ -441,7 +445,14 @@ backend/tests/tool_execution/test_state.md
 backend/tests/tools_guardrails
 backend/tests/tools_guardrails/test_tools_api_guardrails.py
 backend/tests/tools_guardrails/test_tool_tenant_scoping.py
+backend/tests/tools_guardrails/test_tools_runtime_guardrails.py
 backend/tests/tools_guardrails/test_state.md
+backend/tests/legacy_chat_bootstrap
+backend/tests/legacy_chat_bootstrap/test_lazy_agent_initialization.py
+backend/tests/legacy_chat_bootstrap/test_state.md
+backend/tests/agent_resume_authorization
+backend/tests/agent_resume_authorization/test_resume_authorization.py
+backend/tests/agent_resume_authorization/test_state.md
 backend/tests/settings_hub
 backend/tests/settings_hub/test_tenant_profile_update.py
 backend/tests/settings_hub/test_tenant_defaults_settings.py
@@ -601,6 +612,8 @@ backend/alembic/versions/7c9f1c2d3e4f_add_cost_columns_to_model_provider_binding
 backend/alembic/versions/e6f1a9b4c2d0_add_orchestration_kernel_tables_and_lineage.py
 backend/alembic/versions/b2f4c6d8e9a1_add_builtin_tool_metadata.py
 backend/alembic/versions/c4d5e6f7a8b9_add_published_app_revisions_builder_v1.py
+backend/alembic/versions/d2e3f4a5b6c7_add_builder_conversation_turns.py
+backend/alembic/versions/e3f4a5b6c7d8_add_published_app_revision_build_fields.py
 backend/alembic/README
 backend/COMPLEX_TEXT_SUPPORT.md
 backend/Procfile
@@ -624,6 +637,12 @@ backend/tests/tools_guardrails/test_tools_api_guardrails.py
 backend/tests/tools_guardrails/test_tool_tenant_scoping.py
 backend/tests/tools_guardrails/test_tools_runtime_guardrails.py
 backend/tests/tools_guardrails/test_state.md
+backend/tests/legacy_chat_bootstrap
+backend/tests/legacy_chat_bootstrap/test_lazy_agent_initialization.py
+backend/tests/legacy_chat_bootstrap/test_state.md
+backend/tests/agent_resume_authorization
+backend/tests/agent_resume_authorization/test_resume_authorization.py
+backend/tests/agent_resume_authorization/test_state.md
 backend/tests_legacy
 backend/tests_legacy/test_agents_api.py
 backend/tests_legacy/test_pinecone_openai_rag.py

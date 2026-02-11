@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TextDecoder } from "util";
 
 import { AppsBuilderWorkspace } from "@/features/apps-builder/workspace/AppsBuilderWorkspace";
-import { publishedAppsService } from "@/services";
+import { publishedAppsService, publishedRuntimeService } from "@/services";
 
 const setOpenMock = jest.fn();
 
@@ -12,10 +12,14 @@ const setOpenMock = jest.fn();
 jest.mock("@/services", () => ({
   publishedAppsService: {
     getBuilderState: jest.fn(),
+    getRevisionBuildStatus: jest.fn(),
     createRevision: jest.fn(),
     publish: jest.fn(),
     resetTemplate: jest.fn(),
     streamBuilderChat: jest.fn(),
+  },
+  publishedRuntimeService: {
+    getPreviewRuntime: jest.fn(),
   },
 }));
 
@@ -75,6 +79,8 @@ const makeState = () => ({
     kind: "draft",
     template_key: "chat-classic",
     entry_file: "src/main.tsx",
+    build_status: "succeeded",
+    build_seq: 1,
     files: {
       "src/main.tsx": "import './App';",
       "src/App.tsx": "export function App() { return <div>Hello</div>; }",
@@ -88,12 +94,30 @@ const makeState = () => ({
 describe("AppsBuilderWorkspace", () => {
   beforeEach(() => {
     (publishedAppsService.getBuilderState as jest.Mock).mockResolvedValue(makeState());
+    (publishedAppsService.getRevisionBuildStatus as jest.Mock).mockResolvedValue({
+      revision_id: "rev-1",
+      build_status: "succeeded",
+      build_seq: 1,
+      build_error: null,
+      template_runtime: "vite_static",
+    });
+    (publishedRuntimeService.getPreviewRuntime as jest.Mock).mockResolvedValue({
+      app_id: "app-1",
+      slug: "builder-app",
+      revision_id: "rev-1",
+      runtime_mode: "vite_static",
+      preview_url: "https://preview.local/rev-1/",
+      asset_base_url: "https://preview.local/rev-1/",
+      api_base_path: "/api/py",
+    });
     (publishedAppsService.createRevision as jest.Mock).mockResolvedValue({
       id: "rev-2",
       published_app_id: "app-1",
       kind: "draft",
       template_key: "chat-classic",
       entry_file: "src/main.tsx",
+      build_status: "queued",
+      build_seq: 2,
       files: {
         "src/main.tsx": "import './App';",
         "src/App.tsx": "export function App() { return <div>Updated</div>; }",
@@ -112,6 +136,8 @@ describe("AppsBuilderWorkspace", () => {
       kind: "draft",
       template_key: "chat-neon",
       entry_file: "src/main.tsx",
+      build_status: "queued",
+      build_seq: 3,
       files: makeState().current_draft_revision.files,
       source_revision_id: "rev-1",
       created_at: new Date().toISOString(),

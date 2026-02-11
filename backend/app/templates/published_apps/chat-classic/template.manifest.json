@@ -1,0 +1,22 @@
+{
+  "key": "chat-classic",
+  "name": "Classic Dialogue",
+  "description": "Balanced chat-first layout with subtle panels.",
+  "thumbnail": "classic",
+  "tags": [
+    "chat",
+    "neutral"
+  ],
+  "entry_file": "src/main.tsx",
+  "style_tokens": {
+    "fontDisplay": "'IBM Plex Serif', serif",
+    "fontBody": "'IBM Plex Sans', sans-serif",
+    "bg": "#f4f5f7",
+    "panel": "#ffffff",
+    "border": "#dde2ea",
+    "accent": "#0f6cff",
+    "accentSoft": "#dce8ff",
+    "text": "#141c2b",
+    "muted": "#5a6b85"
+  }
+}

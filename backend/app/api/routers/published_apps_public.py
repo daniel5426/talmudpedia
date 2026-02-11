@@ -6,7 +6,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,12 @@ from app.api.dependencies import (
 from app.db.postgres.models.chat import Chat, Message, MessageRole
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision, PublishedAppStatus
 from app.db.postgres.session import get_db
+from app.services.published_app_bundle_storage import (
+    PublishedAppBundleAssetNotFound,
+    PublishedAppBundleStorage,
+    PublishedAppBundleStorageError,
+    PublishedAppBundleStorageNotConfigured,
+)
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 
 
@@ -52,6 +58,26 @@ class PublicAppUIResponse(BaseModel):
     compiled_bundle: Optional[str] = None
 
 
+class PublicAppRuntimeResponse(BaseModel):
+    app_id: str
+    slug: str
+    revision_id: str
+    runtime_mode: str
+    published_url: Optional[str] = None
+    asset_base_url: Optional[str] = None
+    api_base_path: str = "/api/py"
+
+
+class PreviewAppRuntimeResponse(BaseModel):
+    app_id: str
+    slug: str
+    revision_id: str
+    runtime_mode: str
+    preview_url: str
+    asset_base_url: str
+    api_base_path: str = "/api/py"
+
+
 class PublicAuthRequest(BaseModel):
     email: EmailStr
     password: str
@@ -71,6 +97,11 @@ def _is_enabled(flag_name: str, default: str = "1") -> bool:
 
 def _apps_base_domain() -> str:
     return os.getenv("APPS_BASE_DOMAIN", "apps.localhost")
+
+
+def _apps_runtime_mode() -> str:
+    value = (os.getenv("APPS_RUNTIME_MODE") or "legacy").strip().lower()
+    return value if value in {"legacy", "static"} else "legacy"
 
 
 def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
@@ -120,6 +151,35 @@ async def _get_published_ui_revision(db: AsyncSession, app: PublishedApp) -> Pub
     if revision is None:
         raise HTTPException(status_code=404, detail="Published app UI snapshot not found")
     return revision
+
+
+async def _get_preview_revision_for_principal(
+    *,
+    db: AsyncSession,
+    revision_id: UUID,
+    principal: Dict[str, Any],
+) -> tuple[PublishedApp, PublishedAppRevision]:
+    app_id = UUID(principal["app_id"])
+    if str(principal["revision_id"]) != str(revision_id):
+        raise HTTPException(status_code=403, detail="Preview token does not match requested revision")
+
+    app_result = await db.execute(select(PublishedApp).where(PublishedApp.id == app_id).limit(1))
+    app = app_result.scalar_one_or_none()
+    if app is None:
+        raise HTTPException(status_code=404, detail="Published app not found")
+
+    revision_result = await db.execute(
+        select(PublishedAppRevision).where(
+            and_(
+                PublishedAppRevision.id == revision_id,
+                PublishedAppRevision.published_app_id == app.id,
+            )
+        ).limit(1)
+    )
+    revision = revision_result.scalar_one_or_none()
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Preview revision not found")
+    return app, revision
 
 
 def _normalize_return_to(request: Request, value: Optional[str], app_slug: str) -> str:
@@ -181,11 +241,39 @@ async def get_app_config(
     return _to_public_config(app)
 
 
+@router.get("/{app_slug}/runtime", response_model=PublicAppRuntimeResponse)
+async def get_published_runtime(
+    app_slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    app = await _assert_published(db, app_slug)
+    revision = await _get_published_ui_revision(db, app)
+    published_url = app.published_url
+    return PublicAppRuntimeResponse(
+        app_id=str(app.id),
+        slug=app.slug,
+        revision_id=str(revision.id),
+        runtime_mode=revision.template_runtime or "vite_static",
+        published_url=published_url,
+        asset_base_url=published_url,
+        api_base_path="/api/py",
+    )
+
+
 @router.get("/{app_slug}/ui", response_model=PublicAppUIResponse)
 async def get_published_ui(
     app_slug: str,
     db: AsyncSession = Depends(get_db),
 ):
+    if _apps_runtime_mode() == "static":
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "UI_SOURCE_MODE_REMOVED",
+                "message": "UI source mode is disabled in static runtime mode",
+            },
+        )
+
     app = await _assert_published(db, app_slug)
     revision = await _get_published_ui_revision(db, app)
     return PublicAppUIResponse(
@@ -204,26 +292,11 @@ async def get_preview_ui(
     principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    app_id = UUID(principal["app_id"])
-    if str(principal["revision_id"]) != str(revision_id):
-        raise HTTPException(status_code=403, detail="Preview token does not match requested revision")
-
-    app_result = await db.execute(select(PublishedApp).where(PublishedApp.id == app_id).limit(1))
-    app = app_result.scalar_one_or_none()
-    if app is None:
-        raise HTTPException(status_code=404, detail="Published app not found")
-
-    revision_result = await db.execute(
-        select(PublishedAppRevision).where(
-            and_(
-                PublishedAppRevision.id == revision_id,
-                PublishedAppRevision.published_app_id == app.id,
-            )
-        ).limit(1)
+    app, revision = await _get_preview_revision_for_principal(
+        db=db,
+        revision_id=revision_id,
+        principal=principal,
     )
-    revision = revision_result.scalar_one_or_none()
-    if revision is None:
-        raise HTTPException(status_code=404, detail="Preview revision not found")
 
     return PublicAppUIResponse(
         app_id=str(app.id),
@@ -232,6 +305,70 @@ async def get_preview_ui(
         entry_file=revision.entry_file,
         files=dict(revision.files or {}),
         compiled_bundle=revision.compiled_bundle,
+    )
+
+
+@router.get("/preview/revisions/{revision_id}/assets/{asset_path:path}")
+async def get_preview_asset(
+    revision_id: UUID,
+    asset_path: str,
+    principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    _, revision = await _get_preview_revision_for_principal(
+        db=db,
+        revision_id=revision_id,
+        principal=principal,
+    )
+    dist_prefix = (revision.dist_storage_prefix or "").strip()
+    if not dist_prefix:
+        raise HTTPException(status_code=404, detail="Preview assets are unavailable for this revision")
+
+    try:
+        storage = PublishedAppBundleStorage.from_env()
+        payload, content_type = storage.read_asset_bytes(
+            dist_storage_prefix=dist_prefix,
+            asset_path=asset_path,
+        )
+    except PublishedAppBundleAssetNotFound:
+        raise HTTPException(status_code=404, detail="Preview asset not found")
+    except PublishedAppBundleStorageNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except PublishedAppBundleStorageError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load preview asset: {exc}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/preview/revisions/{revision_id}/runtime", response_model=PreviewAppRuntimeResponse)
+async def get_preview_runtime(
+    request: Request,
+    revision_id: UUID,
+    principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    app, revision = await _get_preview_revision_for_principal(
+        db=db,
+        revision_id=revision_id,
+        principal=principal,
+    )
+
+    base_url = str(request.base_url).rstrip("/")
+    preview_url = f"{base_url}/api/py/public/apps/preview/revisions/{revision_id}/assets/"
+    return PreviewAppRuntimeResponse(
+        app_id=str(app.id),
+        slug=app.slug,
+        revision_id=str(revision.id),
+        runtime_mode=revision.template_runtime or "vite_static",
+        preview_url=preview_url,
+        asset_base_url=preview_url,
+        api_base_path="/api/py",
     )
 
 

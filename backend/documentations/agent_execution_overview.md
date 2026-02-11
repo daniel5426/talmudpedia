@@ -1,6 +1,6 @@
 # Agent Execution State Overview
 
-Last Updated: 2026-02-06
+Last Updated: 2026-02-11
 
 This document outlines the architectural model of agent execution, following the **"Unified Engine, Divergent Observability"** pattern established in [ADR 001](./architecture/001_agent_execution_modes.md).
 
@@ -52,6 +52,11 @@ The `StreamAdapter` sits between the Engine and the API Response. It filters the
 1.  **Side-Effect Free Observation**: logging to the DB never awaits in the hot path.
 2.  **Auth-Scoped Enforcement**: Public tokens cannot request `DEBUG` mode.
 3.  **Stateless Hooks**: Frontend hooks (`useAgentExecution`) do not retain state between runs, preventing cross-run contamination.
+4.  **Run Ownership Checks on Resume**: `POST /agents/runs/{run_id}/resume` verifies tenant scope and user/principal ownership before resuming.
+
+## Legacy Chat Bootstrap
+- The legacy `/chat` router now initializes its agent lazily on first request instead of module import.
+- This prevents import-time external dependency calls (e.g., vector store bootstrapping) from breaking startup and test setup.
 
 ## Tool Loop Execution (Agent Node)
 - Agent nodes run an **iterative tool loop** when tools are configured: model → tool calls → tool execution → model, until no tool calls or `max_tool_iterations` is reached.

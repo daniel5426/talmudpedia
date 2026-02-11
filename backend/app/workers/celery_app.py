@@ -29,6 +29,7 @@ celery_app.conf.update(
         Queue("default", routing_key="default"),
         Queue("ingestion", routing_key="ingestion"),
         Queue("embedding", routing_key="embedding"),
+        Queue("apps_build", routing_key="apps_build"),
     ),
     
     task_default_queue="default",
@@ -38,6 +39,7 @@ celery_app.conf.update(
     task_routes={
         "app.workers.tasks.ingest_documents_task": {"queue": "ingestion"},
         "app.workers.tasks.embed_chunks_task": {"queue": "embedding"},
+        "app.workers.tasks.build_published_app_revision_task": {"queue": "apps_build"},
     },
     
     result_expires=86400,

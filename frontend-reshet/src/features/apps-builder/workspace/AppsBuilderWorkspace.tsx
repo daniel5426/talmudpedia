@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSidebar } from "@/components/ui/sidebar";
-import { publishedAppsService } from "@/services";
+import { publishedAppsService, publishedRuntimeService } from "@/services";
 import type {
   BuilderChatEvent,
   BuilderPatchOp,
@@ -44,6 +44,8 @@ type WorkspaceProps = {
   appId: string;
 };
 
+type RevisionBuildStatus = "queued" | "running" | "succeeded" | "failed";
+
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const { setOpen } = useSidebar();
   const [state, setState] = useState<BuilderStateResponse | null>(null);
@@ -52,6 +54,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [entryFile, setEntryFile] = useState("src/main.tsx");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [currentRevisionId, setCurrentRevisionId] = useState<string | null>(null);
+  const [buildStatus, setBuildStatus] = useState<RevisionBuildStatus | null>(null);
+  const [buildError, setBuildError] = useState<string | null>(null);
+  const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -71,6 +76,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setEntryFile(revision?.entry_file || "src/main.tsx");
     setSelectedFile(Object.keys(nextFiles).sort()[0] || null);
     setCurrentRevisionId(revision?.id || null);
+    setBuildStatus((revision?.build_status as RevisionBuildStatus | undefined) || null);
+    setBuildError(revision?.build_error || null);
   }, []);
 
   const loadState = useCallback(async () => {
@@ -91,6 +98,67 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     loadState();
   }, [loadState]);
 
+  const loadPreviewRuntime = useCallback(
+    async (revisionId: string, previewToken: string) => {
+      try {
+        const runtime = await publishedRuntimeService.getPreviewRuntime(revisionId, previewToken);
+        const nextUrl = runtime.asset_base_url || runtime.preview_url;
+        setPreviewAssetUrl(nextUrl || null);
+      } catch {
+        setPreviewAssetUrl(null);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const pollBuildStatus = async () => {
+      if (!currentRevisionId) return;
+      try {
+        const status = await publishedAppsService.getRevisionBuildStatus(appId, currentRevisionId);
+        if (cancelled) return;
+
+        const nextStatus = status.build_status as RevisionBuildStatus;
+        setBuildStatus(nextStatus);
+        setBuildError(status.build_error || null);
+
+        if (nextStatus === "succeeded") {
+          const previewToken = state?.preview_token;
+          if (previewToken) {
+            await loadPreviewRuntime(currentRevisionId, previewToken);
+          }
+          return;
+        }
+
+        setPreviewAssetUrl(null);
+        if (nextStatus === "queued" || nextStatus === "running") {
+          timer = window.setTimeout(pollBuildStatus, 2000);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setBuildError(err instanceof Error ? err.message : "Failed to load build status");
+      }
+    };
+
+    if (currentRevisionId) {
+      pollBuildStatus();
+    } else {
+      setBuildStatus(null);
+      setBuildError(null);
+      setPreviewAssetUrl(null);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [appId, currentRevisionId, loadPreviewRuntime, state?.preview_token]);
+
   const saveDraft = useCallback(async () => {
     if (!currentRevisionId && Object.keys(files).length === 0) return;
 
@@ -103,6 +171,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         entry_file: entryFile,
       });
       setCurrentRevisionId(revision.id);
+      setBuildStatus((revision.build_status as RevisionBuildStatus | undefined) || "queued");
+      setBuildError(revision.build_error || null);
+      setPreviewAssetUrl(null);
       setState((prev) => {
         if (!prev) return prev;
         return {
@@ -262,6 +333,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           operations: pendingOps,
         });
         setCurrentRevisionId(saved.id);
+        setBuildStatus((saved.build_status as RevisionBuildStatus | undefined) || "queued");
+        setBuildError(saved.build_error || null);
+        setPreviewAssetUrl(null);
         setState((prev) => {
           if (!prev) return prev;
           return {
@@ -334,6 +408,19 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
               /{state.app.slug}
             </Badge>
             <Badge variant={state.app.status === "published" ? "default" : "secondary"}>{state.app.status}</Badge>
+            {buildStatus && (
+              <Badge
+                variant={
+                  buildStatus === "succeeded"
+                    ? "default"
+                    : buildStatus === "failed"
+                      ? "destructive"
+                      : "secondary"
+                }
+              >
+                build:{buildStatus}
+              </Badge>
+            )}
           </div>
 
           <div className="justify-self-center">
@@ -380,9 +467,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             <div className="min-h-0 flex-1">
               {activeTab === "preview" ? (
                 <PreviewCanvas
-                  files={files}
-                  entryFile={entryFile}
-                  runtimeContext={{ mode: "builder-preview", appSlug: state.app.slug }}
+                  previewUrl={previewAssetUrl}
+                  buildStatus={buildStatus}
+                  buildError={buildError}
                 />
               ) : (
                 <VirtualFileExplorer

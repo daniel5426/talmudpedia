@@ -27,13 +27,17 @@ Last Updated: 2026-02-11
 
 ## Backend Architecture
 - Admin API router: `backend/app/api/routers/published_apps_admin.py`
-  - CRUD + templates + builder state/revision/template-reset + builder SSE + publish snapshot.
+  - CRUD + templates + builder state/revision/template-reset + builder SSE + conversation replay + revision build status/retry + publish snapshot.
 - Public runtime API router: `backend/app/api/routers/published_apps_public.py`
-  - host resolve, runtime config, auth flows, chat runtime endpoints, and published UI snapshot endpoints.
+  - host resolve, runtime config, runtime descriptors, auth flows, chat runtime endpoints, published UI snapshot endpoints, and preview asset proxy endpoints.
 - Auth domain service: `backend/app/services/published_app_auth_service.py`
   - signup/login, memberships, session issuance/revocation, OAuth callbacks.
 - Template service: `backend/app/services/published_app_templates.py`
-  - template manifest listing and baseline virtual project file generation.
+  - filesystem-backed template pack loading from `backend/app/templates/published_apps/{template_key}/`.
+- Dependency governance: `backend/app/services/apps_builder_dependency_policy.py`
+  - curated semi-open package policy with pinned versions and import/declaration validation.
+- Bundle storage service: `backend/app/services/published_app_bundle_storage.py`
+  - S3-compatible dist artifact copy/read operations for publish promotion and preview asset proxy streaming.
 - Principal dependencies include published-app session validation in:
   - `backend/app/api/dependencies.py`
   - includes preview-token principal for builder preview UI endpoints.
@@ -42,7 +46,7 @@ Last Updated: 2026-02-11
 - `published_apps`
   - app identity, tenant ownership, connected `agent_id`, auth settings, publish status/url, `template_key`, and draft/published revision pointers.
 - `published_app_revisions`
-  - immutable revision records for draft/published states, virtual files map, entry file, optional bundle metadata, source lineage.
+  - immutable revision records for draft/published states, full Vite project files map, entry file, build lifecycle (`build_status`, `build_seq`, timestamps/errors), dist metadata (`dist_storage_prefix`, `dist_manifest`), source lineage.
 - `published_app_user_memberships`
   - user-to-app access relation and login status metadata.
 - `published_app_sessions`
@@ -53,6 +57,8 @@ Last Updated: 2026-02-11
 Migration:
 - `backend/alembic/versions/9a4c7e21b3d5_add_published_apps_phase1_3.py`
 - `backend/alembic/versions/c4d5e6f7a8b9_add_published_app_revisions_builder_v1.py`
+- `backend/alembic/versions/d2e3f4a5b6c7_add_builder_conversation_turns.py`
+- `backend/alembic/versions/e3f4a5b6c7d8_add_published_app_revision_build_fields.py`
 
 ## Frontend Architecture
 - Admin pages:
@@ -79,7 +85,8 @@ Migration:
 - Cross-app access is prevented by filtering all app runtime reads/writes with app scope.
 - Membership model enforces which users can access authenticated app data.
 - Builder preview uses short-lived preview tokens and revision/app/tenant claims.
-- Public UI endpoint serves published snapshot only (never draft).
+- Public UI endpoint serves published snapshot only (never draft); when `APPS_RUNTIME_MODE=static`, `/public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED`.
+- Publish artifact promotion copies built dist assets from draft revision prefix to published revision prefix; copy failures return `500 BUILD_ARTIFACT_COPY_FAILED` and leave app publish pointer unchanged.
 
 ## Current Constraints
 - No billing/subscriptions yet.

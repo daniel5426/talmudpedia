@@ -1,6 +1,9 @@
 import pytest
+from sqlalchemy import select
+from uuid import UUID
 
-from ._helpers import seed_admin_tenant_and_agent, seed_published_app
+from ._helpers import admin_headers, seed_admin_tenant_and_agent, seed_published_app
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision
 
 
 @pytest.mark.asyncio
@@ -32,3 +35,100 @@ async def test_public_resolve_and_config(client, db_session):
 async def test_public_resolve_rejects_unknown_host(client):
     resp = await client.get("/public/apps/resolve?host=example.com")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_runtime_descriptor_and_ui_mode_switch(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Runtime Descriptor App",
+            "slug": "runtime-descriptor-app",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    publish_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
+    assert publish_resp.status_code == 200
+    app_payload = publish_resp.json()
+    assert app_payload["current_published_revision_id"]
+
+    runtime_resp = await client.get("/public/apps/runtime-descriptor-app/runtime")
+    assert runtime_resp.status_code == 200
+    runtime_payload = runtime_resp.json()
+    assert runtime_payload["slug"] == "runtime-descriptor-app"
+    assert runtime_payload["runtime_mode"] == "vite_static"
+    assert runtime_payload["api_base_path"] == "/api/py"
+    assert runtime_payload["revision_id"] == app_payload["current_published_revision_id"]
+
+    ui_resp = await client.get("/public/apps/runtime-descriptor-app/ui")
+    assert ui_resp.status_code == 200
+
+    monkeypatch.setenv("APPS_RUNTIME_MODE", "static")
+    ui_static_resp = await client.get("/public/apps/runtime-descriptor-app/ui")
+    assert ui_static_resp.status_code == 410
+    detail = ui_static_resp.json()["detail"]
+    assert detail["code"] == "UI_SOURCE_MODE_REMOVED"
+
+
+@pytest.mark.asyncio
+async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Preview Asset App",
+            "slug": "preview-asset-app",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    state_payload = state_resp.json()
+    draft_revision_id = state_payload["current_draft_revision"]["id"]
+    preview_token = state_payload["preview_token"]
+    assert preview_token
+
+    app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
+    assert app_row is not None
+    revision_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
+    assert revision_row is not None
+    revision_row.dist_storage_prefix = "apps/t/a/revisions/r1/dist"
+    await db_session.commit()
+
+    class _Storage:
+        def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str):
+            assert dist_storage_prefix == "apps/t/a/revisions/r1/dist"
+            assert asset_path == "assets/main.js"
+            return b"console.log('ok');", "application/javascript"
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_public.PublishedAppBundleStorage.from_env",
+        staticmethod(lambda: _Storage()),
+    )
+
+    asset_resp = await client.get(
+        f"/public/apps/preview/revisions/{draft_revision_id}/assets/assets/main.js",
+        headers={"Authorization": f"Bearer {preview_token}"},
+    )
+    assert asset_resp.status_code == 200
+    assert asset_resp.headers["content-type"].startswith("application/javascript")
+    assert "console.log('ok');" in asset_resp.text

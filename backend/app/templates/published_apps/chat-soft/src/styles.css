@@ -1,0 +1,13 @@
+:root {
+  color-scheme: light;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: var(--font-body, system-ui, sans-serif);
+}
+button {
+  cursor: pointer;
+}

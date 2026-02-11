@@ -18,8 +18,9 @@ from app.db.postgres.models.chat import Chat, Message, MessageRole
 from app.db.postgres.models.identity import User, Tenant
 from app.api.routers.auth import oauth2_scheme, get_current_user
 
-# Initialize the agent
-chat_agent = AgentFactory.create_agent(AgentConfig())
+# Lazily initialize the legacy chat agent to avoid import-time side effects.
+_chat_agent = None
+_chat_agent_lock = asyncio.Lock()
 
 router = APIRouter()
 
@@ -57,6 +58,24 @@ class ThinkingDurationFormatter:
 
 CACHED_TENANT_ID: Optional[UUID] = None
 
+
+async def get_chat_agent():
+    global _chat_agent
+    if _chat_agent is not None:
+        return _chat_agent
+
+    async with _chat_agent_lock:
+        if _chat_agent is None:
+            try:
+                _chat_agent = await asyncio.to_thread(AgentFactory.create_agent, AgentConfig())
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Legacy chat agent is unavailable: {exc}",
+                )
+    return _chat_agent
+
+
 async def get_tenant_id(db: AsyncSession) -> UUID:
     """Helper to get a tenant ID with simple caching."""
     global CACHED_TENANT_ID
@@ -82,6 +101,7 @@ async def chat_endpoint(
     t_enter = time.perf_counter()
     print(f"[TIMER] chat_endpoint entered: {t_enter}")
     """Streams chat completions along with reasoning artifacts using Postgres."""
+    chat_agent = await get_chat_agent()
     chat_id = request_body.chatId
     user_message = request_body.message
     files = request_body.files or []
@@ -297,4 +317,3 @@ async def chat_endpoint(
     headers = {"X-Chat-ID": str(chat_id or "")}
     print(f"[TIMER] chat_endpoint returning StreamingResponse: {time.perf_counter()-t_enter:.4f}s")
     return StreamingResponse(event_generator(), media_type="application/x-ndjson", headers=headers)
-

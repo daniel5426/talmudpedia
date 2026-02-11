@@ -668,9 +668,35 @@ async def resume_run_v2(
     Resume a paused agent run.
     """
     from app.agent.execution.service import AgentExecutorService
+    from app.db.postgres.models.agents import AgentRun
     
     executor = AgentExecutorService(db=db)
-    # TODO: Verify run belongs to tenant/user
+
+    run_result = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+    run = run_result.scalars().first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if str(run.tenant_id) != str(context.get("tenant_id")):
+        raise HTTPException(status_code=403, detail="Tenant mismatch")
+
+    # User principals can only resume their own runs (unless system admin).
+    if not context.get("is_service"):
+        user = context.get("user")
+        if user is not None and str(getattr(user, "role", "")).lower() != "admin":
+            allowed_user_ids = {
+                str(uid)
+                for uid in (run.user_id, run.initiator_user_id)
+                if uid is not None
+            }
+            if allowed_user_ids and str(user.id) not in allowed_user_ids:
+                raise HTTPException(status_code=403, detail="Run ownership mismatch")
+    else:
+        # Workload principals must match if the run is tied to a principal.
+        principal_id = context.get("principal_id")
+        if run.workload_principal_id is not None and principal_id is not None:
+            if str(run.workload_principal_id) != str(principal_id):
+                raise HTTPException(status_code=403, detail="Run principal mismatch")
     
     await executor.resume_run(run_id, request)
     return {"status": "resumed"}

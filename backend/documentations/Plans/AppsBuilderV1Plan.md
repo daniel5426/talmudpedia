@@ -1,206 +1,149 @@
-# Apps Builder V1 (Phased, Contract-First)
+# Apps Builder V1 (Vite Static Runtime, Big-Bang)
 Last Updated: 2026-02-11
 
 ## Summary
-Deliver in 3 milestones (not one pass), with contracts locked first for concurrency, compile policy, preview auth, stream transport, and publish semantics.
+This plan supersedes the older "virtual React files compiled in-browser" V1 assumptions.
 
-## Milestone 0: Contract Lock (no UI build yet)
-1. Finalize API contracts and schemas:
-- `POST /admin/apps` accepts `template_key`, `slug` optional.
-- `POST /admin/apps/{id}/builder/revisions` uses optimistic concurrency.
-- `POST /admin/apps/{id}/builder/chat/stream` emits patch ops contract.
-- `POST /admin/apps/{id}/publish` clones current draft into published snapshot revision.
-- `GET /public/apps/{slug}/ui` returns published UI snapshot only.
+V1 is now defined as:
+- full Vite React project files stored per revision,
+- backend worker builds,
+- static asset deployment,
+- runtime served from static bundles,
+- big-bang migration away from source-UI runtime mode.
 
-2. Lock concurrency response:
-- On stale `base_revision_id`, return `409` with payload:
-  - `code: "REVISION_CONFLICT"`
-  - `latest_revision_id`
-  - `latest_updated_at`
-  - `message`
+## Locked Architecture Decisions
+1. Build engine: Celery + dedicated Node-capable build workers.
+2. Asset serving: object storage + CDN.
+3. Dependency policy: curated semi-open allowlist with pinned versions.
+4. Build trigger: auto-build on save and publish checks.
+5. Draft preview: backend proxy with preview token.
+6. Rollout: big-bang runtime switch.
+7. Runtime API origin on app domain: `/api/py` gateway path.
+8. Template source: filesystem-backed full Vite template packs.
 
-3. Lock compile/import policy:
-- Virtual multi-file project only.
-- Allow relative imports inside virtual tree.
-- Allow package imports only: `react`, `react-dom/client`, `react/jsx-runtime`, `react/jsx-dev-runtime`.
-- Block network and absolute imports.
-- Limits: max files, max per-file size, max total project size, max compile time.
+## Contract-First V1 Milestones
 
-4. Lock preview token model:
-- New short-lived preview token (5 min TTL), claims:
-  - `sub` (admin user id)
-  - `tenant_id`
-  - `published_app_id`
-  - `revision_id`
-  - `scopes: ["apps.preview"]`
-  - `jti`, `exp`
-- New dependency validator for preview endpoints.
+### Milestone 0: Runtime and Data Contract Lock
+1. Runtime mode contract:
+- `runtime_mode = "vite_static"` for published and preview descriptors.
+- Source-UI runtime contract is deprecated and removed at cutover.
 
-5. Lock runtime config visibility semantics:
-- Keep current `GET /public/apps/{slug}/config` behavior (status visible by slug).
-- New `/ui` endpoint is published-only and never leaks draft files/bundle.
+2. Revision lifecycle fields (required on revisions):
+- `build_status`: `queued | running | succeeded | failed`
+- `build_error`, `build_started_at`, `build_finished_at`
+- `dist_storage_prefix`, `dist_manifest`
+- `template_runtime` default: `vite_static`
 
-6. Migration sequencing rule:
-- New alembic revision must chain from current latest head (`b2f4c6d8e9a1...`), not older Apps migration.
+3. Publish gate contract:
+- `POST /admin/apps/{id}/publish` returns:
+  - `409 BUILD_PENDING` when build is `queued|running`
+  - `422 BUILD_FAILED` with diagnostics when build is `failed`
+  - success only when build is `succeeded`
 
-## Milestone 1: Data + Create Flow + Builder State
-1. Backend:
-- Add `published_app_revisions` table.
-- Add lightweight pointers on `published_apps`:
-  - `current_draft_revision_id`
-  - `current_published_revision_id`
-- Seed template manifests (5 templates).
-- On app create:
-  - auto-generate slug from name
-  - create initial draft revision from selected template.
+4. Public runtime contract:
+- `GET /public/apps/{slug}/runtime` returns runtime descriptor.
+- `GET /public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED` after cutover.
 
-2. Frontend:
-- Expand create modal in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/admin/apps/page.tsx`.
-- Remove visible slug field.
-- Add 5 template cards.
-- Redirect create success to `/admin/apps/[id]`.
+### Milestone 1: Full Vite Template Packs + Revision Source Model
+1. Replace string-generated templates with filesystem packs under:
+- `backend/app/templates/published_apps/{template_key}/...`
 
-3. API/types:
-- Centralized in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/services/`.
-- Add types: template, revision, builder state, conflict response.
+2. Keep template keys API-stable:
+- `chat-classic`, `chat-editorial`, `chat-neon`, `chat-soft`, `chat-grid`
 
-4. Tests:
-- Backend create-with-template + slug autogen + initial draft revision.
-- Frontend create modal template selection + payload + redirect.
+3. Store full project source in revision files (including root build/config files as policy allows), not only `src/**` assumptions.
 
-## Milestone 2: Builder Workspace (Preview/Code, no AI patching yet)
-1. Route and layout:
-- `/admin/apps/[id]` becomes builder default route.
-- Top tabs: `Preview` (default), `Code`.
-- Right panel reserved for edit chat UI shell.
-- App sidebar auto-collapses on entry.
+### Milestone 2: Dependency Policy + Build Queue Pipeline
+1. Add dependency governance module:
+- `backend/app/services/apps_builder_dependency_policy.py`
 
-2. Preview tab:
-- Live preview from draft revision using existing sandboxed iframe compile flow, upgraded to multi-file.
+2. Enforce project/dependency rules:
+- `package.json` required,
+- bare imports must be declared,
+- packages/versions must match curated allowlist pins,
+- network URL imports and absolute filesystem imports forbidden.
 
-3. Code tab:
-- Base44-style file tree + Monaco editor.
-- Full editability of client-visible virtual files only.
-- Save creates new draft revision.
+3. Queue build task on revision save/reset and update build lifecycle fields.
 
-4. Feature-scoped cleanup:
-- New module: `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/`
-  - `templates/`, `workspace/`, `preview/`, `editor/`, `state/`, `runtime-sdk/`
+4. Build flow contract:
+- materialize project,
+- `npm ci`, `npm run build`,
+- upload `dist/` under deterministic prefix,
+- persist manifest and status.
 
-5. Tests:
-- Tab switching, file tree rendering, file edit/save revision creation, preview refresh.
+### Milestone 3: Admin and Public API Migration
+1. Admin endpoints:
+- `GET /admin/apps/{app_id}/builder/revisions/{revision_id}/build`
+- `POST /admin/apps/{app_id}/builder/revisions/{revision_id}/build/retry`
 
-## Milestone 3: AI Patch Editing + Template Switch + Publish Snapshot
-1. Builder chat endpoint:
-- Dedicated app-builder SSE endpoint.
-- Returns structured patch ops at completion.
+2. Public endpoints:
+- `GET /public/apps/{slug}/runtime`
+- `GET /public/apps/preview/revisions/{revision_id}/runtime`
+- `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
 
-2. Patch apply pipeline:
-- Validate ops against allowlist and file constraints.
-- Apply in-memory.
-- Compile.
-- Save new draft revision if valid.
-- Surface compile errors otherwise.
+3. Preview/published UI behavior:
+- builder preview iframe loads runtime/asset descriptor URLs (no in-browser compile path),
+- published page redirects to static published URL.
 
-3. Template switching:
-- Settings action: switch template with destructive confirmation.
-- Creates new draft revision by full overwrite from template baseline.
+### Milestone 4: Big-Bang Migration and Legacy Removal
+1. Migration/backfill:
+- prepare existing revisions as valid Vite projects,
+- queue builds for published first, then drafts.
 
-4. Publish:
-- Clone current draft to published revision snapshot.
-- Public runtime serves only published snapshot from `/public/apps/{slug}/ui`.
+2. Cutover condition:
+- switch runtime mode after all currently published revisions succeed builds.
 
-5. Stream transport:
-- Builder streaming calls bypass buffering path (same principle as agent streaming direct backend usage).
+3. Failure handling:
+- pause affected apps with actionable build errors.
 
-6. Tests:
-- Patch ops success/failure.
-- Template reset overwrite behavior.
-- Publish snapshot immutability.
-- Public UI serves published snapshot only.
+4. Remove legacy source runtime path after completion verification.
 
-## Public Interfaces / Types Added
-1. `PublishedAppTemplate`:
-- `key`, `name`, `description`, `thumbnail`, `style_tokens`, `entry_file`.
+## Public Interfaces / Types (V1 Target)
+1. `PublishedAppRevision` includes build lifecycle and dist metadata fields.
+2. Runtime descriptor types for published and preview runtime endpoints.
+3. Publish error contracts:
+- `BUILD_PENDING`
+- `BUILD_FAILED`
+4. Legacy source-UI contract deprecation code:
+- `UI_SOURCE_MODE_REMOVED`
 
-2. `PublishedAppRevision`:
-- `id`, `published_app_id`, `kind`, `template_key`, `entry_file`, `files`, `compiled_bundle`, `created_at`, `source_revision_id`.
-
-3. `BuilderPatchOp` union:
-- `upsert_file`, `delete_file`, `rename_file`, `set_entry_file`.
-
-4. `RevisionConflictResponse`:
-- `code`, `latest_revision_id`, `latest_updated_at`, `message`.
-
-## Explicit Assumptions / Defaults
-1. Builder is primary app screen.
-2. Slug is hidden at create and auto-generated.
-3. Template switching is allowed and overwrites current draft after confirmation.
-4. Published runtime serves published snapshot only.
-5. Refactor is feature-scoped, not whole-frontend reorg.
-6. Dedicated builder chat backend is required in v1.
-7. Existing docs currently contradict this direction (`Apps.md` says no template customization); update docs during implementation.
+## Security and Governance
+1. Build workers run in isolated temp directories per job.
+2. Dependency installs constrained by curated allowlist policy.
+3. Preview assets require valid preview token scoped to revision.
+4. Static runtime calls backend through same-origin `/api/py` gateway.
 
 ## Implementation Status
-### Last Updated: 2026-02-11
 ### Completed
-- [x] Milestone 1 backend schema/model work landed: `published_app_revisions`, app draft/published revision pointers, and migration chained from `b2f4c6d8e9a1`.
-- [x] Milestone 1 create flow landed: `POST /admin/apps` supports optional `slug`, accepts `template_key`, and auto-generates slug server-side.
-- [x] Milestone 1 builder seed/template contracts landed: `GET /admin/apps/templates` and template manifest service with 5 templates.
-- [x] Milestone 1 builder state endpoint landed: `GET /admin/apps/{app_id}/builder/state`.
-- [x] Milestone 1 frontend create modal landed: slug removed, larger modal, template cards, template selection in payload, redirect to `/admin/apps/{id}`.
-- [x] Milestone 1 service/type centralization landed in `src/services/published-apps.ts` and `src/services/index.ts`.
-- [x] Milestone 2 route behavior landed: `/admin/apps/[id]` now opens builder workspace by default.
-- [x] Milestone 2 workspace UI landed: `Preview | Code` tabs, center workspace, right builder chat panel shell, sidebar auto-close.
-- [x] Milestone 2 preview tab landed on multi-file sandbox compile path.
-- [x] Milestone 2 code workspace landed with virtual file explorer + code editor and draft save to revisions endpoint.
-- [x] Milestone 2 feature-scoped module landed at `frontend-reshet/src/features/apps-builder/`.
-- [x] Milestone 3 builder SSE endpoint landed: `POST /admin/apps/{app_id}/builder/chat/stream`.
-- [x] Milestone 3 revisions write endpoint landed: `POST /admin/apps/{app_id}/builder/revisions` with optimistic concurrency and `REVISION_CONFLICT` 409 contract.
-- [x] Milestone 3 template reset endpoint landed: `POST /admin/apps/{app_id}/builder/template-reset`.
-- [x] Milestone 3 publish semantics landed: publish clones latest draft into new published snapshot revision and updates pointers.
-- [x] Milestone 3 public UI runtime landed: `GET /public/apps/{slug}/ui` serves published snapshots only.
-- [x] Milestone 3 preview auth landed: short-lived preview token + validator dependency for preview UI fetch.
-- [x] Public interfaces/types landed: `PublishedAppTemplate`, `PublishedAppRevision`, `BuilderPatchOp`, `RevisionConflictResponse`.
-- [x] Backend/Frontend tests expanded for builder flow and updated for new contracts.
+1. Draft/published revision architecture and optimistic concurrency contracts are in place.
+2. Builder chat structured streaming and patch application contracts are in place.
+3. Initial model-backed and agentic patch-generation framework is in place behind feature flags.
+
 ### In Progress
-- None.
+1. Worker-backed Vite build lifecycle on revision save/publish path.
+2. Runtime descriptor/public static serving contracts and `/ui` cutover behavior.
+3. Curated dependency governance module and full Vite root file policy.
+
 ### Deferred
-- None.
-### File-Level Changes
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/alembic/versions/c4d5e6f7a8b9_add_published_app_revisions_builder_v1.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/dependencies.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_admin.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_public.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/core/security.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/db/postgres/models/__init__.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/db/postgres/models/published_apps.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_templates.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/conftest.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/published_apps/test_admin_apps_crud.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/published_apps/test_admin_apps_publish_rules.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/published_apps/test_builder_revisions.py
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/admin/apps/page.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/admin/apps/[id]/page.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/published/[appSlug]/page.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/templates/index.ts
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/AppsBuilderWorkspace.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/preview/PreviewCanvas.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/editor/VirtualFileExplorer.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/state/useBuilderDraft.ts
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/runtime-sdk/index.ts
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/lib/react-artifacts/compiler.ts
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/services/index.ts
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/services/published-apps.ts
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/services/published-runtime.ts
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/__tests__/published_apps/apps_builder_workspace.test.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/__tests__/published_apps/published_chat_template.test.tsx
-- /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/__tests__/published_apps/published_runtime_gate.test.tsx
-### Validation
-- `pytest backend/tests/published_apps -q` -> PASS (12 passed).
-- `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps` -> PASS (5 suites, 7 tests).
-### Follow-ups
-- Add stronger backend-side builder patch validation/compile guardrails (file-count/size/time ceilings) before wider rollout.
-- Add targeted API tests for preview-token expiry and invalid-claims rejection paths.
-- Add end-to-end builder publish verification test across create -> edit -> publish -> public `/ui` runtime render.
+1. Removal of deprecated `compiled_bundle` column in follow-up migration.
+2. Legacy runtime path deletion until migration verification is complete.
+
+## Validation Targets
+1. Backend tests:
+- build lifecycle transitions,
+- publish gate codes,
+- runtime descriptor responses,
+- `/ui` deprecation response,
+- preview asset auth.
+
+2. Frontend tests:
+- preview build status UX,
+- runtime descriptor consumption,
+- published static redirect.
+
+3. End-to-end:
+- create -> edit -> build -> preview -> publish -> static runtime load.
+
+## Contradiction Resolution
+This file intentionally replaces old React-only import allowlist and in-browser compile assumptions.
+Any remaining docs that describe V1 as source-UI runtime should be treated as stale and updated to this contract.

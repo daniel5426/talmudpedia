@@ -40,11 +40,31 @@ export interface PublishedAppRevision {
   template_key: string;
   entry_file: string;
   files: Record<string, string>;
+  build_status?: "queued" | "running" | "succeeded" | "failed";
+  build_seq?: number;
+  build_error?: string | null;
+  build_started_at?: string | null;
+  build_finished_at?: string | null;
+  dist_storage_prefix?: string | null;
+  dist_manifest?: Record<string, unknown> | null;
+  template_runtime?: string;
   compiled_bundle?: string | null;
   bundle_hash?: string | null;
   source_revision_id?: string | null;
   created_by?: string | null;
   created_at: string;
+}
+
+export interface RevisionBuildStatusResponse {
+  revision_id: string;
+  build_status: "queued" | "running" | "succeeded" | "failed";
+  build_seq: number;
+  build_error?: string | null;
+  build_started_at?: string | null;
+  build_finished_at?: string | null;
+  dist_storage_prefix?: string | null;
+  dist_manifest?: Record<string, unknown> | null;
+  template_runtime?: string;
 }
 
 export interface RevisionConflictResponse {
@@ -163,6 +183,14 @@ export const publishedAppsService = {
 
   async createRevision(appId: string, payload: CreateBuilderRevisionRequest): Promise<PublishedAppRevision> {
     return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/builder/revisions`, payload);
+  },
+
+  async getRevisionBuildStatus(appId: string, revisionId: string): Promise<RevisionBuildStatusResponse> {
+    return httpClient.get<RevisionBuildStatusResponse>(`/admin/apps/${appId}/builder/revisions/${revisionId}/build`);
+  },
+
+  async retryRevisionBuild(appId: string, revisionId: string): Promise<RevisionBuildStatusResponse> {
+    return httpClient.post<RevisionBuildStatusResponse>(`/admin/apps/${appId}/builder/revisions/${revisionId}/build/retry`, {});
   },
 
   async validateRevision(appId: string, payload: CreateBuilderRevisionRequest): Promise<BuilderValidationResponse> {

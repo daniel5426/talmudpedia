@@ -12,7 +12,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { clearPublishedAppToken, getPublishedAppToken } from "@/lib/store/usePublishedAppAuthStore";
 import { publishedRuntimeService } from "@/services";
 import type { PublicChatItem, PublishedRuntimeConfig, PublishedRuntimeUser } from "@/services";
-import { compileReactArtifactProject } from "@/lib/react-artifacts/compiler";
 
 type ChatMessage = { role: string; content: string };
 
@@ -31,41 +30,6 @@ function normalizeSseEvent(raw: string): Record<string, any> | null {
   return null;
 }
 
-type RuntimeContext = {
-  mode: "builder-preview" | "published-runtime";
-  appSlug?: string;
-  token?: string | null;
-  basePath?: string;
-};
-
-function buildPreviewHtml(bundle: string, css?: string, runtimeContext?: RuntimeContext): string {
-  const safeBundle = bundle.replace(/<\/(script)/gi, "<\\/$1");
-  const safeCss = (css || "").replace(/<\/(style)/gi, "<\\/$1");
-  const contextJson = runtimeContext
-    ? JSON.stringify(runtimeContext).replace(/<\/(script)/gi, "<\\/$1")
-    : "";
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://cdn.tailwindcss.com;" />
-    <style>
-      * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; width: 100%; height: 100%; }
-      body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: #fff; color: #111827; }
-      #root { width: 100%; height: 100%; }
-    </style>
-    ${safeCss ? `<style>${safeCss}</style>` : ""}
-  </head>
-  <body>
-    <div id="root"></div>
-    <script src="https://cdn.tailwindcss.com"></script>
-    ${contextJson ? `<script>window.__APP_RUNTIME_CONTEXT = ${contextJson};</script>` : ""}
-    <script>${safeBundle}</script>
-  </body>
-</html>`;
-}
-
 export default function PublishedAppPage() {
   const params = useParams<{ appSlug: string }>();
   const router = useRouter();
@@ -81,8 +45,6 @@ export default function PublishedAppPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [customUISrcDoc, setCustomUISrcDoc] = useState<string | null>(null);
-  const [customUIError, setCustomUIError] = useState<string | null>(null);
 
   async function loadConfig() {
     if (!appSlug) return;
@@ -97,6 +59,16 @@ export default function PublishedAppPage() {
         return;
       }
 
+      try {
+        const runtime = await publishedRuntimeService.getRuntime(appSlug);
+        if (runtime.published_url) {
+          window.location.replace(runtime.published_url);
+          return;
+        }
+      } catch {
+        // Fall back to legacy runtime path until full static migration is complete.
+      }
+
       if (nextConfig.auth_enabled) {
         if (!token) {
           router.replace(`/published/${appSlug}/login`);
@@ -106,26 +78,6 @@ export default function PublishedAppPage() {
         setViewer(me);
         const list = await publishedRuntimeService.listChats(appSlug, token);
         setHistory(list.items);
-      }
-
-      if (nextConfig.has_custom_ui && nextConfig.ui_runtime_mode === "custom_bundle") {
-        try {
-          const ui = await publishedRuntimeService.getUI(appSlug);
-          const compileResult = await compileReactArtifactProject(ui.files || {}, ui.entry_file || "src/main.tsx");
-          if (!compileResult.ok) {
-            setCustomUIError(compileResult.error);
-          } else {
-            setCustomUISrcDoc(
-              buildPreviewHtml(compileResult.output, compileResult.css, {
-                mode: "published-runtime",
-                appSlug,
-                token,
-              }),
-            );
-          }
-        } catch (uiErr) {
-          setCustomUIError(uiErr instanceof Error ? uiErr.message : "Failed to load custom UI");
-        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load app");
@@ -277,30 +229,6 @@ export default function PublishedAppPage() {
             <CardDescription>Status: {config.status}</CardDescription>
           </CardHeader>
         </Card>
-      </div>
-    );
-  }
-
-  if (config.has_custom_ui && config.ui_runtime_mode === "custom_bundle") {
-    return (
-      <div className="h-screen w-full bg-background">
-        {customUIError ? (
-          <div className="mx-auto max-w-xl p-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Custom UI Unavailable</CardTitle>
-                <CardDescription>{customUIError}</CardDescription>
-              </CardHeader>
-            </Card>
-          </div>
-        ) : customUISrcDoc ? (
-          <iframe className="h-full w-full" title="Published App UI" sandbox="allow-scripts" srcDoc={customUISrcDoc} />
-        ) : (
-          <div className="flex h-screen items-center justify-center text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Loading app UI...
-          </div>
-        )}
       </div>
     );
   }

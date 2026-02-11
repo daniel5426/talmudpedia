@@ -35,8 +35,11 @@ from .orchestration import (
     OrchestrationGroupMember,
 )
 from .published_apps import (
+    BuilderConversationTurnStatus,
     PublishedApp,
+    PublishedAppBuilderConversationTurn,
     PublishedAppRevision,
+    PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
     PublishedAppSession,
     PublishedAppStatus,

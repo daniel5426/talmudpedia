@@ -26,6 +26,26 @@ export interface PublishedRuntimeUI {
   compiled_bundle?: string | null;
 }
 
+export interface PublishedRuntimeDescriptor {
+  app_id: string;
+  slug: string;
+  revision_id: string;
+  runtime_mode: string;
+  published_url?: string | null;
+  asset_base_url?: string | null;
+  api_base_path: string;
+}
+
+export interface PreviewRuntimeDescriptor {
+  app_id: string;
+  slug: string;
+  revision_id: string;
+  runtime_mode: string;
+  preview_url: string;
+  asset_base_url: string;
+  api_base_path: string;
+}
+
 export interface PublishedRuntimeUser {
   id: string;
   email: string;
@@ -101,8 +121,18 @@ export const publishedRuntimeService = {
     return runtimeRequest<PublishedRuntimeConfig>(`/public/apps/${encodeURIComponent(appSlug)}/config`);
   },
 
+  async getRuntime(appSlug: string): Promise<PublishedRuntimeDescriptor> {
+    return runtimeRequest<PublishedRuntimeDescriptor>(`/public/apps/${encodeURIComponent(appSlug)}/runtime`);
+  },
+
   async getUI(appSlug: string): Promise<PublishedRuntimeUI> {
     return runtimeRequest<PublishedRuntimeUI>(`/public/apps/${encodeURIComponent(appSlug)}/ui`);
+  },
+
+  async getPreviewRuntime(revisionId: string, token: string): Promise<PreviewRuntimeDescriptor> {
+    return runtimeRequest<PreviewRuntimeDescriptor>(`/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime`, {
+      token,
+    });
   },
 
   async signup(appSlug: string, payload: { email: string; password: string; full_name?: string }): Promise<PublicAuthResponse> {

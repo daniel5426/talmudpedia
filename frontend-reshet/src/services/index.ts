@@ -94,8 +94,10 @@ export type {
   PublishedAppStatus,
   PublishedAppAuthProvider,
   BuilderPatchOp,
+  BuilderChatEvent,
   BuilderStateResponse,
   BuilderValidationResponse,
+  RevisionBuildStatusResponse,
   RevisionConflictResponse,
   CreatePublishedAppRequest,
   CreateBuilderRevisionRequest,
@@ -110,6 +112,8 @@ export type {
   PublicChatHistory,
   PublicChatItem,
   PublishedRuntimeUI,
+  PublishedRuntimeDescriptor,
+  PreviewRuntimeDescriptor,
 } from "./published-runtime";
 
 export type {

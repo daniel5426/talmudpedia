@@ -1,9 +1,11 @@
 import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
+from uuid import UUID
 
 from celery import shared_task
 from celery.utils.log import get_task_logger
+from sqlalchemy import and_, select
 
 from app.workers.celery_app import celery_app
 from app.workers.job_manager import job_manager, JobStatus
@@ -319,3 +321,95 @@ def ingest_from_loader_task(
 @celery_app.task(name="app.workers.tasks.health_check")
 def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+
+@celery_app.task(bind=True, name="app.workers.tasks.build_published_app_revision_task")
+def build_published_app_revision_task(
+    self,
+    revision_id: str,
+    tenant_id: str,
+    app_id: str,
+    slug: str,
+    build_kind: str,
+):
+    async def _run():
+        from app.db.postgres.models.published_apps import (
+            PublishedAppRevision,
+            PublishedAppRevisionBuildStatus,
+        )
+        from app.db.postgres.session import sessionmaker
+
+        revision_uuid = UUID(str(revision_id))
+        app_uuid = UUID(str(app_id))
+
+        async with sessionmaker() as db:
+            result = await db.execute(
+                select(PublishedAppRevision).where(
+                    and_(
+                        PublishedAppRevision.id == revision_uuid,
+                        PublishedAppRevision.published_app_id == app_uuid,
+                    )
+                ).limit(1)
+            )
+            revision = result.scalar_one_or_none()
+            if revision is None:
+                logger.warning("build task ignored: revision not found", extra={"revision_id": revision_id, "app_id": app_id})
+                return {
+                    "status": "missing",
+                    "revision_id": revision_id,
+                    "app_id": app_id,
+                }
+
+            requested_seq = int(revision.build_seq or 0)
+            revision.build_status = PublishedAppRevisionBuildStatus.running
+            revision.build_started_at = datetime.now(timezone.utc)
+            revision.build_finished_at = None
+            revision.build_error = None
+            await db.commit()
+
+        # TODO: replace this placeholder with isolated npm build worker execution.
+        async with sessionmaker() as db:
+            result = await db.execute(
+                select(PublishedAppRevision).where(
+                    and_(
+                        PublishedAppRevision.id == revision_uuid,
+                        PublishedAppRevision.published_app_id == app_uuid,
+                    )
+                ).limit(1)
+            )
+            revision = result.scalar_one_or_none()
+            if revision is None:
+                return {
+                    "status": "missing_after_start",
+                    "revision_id": revision_id,
+                    "app_id": app_id,
+                }
+
+            if int(revision.build_seq or 0) != requested_seq:
+                logger.info(
+                    "build task stale completion ignored",
+                    extra={"revision_id": revision_id, "app_id": app_id, "requested_seq": requested_seq, "current_seq": revision.build_seq},
+                )
+                return {
+                    "status": "stale",
+                    "revision_id": revision_id,
+                    "requested_seq": requested_seq,
+                    "current_seq": int(revision.build_seq or 0),
+                }
+
+            revision.build_status = PublishedAppRevisionBuildStatus.failed
+            revision.build_error = "Build worker pipeline not implemented yet"
+            revision.build_finished_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        return {
+            "status": "failed",
+            "revision_id": revision_id,
+            "tenant_id": tenant_id,
+            "app_id": app_id,
+            "slug": slug,
+            "build_kind": build_kind,
+            "error": "Build worker pipeline not implemented yet",
+        }
+
+    return run_async(_run())

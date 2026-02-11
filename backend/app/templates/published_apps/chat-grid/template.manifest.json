@@ -1,0 +1,23 @@
+{
+  "key": "chat-grid",
+  "name": "Layout Shell Premium",
+  "description": "LayoutShell-style workspace with sidebar, resizable source viewer, and mobile overlays.",
+  "thumbnail": "layout-shell",
+  "tags": [
+    "chat",
+    "premium",
+    "workspace"
+  ],
+  "entry_file": "src/main.tsx",
+  "style_tokens": {
+    "fontDisplay": "'Sora', sans-serif",
+    "fontBody": "'Nunito Sans', sans-serif",
+    "bg": "#f3f6fc",
+    "panel": "#ffffff",
+    "border": "#d8dfec",
+    "accent": "#115ad8",
+    "accentSoft": "#dce8ff",
+    "text": "#10243b",
+    "muted": "#60758f"
+  }
+}

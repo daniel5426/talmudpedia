@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import and_, select
@@ -19,12 +19,20 @@ from app.core.security import create_published_app_preview_token
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.db.postgres.models.identity import OrgMembership, OrgRole, User
 from app.db.postgres.models.published_apps import (
+    BuilderConversationTurnStatus,
     PublishedApp,
+    PublishedAppBuilderConversationTurn,
     PublishedAppRevision,
+    PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
     PublishedAppStatus,
 )
 from app.db.postgres.session import get_db
+from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
+from app.services.published_app_bundle_storage import (
+    PublishedAppBundleStorage,
+    PublishedAppBundleStorageError,
+)
 from app.services.published_app_templates import (
     build_template_files,
     get_template,
@@ -35,14 +43,16 @@ from app.services.published_app_templates import (
 router = APIRouter(prefix="/admin/apps", tags=["published-apps-admin"])
 
 APP_SLUG_PATTERN = re.compile(r"^[a-z0-9-]{3,64}$")
-BUILDER_ALLOWED_IMPORTS = {
-    "react",
-    "react-dom/client",
-    "react/jsx-runtime",
-    "react/jsx-dev-runtime",
+BUILDER_ALLOWED_DIR_ROOTS = ("src/", "public/")
+BUILDER_ALLOWED_ROOT_FILES = {
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "vite.config.ts",
 }
-BUILDER_ALLOWED_ROOTS = ("src/", "public/")
+BUILDER_ALLOWED_ROOT_GLOBS = ("tsconfig*.json", "postcss.config.*", "tailwind.config.*")
 BUILDER_ALLOWED_EXTENSIONS = {
+    ".html",
     ".ts",
     ".tsx",
     ".js",
@@ -108,6 +118,14 @@ class PublishedAppRevisionResponse(BaseModel):
     template_key: str
     entry_file: str
     files: Dict[str, str]
+    build_status: str
+    build_seq: int
+    build_error: Optional[str] = None
+    build_started_at: Optional[datetime] = None
+    build_finished_at: Optional[datetime] = None
+    dist_storage_prefix: Optional[str] = None
+    dist_manifest: Optional[Dict[str, Any]] = None
+    template_runtime: str = "vite_static"
     compiled_bundle: Optional[str] = None
     bundle_hash: Optional[str] = None
     source_revision_id: Optional[str] = None
@@ -173,6 +191,36 @@ class BuilderValidationResponse(BaseModel):
     diagnostics: List[Dict[str, str]] = Field(default_factory=list)
 
 
+class RevisionBuildStatusResponse(BaseModel):
+    revision_id: str
+    build_status: str
+    build_seq: int
+    build_error: Optional[str] = None
+    build_started_at: Optional[datetime] = None
+    build_finished_at: Optional[datetime] = None
+    dist_storage_prefix: Optional[str] = None
+    dist_manifest: Optional[Dict[str, Any]] = None
+    template_runtime: str = "vite_static"
+
+
+class BuilderConversationTurnResponse(BaseModel):
+    id: str
+    published_app_id: str
+    revision_id: Optional[str] = None
+    request_id: str
+    status: str
+    user_prompt: str
+    assistant_summary: Optional[str] = None
+    assistant_rationale: Optional[str] = None
+    assistant_assumptions: List[str] = Field(default_factory=list)
+    patch_operations: List[Dict[str, Any]] = Field(default_factory=list)
+    tool_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    diagnostics: List[Dict[str, str]] = Field(default_factory=list)
+    failure_code: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+
+
 class BuilderModelPatchPlan(BaseModel):
     operations: List[BuilderPatchOp] = Field(default_factory=list)
     summary: str = "prepared a draft update"
@@ -195,9 +243,6 @@ def _apps_url_scheme() -> str:
     configured = (os.getenv("APPS_URL_SCHEME") or "").strip().lower()
     if configured in {"http", "https"}:
         return configured
-    base_domain = _apps_base_domain().strip().lower()
-    if base_domain == "localhost" or base_domain.endswith(".localhost"):
-        return "http"
     return "https"
 
 
@@ -205,9 +250,6 @@ def _apps_url_port() -> str:
     configured = (os.getenv("APPS_URL_PORT") or "").strip()
     if configured:
         return configured if configured.startswith(":") else f":{configured}"
-    base_domain = _apps_base_domain().strip().lower()
-    if base_domain == "localhost" or base_domain.endswith(".localhost"):
-        return ":3000"
     return ""
 
 
@@ -288,11 +330,33 @@ def _revision_to_response(revision: PublishedAppRevision) -> PublishedAppRevisio
         template_key=revision.template_key,
         entry_file=revision.entry_file,
         files=dict(revision.files or {}),
+        build_status=revision.build_status.value if hasattr(revision.build_status, "value") else str(revision.build_status),
+        build_seq=int(revision.build_seq or 0),
+        build_error=revision.build_error,
+        build_started_at=revision.build_started_at,
+        build_finished_at=revision.build_finished_at,
+        dist_storage_prefix=revision.dist_storage_prefix,
+        dist_manifest=dict(revision.dist_manifest or {}) if revision.dist_manifest else None,
+        template_runtime=revision.template_runtime or "vite_static",
         compiled_bundle=revision.compiled_bundle,
         bundle_hash=revision.bundle_hash,
         source_revision_id=str(revision.source_revision_id) if revision.source_revision_id else None,
         created_by=str(revision.created_by) if revision.created_by else None,
         created_at=revision.created_at,
+    )
+
+
+def _revision_build_status_to_response(revision: PublishedAppRevision) -> RevisionBuildStatusResponse:
+    return RevisionBuildStatusResponse(
+        revision_id=str(revision.id),
+        build_status=revision.build_status.value if hasattr(revision.build_status, "value") else str(revision.build_status),
+        build_seq=int(revision.build_seq or 0),
+        build_error=revision.build_error,
+        build_started_at=revision.build_started_at,
+        build_finished_at=revision.build_finished_at,
+        dist_storage_prefix=revision.dist_storage_prefix,
+        dist_manifest=dict(revision.dist_manifest or {}) if revision.dist_manifest else None,
+        template_runtime=revision.template_runtime or "vite_static",
     )
 
 
@@ -421,6 +485,21 @@ async def _get_revision(db: AsyncSession, revision_id: Optional[UUID]) -> Option
     return result.scalar_one_or_none()
 
 
+async def _get_revision_for_app(db: AsyncSession, app_id: UUID, revision_id: UUID) -> PublishedAppRevision:
+    result = await db.execute(
+        select(PublishedAppRevision).where(
+            and_(
+                PublishedAppRevision.id == revision_id,
+                PublishedAppRevision.published_app_id == app_id,
+            )
+        ).limit(1)
+    )
+    revision = result.scalar_one_or_none()
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Revision not found")
+    return revision
+
+
 async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, actor_id: Optional[UUID]) -> PublishedAppRevision:
     draft = await _get_revision(db, app.current_draft_revision_id)
     if draft is not None:
@@ -433,6 +512,14 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
         template_key=app.template_key or "chat-classic",
         entry_file=get_template(app.template_key or "chat-classic").entry_file,
         files=files,
+        build_status=PublishedAppRevisionBuildStatus.queued,
+        build_seq=1,
+        build_error=None,
+        build_started_at=None,
+        build_finished_at=None,
+        dist_storage_prefix=None,
+        dist_manifest=None,
+        template_runtime="vite_static",
         compiled_bundle=None,
         bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
         source_revision_id=None,
@@ -441,6 +528,7 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
     db.add(created)
     await db.flush()
     app.current_draft_revision_id = created.id
+    _enqueue_revision_build(revision=created, app=app, build_kind="draft")
     return created
 
 
@@ -524,6 +612,74 @@ def _extract_http_error_details(exc: HTTPException) -> tuple[str, List[Dict[str,
             diagnostics = [{"message": message}]
         return message, diagnostics
     return str(detail), [{"message": str(detail)}]
+
+
+def _extract_http_error_code(exc: HTTPException) -> Optional[str]:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        if code:
+            return str(code)
+    return None
+
+
+def _next_build_seq(previous: Optional[PublishedAppRevision]) -> int:
+    if previous is None:
+        return 1
+    return int(previous.build_seq or 0) + 1
+
+
+def _builder_auto_enqueue_enabled() -> bool:
+    return _env_flag("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", False)
+
+
+def _builder_publish_build_guard_enabled() -> bool:
+    return _env_flag("APPS_BUILDER_PUBLISH_BUILD_GUARD_ENABLED", False)
+
+
+def _enqueue_revision_build(
+    *,
+    revision: PublishedAppRevision,
+    app: PublishedApp,
+    build_kind: str,
+) -> None:
+    if not _builder_auto_enqueue_enabled():
+        return
+    try:
+        from app.workers.tasks import build_published_app_revision_task
+    except Exception:
+        return
+
+    build_published_app_revision_task.delay(
+        revision_id=str(revision.id),
+        tenant_id=str(app.tenant_id),
+        app_id=str(app.id),
+        slug=app.slug,
+        build_kind=build_kind,
+    )
+
+
+def _promote_revision_dist_artifacts(
+    *,
+    app: PublishedApp,
+    source_revision: PublishedAppRevision,
+    destination_revision: PublishedAppRevision,
+) -> Optional[str]:
+    source_prefix = (source_revision.dist_storage_prefix or "").strip()
+    if not source_prefix:
+        return None
+
+    storage = PublishedAppBundleStorage.from_env()
+    destination_prefix = PublishedAppBundleStorage.build_revision_dist_prefix(
+        tenant_id=str(app.tenant_id),
+        app_id=str(app.id),
+        revision_id=str(destination_revision.id),
+    )
+    storage.copy_prefix(
+        source_prefix=source_prefix,
+        destination_prefix=destination_prefix,
+    )
+    return destination_prefix
 
 
 def _truncate_for_context(content: str, *, max_bytes: int = BUILDER_CONTEXT_MAX_FILE_BYTES) -> str:
@@ -614,6 +770,59 @@ def _select_builder_context_paths(
 
 def _serialize_patch_ops(operations: List[BuilderPatchOp]) -> List[Dict[str, Any]]:
     return [op.model_dump(exclude_none=True) for op in operations]
+
+
+def _builder_conversation_to_response(turn: PublishedAppBuilderConversationTurn) -> BuilderConversationTurnResponse:
+    return BuilderConversationTurnResponse(
+        id=str(turn.id),
+        published_app_id=str(turn.published_app_id),
+        revision_id=str(turn.revision_id) if turn.revision_id else None,
+        request_id=turn.request_id,
+        status=turn.status.value if hasattr(turn.status, "value") else str(turn.status),
+        user_prompt=turn.user_prompt,
+        assistant_summary=turn.assistant_summary,
+        assistant_rationale=turn.assistant_rationale,
+        assistant_assumptions=list(turn.assistant_assumptions or []),
+        patch_operations=list(turn.patch_operations or []),
+        tool_trace=list(turn.tool_trace or []),
+        diagnostics=list(turn.diagnostics or []),
+        failure_code=turn.failure_code,
+        created_by=str(turn.created_by) if turn.created_by else None,
+        created_at=turn.created_at,
+    )
+
+
+async def _persist_builder_conversation_turn(
+    db: AsyncSession,
+    *,
+    app_id: UUID,
+    revision_id: Optional[UUID],
+    actor_id: Optional[UUID],
+    request_id: str,
+    user_prompt: str,
+    status: BuilderConversationTurnStatus,
+    generation_result: Optional[BuilderPatchGenerationResult] = None,
+    trace_events: Optional[List[Dict[str, Any]]] = None,
+    diagnostics: Optional[List[Dict[str, str]]] = None,
+    failure_code: Optional[str] = None,
+) -> None:
+    turn = PublishedAppBuilderConversationTurn(
+        published_app_id=app_id,
+        revision_id=revision_id,
+        request_id=request_id,
+        status=status,
+        user_prompt=user_prompt,
+        assistant_summary=generation_result.summary if generation_result else None,
+        assistant_rationale=generation_result.rationale if generation_result else None,
+        assistant_assumptions=list(generation_result.assumptions) if generation_result else [],
+        patch_operations=_serialize_patch_ops(generation_result.operations) if generation_result else [],
+        tool_trace=list(trace_events or []),
+        diagnostics=list(diagnostics or []),
+        failure_code=failure_code,
+        created_by=actor_id,
+    )
+    db.add(turn)
+    await db.flush()
 
 
 def _build_builder_context_snapshot(
@@ -709,7 +918,7 @@ async def _request_builder_model_patch_plan(
         "You generate safe frontend patch operations.\n"
         "Return only strict JSON (no markdown) with keys: operations, summary, rationale, assumptions.\n"
         "Each operation must be one of: upsert_file, delete_file, rename_file, set_entry_file.\n"
-        "Use paths under src/ or public/ only."
+        "Use paths under src/, public/, or allowed Vite root files only."
     )
 
     client = AsyncOpenAI(api_key=openai_api_key)
@@ -1054,8 +1263,16 @@ def _normalize_builder_path(path: str) -> str:
 
 
 def _assert_builder_path_allowed(path: str, *, field: str = "path") -> None:
-    if not any(path.startswith(root) for root in BUILDER_ALLOWED_ROOTS):
-        raise _builder_policy_error("File path must be under src/ or public/", field=field)
+    in_allowed_dir = any(path.startswith(root) for root in BUILDER_ALLOWED_DIR_ROOTS)
+    if not in_allowed_dir:
+        is_root_file = "/" not in path
+        matches_root_file = path in BUILDER_ALLOWED_ROOT_FILES
+        matches_root_glob = any(PurePosixPath(path).match(pattern) for pattern in BUILDER_ALLOWED_ROOT_GLOBS)
+        if not (is_root_file and (matches_root_file or matches_root_glob)):
+            raise _builder_policy_error(
+                "File path must be in src/, public/, or an allowed Vite root file",
+                field=field,
+            )
 
     suffix = PurePosixPath(path).suffix.lower()
     if suffix not in BUILDER_ALLOWED_EXTENSIONS:
@@ -1132,7 +1349,7 @@ def _validate_builder_project_or_raise(files: Dict[str, str], entry_file: str) -
 
     code_files = [
         path for path in files.keys()
-        if PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".js", ".jsx"}
+        if PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
     ]
     for path in code_files:
         source = files.get(path, "")
@@ -1140,18 +1357,11 @@ def _validate_builder_project_or_raise(files: Dict[str, str], entry_file: str) -
             spec = match.strip()
             if not spec:
                 continue
-            if spec.startswith(("http://", "https://")):
-                diagnostics.append({"path": path, "message": f"Network import is not allowed: {spec}"})
-                continue
-            if spec.startswith("/"):
-                diagnostics.append({"path": path, "message": f"Absolute import is not allowed: {spec}"})
-                continue
             if spec.startswith("."):
                 if _resolve_local_project_import(spec, path, files) is None:
                     diagnostics.append({"path": path, "message": f"Unresolved local import: {spec}"})
-                continue
-            if spec not in BUILDER_ALLOWED_IMPORTS:
-                diagnostics.append({"path": path, "message": f"Unsupported package import: {spec}"})
+
+    diagnostics.extend(validate_builder_dependency_policy(files))
 
     if diagnostics:
         raise _builder_compile_error("Project validation failed", diagnostics=diagnostics)
@@ -1389,6 +1599,14 @@ async def create_published_app(
             template_key=template_key,
             entry_file=template.entry_file,
             files=files,
+            build_status=PublishedAppRevisionBuildStatus.queued,
+            build_seq=1,
+            build_error=None,
+            build_started_at=None,
+            build_finished_at=None,
+            dist_storage_prefix=None,
+            dist_manifest=None,
+            template_runtime="vite_static",
             compiled_bundle=None,
             bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
             source_revision_id=None,
@@ -1397,6 +1615,7 @@ async def create_published_app(
         db.add(revision)
         await db.flush()
         app.current_draft_revision_id = revision.id
+        _enqueue_revision_build(revision=revision, app=app, build_kind="draft")
 
         await db.commit()
     except IntegrityError:
@@ -1503,6 +1722,14 @@ async def create_builder_revision(
         template_key=app.template_key,
         entry_file=next_entry,
         files=next_files,
+        build_status=PublishedAppRevisionBuildStatus.queued,
+        build_seq=_next_build_seq(current),
+        build_error=None,
+        build_started_at=None,
+        build_finished_at=None,
+        dist_storage_prefix=None,
+        dist_manifest=None,
+        template_runtime="vite_static",
         compiled_bundle=None,
         bundle_hash=sha256(json.dumps(next_files, sort_keys=True).encode("utf-8")).hexdigest(),
         source_revision_id=current.id,
@@ -1512,10 +1739,65 @@ async def create_builder_revision(
     await db.flush()
 
     app.current_draft_revision_id = revision.id
+    _enqueue_revision_build(revision=revision, app=app, build_kind="draft")
     await db.commit()
     await db.refresh(app)
     await db.refresh(revision)
     return _revision_to_response(revision)
+
+
+@router.get(
+    "/{app_id}/builder/revisions/{revision_id}/build",
+    response_model=RevisionBuildStatusResponse,
+)
+async def get_builder_revision_build_status(
+    app_id: UUID,
+    revision_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    revision = await _get_revision_for_app(db, app.id, revision_id)
+    return _revision_build_status_to_response(revision)
+
+
+@router.post(
+    "/{app_id}/builder/revisions/{revision_id}/build/retry",
+    response_model=RevisionBuildStatusResponse,
+)
+async def retry_builder_revision_build(
+    app_id: UUID,
+    revision_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    revision = await _get_revision_for_app(db, app.id, revision_id)
+
+    revision.build_status = PublishedAppRevisionBuildStatus.queued
+    revision.build_seq = int(revision.build_seq or 0) + 1
+    revision.build_error = None
+    revision.build_started_at = None
+    revision.build_finished_at = None
+    revision.dist_storage_prefix = None
+    revision.dist_manifest = None
+    revision.template_runtime = revision.template_runtime or "vite_static"
+    _enqueue_revision_build(
+        revision=revision,
+        app=app,
+        build_kind=revision.kind.value if hasattr(revision.kind, "value") else str(revision.kind),
+    )
+    await db.commit()
+    await db.refresh(revision)
+    return _revision_build_status_to_response(revision)
 
 
 @router.post("/{app_id}/builder/validate", response_model=BuilderValidationResponse)
@@ -1589,6 +1871,14 @@ async def reset_builder_template(
         template_key=template_key,
         entry_file=template.entry_file,
         files=files,
+        build_status=PublishedAppRevisionBuildStatus.queued,
+        build_seq=_next_build_seq(current),
+        build_error=None,
+        build_started_at=None,
+        build_finished_at=None,
+        dist_storage_prefix=None,
+        dist_manifest=None,
+        template_runtime="vite_static",
         compiled_bundle=None,
         bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
         source_revision_id=current.id,
@@ -1599,10 +1889,33 @@ async def reset_builder_template(
 
     app.template_key = template_key
     app.current_draft_revision_id = revision.id
+    _enqueue_revision_build(revision=revision, app=app, build_kind="draft")
 
     await db.commit()
     await db.refresh(revision)
     return _revision_to_response(revision)
+
+
+@router.get("/{app_id}/builder/conversations", response_model=List[BuilderConversationTurnResponse])
+async def list_builder_conversations(
+    app_id: UUID,
+    request: Request,
+    limit: int = Query(default=25, ge=1, le=100),
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+
+    result = await db.execute(
+        select(PublishedAppBuilderConversationTurn)
+        .where(PublishedAppBuilderConversationTurn.published_app_id == app.id)
+        .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
+        .limit(limit)
+    )
+    return [_builder_conversation_to_response(turn) for turn in result.scalars().all()]
 
 
 @router.post("/{app_id}/builder/chat/stream")
@@ -1639,28 +1952,77 @@ async def builder_chat_stream(
     existing_files = dict(draft.files or {})
     request_id = _new_builder_request_id()
     trace_events: List[Dict[str, Any]] = []
-    if _builder_model_patch_generation_enabled():
-        if _builder_agentic_loop_enabled():
-            generation_result, trace_events = await _run_builder_agentic_loop(
-                user_prompt=user_prompt,
-                files=existing_files,
-                entry_file=draft.entry_file,
-                request_id=request_id,
-            )
+    generation_result: Optional[BuilderPatchGenerationResult] = None
+    patch_ops_payload: List[Dict[str, Any]] = []
+    try:
+        if _builder_model_patch_generation_enabled():
+            if _builder_agentic_loop_enabled():
+                generation_result, trace_events = await _run_builder_agentic_loop(
+                    user_prompt=user_prompt,
+                    files=existing_files,
+                    entry_file=draft.entry_file,
+                    request_id=request_id,
+                )
+            else:
+                generation_result = await _generate_builder_patch_with_model(
+                    user_prompt=user_prompt,
+                    files=existing_files,
+                    entry_file=draft.entry_file,
+                )
         else:
-            generation_result = await _generate_builder_patch_with_model(
-                user_prompt=user_prompt,
-                files=existing_files,
-                entry_file=draft.entry_file,
+            patch_ops, patch_summary = _build_builder_patch_from_prompt(user_prompt, existing_files)
+            generation_result = BuilderPatchGenerationResult(
+                operations=[BuilderPatchOp(**op) for op in patch_ops],
+                summary=patch_summary,
             )
-    else:
-        patch_ops, patch_summary = _build_builder_patch_from_prompt(user_prompt, existing_files)
-        generation_result = BuilderPatchGenerationResult(
-            operations=[BuilderPatchOp(**op) for op in patch_ops],
-            summary=patch_summary,
+        patch_ops_payload = _serialize_patch_ops(generation_result.operations)
+        _apply_patch_operations(existing_files, draft.entry_file, generation_result.operations)
+    except HTTPException as exc:
+        _, diagnostics = _extract_http_error_details(exc)
+        await _persist_builder_conversation_turn(
+            db,
+            app_id=app.id,
+            revision_id=draft.id,
+            actor_id=actor_id,
+            request_id=request_id,
+            user_prompt=user_prompt,
+            status=BuilderConversationTurnStatus.failed,
+            generation_result=generation_result,
+            trace_events=trace_events,
+            diagnostics=diagnostics,
+            failure_code=_extract_http_error_code(exc) or "BUILDER_REQUEST_FAILED",
         )
-    patch_ops_payload = _serialize_patch_ops(generation_result.operations)
-    _apply_patch_operations(existing_files, draft.entry_file, generation_result.operations)
+        await db.commit()
+        raise
+    except Exception as exc:
+        await _persist_builder_conversation_turn(
+            db,
+            app_id=app.id,
+            revision_id=draft.id,
+            actor_id=actor_id,
+            request_id=request_id,
+            user_prompt=user_prompt,
+            status=BuilderConversationTurnStatus.failed,
+            generation_result=generation_result,
+            trace_events=trace_events,
+            diagnostics=[{"message": str(exc)}],
+            failure_code="BUILDER_INTERNAL_ERROR",
+        )
+        await db.commit()
+        raise
+
+    await _persist_builder_conversation_turn(
+        db,
+        app_id=app.id,
+        revision_id=draft.id,
+        actor_id=actor_id,
+        request_id=request_id,
+        user_prompt=user_prompt,
+        status=BuilderConversationTurnStatus.succeeded,
+        generation_result=generation_result,
+        trace_events=trace_events,
+    )
+    await db.commit()
 
     async def event_generator():
         yield ": " + (" " * 2048) + "\n\n"
@@ -1776,12 +2138,54 @@ async def publish_published_app(
     actor_id = ctx["user"].id if ctx["user"] else None
 
     current_draft = await _ensure_current_draft_revision(db, app, actor_id)
+    current_draft_id = str(current_draft.id)
+    if _builder_publish_build_guard_enabled():
+        current_build_status = (
+            current_draft.build_status.value
+            if hasattr(current_draft.build_status, "value")
+            else str(current_draft.build_status)
+        )
+        if current_build_status in {
+            PublishedAppRevisionBuildStatus.queued.value,
+            PublishedAppRevisionBuildStatus.running.value,
+        }:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "BUILD_PENDING",
+                    "message": "Draft build is still in progress",
+                    "build_status": current_build_status,
+                    "revision_id": current_draft_id,
+                },
+            )
+        if current_build_status == PublishedAppRevisionBuildStatus.failed.value:
+            diagnostics = []
+            if current_draft.build_error:
+                diagnostics.append({"message": current_draft.build_error})
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "BUILD_FAILED",
+                    "message": "Draft build failed",
+                    "build_status": current_build_status,
+                    "revision_id": current_draft_id,
+                    "diagnostics": diagnostics,
+                },
+            )
     published_revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.published,
         template_key=current_draft.template_key,
         entry_file=current_draft.entry_file,
         files=dict(current_draft.files or {}),
+        build_status=current_draft.build_status,
+        build_seq=current_draft.build_seq,
+        build_error=current_draft.build_error,
+        build_started_at=current_draft.build_started_at,
+        build_finished_at=current_draft.build_finished_at,
+        dist_storage_prefix=None,
+        dist_manifest=dict(current_draft.dist_manifest or {}) if current_draft.dist_manifest else None,
+        template_runtime=current_draft.template_runtime or "vite_static",
         compiled_bundle=current_draft.compiled_bundle,
         bundle_hash=current_draft.bundle_hash,
         source_revision_id=current_draft.id,
@@ -1789,6 +2193,26 @@ async def publish_published_app(
     )
     db.add(published_revision)
     await db.flush()
+
+    try:
+        promoted_prefix = _promote_revision_dist_artifacts(
+            app=app,
+            source_revision=current_draft,
+            destination_revision=published_revision,
+        )
+        if promoted_prefix:
+            published_revision.dist_storage_prefix = promoted_prefix
+    except (PublishedAppBundleStorageError, ValueError) as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "BUILD_ARTIFACT_COPY_FAILED",
+                "message": "Failed to promote build artifacts during publish",
+                "revision_id": current_draft_id,
+                "error": str(exc),
+            },
+        )
 
     app.current_published_revision_id = published_revision.id
     app.status = PublishedAppStatus.published

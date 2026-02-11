@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -23,6 +23,18 @@ class PublishedAppStatus(str, enum.Enum):
 class PublishedAppRevisionKind(str, enum.Enum):
     draft = "draft"
     published = "published"
+
+
+class PublishedAppRevisionBuildStatus(str, enum.Enum):
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+
+
+class BuilderConversationTurnStatus(str, enum.Enum):
+    succeeded = "succeeded"
+    failed = "failed"
 
 
 class PublishedAppUserMembershipStatus(str, enum.Enum):
@@ -63,6 +75,11 @@ class PublishedApp(Base):
     memberships = relationship("PublishedAppUserMembership", back_populates="published_app", cascade="all, delete-orphan")
     sessions = relationship("PublishedAppSession", back_populates="published_app", cascade="all, delete-orphan")
     revisions = relationship("PublishedAppRevision", back_populates="published_app", cascade="all, delete-orphan")
+    builder_conversations = relationship(
+        "PublishedAppBuilderConversationTurn",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_published_apps_tenant_name"),
@@ -133,6 +150,18 @@ class PublishedAppRevision(Base):
     template_key = Column(String, nullable=False, default="chat-classic")
     entry_file = Column(String, nullable=False, default="src/main.tsx")
     files = Column(JSONB, nullable=False, default=dict)
+    build_status = Column(
+        SQLEnum(PublishedAppRevisionBuildStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppRevisionBuildStatus.queued,
+    )
+    build_seq = Column(Integer, nullable=False, default=0)
+    build_error = Column(Text, nullable=True)
+    build_started_at = Column(DateTime(timezone=True), nullable=True)
+    build_finished_at = Column(DateTime(timezone=True), nullable=True)
+    dist_storage_prefix = Column(String, nullable=True)
+    dist_manifest = Column(JSONB, nullable=True)
+    template_runtime = Column(String, nullable=False, default="vite_static")
     compiled_bundle = Column(String, nullable=True)
     bundle_hash = Column(String, nullable=True, index=True)
     source_revision_id = Column(
@@ -146,3 +175,46 @@ class PublishedAppRevision(Base):
 
     published_app = relationship("PublishedApp", back_populates="revisions")
     creator = relationship("User")
+    builder_conversations = relationship("PublishedAppBuilderConversationTurn", back_populates="revision")
+
+
+class PublishedAppBuilderConversationTurn(Base):
+    __tablename__ = "published_app_builder_conversation_turns"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    request_id = Column(String(64), nullable=False, index=True)
+    status = Column(
+        SQLEnum(BuilderConversationTurnStatus, values_callable=_enum_values),
+        nullable=False,
+        default=BuilderConversationTurnStatus.succeeded,
+    )
+    user_prompt = Column(Text, nullable=False)
+    assistant_summary = Column(Text, nullable=True)
+    assistant_rationale = Column(Text, nullable=True)
+    assistant_assumptions = Column(JSONB, nullable=False, default=list)
+    patch_operations = Column(JSONB, nullable=False, default=list)
+    tool_trace = Column(JSONB, nullable=False, default=list)
+    diagnostics = Column(JSONB, nullable=False, default=list)
+    failure_code = Column(String, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="builder_conversations")
+    revision = relationship("PublishedAppRevision", back_populates="builder_conversations")
+    creator = relationship("User")
+
+    __table_args__ = (
+        Index("ix_builder_conversation_app_created_at", "published_app_id", "created_at"),
+    )
