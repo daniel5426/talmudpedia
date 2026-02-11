@@ -21,7 +21,6 @@ import {
     RefreshCw,
     Bot,
     ListFilter,
-    Check,
     GitMerge,
     Link,
     Route,
@@ -59,6 +58,7 @@ import { ToolPicker } from "./ToolPicker"
 import { useTenant } from "@/contexts/TenantContext"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
 import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
+import { SearchableResourceInput } from "../shared/SearchableResourceInput"
 
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -446,130 +446,6 @@ function SmartInput({
                                 </span>
                             </div>
                             <span className="text-[10px] opacity-50">{item.meta}</span>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-    )
-}
-
-function SearchableResourceInput({
-    value,
-    onChange,
-    placeholder,
-    className,
-    resources = []
-}: {
-    value: string
-    onChange: (val: string) => void
-    placeholder?: string
-    className?: string
-    resources: Array<{ value: string; label: string; info?: string }>
-}) {
-    const [showSuggestions, setShowSuggestions] = useState(false)
-    const [selectedIndex, setSelectedIndex] = useState(0)
-
-    // Get the label for the current value
-    const selectedResource = resources.find(r => r.value === value)
-    const [query, setQuery] = useState(selectedResource?.label || "")
-    const [isFocused, setIsFocused] = useState(false)
-
-    // Sync query when value changes and we are not typing
-    useEffect(() => {
-        if (!isFocused) {
-            setQuery(selectedResource?.label || value || "")
-        }
-    }, [value, selectedResource, isFocused])
-
-    const filteredResources = resources.filter(r =>
-        r.label.toLowerCase().includes(query.toLowerCase()) ||
-        r.value.toLowerCase().includes(query.toLowerCase())
-    )
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (!showSuggestions || filteredResources.length === 0) {
-            e.stopPropagation()
-            return
-        }
-
-        if (e.key === "ArrowDown") {
-            e.preventDefault()
-            e.stopPropagation()
-            setSelectedIndex(i => (i + 1) % filteredResources.length)
-        } else if (e.key === "ArrowUp") {
-            e.preventDefault()
-            e.stopPropagation()
-            setSelectedIndex(i => (i - 1 + filteredResources.length) % filteredResources.length)
-        } else if (e.key === "Enter" || e.key === "Tab") {
-            e.preventDefault()
-            e.stopPropagation()
-            const selected = filteredResources[selectedIndex]
-            onChange(selected.value)
-            setQuery(selected.label)
-            setShowSuggestions(false)
-        } else if (e.key === "Escape") {
-            e.stopPropagation()
-            setShowSuggestions(false)
-        } else {
-            e.stopPropagation()
-        }
-    }
-
-    return (
-        <div className="relative">
-            <div className="relative">
-                <Input
-                    value={query}
-                    onChange={(e) => {
-                        setQuery(e.target.value)
-                        setShowSuggestions(true)
-                    }}
-                    onFocus={() => {
-                        setIsFocused(true)
-                        setShowSuggestions(true)
-                    }}
-                    onKeyDown={handleKeyDown}
-                    placeholder={placeholder}
-                    className={cn(className, "pr-8")}
-                    onBlur={() => {
-                        setIsFocused(false)
-                        setShowSuggestions(false)
-                    }}
-                />
-                {query && (
-                    <button
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-muted-foreground"
-                        onClick={() => {
-                            setQuery("")
-                            onChange("")
-                        }}
-                    >
-                        <X className="h-3 w-3" />
-                    </button>
-                )}
-            </div>
-            {showSuggestions && filteredResources.length > 0 && (
-                <div className="absolute z-50 w-full mt-1 bg-popover text-popover-foreground shadow-md rounded-md border border-border p-1 max-h-[200px] overflow-auto">
-                    {filteredResources.map((r, idx) => (
-                        <div
-                            key={r.value}
-                            className={cn(
-                                "flex flex-col px-2 py-1.5 text-xs rounded-sm cursor-pointer",
-                                idx === selectedIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-                            )}
-                            onMouseDown={(e) => {
-                                e.preventDefault()
-                                onChange(r.value)
-                                setQuery(r.label)
-                                setShowSuggestions(false)
-                            }}
-                        >
-                            <div className="flex items-center justify-between">
-                                <span className="font-medium">{r.label}</span>
-                                {r.value === value && <Check className="h-3 w-3 text-primary" />}
-                            </div>
-                            <span className="text-[10px] opacity-50 font-mono truncate">{r.value}</span>
                         </div>
                     ))}
                 </div>

@@ -158,15 +158,20 @@ export const ReactArtifactPane = ({
   }, [artifact.code, artifact.id, runCompile]);
 
   useEffect(() => {
+    const isConsoleLevel = (value: unknown): value is ConsoleLog["level"] =>
+      value === "log" || value === "warn" || value === "error";
+
     const handler = (event: MessageEvent) => {
       const data = event.data as { source?: string; type?: string; level?: ConsoleLog["level"]; message?: string };
       if (!data || data.source !== "react-artifact" || data.type !== "console") return;
-      if (!data.message || !data.level) return;
+      if (!data.message || !isConsoleLevel(data.level)) return;
+      const level: ConsoleLog["level"] = data.level;
+      const message = data.message;
       setLogs((prev) => [
         ...prev,
         {
-          level: data.level,
-          message: data.message,
+          level,
+          message,
           timestamp: new Date(),
         },
       ]);

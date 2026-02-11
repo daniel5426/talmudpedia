@@ -510,6 +510,7 @@ export const reconcileRuntimeTree = (
   treePayload: AgentRunTreeResponse
 ): RuntimeGraphState => {
   const allTreeNodes = walkRunTree(treePayload.tree)
+  const rootRunId = String(treePayload.root_run_id || "")
   let state = baseState
   const nextAuthoritative: Record<string, string> = {
     ...state.indexes.authoritativeRunStatusByRunId,
@@ -518,6 +519,10 @@ export const reconcileRuntimeTree = (
   allTreeNodes.forEach((treeNode, idx) => {
     const runId = treeNode.run_id
     nextAuthoritative[runId] = treeNode.status
+    const isRootNode = runId === rootRunId && !treeNode.parent_run_id
+    if (isRootNode) {
+      return
+    }
     const x = 540 + (treeNode.depth || 0) * 220
     const y = 80 + idx * 96
     state = ensureChildRunNode(state, runId, { x, y }, treeNode.status)

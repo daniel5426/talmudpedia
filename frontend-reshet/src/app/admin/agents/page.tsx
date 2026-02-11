@@ -1,38 +1,44 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import Link from "next/link"
+import { useState, useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import {
+    Bot,
     Plus,
     Search,
-    MoreVertical,
-    Play,
-    Trash2,
-    ExternalLink,
-    Loader2,
-    AlertCircle
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardFooter,
-    CardHeader,
-    CardTitle,
-} from "@/components/ui/card"
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { agentService, Agent } from "@/services"
+import { AgentCard } from "@/components/agent-card"
+
+
+
+function AgentCardSkeleton() {
+    return (
+        <div className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
+            <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                    <Skeleton className="h-10 w-10 rounded-lg" />
+                    <div className="space-y-1.5">
+                        <Skeleton className="h-4 w-32" />
+                        <Skeleton className="h-3 w-20" />
+                    </div>
+                </div>
+                <Skeleton className="h-7 w-7 rounded-md" />
+            </div>
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-3/4" />
+            <div className="flex items-center justify-between pt-2">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-8 w-16 rounded-md" />
+            </div>
+        </div>
+    )
+}
 
 export default function AgentsPage() {
     const router = useRouter()
@@ -60,23 +66,14 @@ export default function AgentsPage() {
         }
     }
 
-    const filteredAgents = agents.filter(agent =>
-        agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        agent.slug?.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-
-    const getStatusBadge = (status: Agent['status']) => {
-        switch (status) {
-            case 'published':
-                return <Badge variant="default" className="bg-green-500 hover:bg-green-600">Published</Badge>
-            case 'draft':
-                return <Badge variant="secondary">Draft</Badge>
-            case 'archived':
-                return <Badge variant="outline">Archived</Badge>
-            default:
-                return <Badge variant="outline">{status}</Badge>
-        }
-    }
+    const filteredAgents = useMemo(() => {
+        const q = searchQuery.toLowerCase().trim()
+        if (!q) return agents
+        return agents.filter(agent =>
+            agent.name.toLowerCase().includes(q) ||
+            agent.slug?.toLowerCase().includes(q)
+        )
+    }, [agents, searchQuery])
 
     const handleDelete = async (agent: Agent) => {
         if (!window.confirm(`Delete agent "${agent.name}"? This cannot be undone.`)) return
@@ -94,130 +91,91 @@ export default function AgentsPage() {
 
     return (
         <div className="flex w-full flex-col h-screen bg-background overflow-hidden">
-            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                        <CustomBreadcrumb items={[
-                            { label: "Agents Management", href: "/admin/agents", active: true },
-                        ]} />
-                    </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                    <div className="relative w-64">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            placeholder="Search agents..."
-                            className="pl-8 h-9 bg-muted/50 border-none focus-visible:ring-1"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            disabled={isLoading}
-                        />
-                    </div>
-                    <Button size="sm" className="h-9" onClick={() => router.push("/admin/agents/new")} disabled={isLoading}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Create Agent
-                    </Button>
-                </div>
+            {/* Header */}
+            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0 border-b border-border/40">
+                <CustomBreadcrumb items={[
+                    { label: "Agents", href: "/admin/agents", active: true },
+                ]} />
+                <Button
+                    size="sm"
+                    className="h-8 gap-1.5"
+                    onClick={() => router.push("/admin/agents/new")}
+                    disabled={isLoading}
+                >
+                    <Plus className="h-3.5 w-3.5" />
+                    New Agent
+                </Button>
             </header>
 
-            <main className="flex-1 overflow-y-auto p-6">
-                <div className="max-w-7xl mx-auto space-y-6">
-
-                    {isLoading ? (
-                        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
-                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                            <p className="text-muted-foreground">Loading agents...</p>
-                        </div>
-                    ) : error ? (
-                        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4 text-center">
-                            <AlertCircle className="h-12 w-12 text-destructive" />
-                            <div className="space-y-2">
-                                <h3 className="text-lg font-medium">Error</h3>
-                                <p className="text-muted-foreground max-w-sm">{error}</p>
-                            </div>
-                            <Button variant="outline" onClick={loadAgents}>Try Again</Button>
-                        </div>
-                    ) : filteredAgents.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4 text-center border-2 border-dashed rounded-lg">
-                            <div className="bg-muted p-4 rounded-full">
-                                <Plus className="h-8 w-8 text-muted-foreground" />
-                            </div>
-                            <div className="space-y-1">
-                                <h3 className="text-lg font-medium">No agents found</h3>
-                                <p className="text-muted-foreground max-w-sm">
-                                    {searchQuery ? "No agents match your search criteria." : "Get started by creating your first AI agent."}
-                                </p>
-                            </div>
-                            <Button variant="secondary" onClick={() => router.push("/admin/agents/new")}>
-                                Create your first agent
-                            </Button>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {filteredAgents.map((agent) => (
-                                <Card key={agent.id} className="flex flex-col relative">
-                                    <CardHeader className="space-y-1">
-                                        <div className="flex items-start justify-between">
-                                            <div className="space-y-1 flex-1 pr-8">
-                                                <div className="flex items-center gap-2">
-                                                    <CardTitle className="line-clamp-1">{agent.name}</CardTitle>
-                                                    {getStatusBadge(agent.status)}
-                                                </div>
-                                                <CardDescription>v{agent.version} • {agent.slug}</CardDescription>
-                                            </div>
-                                            <DropdownMenu>
-                                                <DropdownMenuTrigger asChild>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="absolute top-2 right-2 h-8 w-8"
-                                                        aria-label={`Open actions for ${agent.name}`}
-                                                    >
-                                                        <MoreVertical className="h-4 w-4" />
-                                                    </Button>
-                                                </DropdownMenuTrigger>
-                                                <DropdownMenuContent align="end">
-                                                    <DropdownMenuItem onClick={() => router.push(`/admin/agents/${agent.id}/builder`)}>
-                                                        Edit Builder
-                                                    </DropdownMenuItem>
-                                                    <DropdownMenuItem>Settings</DropdownMenuItem>
-                                                    <DropdownMenuItem
-                                                        className="text-destructive"
-                                                        onClick={() => handleDelete(agent)}
-                                                        disabled={deletingAgentId === agent.id}
-                                                    >
-                                                        {deletingAgentId === agent.id ? "Deleting..." : "Delete"}
-                                                    </DropdownMenuItem>
-                                                </DropdownMenuContent>
-                                            </DropdownMenu>
-                                        </div>
-                                    </CardHeader>
-                                    <CardContent className="flex-1">
-                                        <p className="text-sm text-muted-foreground line-clamp-3">
-                                            {agent.description || "No description provided."}
-                                        </p>
-                                    </CardContent>
-                                    <CardFooter className="pt-0 flex justify-between">
-                                        <div className="text-xs text-muted-foreground">
-                                            Updated {new Date(agent.updated_at).toLocaleDateString()}
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <Button variant="outline" size="sm" onClick={() => router.push(`/admin/agents/${agent.id}/builder`)}>
-                                                <ExternalLink className="mr-2 h-3 w-3" />
-                                                Open
-                                            </Button>
-                                            <Button size="sm" onClick={() => router.push(`/admin/agents/playground?agentId=${agent.id}`)}>
-                                                <Play className="mr-2 h-3 w-3" />
-                                                Run
-                                            </Button>
-                                        </div>
-                                    </CardFooter>
-                                </Card>
-                            ))}
-                        </div>
-                    )}
+            {/* Search bar */}
+            <div className="shrink-0 border-b border-border/40 px-4 py-3">
+                <div className="relative max-w-md">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
+                    <Input
+                        placeholder="Search agents..."
+                        className="h-9 pl-8 bg-muted/30 border-border/50 text-sm placeholder:text-muted-foreground/50"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        disabled={isLoading}
+                    />
                 </div>
+            </div>
+
+            {/* Content */}
+            <main className="flex-1 overflow-y-auto p-4">
+                {error && (
+                    <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive flex items-center justify-between">
+                        <span>{error}</span>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={loadAgents}>
+                            Try Again
+                        </Button>
+                    </div>
+                )}
+
+                {isLoading ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <AgentCardSkeleton key={i} />
+                        ))}
+                    </div>
+                ) : filteredAgents.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-24 px-4 text-center">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-dashed border-border/60 mb-4">
+                            <Bot className="h-6 w-6 text-muted-foreground/40" />
+                        </div>
+                        <h3 className="text-sm font-medium text-foreground mb-1">
+                            {searchQuery ? "No agents match your search" : "No agents yet"}
+                        </h3>
+                        <p className="text-sm text-muted-foreground/70 max-w-[300px] mb-5">
+                            {searchQuery
+                                ? "Try a different search term."
+                                : "Create your first AI agent to get started."}
+                        </p>
+                        {!searchQuery && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5"
+                                onClick={() => router.push("/admin/agents/new")}
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                                Create Agent
+                            </Button>
+                        )}
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-2">
+                        {filteredAgents.map((agent) => (
+                            <AgentCard
+                                key={agent.id}
+                                agent={agent}
+                                onOpen={(a) => router.push(`/admin/agents/${a.id}/builder`)}
+                                onPlayground={(a) => router.push(`/admin/agents/playground?agentId=${a.id}`)}
+                                onDelete={handleDelete}
+                            />
+                        ))}
+                    </div>
+                )}
             </main>
         </div>
     )

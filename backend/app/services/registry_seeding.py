@@ -21,6 +21,7 @@ from app.db.postgres.models.orchestration import (
     OrchestratorPolicy,
     OrchestratorTargetAllowlist,
 )
+from app.services.builtin_tools import BUILTIN_TEMPLATE_SPECS, is_builtin_tools_v1_enabled
 
 
 ARCHITECT_ORCHESTRATION_SCOPE_SUBSET = [
@@ -281,6 +282,9 @@ async def seed_platform_sdk_tool(db):
                 implementation_type=ToolImplementationType.ARTIFACT,
                 artifact_id="builtin/platform_sdk",
                 artifact_version="1.0.0",
+                builtin_key="platform_sdk",
+                builtin_template_id=None,
+                is_builtin_template=True,
                 is_active=True,
                 is_system=True,
                 published_at=datetime.utcnow(),
@@ -297,6 +301,9 @@ async def seed_platform_sdk_tool(db):
             tool.implementation_type = ToolImplementationType.ARTIFACT
             tool.artifact_id = "builtin/platform_sdk"
             tool.artifact_version = "1.0.0"
+            tool.builtin_key = "platform_sdk"
+            tool.builtin_template_id = None
+            tool.is_builtin_template = True
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.utcnow()
@@ -307,6 +314,99 @@ async def seed_platform_sdk_tool(db):
 
     await db.rollback()
     return await _seed_platform_sdk_tool_legacy(db, schema, config_schema, tool_columns, scope_value)
+
+
+async def seed_builtin_tool_templates(db):
+    """
+    Seeds global built-in tool templates for Built-in Tools v1.
+    """
+    if not is_builtin_tools_v1_enabled():
+        return []
+
+    await _normalize_tool_status_values(db)
+    await _normalize_tool_impl_values(db)
+
+    tool_columns = await _get_table_columns(db, "tool_registry")
+    required_cols = {
+        "builtin_key",
+        "builtin_template_id",
+        "is_builtin_template",
+        "artifact_id",
+        "artifact_version",
+    }
+    if not required_cols.issubset(tool_columns):
+        print("tool_registry missing builtin metadata columns; skipping built-in template seed.")
+        return []
+
+    seeded = []
+    for spec in BUILTIN_TEMPLATE_SPECS:
+        # Platform SDK is seeded by the dedicated seeder.
+        if spec.key == "platform_sdk":
+            continue
+
+        result = await db.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.tenant_id == None,
+                ToolRegistry.builtin_key == spec.key,
+                ToolRegistry.is_builtin_template == True,
+            )
+        )
+        tool = result.scalar_one_or_none()
+
+        schema = {
+            "input": spec.input_schema,
+            "output": spec.output_schema,
+        }
+        config_schema = {
+            "implementation": dict(spec.implementation),
+            "execution": dict(spec.execution),
+        }
+
+        if tool is None:
+            tool = ToolRegistry(
+                tenant_id=None,
+                name=spec.name,
+                slug=spec.slug,
+                description=spec.description,
+                scope=ToolDefinitionScope.GLOBAL,
+                schema=schema,
+                config_schema=config_schema,
+                status=ToolStatus.PUBLISHED,
+                version="1.0.0",
+                implementation_type=spec.implementation_type,
+                artifact_id=None,
+                artifact_version=None,
+                builtin_key=spec.key,
+                builtin_template_id=None,
+                is_builtin_template=True,
+                is_active=True,
+                is_system=True,
+                published_at=datetime.utcnow(),
+            )
+            db.add(tool)
+        else:
+            tool.name = spec.name
+            tool.slug = spec.slug
+            tool.description = spec.description
+            tool.scope = ToolDefinitionScope.GLOBAL
+            tool.schema = schema
+            tool.config_schema = config_schema
+            tool.status = ToolStatus.PUBLISHED
+            tool.version = "1.0.0"
+            tool.implementation_type = spec.implementation_type
+            tool.artifact_id = None
+            tool.artifact_version = None
+            tool.builtin_key = spec.key
+            tool.builtin_template_id = None
+            tool.is_builtin_template = True
+            tool.is_active = True
+            tool.is_system = True
+            tool.published_at = tool.published_at or datetime.utcnow()
+
+        seeded.append(tool)
+
+    await db.commit()
+    return seeded
 
 
 async def seed_platform_architect_agent(db):
@@ -475,9 +575,9 @@ def _build_architect_graph_definition(_tool_id: str, model_id: str, subagent_slu
 
     instructions = (
         "You are the Platform Architect final reporter. "
-        f"This run delegates sub-agents via GraphSpec v2 orchestration nodes. Sub-agent slugs: catalog={slugs['catalog']}, "
+        f"This run uses a linear staged multi-agent orchestration via GraphSpec v2 nodes. Sub-agent slugs: catalog={slugs['catalog']}, "
         f"planner={slugs['planner']}, builder={slugs['builder']}, coder={slugs['coder']}, tester={slugs['tester']}. "
-        "Read orchestration outcomes from state._node_outputs and summarize run health, child activity, and next draft-safe actions. "
+        "Read orchestration outcomes from state._node_outputs and summarize run health, child activity, stage-by-stage results, and next draft-safe actions. "
         "Never claim publish/promote occurred unless explicitly shown in node outputs. "
         "Return JSON only."
     )
@@ -503,28 +603,42 @@ def _build_architect_graph_definition(_tool_id: str, model_id: str, subagent_slu
         "nodes": [
             {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
             {
-                "id": "spawn_catalog",
-                "type": "spawn_run",
+                "id": "spawn_catalog_stage",
+                "type": "spawn_group",
                 "position": {"x": 220, "y": -120},
                 "config": {
-                    "target_agent_slug": slugs["catalog"],
+                    "targets": [
+                        {
+                            "target_agent_slug": slugs["catalog"],
+                            "mapped_input_payload": {
+                                "messages": [
+                                    {"role": "user", "content": "Fetch and summarize platform catalog capabilities as JSON."}
+                                ],
+                                "context": {"orchestrator_stage": "catalog"},
+                            },
+                        }
+                    ],
                     "scope_subset": scope_subset,
-                    "idempotency_key": "platform-architect:catalog:v2",
+                    "join_mode": "best_effort",
                     "failure_policy": "best_effort",
                     "timeout_s": 90,
                     "start_background": True,
-                    "mapped_input_payload": {
-                        "messages": [
-                            {"role": "user", "content": "Fetch and summarize platform catalog capabilities as JSON."}
-                        ],
-                        "context": {"orchestrator_stage": "catalog"},
-                    },
+                    "idempotency_key_prefix": "platform-architect:catalog-stage:v3",
                 },
             },
             {
-                "id": "spawn_core_group",
+                "id": "join_catalog_stage",
+                "type": "join",
+                "position": {"x": 420, "y": -120},
+                "config": {
+                    "mode": "best_effort",
+                    "timeout_s": 90,
+                },
+            },
+            {
+                "id": "spawn_planner_stage",
                 "type": "spawn_group",
-                "position": {"x": 430, "y": -120},
+                "position": {"x": 620, "y": -120},
                 "config": {
                     "targets": [
                         {
@@ -533,103 +647,169 @@ def _build_architect_graph_definition(_tool_id: str, model_id: str, subagent_slu
                                 "messages": [
                                     {"role": "user", "content": "Produce strict plan JSON for draft-only execution."}
                                 ],
-                                "context": {"orchestrator_role": "planner"},
+                                "context": {"orchestrator_stage": "planner"},
                             },
-                        },
+                        }
+                    ],
+                    "scope_subset": scope_subset,
+                    "join_mode": "best_effort",
+                    "failure_policy": "best_effort",
+                    "timeout_s": 120,
+                    "start_background": True,
+                    "idempotency_key_prefix": "platform-architect:planner-stage:v3",
+                },
+            },
+            {
+                "id": "join_planner_stage",
+                "type": "join",
+                "position": {"x": 820, "y": -120},
+                "config": {
+                    "mode": "best_effort",
+                    "timeout_s": 120,
+                },
+            },
+            {
+                "id": "spawn_builder_stage",
+                "type": "spawn_group",
+                "position": {"x": 1020, "y": -120},
+                "config": {
+                    "targets": [
                         {
                             "target_agent_slug": slugs["builder"],
                             "mapped_input_payload": {
                                 "messages": [
                                     {"role": "user", "content": "Produce deploy-ready payload JSON from the plan."}
                                 ],
-                                "context": {"orchestrator_role": "builder"},
+                                "context": {"orchestrator_stage": "builder"},
                             },
-                        },
+                        }
+                    ],
+                    "scope_subset": scope_subset,
+                    "join_mode": "best_effort",
+                    "failure_policy": "best_effort",
+                    "timeout_s": 120,
+                    "start_background": True,
+                    "idempotency_key_prefix": "platform-architect:builder-stage:v3",
+                },
+            },
+            {
+                "id": "join_builder_stage",
+                "type": "join",
+                "position": {"x": 1220, "y": -120},
+                "config": {
+                    "mode": "best_effort",
+                    "timeout_s": 120,
+                },
+            },
+            {
+                "id": "spawn_coder_stage",
+                "type": "spawn_group",
+                "position": {"x": 1420, "y": -120},
+                "config": {
+                    "targets": [
                         {
                             "target_agent_slug": slugs["coder"],
                             "mapped_input_payload": {
                                 "messages": [
                                     {"role": "user", "content": "Draft missing artifacts/tools as JSON only."}
                                 ],
-                                "context": {"orchestrator_role": "coder"},
+                                "context": {"orchestrator_stage": "coder"},
                             },
-                        },
+                        }
+                    ],
+                    "scope_subset": scope_subset,
+                    "join_mode": "best_effort",
+                    "failure_policy": "best_effort",
+                    "timeout_s": 120,
+                    "start_background": True,
+                    "idempotency_key_prefix": "platform-architect:coder-stage:v3",
+                },
+            },
+            {
+                "id": "join_coder_stage",
+                "type": "join",
+                "position": {"x": 1620, "y": -120},
+                "config": {
+                    "mode": "best_effort",
+                    "timeout_s": 120,
+                },
+            },
+            {
+                "id": "spawn_tester_stage",
+                "type": "spawn_group",
+                "position": {"x": 1820, "y": -120},
+                "config": {
+                    "targets": [
                         {
                             "target_agent_slug": slugs["tester"],
                             "mapped_input_payload": {
                                 "messages": [
                                     {"role": "user", "content": "Run provided multi-case tests and return test report JSON."}
                                 ],
-                                "context": {"orchestrator_role": "tester"},
+                                "context": {"orchestrator_stage": "tester"},
                             },
-                        },
+                        }
                     ],
                     "scope_subset": scope_subset,
                     "join_mode": "best_effort",
                     "failure_policy": "best_effort",
                     "timeout_s": 180,
                     "start_background": True,
-                    "idempotency_key_prefix": "platform-architect:core-group:v2",
+                    "idempotency_key_prefix": "platform-architect:tester-stage:v3",
                 },
             },
             {
-                "id": "join_core_group",
+                "id": "join_tester_stage",
                 "type": "join",
-                "position": {"x": 640, "y": -120},
+                "position": {"x": 2020, "y": -120},
                 "config": {
                     "mode": "best_effort",
                     "timeout_s": 180,
                 },
             },
             {
-                "id": "judge_core",
-                "type": "judge",
-                "position": {"x": 850, "y": -220},
-                "config": {
-                    "outcomes": ["pass", "fail"],
-                },
-            },
-            {
                 "id": "replan_core",
                 "type": "replan",
-                "position": {"x": 850, "y": 10},
+                "position": {"x": 2220, "y": -120},
                 "config": {},
             },
             {
-                "id": "route_replan",
-                "type": "router",
-                "position": {"x": 1060, "y": 10},
+                "id": "spawn_replanner_stage",
+                "type": "spawn_group",
+                "position": {"x": 2420, "y": -220},
                 "config": {
-                    "route_key": "suggested_action",
-                    "routes": [
-                        {"name": "replan", "match": "replan"},
-                        {"name": "continue", "match": "continue"},
+                    "targets": [
+                        {
+                            "target_agent_slug": slugs["planner"],
+                            "mapped_input_payload": {
+                                "messages": [
+                                    {"role": "user", "content": "Produce a revised plan JSON after orchestration failure."}
+                                ],
+                                "context": {"orchestrator_stage": "replan"},
+                            },
+                        }
                     ],
-                },
-            },
-            {
-                "id": "spawn_replanner",
-                "type": "spawn_run",
-                "position": {"x": 1270, "y": -70},
-                "config": {
-                    "target_agent_slug": slugs["planner"],
                     "scope_subset": scope_subset,
-                    "idempotency_key": "platform-architect:replanner:v2",
+                    "join_mode": "best_effort",
                     "failure_policy": "best_effort",
                     "timeout_s": 90,
                     "start_background": True,
-                    "mapped_input_payload": {
-                        "messages": [
-                            {"role": "user", "content": "Produce a revised plan JSON after orchestration failure."}
-                        ],
-                        "context": {"orchestrator_stage": "replan"},
-                    },
+                    "idempotency_key_prefix": "platform-architect:replanner-stage:v3",
+                },
+            },
+            {
+                "id": "join_replanner_stage",
+                "type": "join",
+                "position": {"x": 2620, "y": -220},
+                "config": {
+                    "mode": "best_effort",
+                    "timeout_s": 90,
                 },
             },
             {
                 "id": "cancel_subtree",
                 "type": "cancel_subtree",
-                "position": {"x": 1270, "y": 110},
+                "position": {"x": 2820, "y": -120},
                 "config": {
                     "include_root": False,
                     "reason": "platform_architect_orchestration_cleanup",
@@ -638,7 +818,7 @@ def _build_architect_graph_definition(_tool_id: str, model_id: str, subagent_slu
             {
                 "id": "final_report",
                 "type": "agent",
-                "position": {"x": 1480, "y": 0},
+                "position": {"x": 3020, "y": -120},
                 "config": {
                     "name": "Platform Architect Final Report",
                     "model_id": model_id,
@@ -650,27 +830,50 @@ def _build_architect_graph_definition(_tool_id: str, model_id: str, subagent_slu
                     "write_output_to_context": True,
                 },
             },
-            {"id": "end", "type": "end", "position": {"x": 1700, "y": 0}, "config": {"output_variable": "context"}},
+            {"id": "end", "type": "end", "position": {"x": 3220, "y": -120}, "config": {"output_variable": "context"}},
         ],
         "edges": [
-            {"id": "e1", "source": "start", "target": "spawn_catalog", "type": "control"},
-            {"id": "e2", "source": "spawn_catalog", "target": "spawn_core_group", "type": "control"},
-            {"id": "e3", "source": "spawn_core_group", "target": "join_core_group", "type": "control"},
-            {"id": "e4", "source": "join_core_group", "target": "judge_core", "type": "control", "source_handle": "completed"},
-            {"id": "e5", "source": "join_core_group", "target": "judge_core", "type": "control", "source_handle": "completed_with_errors"},
-            {"id": "e6", "source": "join_core_group", "target": "replan_core", "type": "control", "source_handle": "failed"},
-            {"id": "e7", "source": "join_core_group", "target": "cancel_subtree", "type": "control", "source_handle": "timed_out"},
-            {"id": "e8", "source": "join_core_group", "target": "join_core_group", "type": "control", "source_handle": "pending"},
-            {"id": "e9", "source": "judge_core", "target": "final_report", "type": "control", "source_handle": "pass"},
-            {"id": "e10", "source": "judge_core", "target": "replan_core", "type": "control", "source_handle": "fail"},
-            {"id": "e11", "source": "replan_core", "target": "route_replan", "type": "control", "source_handle": "replan"},
-            {"id": "e12", "source": "replan_core", "target": "final_report", "type": "control", "source_handle": "continue"},
-            {"id": "e13", "source": "route_replan", "target": "spawn_replanner", "type": "control", "source_handle": "replan"},
-            {"id": "e14", "source": "route_replan", "target": "final_report", "type": "control", "source_handle": "continue"},
-            {"id": "e15", "source": "route_replan", "target": "final_report", "type": "control", "source_handle": "default"},
-            {"id": "e16", "source": "spawn_replanner", "target": "cancel_subtree", "type": "control"},
-            {"id": "e17", "source": "cancel_subtree", "target": "final_report", "type": "control"},
-            {"id": "e18", "source": "final_report", "target": "end", "type": "control"},
+            {"id": "e1", "source": "start", "target": "spawn_catalog_stage", "type": "control"},
+            {"id": "e2", "source": "spawn_catalog_stage", "target": "join_catalog_stage", "type": "control"},
+            {"id": "e3", "source": "join_catalog_stage", "target": "spawn_planner_stage", "type": "control", "source_handle": "completed"},
+            {"id": "e4", "source": "join_catalog_stage", "target": "spawn_planner_stage", "type": "control", "source_handle": "completed_with_errors"},
+            {"id": "e5", "source": "join_catalog_stage", "target": "spawn_planner_stage", "type": "control", "source_handle": "failed"},
+            {"id": "e6", "source": "join_catalog_stage", "target": "spawn_planner_stage", "type": "control", "source_handle": "timed_out"},
+            {"id": "e7", "source": "join_catalog_stage", "target": "join_catalog_stage", "type": "control", "source_handle": "pending"},
+            {"id": "e8", "source": "spawn_planner_stage", "target": "join_planner_stage", "type": "control"},
+            {"id": "e9", "source": "join_planner_stage", "target": "spawn_builder_stage", "type": "control", "source_handle": "completed"},
+            {"id": "e10", "source": "join_planner_stage", "target": "spawn_builder_stage", "type": "control", "source_handle": "completed_with_errors"},
+            {"id": "e11", "source": "join_planner_stage", "target": "spawn_builder_stage", "type": "control", "source_handle": "failed"},
+            {"id": "e12", "source": "join_planner_stage", "target": "spawn_builder_stage", "type": "control", "source_handle": "timed_out"},
+            {"id": "e13", "source": "join_planner_stage", "target": "join_planner_stage", "type": "control", "source_handle": "pending"},
+            {"id": "e14", "source": "spawn_builder_stage", "target": "join_builder_stage", "type": "control"},
+            {"id": "e15", "source": "join_builder_stage", "target": "spawn_coder_stage", "type": "control", "source_handle": "completed"},
+            {"id": "e16", "source": "join_builder_stage", "target": "spawn_coder_stage", "type": "control", "source_handle": "completed_with_errors"},
+            {"id": "e17", "source": "join_builder_stage", "target": "spawn_coder_stage", "type": "control", "source_handle": "failed"},
+            {"id": "e18", "source": "join_builder_stage", "target": "spawn_coder_stage", "type": "control", "source_handle": "timed_out"},
+            {"id": "e19", "source": "join_builder_stage", "target": "join_builder_stage", "type": "control", "source_handle": "pending"},
+            {"id": "e20", "source": "spawn_coder_stage", "target": "join_coder_stage", "type": "control"},
+            {"id": "e21", "source": "join_coder_stage", "target": "spawn_tester_stage", "type": "control", "source_handle": "completed"},
+            {"id": "e22", "source": "join_coder_stage", "target": "spawn_tester_stage", "type": "control", "source_handle": "completed_with_errors"},
+            {"id": "e23", "source": "join_coder_stage", "target": "spawn_tester_stage", "type": "control", "source_handle": "failed"},
+            {"id": "e24", "source": "join_coder_stage", "target": "spawn_tester_stage", "type": "control", "source_handle": "timed_out"},
+            {"id": "e25", "source": "join_coder_stage", "target": "join_coder_stage", "type": "control", "source_handle": "pending"},
+            {"id": "e26", "source": "spawn_tester_stage", "target": "join_tester_stage", "type": "control"},
+            {"id": "e27", "source": "join_tester_stage", "target": "replan_core", "type": "control", "source_handle": "completed"},
+            {"id": "e28", "source": "join_tester_stage", "target": "replan_core", "type": "control", "source_handle": "completed_with_errors"},
+            {"id": "e29", "source": "join_tester_stage", "target": "replan_core", "type": "control", "source_handle": "failed"},
+            {"id": "e30", "source": "join_tester_stage", "target": "replan_core", "type": "control", "source_handle": "timed_out"},
+            {"id": "e31", "source": "join_tester_stage", "target": "join_tester_stage", "type": "control", "source_handle": "pending"},
+            {"id": "e32", "source": "replan_core", "target": "spawn_replanner_stage", "type": "control", "source_handle": "replan"},
+            {"id": "e33", "source": "replan_core", "target": "final_report", "type": "control", "source_handle": "continue"},
+            {"id": "e34", "source": "spawn_replanner_stage", "target": "join_replanner_stage", "type": "control"},
+            {"id": "e35", "source": "join_replanner_stage", "target": "cancel_subtree", "type": "control", "source_handle": "completed"},
+            {"id": "e36", "source": "join_replanner_stage", "target": "cancel_subtree", "type": "control", "source_handle": "completed_with_errors"},
+            {"id": "e37", "source": "join_replanner_stage", "target": "cancel_subtree", "type": "control", "source_handle": "failed"},
+            {"id": "e38", "source": "join_replanner_stage", "target": "cancel_subtree", "type": "control", "source_handle": "timed_out"},
+            {"id": "e39", "source": "join_replanner_stage", "target": "join_replanner_stage", "type": "control", "source_handle": "pending"},
+            {"id": "e40", "source": "cancel_subtree", "target": "final_report", "type": "control"},
+            {"id": "e41", "source": "final_report", "target": "end", "type": "control"},
         ],
     }
 
@@ -898,7 +1101,7 @@ async def _seed_architect_orchestration_policy(
             is_active=True,
             enforce_published_only=True,
             default_failure_policy="best_effort",
-            max_depth=3,
+            max_depth=8,
             max_fanout=8,
             max_children_total=32,
             join_timeout_s=180,
@@ -910,7 +1113,7 @@ async def _seed_architect_orchestration_policy(
         policy.is_active = True
         policy.enforce_published_only = True
         policy.default_failure_policy = "best_effort"
-        policy.max_depth = 3
+        policy.max_depth = 8
         policy.max_fanout = 8
         policy.max_children_total = 32
         policy.join_timeout_s = 180

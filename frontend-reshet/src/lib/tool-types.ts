@@ -33,6 +33,7 @@ export const TOOL_SUBTYPES: ToolSubtypeMeta[] = [
 
 export function getToolBucket(tool: ToolDefinition): ToolTypeBucket {
   if (tool.tool_type) return tool.tool_type
+  if (tool.builtin_key || tool.is_builtin_template || tool.is_builtin_instance) return "built_in"
   if (tool.implementation_type === "mcp") return "mcp"
   if (tool.implementation_type === "artifact" || tool.artifact_id) return "artifact"
   if (tool.implementation_type === "internal") return "built_in"

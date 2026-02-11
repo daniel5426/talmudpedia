@@ -450,7 +450,7 @@ export function PipelineBuilder(props: PipelineBuilderProps) {
   )
 }
 
-function computeAutoLayout<T>(nodes: Node<T>[], edges: Edge[]) {
+function computeAutoLayout<T extends Record<string, unknown>>(nodes: Node<T>[], edges: Edge[]) {
   const nodeSpacing = 140
   const rankSpacing = 280
   const startX = 40

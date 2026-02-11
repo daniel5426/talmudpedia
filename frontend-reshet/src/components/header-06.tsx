@@ -1,4 +1,4 @@
-import { Header } from "@/components/header";
+import { Header } from "@/components/navigation/header";
 
 export default function Header05() {
   return (

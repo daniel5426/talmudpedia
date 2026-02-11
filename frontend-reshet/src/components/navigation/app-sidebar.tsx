@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play, Code2, BarChart3 } from "lucide-react";
+import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play, Code2, BarChart3, Globe } from "lucide-react";
 
 import { NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
@@ -154,6 +154,18 @@ const data = {
         },
       ],
     },
+    {
+      title: "Apps",
+      url: "/admin/apps",
+      icon: Globe,
+      items: [
+        {
+          title: "All Apps",
+          url: "/admin/apps",
+          icon: Globe,
+        },
+      ],
+    },
   ]
 };
 
@@ -186,7 +198,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       isActive: (item.items && item.items.length > 0) ? false : pathname === item.url,
       items: item.items?.map(sub => {
         const isPlayground = sub.title === "Playground";
-        const isActive = isPlayground ? pathname?.includes("/admin/agents/playground") : pathname === sub.url;
+        const isApps = sub.url === "/admin/apps";
+        const isActive = isPlayground
+          ? pathname?.includes("/admin/agents/playground")
+          : isApps
+            ? pathname?.startsWith("/admin/apps")
+            : pathname === sub.url;
 
         return {
           ...sub,

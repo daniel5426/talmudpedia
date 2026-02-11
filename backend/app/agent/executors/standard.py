@@ -373,6 +373,64 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 return {}
         return {}
 
+    def _parse_tool_input_schema(self, tool: Any) -> Dict[str, Any]:
+        schema = getattr(tool, "schema", {}) or {}
+        if isinstance(schema, str):
+            try:
+                schema = json.loads(schema)
+            except Exception:
+                schema = {}
+        if not isinstance(schema, dict):
+            return {}
+        input_schema = schema.get("input") or {}
+        return input_schema if isinstance(input_schema, dict) else {}
+
+    def _coerce_tool_input(self, tool_input: Any, tool: Any) -> Dict[str, Any]:
+        if not isinstance(tool_input, dict):
+            tool_input = {"value": tool_input}
+        else:
+            tool_input = dict(tool_input)
+
+        value_payload = tool_input.get("value")
+        if isinstance(value_payload, dict):
+            merged = dict(value_payload)
+            for key, val in tool_input.items():
+                if key == "value":
+                    continue
+                if key not in merged:
+                    merged[key] = val
+            tool_input = merged
+
+        nested = tool_input.get("input") if isinstance(tool_input.get("input"), dict) else {}
+        query_aliases = ("query", "q", "search_query", "keywords", "text", "value")
+        if not tool_input.get("query"):
+            for alias in query_aliases:
+                candidate = tool_input.get(alias)
+                if candidate is None:
+                    candidate = nested.get(alias)
+                if isinstance(candidate, str) and candidate.strip():
+                    tool_input["query"] = candidate
+                    break
+
+        input_schema = self._parse_tool_input_schema(tool)
+        properties = input_schema.get("properties", {}) if isinstance(input_schema, dict) else {}
+        required = input_schema.get("required", []) if isinstance(input_schema, dict) else []
+        target_key: Optional[str] = None
+
+        if isinstance(required, list) and len(required) == 1 and isinstance(required[0], str):
+            target_key = required[0]
+        elif isinstance(properties, dict) and len(properties) == 1:
+            target_key = next(iter(properties.keys()))
+
+        if target_key and not tool_input.get(target_key):
+            scalar_value = tool_input.get("value")
+            if scalar_value is None and nested:
+                scalar_value = nested.get("value")
+            if scalar_value is not None and not isinstance(scalar_value, dict):
+                tool_input[target_key] = scalar_value
+
+        return tool_input
+
     def _get_tool_execution_policy(self, tool: Any, default_timeout: Optional[int]) -> ToolExecutionPolicy:
         config_schema = self._parse_config_schema(getattr(tool, "config_schema", {}) or {})
         execution = config_schema.get("execution") if isinstance(config_schema, dict) else {}
@@ -449,7 +507,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             return []
 
         from uuid import UUID
-        from sqlalchemy import select
+        from sqlalchemy import select, or_
         from app.db.postgres.models.registry import ToolRegistry
 
         valid_ids = []
@@ -462,7 +520,17 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         if not valid_ids:
             return []
 
-        result = await self.db.execute(select(ToolRegistry).where(ToolRegistry.id.in_(valid_ids)))
+        stmt = select(ToolRegistry).where(ToolRegistry.id.in_(valid_ids))
+        if self.tenant_id is None:
+            stmt = stmt.where(ToolRegistry.tenant_id == None)
+        else:
+            stmt = stmt.where(
+                or_(
+                    ToolRegistry.tenant_id == self.tenant_id,
+                    ToolRegistry.tenant_id == None,
+                )
+            )
+        result = await self.db.execute(stmt)
         return result.scalars().all()
 
     def _buffer_tool_call_chunks(
@@ -609,7 +677,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
 
         try:
             from uuid import UUID
-            from sqlalchemy import select
+            from sqlalchemy import select, or_
             from app.db.postgres.models.registry import ToolRegistry
 
             tool_ids = []
@@ -622,7 +690,17 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             if not tool_ids:
                 return None
 
-            result = await self.db.execute(select(ToolRegistry).where(ToolRegistry.id.in_(tool_ids)))
+            stmt = select(ToolRegistry).where(ToolRegistry.id.in_(tool_ids))
+            if self.tenant_id is None:
+                stmt = stmt.where(ToolRegistry.tenant_id == None)
+            else:
+                stmt = stmt.where(
+                    or_(
+                        ToolRegistry.tenant_id == self.tenant_id,
+                        ToolRegistry.tenant_id == None,
+                    )
+                )
+            result = await self.db.execute(stmt)
             tools = result.scalars().all()
         except Exception:
             return None
@@ -886,6 +964,8 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         tool_input = {"value": tool_input}
 
                     tool_record = tool_records_by_id.get(resolved_tool_id)
+                    if tool_record is not None:
+                        tool_input = self._coerce_tool_input(tool_input, tool_record)
                     if (not tool_input) and tool_record is not None:
                         tool_slug = str(getattr(tool_record, "slug", "") or "").lower()
                         tool_name_lower = str(getattr(tool_record, "name", "") or "").lower()

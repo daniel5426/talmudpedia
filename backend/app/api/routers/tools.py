@@ -1,23 +1,32 @@
+from __future__ import annotations
+
+from copy import deepcopy
 from datetime import datetime
+import re
 from typing import Optional
 import uuid
-import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, delete, func, text
-from sqlalchemy.exc import ProgrammingError
 
+from app.api.dependencies import (
+    ensure_sensitive_action_approved,
+    get_current_principal,
+    require_scopes,
+)
+from app.db.postgres.models.identity import Tenant
+from app.db.postgres.models.rag import ExecutablePipeline, PipelineType, VisualPipeline
 from app.db.postgres.models.registry import (
-    ToolRegistry,
-    ToolVersion,
     ToolDefinitionScope,
-    ToolStatus,
     ToolImplementationType,
+    ToolRegistry,
+    ToolStatus,
+    ToolVersion,
 )
 from app.db.postgres.session import get_db
-from app.db.postgres.models.identity import Tenant
-from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
+from app.services.builtin_tools import is_builtin_tools_v1_enabled
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -58,9 +67,6 @@ async def get_tools_context(
         "is_service": False,
     }
 
-# ============================================================================
-# Request/Response Schemas
-# ============================================================================
 
 class CreateToolRequest(BaseModel):
     name: str
@@ -77,6 +83,7 @@ class CreateToolRequest(BaseModel):
     artifact_version: Optional[str] = None
     status: Optional[ToolStatus] = None
 
+
 class UpdateToolRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
@@ -90,6 +97,25 @@ class UpdateToolRequest(BaseModel):
     artifact_id: Optional[str] = None
     artifact_version: Optional[str] = None
     status: Optional[ToolStatus] = None
+
+
+class CreateBuiltinInstanceRequest(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    description: Optional[str] = None
+    implementation_config: Optional[dict] = None
+    execution_config: Optional[dict] = None
+    status: Optional[ToolStatus] = None
+
+
+class UpdateBuiltinInstanceRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    implementation_config: Optional[dict] = None
+    execution_config: Optional[dict] = None
+    status: Optional[ToolStatus] = None
+    is_active: Optional[bool] = None
+
 
 class ToolResponse(BaseModel):
     id: uuid.UUID
@@ -108,429 +134,166 @@ class ToolResponse(BaseModel):
     tool_type: str
     artifact_id: Optional[str] = None
     artifact_version: Optional[str] = None
+    builtin_key: Optional[str] = None
+    builtin_template_id: Optional[uuid.UUID] = None
+    is_builtin_template: bool = False
+    is_builtin_instance: bool = False
     is_active: bool
     is_system: bool
     created_at: datetime
     updated_at: datetime
 
+
 class ToolListResponse(BaseModel):
     tools: list[ToolResponse]
     total: int
 
-def _get_tool_impl_type(tool: ToolRegistry) -> ToolImplementationType:
-    if getattr(tool, "implementation_type", None):
-        return tool.implementation_type
+
+def _ensure_builtin_tools_enabled() -> None:
+    if not is_builtin_tools_v1_enabled():
+        raise HTTPException(status_code=404, detail="Built-in tools v1 is disabled")
+
+
+def _serialize_scope(value: ToolDefinitionScope | str | None) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "value"):
+        return value.value
+    return str(value)
+
+
+def _status_value(tool: ToolRegistry | object) -> str:
+    raw = getattr(tool, "status", None)
+    if raw is None:
+        return ""
+    if hasattr(raw, "value"):
+        return str(raw.value).lower()
+    return str(raw).lower()
+
+
+def _get_tool_impl_type(tool: ToolRegistry | object) -> ToolImplementationType:
+    impl_type = getattr(tool, "implementation_type", None)
+    if impl_type is not None:
+        if isinstance(impl_type, ToolImplementationType):
+            return impl_type
+        impl_str = str(getattr(impl_type, "value", impl_type)).lower()
+        for item in ToolImplementationType:
+            if item.value.lower() == impl_str:
+                return item
+
     config_schema = getattr(tool, "config_schema", {}) or {}
-    impl_type = (config_schema.get("implementation") or {}).get("type")
-    if impl_type in [t.value for t in ToolImplementationType]:
-        return ToolImplementationType(impl_type)
+    impl_from_config = (config_schema.get("implementation") or {}).get("type")
+    if impl_from_config:
+        impl_str = str(impl_from_config).lower()
+        for item in ToolImplementationType:
+            if item.value.lower() == impl_str:
+                return item
+
     if getattr(tool, "artifact_id", None):
         return ToolImplementationType.ARTIFACT
     if getattr(tool, "is_system", False):
         return ToolImplementationType.INTERNAL
     return ToolImplementationType.CUSTOM
 
-def _get_tool_type(tool: ToolRegistry, impl_type: ToolImplementationType) -> str:
-    if getattr(tool, "is_system", False) or (tool.tenant_id is None and impl_type == ToolImplementationType.INTERNAL):
+
+def _is_builtin_template(tool: ToolRegistry | object) -> bool:
+    return bool(getattr(tool, "is_builtin_template", False))
+
+
+def _is_builtin_instance(tool: ToolRegistry | object) -> bool:
+    return bool(getattr(tool, "builtin_key", None)) and not _is_builtin_template(tool)
+
+
+def _is_builtin(tool: ToolRegistry | object) -> bool:
+    return bool(getattr(tool, "builtin_key", None)) or bool(getattr(tool, "is_system", False)) or _is_builtin_template(tool)
+
+
+def _get_tool_type(tool: ToolRegistry | object, impl_type: ToolImplementationType) -> str:
+    if _is_builtin(tool):
         return "built_in"
-    config_schema = getattr(tool, "config_schema", {}) or {}
-    if impl_type == ToolImplementationType.MCP or (config_schema.get("implementation") or {}).get("type") == "mcp":
+    if impl_type == ToolImplementationType.MCP:
         return "mcp"
     if getattr(tool, "artifact_id", None) or impl_type == ToolImplementationType.ARTIFACT:
         return "artifact"
     return "custom"
 
-# ============================================================================
-# Endpoints
-# ============================================================================
 
-@router.get("", response_model=ToolListResponse)
-async def list_tools(
-    scope: Optional[ToolDefinitionScope] = None,
-    is_active: Optional[bool] = True,
-    status: Optional[ToolStatus] = None,
-    implementation_type: Optional[ToolImplementationType] = None,
-    tool_type: Optional[str] = Query(None, description="Primary tool bucket: built_in, mcp, artifact, custom"),
-    skip: int = 0,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
-):
-    """List all tools for the current tenant or global tools."""
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    
-    try:
-        conditions = [
-            (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None),
-        ]
-        if scope:
-            conditions.append(ToolRegistry.scope == scope)
-        if status is not None:
-            conditions.append(ToolRegistry.status == status)
-        elif is_active is not None:
-            conditions.append(ToolRegistry.is_active == is_active)
-        if implementation_type is not None:
-            conditions.append(ToolRegistry.implementation_type == implementation_type)
-
-        if tool_type in {"built_in", "mcp", "artifact", "custom"}:
-            if tool_type == "built_in":
-                conditions.append(
-                    (ToolRegistry.is_system == True) | (
-                        (ToolRegistry.tenant_id == None) & (ToolRegistry.implementation_type == ToolImplementationType.INTERNAL)
-                    )
-                )
-            elif tool_type == "mcp":
-                conditions.append(
-                    (ToolRegistry.implementation_type == ToolImplementationType.MCP) |
-                    (ToolRegistry.config_schema["implementation"]["type"].astext == "mcp")
-                )
-            elif tool_type == "artifact":
-                conditions.append(
-                    (ToolRegistry.artifact_id != None) | (ToolRegistry.implementation_type == ToolImplementationType.ARTIFACT)
-                )
-            elif tool_type == "custom":
-                conditions.append(
-                    ~(
-                        (ToolRegistry.is_system == True) |
-                        ((ToolRegistry.tenant_id == None) & (ToolRegistry.implementation_type == ToolImplementationType.INTERNAL)) |
-                        (ToolRegistry.implementation_type == ToolImplementationType.MCP) |
-                        (ToolRegistry.config_schema["implementation"]["type"].astext == "mcp") |
-                        (ToolRegistry.artifact_id != None) |
-                        (ToolRegistry.implementation_type == ToolImplementationType.ARTIFACT)
-                    )
-                )
-
-        stmt = select(ToolRegistry).where(and_(*conditions)).offset(skip).limit(limit).order_by(ToolRegistry.name.asc())
-
-        result = await db.execute(stmt)
-        tools = result.scalars().all()
-
-        count_stmt = select(func.count(ToolRegistry.id)).where(and_(*conditions))
-        total_res = await db.execute(count_stmt)
-        total = total_res.scalar()
-
-        return ToolListResponse(
-            tools=[ToolResponse(
-                id=t.id,
-                tenant_id=t.tenant_id,
-                name=t.name,
-                slug=t.slug,
-                description=t.description,
-                scope=t.scope.value,
-                input_schema=t.schema.get("input", {}),
-                output_schema=t.schema.get("output", {}),
-                config_schema=t.config_schema or {},
-                status=t.status,
-                version=t.version,
-                implementation_type=_get_tool_impl_type(t),
-                published_at=t.published_at,
-                tool_type=_get_tool_type(t, _get_tool_impl_type(t)),
-                artifact_id=t.artifact_id,
-                artifact_version=t.artifact_version,
-                is_active=t.is_active,
-                is_system=t.is_system,
-                created_at=t.created_at,
-                updated_at=t.updated_at
-            ) for t in tools],
-            total=total
-        )
-    except ProgrammingError:
-        # Fallback for legacy schema without artifact columns
-        await db.rollback()
-        raw = await db.execute(
-            text(
-                """
-                SELECT id, tenant_id, name, slug, description, scope, schema, config_schema,
-                       is_active, is_system, created_at, updated_at
-                FROM tool_registry
-                WHERE (tenant_id = :tid OR tenant_id IS NULL)
-                  AND is_active = :is_active
-                ORDER BY name ASC
-                LIMIT :limit OFFSET :skip
-                """
-            ),
-            {"tid": str(tid), "is_active": is_active, "limit": limit, "skip": skip},
-        )
-        rows = raw.fetchall()
-
-        count_raw = await db.execute(
-            text(
-                """
-                SELECT COUNT(id)
-                FROM tool_registry
-                WHERE (tenant_id = :tid OR tenant_id IS NULL)
-                """
-            ),
-            {"tid": str(tid)},
-        )
-        total = count_raw.scalar() or 0
-
-        tools = []
-        for row in rows:
-            config_schema = row[7] or {}
-            impl_type_val = (config_schema.get("implementation") or {}).get("type")
-            impl_type = ToolImplementationType(impl_type_val) if impl_type_val in [t.value for t in ToolImplementationType] else ToolImplementationType.CUSTOM
-            tool_type_val = "custom"
-            if row[9]:
-                tool_type_val = "built_in"
-            elif impl_type == ToolImplementationType.MCP:
-                tool_type_val = "mcp"
-            tools.append(ToolResponse(
-                id=row[0],
-                tenant_id=row[1],
-                name=row[2],
-                slug=row[3],
-                description=row[4],
-                scope=row[5],
-                input_schema=(row[6] or {}).get("input", {}),
-                output_schema=(row[6] or {}).get("output", {}),
-                config_schema=config_schema,
-                status=ToolStatus.PUBLISHED if row[8] else ToolStatus.DISABLED,
-                version="1.0.0",
-                implementation_type=impl_type,
-                published_at=row[10] if row[8] else None,
-                tool_type=tool_type_val,
-                artifact_id=None,
-                artifact_version=None,
-                is_active=row[8],
-                is_system=row[9],
-                created_at=row[10],
-                updated_at=row[11],
-            ))
-
-        return ToolListResponse(tools=tools, total=total)
-
-@router.post("", response_model=ToolResponse)
-async def create_tool(
-    request: CreateToolRequest,
-    _: dict = Depends(require_scopes("tools.write")),
-    db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
-):
-    """Create a new tool definition."""
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    
-    # Check for duplicate slug
-    stmt = select(ToolRegistry).where(ToolRegistry.slug == request.slug)
-    res = await db.execute(stmt)
-    if res.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Tool with slug '{request.slug}' already exists")
-    
-    config_schema = request.config_schema or {}
-    if request.implementation_config:
-        config_schema["implementation"] = request.implementation_config
-    elif request.implementation_type:
-        config_schema.setdefault("implementation", {"type": request.implementation_type.value})
-    if request.execution_config:
-        config_schema["execution"] = request.execution_config
-
-    impl_type = request.implementation_type
-    if impl_type is None:
-        impl_type = _get_tool_impl_type(ToolRegistry(
-            tenant_id=tid,
-            name=request.name,
-            slug=request.slug,
-            description=request.description,
-            scope=request.scope,
-            schema={"input": request.input_schema, "output": request.output_schema},
-            config_schema=config_schema,
-            artifact_id=request.artifact_id,
-            artifact_version=request.artifact_version,
-            is_active=True,
-            is_system=False,
-        ))
-
-    requested_status = request.status or ToolStatus.DRAFT
-    published_at = datetime.utcnow() if requested_status == ToolStatus.PUBLISHED else None
-    is_active = requested_status != ToolStatus.DISABLED
-    new_tool = ToolRegistry(
-        tenant_id=tid if request.scope == ToolDefinitionScope.TENANT else None,
-        name=request.name,
-        slug=request.slug,
-        description=request.description,
-        scope=request.scope,
-        schema={
-            "input": request.input_schema,
-            "output": request.output_schema
-        },
-        config_schema=config_schema,
+def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
+    impl_type = _get_tool_impl_type(tool)
+    return ToolResponse(
+        id=getattr(tool, "id"),
+        tenant_id=getattr(tool, "tenant_id", None),
+        name=getattr(tool, "name"),
+        slug=getattr(tool, "slug"),
+        description=getattr(tool, "description", None),
+        scope=_serialize_scope(getattr(tool, "scope", None)),
+        input_schema=((getattr(tool, "schema", None) or {}).get("input", {})),
+        output_schema=((getattr(tool, "schema", None) or {}).get("output", {})),
+        config_schema=(getattr(tool, "config_schema", {}) or {}),
+        status=getattr(tool, "status"),
+        version=str(getattr(tool, "version", "1.0.0")),
         implementation_type=impl_type,
-        status=requested_status,
-        version="1.0.0",
-        published_at=published_at,
-        artifact_id=request.artifact_id,
-        artifact_version=request.artifact_version,
-        is_active=is_active,
-        is_system=False
-    )
-    
-    db.add(new_tool)
-    await db.commit()
-    await db.refresh(new_tool)
-    
-    return ToolResponse(
-        id=new_tool.id,
-        tenant_id=new_tool.tenant_id,
-        name=new_tool.name,
-        slug=new_tool.slug,
-        description=new_tool.description,
-        scope=new_tool.scope.value,
-        input_schema=new_tool.schema.get("input", {}),
-        output_schema=new_tool.schema.get("output", {}),
-        config_schema=new_tool.config_schema or {},
-        status=new_tool.status,
-        version=new_tool.version,
-        implementation_type=_get_tool_impl_type(new_tool),
-        published_at=new_tool.published_at,
-        tool_type=_get_tool_type(new_tool, _get_tool_impl_type(new_tool)),
-        artifact_id=new_tool.artifact_id,
-        artifact_version=new_tool.artifact_version,
-        is_active=new_tool.is_active,
-        is_system=new_tool.is_system,
-        created_at=new_tool.created_at,
-        updated_at=new_tool.updated_at
+        published_at=getattr(tool, "published_at", None),
+        tool_type=_get_tool_type(tool, impl_type),
+        artifact_id=getattr(tool, "artifact_id", None),
+        artifact_version=getattr(tool, "artifact_version", None),
+        builtin_key=getattr(tool, "builtin_key", None),
+        builtin_template_id=getattr(tool, "builtin_template_id", None),
+        is_builtin_template=_is_builtin_template(tool),
+        is_builtin_instance=_is_builtin_instance(tool),
+        is_active=bool(getattr(tool, "is_active", False)),
+        is_system=bool(getattr(tool, "is_system", False)),
+        created_at=getattr(tool, "created_at"),
+        updated_at=getattr(tool, "updated_at"),
     )
 
-@router.get("/{tool_id}", response_model=ToolResponse)
-async def get_tool(
-    tool_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
-):
-    """Get a specific tool by ID."""
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    
-    stmt = select(ToolRegistry).where(
-        and_(
-            ToolRegistry.id == tool_id,
-            (ToolRegistry.tenant_id == tid) | (ToolRegistry.tenant_id == None)
-        )
-    )
-    res = await db.execute(stmt)
-    tool = res.scalar_one_or_none()
-    
-    if not tool:
-        raise HTTPException(status_code=404, detail="Tool not found")
-        
-    return ToolResponse(
-        id=tool.id,
-        tenant_id=tool.tenant_id,
-        name=tool.name,
-        slug=tool.slug,
-        description=tool.description,
-        scope=tool.scope.value,
-        input_schema=tool.schema.get("input", {}),
-        output_schema=tool.schema.get("output", {}),
-        config_schema=tool.config_schema or {},
-        status=tool.status,
-        version=tool.version,
-        implementation_type=_get_tool_impl_type(tool),
-        published_at=tool.published_at,
-        tool_type=_get_tool_type(tool, _get_tool_impl_type(tool)),
-        artifact_id=tool.artifact_id,
-        artifact_version=tool.artifact_version,
-        is_active=tool.is_active,
-        is_system=tool.is_system,
-        created_at=tool.created_at,
-        updated_at=tool.updated_at
-    )
 
-@router.put("/{tool_id}", response_model=ToolResponse)
-async def update_tool(
-    tool_id: uuid.UUID,
-    request: UpdateToolRequest,
-    _: dict = Depends(require_scopes("tools.write")),
-    db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
-):
-    """Update a tool definition."""
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    
-    stmt = select(ToolRegistry).where(
-        and_(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid)
-    )
-    res = await db.execute(stmt)
-    tool = res.scalar_one_or_none()
-    
-    if not tool:
-        raise HTTPException(status_code=404, detail="Tool not found")
-        
-    if tool.is_system:
-        raise HTTPException(status_code=400, detail="Cannot modify system tools")
-        
-    if request.name is not None:
-        tool.name = request.name
-    if request.description is not None:
-        tool.description = request.description
-    
-    # Update nested schema
-    current_schema = dict(tool.schema or {})
-    if request.input_schema is not None:
-        current_schema["input"] = request.input_schema
-    if request.output_schema is not None:
-        current_schema["output"] = request.output_schema
-    tool.schema = current_schema
-    
-    config_schema = dict(tool.config_schema or {})
-    if request.config_schema is not None:
-        config_schema = request.config_schema
-    if request.implementation_config is not None:
-        config_schema["implementation"] = request.implementation_config
-    elif request.implementation_type is not None:
-        config_schema.setdefault("implementation", {"type": request.implementation_type.value})
-    if request.execution_config is not None:
-        config_schema["execution"] = request.execution_config
-    tool.config_schema = config_schema
-    
-    if request.artifact_id is not None:
-        tool.artifact_id = request.artifact_id
-    if request.artifact_version is not None:
-        tool.artifact_version = request.artifact_version
-    if request.implementation_type is not None:
-        tool.implementation_type = request.implementation_type
+def _compose_config_schema(
+    *,
+    current: Optional[dict],
+    config_schema: Optional[dict],
+    implementation_config: Optional[dict],
+    execution_config: Optional[dict],
+    implementation_type: Optional[ToolImplementationType],
+) -> dict:
+    next_schema = deepcopy(current or {})
+    if config_schema is not None:
+        next_schema = deepcopy(config_schema)
+    if implementation_config is not None:
+        next_schema["implementation"] = implementation_config
+    elif implementation_type is not None:
+        next_schema.setdefault("implementation", {})
+        next_schema["implementation"]["type"] = implementation_type.value
+    if execution_config is not None:
+        next_schema["execution"] = execution_config
+    return next_schema
 
-    if request.status is not None:
-        tool.status = request.status
-        if request.status == ToolStatus.PUBLISHED and tool.published_at is None:
-            tool.published_at = datetime.utcnow()
-        if request.status == ToolStatus.DISABLED:
-            tool.is_active = False
-        elif request.is_active is None:
-            tool.is_active = True
 
-    if request.is_active is not None:
-        tool.is_active = request.is_active
-        
-    await db.commit()
-    await db.refresh(tool)
-    
-    return await get_tool(tool.id, db, tenant_ctx)
+async def _ensure_slug_available(db: AsyncSession, slug: str) -> None:
+    exists = await db.execute(select(ToolRegistry.id).where(ToolRegistry.slug == slug))
+    if exists.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=400, detail=f"Tool with slug '{slug}' already exists")
 
-@router.post("/{tool_id}/publish", response_model=ToolResponse)
-async def publish_tool(
-    tool_id: uuid.UUID,
-    principal: dict = Depends(get_current_principal),
-    _: dict = Depends(require_scopes("tools.write")),
-    db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
-):
-    """Publish a tool and snapshot its schema."""
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
 
-    stmt = select(ToolRegistry).where(
-        and_(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid)
-    )
-    res = await db.execute(stmt)
-    tool = res.scalar_one_or_none()
+def _enum_name(value: ToolImplementationType | ToolStatus | ToolDefinitionScope | str | None) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "value"):
+        return str(value.value)
+    return str(value)
 
-    if not tool:
-        raise HTTPException(status_code=404, detail="Tool not found")
-    if tool.is_system:
-        raise HTTPException(status_code=400, detail="Cannot publish system tools")
 
+async def _publish_tool(
+    *,
+    db: AsyncSession,
+    tool: ToolRegistry,
+    tenant_ctx: dict,
+    principal: dict,
+    tenant_id: uuid.UUID,
+) -> ToolRegistry:
     await ensure_sensitive_action_approved(
         principal=principal,
-        tenant_id=tid,
+        tenant_id=tenant_id,
         subject_type="tool",
         subject_id=str(tool.id),
         action_scope="tools.publish",
@@ -544,21 +307,555 @@ async def publish_tool(
     snapshot = {
         "schema": tool.schema or {},
         "config_schema": tool.config_schema or {},
-        "implementation_type": tool.implementation_type.value if tool.implementation_type else None,
+        "implementation_type": _enum_name(tool.implementation_type),
         "version": tool.version,
     }
     actor = tenant_ctx.get("user")
-    version_entry = ToolVersion(
-        tool_id=tool.id,
-        version=tool.version,
-        schema_snapshot=snapshot,
-        created_by=actor.id if actor else None,
+    db.add(
+        ToolVersion(
+            tool_id=tool.id,
+            version=tool.version,
+            schema_snapshot=snapshot,
+            created_by=actor.id if actor else None,
+        )
     )
-    db.add(version_entry)
     await db.commit()
     await db.refresh(tool)
+    return tool
 
-    return await get_tool(tool.id, db, tenant_ctx)
+
+async def _validate_retrieval_pipeline_for_tenant(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    pipeline_id_raw: Optional[str],
+) -> None:
+    if not pipeline_id_raw:
+        raise HTTPException(status_code=400, detail="retrieval_pipeline built-in requires implementation.pipeline_id")
+
+    try:
+        pipeline_uuid = uuid.UUID(str(pipeline_id_raw))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid retrieval pipeline id")
+
+    executable = await db.execute(
+        select(ExecutablePipeline.id).where(
+            ExecutablePipeline.id == pipeline_uuid,
+            ExecutablePipeline.tenant_id == tenant_id,
+            ExecutablePipeline.pipeline_type == PipelineType.RETRIEVAL,
+        )
+    )
+    if executable.scalar_one_or_none() is not None:
+        return
+
+    visual = await db.execute(
+        select(VisualPipeline.id).where(
+            VisualPipeline.id == pipeline_uuid,
+            VisualPipeline.tenant_id == tenant_id,
+            VisualPipeline.pipeline_type == PipelineType.RETRIEVAL,
+        )
+    )
+    if visual.scalar_one_or_none() is not None:
+        return
+
+    raise HTTPException(status_code=400, detail="Retrieval pipeline not found in tenant scope")
+
+
+def _maybe_validate_builtin_registry_status(requested_status: ToolStatus | None) -> None:
+    if requested_status == ToolStatus.PUBLISHED:
+        raise HTTPException(status_code=400, detail="Use publish endpoint to publish this tool")
+
+
+@router.get("", response_model=ToolListResponse)
+async def list_tools(
+    scope: Optional[ToolDefinitionScope] = None,
+    is_active: Optional[bool] = True,
+    status: Optional[ToolStatus] = None,
+    implementation_type: Optional[ToolImplementationType] = None,
+    tool_type: Optional[str] = Query(None, description="Primary tool bucket: built_in, mcp, artifact, custom"),
+    skip: int = 0,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    conditions = [or_(ToolRegistry.tenant_id == tid, ToolRegistry.tenant_id == None)]
+    if scope:
+        conditions.append(ToolRegistry.scope == scope)
+    if status is not None:
+        conditions.append(ToolRegistry.status == status)
+    elif is_active is not None:
+        conditions.append(ToolRegistry.is_active == is_active)
+    if implementation_type is not None:
+        conditions.append(ToolRegistry.implementation_type == implementation_type)
+
+    if tool_type in {"built_in", "mcp", "artifact", "custom"}:
+        built_in_pred = or_(
+            ToolRegistry.is_system == True,
+            ToolRegistry.is_builtin_template == True,
+            ToolRegistry.builtin_key != None,
+            and_(ToolRegistry.tenant_id == None, ToolRegistry.implementation_type == ToolImplementationType.INTERNAL),
+        )
+        mcp_pred = ToolRegistry.implementation_type == ToolImplementationType.MCP
+        artifact_pred = or_(ToolRegistry.artifact_id != None, ToolRegistry.implementation_type == ToolImplementationType.ARTIFACT)
+
+        if tool_type == "built_in":
+            conditions.append(built_in_pred)
+        elif tool_type == "mcp":
+            conditions.append(mcp_pred)
+        elif tool_type == "artifact":
+            conditions.append(artifact_pred)
+        elif tool_type == "custom":
+            conditions.append(~or_(built_in_pred, mcp_pred, artifact_pred))
+
+    stmt = (
+        select(ToolRegistry)
+        .where(and_(*conditions))
+        .order_by(ToolRegistry.name.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    tools = (await db.execute(stmt)).scalars().all()
+
+    count_stmt = select(func.count(ToolRegistry.id)).where(and_(*conditions))
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    return ToolListResponse(tools=[_serialize_tool(t) for t in tools], total=total)
+
+
+@router.get("/builtins/templates", response_model=ToolListResponse)
+async def list_builtin_templates(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_tools_context),
+):
+    _ensure_builtin_tools_enabled()
+
+    stmt = (
+        select(ToolRegistry)
+        .where(
+            ToolRegistry.tenant_id == None,
+            ToolRegistry.is_builtin_template == True,
+            ToolRegistry.builtin_key != None,
+        )
+        .order_by(ToolRegistry.name.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    tools = (await db.execute(stmt)).scalars().all()
+    total = (
+        await db.execute(
+            select(func.count(ToolRegistry.id)).where(
+                ToolRegistry.tenant_id == None,
+                ToolRegistry.is_builtin_template == True,
+                ToolRegistry.builtin_key != None,
+            )
+        )
+    ).scalar() or 0
+
+    return ToolListResponse(tools=[_serialize_tool(t) for t in tools], total=total)
+
+
+@router.post("/builtins/templates/{builtin_key}/instances", response_model=ToolResponse)
+async def create_builtin_instance(
+    builtin_key: str,
+    request: CreateBuiltinInstanceRequest,
+    _: dict = Depends(require_scopes("tools.write")),
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    _ensure_builtin_tools_enabled()
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    builtin_key = str(builtin_key or "").strip()
+
+    template = (
+        await db.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.tenant_id == None,
+                ToolRegistry.builtin_key == builtin_key,
+                ToolRegistry.is_builtin_template == True,
+            )
+        )
+    ).scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Built-in template not found")
+
+    requested_status = request.status or ToolStatus.DRAFT
+    _maybe_validate_builtin_registry_status(requested_status)
+
+    config_schema = deepcopy(template.config_schema or {})
+    if request.implementation_config is not None:
+        config_schema["implementation"] = request.implementation_config
+    if request.execution_config is not None:
+        config_schema["execution"] = request.execution_config
+
+    impl_cfg = (config_schema.get("implementation") or {}) if isinstance(config_schema, dict) else {}
+    if builtin_key == "retrieval_pipeline":
+        await _validate_retrieval_pipeline_for_tenant(
+            db,
+            tenant_id=tid,
+            pipeline_id_raw=impl_cfg.get("pipeline_id"),
+        )
+
+    base_slug = (request.slug or f"{template.slug}-{str(tid)[:8]}").strip().lower()
+    slug_candidate = base_slug
+    for _ in range(12):
+        exists = await db.execute(select(ToolRegistry.id).where(ToolRegistry.slug == slug_candidate))
+        if exists.scalar_one_or_none() is None:
+            break
+        slug_candidate = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+    else:
+        raise HTTPException(status_code=400, detail="Unable to generate unique slug for built-in instance")
+
+    instance = ToolRegistry(
+        tenant_id=tid,
+        name=request.name or f"{template.name} Instance",
+        slug=slug_candidate,
+        description=request.description or template.description,
+        scope=ToolDefinitionScope.TENANT,
+        schema=deepcopy(template.schema or {}),
+        config_schema=config_schema,
+        status=requested_status,
+        version="1.0.0",
+        implementation_type=_get_tool_impl_type(template),
+        artifact_id=template.artifact_id,
+        artifact_version=template.artifact_version,
+        builtin_key=template.builtin_key,
+        builtin_template_id=template.id,
+        is_builtin_template=False,
+        is_active=requested_status != ToolStatus.DISABLED,
+        is_system=False,
+        published_at=None,
+    )
+    db.add(instance)
+    await db.commit()
+    await db.refresh(instance)
+    return _serialize_tool(instance)
+
+
+@router.get("/builtins/instances", response_model=ToolListResponse)
+async def list_builtin_instances(
+    status: Optional[ToolStatus] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    _ensure_builtin_tools_enabled()
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    conditions = [
+        ToolRegistry.tenant_id == tid,
+        ToolRegistry.builtin_key != None,
+        ToolRegistry.is_builtin_template == False,
+    ]
+    if status is not None:
+        conditions.append(ToolRegistry.status == status)
+
+    stmt = (
+        select(ToolRegistry)
+        .where(and_(*conditions))
+        .order_by(ToolRegistry.name.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    tools = (await db.execute(stmt)).scalars().all()
+    total = (await db.execute(select(func.count(ToolRegistry.id)).where(and_(*conditions)))).scalar() or 0
+    return ToolListResponse(tools=[_serialize_tool(t) for t in tools], total=total)
+
+
+@router.patch("/builtins/instances/{tool_id}", response_model=ToolResponse)
+async def update_builtin_instance(
+    tool_id: uuid.UUID,
+    request: UpdateBuiltinInstanceRequest,
+    _: dict = Depends(require_scopes("tools.write")),
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    _ensure_builtin_tools_enabled()
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    tool = (
+        await db.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.id == tool_id,
+                ToolRegistry.tenant_id == tid,
+                ToolRegistry.is_builtin_template == False,
+                ToolRegistry.builtin_key != None,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Built-in instance not found")
+
+    if request.name is not None:
+        tool.name = request.name
+    if request.description is not None:
+        tool.description = request.description
+
+    config_schema = deepcopy(tool.config_schema or {})
+    if request.implementation_config is not None:
+        config_schema["implementation"] = request.implementation_config
+    if request.execution_config is not None:
+        config_schema["execution"] = request.execution_config
+    tool.config_schema = config_schema
+
+    if request.status is not None:
+        if request.status == ToolStatus.PUBLISHED and _status_value(tool) != "published":
+            raise HTTPException(status_code=400, detail="Use /tools/builtins/instances/{tool_id}/publish to publish")
+        tool.status = request.status
+        if request.status == ToolStatus.DISABLED:
+            tool.is_active = False
+        elif request.is_active is None:
+            tool.is_active = True
+
+    if request.is_active is not None:
+        tool.is_active = request.is_active
+
+    if tool.builtin_key == "retrieval_pipeline":
+        impl_cfg = (tool.config_schema or {}).get("implementation") or {}
+        await _validate_retrieval_pipeline_for_tenant(
+            db,
+            tenant_id=tid,
+            pipeline_id_raw=impl_cfg.get("pipeline_id"),
+        )
+
+    await db.commit()
+    await db.refresh(tool)
+    return _serialize_tool(tool)
+
+
+@router.post("/builtins/instances/{tool_id}/publish", response_model=ToolResponse)
+async def publish_builtin_instance(
+    tool_id: uuid.UUID,
+    principal: dict = Depends(get_current_principal),
+    _: dict = Depends(require_scopes("tools.write")),
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    _ensure_builtin_tools_enabled()
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    tool = (
+        await db.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.id == tool_id,
+                ToolRegistry.tenant_id == tid,
+                ToolRegistry.is_builtin_template == False,
+                ToolRegistry.builtin_key != None,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Built-in instance not found")
+
+    if tool.builtin_key == "retrieval_pipeline":
+        impl_cfg = (tool.config_schema or {}).get("implementation") or {}
+        await _validate_retrieval_pipeline_for_tenant(
+            db,
+            tenant_id=tid,
+            pipeline_id_raw=impl_cfg.get("pipeline_id"),
+        )
+
+    tool = await _publish_tool(db=db, tool=tool, tenant_ctx=tenant_ctx, principal=principal, tenant_id=tid)
+    return _serialize_tool(tool)
+
+
+@router.post("", response_model=ToolResponse)
+async def create_tool(
+    request: CreateToolRequest,
+    _: dict = Depends(require_scopes("tools.write")),
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    if request.scope != ToolDefinitionScope.TENANT:
+        raise HTTPException(status_code=400, detail="Only tenant-scoped tools can be created via this endpoint")
+
+    await _ensure_slug_available(db, request.slug)
+
+    config_schema = _compose_config_schema(
+        current=request.config_schema,
+        config_schema=request.config_schema,
+        implementation_config=request.implementation_config,
+        execution_config=request.execution_config,
+        implementation_type=request.implementation_type,
+    )
+
+    impl_type = request.implementation_type
+    if impl_type is None:
+        probe = ToolRegistry(
+            tenant_id=tid,
+            name=request.name,
+            slug=request.slug,
+            description=request.description,
+            scope=request.scope,
+            schema={"input": request.input_schema, "output": request.output_schema},
+            config_schema=config_schema,
+            artifact_id=request.artifact_id,
+            artifact_version=request.artifact_version,
+            is_active=True,
+            is_system=False,
+        )
+        impl_type = _get_tool_impl_type(probe)
+
+    requested_status = request.status or ToolStatus.DRAFT
+    _maybe_validate_builtin_registry_status(requested_status)
+
+    tool = ToolRegistry(
+        tenant_id=tid,
+        name=request.name,
+        slug=request.slug,
+        description=request.description,
+        scope=request.scope,
+        schema={"input": request.input_schema, "output": request.output_schema},
+        config_schema=config_schema,
+        implementation_type=impl_type,
+        status=requested_status,
+        version="1.0.0",
+        published_at=None,
+        artifact_id=request.artifact_id,
+        artifact_version=request.artifact_version,
+        builtin_key=None,
+        builtin_template_id=None,
+        is_builtin_template=False,
+        is_active=requested_status != ToolStatus.DISABLED,
+        is_system=False,
+    )
+    db.add(tool)
+    await db.commit()
+    await db.refresh(tool)
+    return _serialize_tool(tool)
+
+
+@router.get("/{tool_id}", response_model=ToolResponse)
+async def get_tool(
+    tool_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+    tool = (
+        await db.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.id == tool_id,
+                or_(ToolRegistry.tenant_id == tid, ToolRegistry.tenant_id == None),
+            )
+        )
+    ).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    return _serialize_tool(tool)
+
+
+@router.put("/{tool_id}", response_model=ToolResponse)
+async def update_tool(
+    tool_id: uuid.UUID,
+    request: UpdateToolRequest,
+    _: dict = Depends(require_scopes("tools.write")),
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    tool = (
+        await db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid))
+    ).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    if tool.is_system:
+        raise HTTPException(status_code=400, detail="Cannot modify system tools")
+
+    if _is_builtin_instance(tool):
+        if any(
+            [
+                request.input_schema is not None,
+                request.output_schema is not None,
+                request.config_schema is not None,
+                request.implementation_type is not None,
+                request.artifact_id is not None,
+                request.artifact_version is not None,
+            ]
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Built-in instances have immutable schema/type. Use implementation_config/execution_config only.",
+            )
+
+    if request.name is not None:
+        tool.name = request.name
+    if request.description is not None:
+        tool.description = request.description
+
+    if request.input_schema is not None or request.output_schema is not None:
+        schema = deepcopy(tool.schema or {})
+        if request.input_schema is not None:
+            schema["input"] = request.input_schema
+        if request.output_schema is not None:
+            schema["output"] = request.output_schema
+        tool.schema = schema
+
+    tool.config_schema = _compose_config_schema(
+        current=tool.config_schema,
+        config_schema=request.config_schema,
+        implementation_config=request.implementation_config,
+        execution_config=request.execution_config,
+        implementation_type=request.implementation_type,
+    )
+
+    if request.artifact_id is not None:
+        tool.artifact_id = request.artifact_id
+    if request.artifact_version is not None:
+        tool.artifact_version = request.artifact_version
+    if request.implementation_type is not None:
+        tool.implementation_type = request.implementation_type
+
+    if request.status is not None:
+        if request.status == ToolStatus.PUBLISHED and _status_value(tool) != "published":
+            raise HTTPException(status_code=400, detail="Use POST /tools/{tool_id}/publish to publish a tool")
+        tool.status = request.status
+        if request.status == ToolStatus.DISABLED:
+            tool.is_active = False
+        elif request.is_active is None:
+            tool.is_active = True
+
+    if request.is_active is not None:
+        tool.is_active = request.is_active
+
+    await db.commit()
+    await db.refresh(tool)
+    return _serialize_tool(tool)
+
+
+@router.post("/{tool_id}/publish", response_model=ToolResponse)
+async def publish_tool(
+    tool_id: uuid.UUID,
+    principal: dict = Depends(get_current_principal),
+    _: dict = Depends(require_scopes("tools.write")),
+    db: AsyncSession = Depends(get_db),
+    tenant_ctx=Depends(get_tools_context),
+):
+    tid = uuid.UUID(tenant_ctx["tenant_id"])
+
+    tool = (
+        await db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid))
+    ).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    if tool.is_system:
+        raise HTTPException(status_code=400, detail="Cannot publish system tools")
+
+    if tool.builtin_key == "retrieval_pipeline":
+        impl_cfg = (tool.config_schema or {}).get("implementation") or {}
+        await _validate_retrieval_pipeline_for_tenant(db, tenant_id=tid, pipeline_id_raw=impl_cfg.get("pipeline_id"))
+
+    tool = await _publish_tool(db=db, tool=tool, tenant_ctx=tenant_ctx, principal=principal, tenant_id=tid)
+    return _serialize_tool(tool)
+
 
 @router.post("/{tool_id}/version", response_model=ToolResponse)
 async def create_tool_version(
@@ -568,18 +865,14 @@ async def create_tool_version(
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tools_context),
 ):
-    """Create a new tool version snapshot and bump version in registry."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
 
-    if not re.match(r"^\\d+\\.\\d+\\.\\d+$", new_version):
+    if not re.match(r"^\d+\.\d+\.\d+$", new_version):
         raise HTTPException(status_code=400, detail="new_version must be valid semver (e.g. 1.0.0)")
 
-    stmt = select(ToolRegistry).where(
-        and_(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid)
-    )
-    res = await db.execute(stmt)
-    tool = res.scalar_one_or_none()
-
+    tool = (
+        await db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid))
+    ).scalar_one_or_none()
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
     if tool.is_system:
@@ -588,22 +881,23 @@ async def create_tool_version(
     snapshot = {
         "schema": tool.schema or {},
         "config_schema": tool.config_schema or {},
-        "implementation_type": tool.implementation_type.value if tool.implementation_type else None,
+        "implementation_type": _enum_name(tool.implementation_type),
         "version": new_version,
     }
     actor = tenant_ctx.get("user")
-    version_entry = ToolVersion(
-        tool_id=tool.id,
-        version=new_version,
-        schema_snapshot=snapshot,
-        created_by=actor.id if actor else None,
+    db.add(
+        ToolVersion(
+            tool_id=tool.id,
+            version=new_version,
+            schema_snapshot=snapshot,
+            created_by=actor.id if actor else None,
+        )
     )
-    db.add(version_entry)
     tool.version = new_version
     await db.commit()
     await db.refresh(tool)
+    return _serialize_tool(tool)
 
-    return await get_tool(tool.id, db, tenant_ctx)
 
 @router.delete("/{tool_id}")
 async def delete_tool(
@@ -613,18 +907,13 @@ async def delete_tool(
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tools_context),
 ):
-    """Delete a tool (only custom tenant tools can be deleted)."""
     tid = uuid.UUID(tenant_ctx["tenant_id"])
-    
-    stmt = select(ToolRegistry).where(
-        and_(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid)
-    )
-    res = await db.execute(stmt)
-    tool = res.scalar_one_or_none()
-    
+
+    tool = (
+        await db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid))
+    ).scalar_one_or_none()
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
-        
     if tool.is_system:
         raise HTTPException(status_code=400, detail="Cannot delete system tools")
 
@@ -636,8 +925,7 @@ async def delete_tool(
         action_scope="tools.delete",
         db=db,
     )
-        
+
     await db.delete(tool)
     await db.commit()
-    
     return {"status": "deleted", "id": tool_id}

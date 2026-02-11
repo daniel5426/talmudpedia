@@ -4,8 +4,9 @@ export { authService } from "./auth";
 export { chatService } from "./chat";
 export { adminService } from "./admin";
 export { ragAdminService } from "./rag-admin";
-export type { 
+export type {
   RAGIndex, 
+  RAGStats,
   RAGPipeline, 
   ChunkPreview, 
   VisualPipeline,
@@ -52,6 +53,8 @@ export { agentService } from "./agent";
 export { modelsService } from "./models";
 export { toolsService } from "./tools";
 export { credentialsService } from "./credentials";
+export { publishedAppsService } from "./published-apps";
+export { publishedRuntimeService } from "./published-runtime";
 
 export type {
   Agent,
@@ -71,6 +74,7 @@ export type {
   CreateModelRequest,
   UpdateModelRequest,
   CreateProviderRequest,
+  UpdateProviderRequest,
   ModelsListResponse,
   ToolDefinition,
   ToolImplementationType,
@@ -78,8 +82,27 @@ export type {
   ToolTypeBucket,
   CreateToolRequest,
   UpdateToolRequest,
+  CreateBuiltinToolInstanceRequest,
+  UpdateBuiltinToolInstanceRequest,
   ToolsListResponse,
 } from "./agent";
+
+export type {
+  PublishedApp,
+  PublishedAppStatus,
+  PublishedAppAuthProvider,
+  CreatePublishedAppRequest,
+  UpdatePublishedAppRequest,
+} from "./published-apps";
+
+export type {
+  PublishedRuntimeConfig,
+  PublishedRuntimeAuthProvider,
+  PublishedRuntimeUser,
+  PublicAuthResponse,
+  PublicChatHistory,
+  PublicChatItem,
+} from "./published-runtime";
 
 export type {
   IntegrationCredential,

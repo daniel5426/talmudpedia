@@ -78,6 +78,7 @@ describe("run tree reconciliation", () => {
     state = reconcileRuntimeTree(state, treePayload)
     const childAfterTree = state.runtimeNodes.find((node) => node.id === "runtime-run:child-a")
     expect(childAfterTree?.data.executionStatus).toBe("completed")
+    expect(state.runtimeNodes.some((node) => node.id === "runtime-run:run-root")).toBe(false)
 
     const postTreeEvent: AgentExecutionEvent[] = [
       {

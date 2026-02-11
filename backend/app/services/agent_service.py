@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import select, func, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only
 
 from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrace, AgentStatus, RunStatus
 # from ..agent.graph.compiler import AgentCompiler # Mocking compiler for now if not ready, or use it
@@ -75,20 +75,45 @@ class AgentService:
         self, 
         status: Optional[str] = None, 
         skip: int = 0, 
-        limit: int = 50
+        limit: int = 50,
+        compact: bool = False,
     ) -> Tuple[List[Agent], int]:
         """List agents for the tenant with pagination and optional status filter."""
-        query = select(Agent).where(Agent.tenant_id == self.tenant_id)
+        filters = [Agent.tenant_id == self.tenant_id]
         
         if status:
-            query = query.where(Agent.status == status)
-            
+            filters.append(Agent.status == status)
+
         # Count total
-        count_query = select(func.count()).select_from(query.subquery())
+        count_query = select(func.count()).select_from(Agent).where(*filters)
         total = await self.db.scalar(count_query)
         
         # Get results
-        query = query.offset(skip).limit(limit).order_by(Agent.updated_at.desc())
+        query = (
+            select(Agent)
+            .where(*filters)
+            .order_by(Agent.updated_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        if compact:
+            # Exclude large JSON columns used mainly by builder/execution flows.
+            query = query.options(
+                load_only(
+                    Agent.id,
+                    Agent.tenant_id,
+                    Agent.name,
+                    Agent.slug,
+                    Agent.description,
+                    Agent.version,
+                    Agent.status,
+                    Agent.created_at,
+                    Agent.updated_at,
+                    Agent.published_at,
+                    Agent.is_active,
+                    Agent.is_public,
+                )
+            )
         result = await self.db.execute(query)
         agents = result.scalars().all()
         

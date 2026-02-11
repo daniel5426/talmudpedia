@@ -40,11 +40,13 @@ async def lifespan(app: FastAPI):
     from app.services.registry_seeding import (
         seed_global_models,
         seed_platform_sdk_tool,
+        seed_builtin_tool_templates,
         seed_platform_architect_agent,
     )
     async with AsyncSessionLocal() as db:
         await seed_global_models(db)
         await seed_platform_sdk_tool(db)
+        await seed_builtin_tool_templates(db)
         await seed_platform_architect_agent(db)
     
     # Start LiveKit worker in separate process if credentials are configured
@@ -115,6 +117,8 @@ from app.api.routers import settings as settings_router
 from app.api.routers import internal_auth as internal_auth_router
 from app.api.routers import orchestration_internal as orchestration_internal_router
 from app.api.routers import workload_security as workload_security_router
+from app.api.routers import published_apps_admin as published_apps_admin_router
+from app.api.routers import published_apps_public as published_apps_public_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 from app.api.routers import agent_operators
@@ -131,6 +135,8 @@ app.include_router(workload_security_router.router)
 app.include_router(internal_auth_router.router)
 app.include_router(internal_auth_router.jwks_router)
 app.include_router(orchestration_internal_router.router)
+app.include_router(published_apps_admin_router.router)
+app.include_router(published_apps_public_router.router)
 
 from app.api.routers import knowledge_stores as knowledge_stores_router
 app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stores", tags=["knowledge-stores"])

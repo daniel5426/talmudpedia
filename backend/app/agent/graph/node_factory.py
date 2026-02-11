@@ -40,6 +40,7 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             "node_id": node.id,
             "node_type": node.type,
             "node_name": node.config.get("label", node.id),
+            "mode": configurable.get("mode") or state_context.get("mode"),
             "run_id": configurable.get("run_id") or configurable.get("thread_id") or state_context.get("run_id"),
             "root_run_id": configurable.get("root_run_id") or state_context.get("root_run_id"),
             "parent_run_id": configurable.get("parent_run_id") or state_context.get("parent_run_id"),

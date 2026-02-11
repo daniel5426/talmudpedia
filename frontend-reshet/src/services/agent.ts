@@ -120,6 +120,10 @@ export interface ToolDefinition {
   published_at: string | null;
   artifact_id?: string;
   artifact_version?: string;
+  builtin_key?: string | null;
+  builtin_template_id?: string | null;
+  is_builtin_template?: boolean;
+  is_builtin_instance?: boolean;
 }
 
 export interface CreateToolRequest {
@@ -150,6 +154,24 @@ export interface UpdateToolRequest {
     artifact_id?: string;
     artifact_version?: string;
     status?: ToolStatus;
+}
+
+export interface CreateBuiltinToolInstanceRequest {
+  name?: string;
+  slug?: string;
+  description?: string;
+  implementation_config?: Record<string, unknown>;
+  execution_config?: Record<string, unknown>;
+  status?: ToolStatus;
+}
+
+export interface UpdateBuiltinToolInstanceRequest {
+  name?: string;
+  description?: string;
+  implementation_config?: Record<string, unknown>;
+  execution_config?: Record<string, unknown>;
+  status?: ToolStatus;
+  is_active?: boolean;
 }
 
 
@@ -246,11 +268,13 @@ export const agentService = {
     return httpClient.get<AgentOperatorSpec[]>("/agents/operators");
   },
 
-  async listAgents(params?: { status?: string, skip?: number, limit?: number }) {
+  async listAgents(params?: { status?: string, skip?: number, limit?: number, compact?: boolean }) {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
     if (params?.skip) query.set("skip", String(params.skip));
     if (params?.limit) query.set("limit", String(params.limit));
+    const compact = params?.compact ?? true;
+    if (compact) query.set("compact", "true");
     const queryString = query.toString();
     const path = `/agents${queryString ? `?${queryString}` : ""}`;
     return httpClient.get<{ agents: Agent[], total: number }>(path);

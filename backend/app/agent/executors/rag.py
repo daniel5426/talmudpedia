@@ -3,12 +3,8 @@ import uuid
 from typing import Any, Dict
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
-from app.db.postgres.models.rag import PipelineJob, PipelineJobStatus, ExecutablePipeline, PipelineStepStatus
-from app.rag.pipeline.executor import PipelineExecutor as RAGPipelineExecutor
+from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
 from app.services.retrieval_service import RetrievalService
 from app.agent.cel_engine import evaluate_template
 
@@ -37,58 +33,12 @@ class RetrievalNodeExecutor(BaseNodeExecutor):
 
         try:
             pipeline_id = UUID(pipeline_id_str)
-            
-            # 1. Resolve Executable Pipeline
-            exec_pipeline = None
-            # Accept both executable pipeline IDs and visual pipeline IDs.
-            exec_by_id = await self.db.execute(
-                select(ExecutablePipeline).where(ExecutablePipeline.id == pipeline_id)
+            runtime = RetrievalPipelineRuntime(self.db, self.tenant_id)
+            results, _job = await runtime.run_query(
+                pipeline_id=pipeline_id,
+                query=query,
+                top_k=int(top_k or 10),
             )
-            exec_pipeline = exec_by_id.scalar_one_or_none()
-
-            if not exec_pipeline:
-                stmt = select(ExecutablePipeline).where(
-                    ExecutablePipeline.visual_pipeline_id == pipeline_id,
-                    ExecutablePipeline.is_valid == True
-                ).order_by(ExecutablePipeline.version.desc()).limit(1)
-                
-                result = await self.db.execute(stmt)
-                exec_pipeline = result.scalar_one_or_none()
-                
-                if not exec_pipeline:
-                        # Fallback to any version if no valid one marked?
-                        stmt = select(ExecutablePipeline).where(
-                        ExecutablePipeline.visual_pipeline_id == pipeline_id
-                        ).order_by(ExecutablePipeline.version.desc()).limit(1)
-                        result = await self.db.execute(stmt)
-                        exec_pipeline = result.scalar_one_or_none()
-                
-            if not exec_pipeline:
-                    raise ValueError(f"No executable pipeline found for pipeline {pipeline_id_str}")
-
-            # 2. Create Job
-            job_id = uuid.uuid4()
-            job = PipelineJob(
-                id=job_id,
-                tenant_id=self.tenant_id,
-                executable_pipeline_id=exec_pipeline.id,
-                status=PipelineJobStatus.QUEUED,
-                input_params={"query": query, "top_k": top_k}, 
-                triggered_by=None
-            )
-            self.db.add(job)
-            await self.db.commit()
-            
-            # 3. Execute Job
-            executor = RAGPipelineExecutor(self.db)
-            await executor.execute_job(job.id)
-            
-            # 4. Get Results
-            await self.db.refresh(job)
-            if job.status == PipelineJobStatus.FAILED:
-                    raise RuntimeError(f"Pipeline execution failed: {job.error_message}")
-            
-            results = self._normalize_results(job.output)
 
             # Emit End Event
             self._emit_end(context, config, "retrieval", {"results_count": len(results)}, results)
@@ -126,14 +76,6 @@ class RetrievalNodeExecutor(BaseNodeExecutor):
                 else:
                     query = getattr(last_msg, "content", str(last_msg))
         return query
-
-    def _normalize_results(self, raw_results: Any) -> list:
-        if isinstance(raw_results, list):
-            return raw_results
-        elif isinstance(raw_results, dict) and "results" in raw_results:
-            return raw_results["results"]
-        else:
-            return [raw_results] if raw_results else []
 
     def _emit_start(self, context, config, node_type, metadata):
         from app.agent.execution.emitter import active_emitter

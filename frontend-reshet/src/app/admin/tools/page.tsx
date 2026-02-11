@@ -10,6 +10,7 @@ import {
     ToolImplementationType,
     ToolStatus,
     CreateToolRequest,
+    CreateBuiltinToolInstanceRequest,
     ToolTypeBucket,
 } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
@@ -39,6 +40,7 @@ import {
     Layers,
     Info,
     Server,
+    GitFork,
 } from "lucide-react"
 import {
     Dialog,
@@ -60,6 +62,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { JsonViewer } from "@/components/ui/JsonViewer"
 import { cn } from "@/lib/utils"
 import { TOOL_BUCKETS, TOOL_SUBTYPES, filterTools, getToolBucket, getSubtypeLabel } from "@/lib/tool-types"
+import { RetrievalPipelineSelect } from "@/components/shared/RetrievalPipelineSelect"
 
 const IMPLEMENTATION_ICONS: Record<ToolImplementationType, React.ElementType> = {
     internal: Cog,
@@ -403,11 +406,171 @@ function CreateToolDialog({ onCreated }: { onCreated: () => void }) {
     )
 }
 
+function CreateBuiltinInstanceDialog({
+    templates,
+    onCreated,
+}: {
+    templates: ToolDefinition[]
+    onCreated: () => void
+}) {
+    const { direction } = useDirection()
+    const [open, setOpen] = useState(false)
+    const [loading, setLoading] = useState(false)
+    const retrievalTemplate = templates.find((t) => t.builtin_key === "retrieval_pipeline")
+    const [selectedKey, setSelectedKey] = useState<string>("")
+    const [form, setForm] = useState<CreateBuiltinToolInstanceRequest>({
+        name: "",
+        slug: "",
+        description: "",
+    })
+    const selectedTemplate = templates.find((t) => t.builtin_key === selectedKey)
+    const implementationConfig = (form.implementation_config || {}) as Record<string, unknown>
+    const requiresRetrievalPipeline = selectedKey === "retrieval_pipeline"
+    const selectedPipelineId = (implementationConfig.pipeline_id as string) || ""
+
+    useEffect(() => {
+        if (!open) {
+            setSelectedKey("")
+            setForm({ name: "", slug: "", description: "" })
+            return
+        }
+        if (!selectedKey && retrievalTemplate?.builtin_key) {
+            setSelectedKey(retrievalTemplate.builtin_key)
+            if (retrievalTemplate.builtin_key === "retrieval_pipeline") {
+                setForm((prev) => ({
+                    ...prev,
+                    implementation_config: { pipeline_id: "" },
+                }))
+            }
+        }
+    }, [open, selectedKey, retrievalTemplate?.builtin_key])
+
+    const handleTemplateChange = (builtinKey: string) => {
+        setSelectedKey(builtinKey)
+        setForm((prev) => ({
+            ...prev,
+            implementation_config: builtinKey === "retrieval_pipeline" ? { pipeline_id: "" } : undefined,
+        }))
+    }
+
+    const handleCreate = async () => {
+        if (!selectedKey) return
+        setLoading(true)
+        try {
+            await toolsService.createBuiltinInstance(selectedKey, form)
+            setOpen(false)
+            onCreated()
+        } catch (error) {
+            console.error("Failed to create built-in instance", error)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button variant="outline" size="sm">
+                    <GitFork className="h-4 w-4 mr-2" />
+                    Create Built-in Instance
+                </Button>
+            </DialogTrigger>
+            <DialogContent dir={direction} className="max-w-lg">
+                <DialogHeader>
+                    <DialogTitle>Create Built-in Instance</DialogTitle>
+                    <DialogDescription>
+                        Create a tenant-configured instance from a global built-in template.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                        <Label>Template</Label>
+                        <Select value={selectedKey} onValueChange={handleTemplateChange}>
+                            <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Select built-in template..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {templates.filter((tpl) => !!tpl.builtin_key).map((tpl) => (
+                                    <SelectItem key={tpl.id} value={tpl.builtin_key!}>
+                                        {tpl.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Name (optional)</Label>
+                        <Input
+                            placeholder={selectedTemplate ? `${selectedTemplate.name} Instance` : "Custom name"}
+                            value={form.name || ""}
+                            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Slug (optional)</Label>
+                        <Input
+                            placeholder="instance-slug"
+                            value={form.slug || ""}
+                            onChange={(e) => setForm((prev) => ({ ...prev, slug: e.target.value }))}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Description (optional)</Label>
+                        <Textarea
+                            placeholder="Optional description override"
+                            value={form.description || ""}
+                            onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+                        />
+                    </div>
+                    {selectedKey === "retrieval_pipeline" && (
+                        <div className="space-y-2">
+                            <Label>Retrieval Pipeline</Label>
+                            <RetrievalPipelineSelect
+                                value={(implementationConfig.pipeline_id as string) || ""}
+                                onChange={(value) =>
+                                    setForm((prev) => ({
+                                        ...prev,
+                                        implementation_config: {
+                                            ...(prev.implementation_config || {}),
+                                            pipeline_id: value,
+                                        },
+                                    }))
+                                }
+                            />
+                        </div>
+                    )}
+                    {selectedKey === "web_fetch" && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                            <div className="flex items-start gap-2">
+                                <AlertCircle className="mt-0.5 h-3.5 w-3.5" />
+                                <span>
+                                    `web_fetch` currently allows any `http/https` URL in v1. Use only with trusted agent prompts and tenant policy controls.
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpen(false)}>
+                        Cancel
+                    </Button>
+                    <Button onClick={handleCreate} disabled={!selectedKey || loading || (requiresRetrievalPipeline && !selectedPipelineId)}>
+                        {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Create Instance
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
 export default function ToolsPage() {
     const { direction } = useDirection()
     const isRTL = direction === "rtl"
     const [tools, setTools] = useState<ToolDefinition[]>([])
     const [loading, setLoading] = useState(true)
+    const [builtinTemplates, setBuiltinTemplates] = useState<ToolDefinition[]>([])
+    const [builtinTemplatesLoading, setBuiltinTemplatesLoading] = useState(true)
     const [statusFilter, setStatusFilter] = useState<ToolStatus | "all">("all")
     const [bucketFilter, setBucketFilter] = useState<ToolTypeBucket | "all">("all")
     const [subtypeFilter, setSubtypeFilter] = useState<ToolImplementationType | "all">("all")
@@ -428,9 +591,23 @@ export default function ToolsPage() {
         }
     }, [statusFilter, bucketFilter])
 
+    const fetchBuiltinTemplates = useCallback(async () => {
+        setBuiltinTemplatesLoading(true)
+        try {
+            const response = await toolsService.listBuiltinTemplates()
+            setBuiltinTemplates(response.tools)
+        } catch (error) {
+            console.warn("Built-in templates endpoint unavailable", error)
+            setBuiltinTemplates([])
+        } finally {
+            setBuiltinTemplatesLoading(false)
+        }
+    }, [])
+
     useEffect(() => {
         fetchTools()
-    }, [fetchTools])
+        fetchBuiltinTemplates()
+    }, [fetchTools, fetchBuiltinTemplates])
 
     const filteredTools = useMemo(() => filterTools(tools, {
         query,
@@ -497,6 +674,7 @@ export default function ToolsPage() {
                         <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
                         Refresh
                     </Button>
+                    <CreateBuiltinInstanceDialog onCreated={() => { fetchTools(); fetchBuiltinTemplates() }} templates={builtinTemplates} />
                     <CreateToolDialog onCreated={fetchTools} />
                 </div>
             </header>
@@ -508,19 +686,45 @@ export default function ToolsPage() {
                             <Skeleton key={i} className="h-20 w-full" />
                         ))}
                     </div>
-                ) : tools.length === 0 ? (
-                    <Card>
-                        <CardContent className="py-12 text-center">
-                            <Wrench className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                            <h3 className="text-lg font-semibold mb-2">No Tools Defined</h3>
-                            <p className="text-muted-foreground mb-4">
-                                Define callable capabilities for your agents.
-                            </p>
-                            <CreateToolDialog onCreated={fetchTools} />
-                        </CardContent>
-                    </Card>
                 ) : (
                     <>
+                        <Card className="border-border/60">
+                            <CardHeader className="pb-2">
+                                <CardTitle className="text-base">Built-in Templates</CardTitle>
+                                <CardDescription>
+                                    Global templates available to create tenant-scoped instances.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="pt-0">
+                                {builtinTemplatesLoading ? (
+                                    <div className="space-y-2">
+                                        <Skeleton className="h-10 w-full" />
+                                        <Skeleton className="h-10 w-full" />
+                                    </div>
+                                ) : builtinTemplates.length === 0 ? (
+                                    <div className="text-sm text-muted-foreground">
+                                        No built-in templates were returned by the backend.
+                                    </div>
+                                ) : (
+                                    <div className="grid gap-2 md:grid-cols-2">
+                                        {builtinTemplates.map((template) => (
+                                            <div key={template.id} className="rounded-md border border-border/60 p-3">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium">{template.name}</span>
+                                                    <Badge variant="outline" className="text-[10px]">
+                                                        {template.builtin_key || template.slug}
+                                                    </Badge>
+                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground line-clamp-2">
+                                                    {template.description}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+
                         <div className="grid gap-3 md:grid-cols-4">
                             {TOOL_BUCKETS.map((bucket) => (
                                 <Card key={bucket.id} className="border-border/60">
@@ -579,50 +783,66 @@ export default function ToolsPage() {
                             </CardContent>
                         </Card>
 
-                        <div className="grid gap-3">
-                            {filteredTools.map((tool) => (
-                                <Card key={tool.id} className="border-border/60 hover:border-border transition cursor-pointer" onClick={() => setSelectedTool(tool)}>
-                                    <CardContent className="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                                        <div className="space-y-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-semibold">{tool.name}</span>
-                                                <BucketBadge bucket={getToolBucket(tool)} />
-                                                <ImplementationBadge type={tool.implementation_type} />
-                                                <StatusBadge status={tool.status} />
+                        {filteredTools.length === 0 ? (
+                            <Card>
+                                <CardContent className="py-10 text-center">
+                                    <Wrench className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                                    <h3 className="text-base font-semibold mb-2">No Tools Match Your Filters</h3>
+                                    <p className="text-sm text-muted-foreground mb-4">
+                                        Create a built-in instance or custom tool to get started.
+                                    </p>
+                                    <div className="flex items-center justify-center gap-2">
+                                        <CreateBuiltinInstanceDialog onCreated={() => { fetchTools(); fetchBuiltinTemplates() }} templates={builtinTemplates} />
+                                        <CreateToolDialog onCreated={fetchTools} />
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        ) : (
+                            <div className="grid gap-3">
+                                {filteredTools.map((tool) => (
+                                    <Card key={tool.id} className="border-border/60 hover:border-border transition cursor-pointer" onClick={() => setSelectedTool(tool)}>
+                                        <CardContent className="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                                            <div className="space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-semibold">{tool.name}</span>
+                                                    <BucketBadge bucket={getToolBucket(tool)} />
+                                                    <ImplementationBadge type={tool.implementation_type} />
+                                                    <StatusBadge status={tool.status} />
+                                                </div>
+                                                <div className="text-xs text-muted-foreground font-mono">{tool.slug}</div>
+                                                <div className="text-xs text-muted-foreground line-clamp-2">{tool.description}</div>
                                             </div>
-                                            <div className="text-xs text-muted-foreground font-mono">{tool.slug}</div>
-                                            <div className="text-xs text-muted-foreground line-clamp-2">{tool.description}</div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <Badge variant="outline" className="text-xs">v{tool.version}</Badge>
-                                            <Button variant="ghost" size="icon" onClick={(e) => {
-                                                e.stopPropagation()
-                                                setSelectedTool(tool)
-                                            }}>
-                                                <Info className="h-4 w-4" />
-                                            </Button>
-                                            {tool.status === "draft" && (
-                                                <Button variant="outline" size="sm" onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    handlePublish(tool.id)
-                                                }}>
-                                                    <Check className="h-3 w-3 mr-1" />
-                                                    Publish
-                                                </Button>
-                                            )}
-                                            {tool.status === "draft" && (
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="outline" className="text-xs">v{tool.version}</Badge>
                                                 <Button variant="ghost" size="icon" onClick={(e) => {
                                                     e.stopPropagation()
-                                                    handleDelete(tool.id)
+                                                    setSelectedTool(tool)
                                                 }}>
-                                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                                    <Info className="h-4 w-4" />
                                                 </Button>
-                                            )}
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            ))}
-                        </div>
+                                                {tool.status === "draft" && (
+                                                    <Button variant="outline" size="sm" onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        handlePublish(tool.id)
+                                                    }}>
+                                                        <Check className="h-3 w-3 mr-1" />
+                                                        Publish
+                                                    </Button>
+                                                )}
+                                                {tool.status === "draft" && (
+                                                    <Button variant="ghost" size="icon" onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        handleDelete(tool.id)
+                                                    }}>
+                                                        <Trash2 className="h-4 w-4 text-destructive" />
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))}
+                            </div>
+                        )}
                     </>
                 )}
             </div>

@@ -764,13 +764,15 @@ class AgentCompiler:
         
         tool_resolver = ToolResolver(self.db, self.tenant_id)
         rag_resolver = RAGPipelineResolver(self.db, self.tenant_id)
+        execution_mode = str((config or {}).get("mode") or "debug").strip().lower()
+        require_published_tools = execution_mode == "production"
         
         for node in graph.nodes:
             if node.type == "tool":
                 tool_id = node.config.get("tool_id")
                 if tool_id:
                     try:
-                        resolved = await tool_resolver.resolve(UUID(tool_id))
+                        resolved = await tool_resolver.resolve(UUID(tool_id), require_published=require_published_tools)
                         # Optimization: we could store 'resolved_implementation' in config
                         # node.config["_resolved"] = resolved
                     except ResolutionError as e:
@@ -793,7 +795,10 @@ class AgentCompiler:
                         raise ValueError(f"Agent node {node.id} tools must be a list")
                     for tool_id in tools:
                         try:
-                            await tool_resolver.resolve(UUID(str(tool_id)))
+                            await tool_resolver.resolve(
+                                UUID(str(tool_id)),
+                                require_published=require_published_tools,
+                            )
                         except (ValueError, ResolutionError) as e:
                             raise ValueError(f"Agent node {node.id} tool resolution failed: {e}")
 

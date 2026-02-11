@@ -271,7 +271,13 @@ class AgentExecutorService:
             if "approval" in resume_payload:
                 compile_input_params = dict(run_input_params or {})
                 compile_input_params["approval"] = resume_payload.get("approval")
-        graph_ir = await compiler.compile(agent.id, agent.version, graph_def, input_params=compile_input_params)
+        graph_ir = await compiler.compile(
+            agent.id,
+            agent.version,
+            graph_def,
+            config={"mode": mode.value},
+            input_params=compile_input_params,
+        )
 
         # 3. Create Runtime Adapter + Executable
         adapter_cls = RuntimeAdapterRegistry.get_default()

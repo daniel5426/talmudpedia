@@ -1,6 +1,6 @@
 # TalmudPedia: Platform Current State & Overview
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-10
 
 TalmudPedia is a foundational **Enterprise AI Agent & RAG Platform** designed as a unified control plane for models, tools, data, and reasoning workflows. It is vendor-agnostic, modular, and enterprise-ready, supporting both API-based and self-hosted models. Data ingestion (RAG) and reasoning (Agents) are decoupled through the **Knowledge Store** bridge.
 
@@ -29,9 +29,9 @@ The platform is organized into independent domains communicating through stable 
 - **Architecture**: Service Layer (`AgentService`); single execution engine (`AgentExecutorService`) for Playground and Production.
 - **Engine**: `AgentCompiler` turns declarative GraphSpec v1 JSON into executable LangGraph workflows.
 - **Observability**: **Unified Engine, Divergent Observability** (ADR 001). `StreamAdapter` filters events by `ExecutionMode`: Debug = full firehose (inputs, tool calls, thoughts, tokens); Production = clean stream (final tokens and client-safe events only). Auth-scoped: public tokens cannot request Debug.
-- **Features**: Cyclic workflows, CEL (If/Else, While), User Approval (HITL), Transform/Set State, artifact field mapping, versioning, `AgentRun`/`AgentTrace` persistence. Tool execution: HTTP, artifact, MCP, and function tools supported. Tool invocation in agent nodes supports structured tool calls with JSON fallback (native LLM tool calling is still a roadmap item).
+- **Features**: Cyclic workflows, CEL (If/Else, While), User Approval (HITL), Transform/Set State, artifact field mapping, versioning, `AgentRun`/`AgentTrace` persistence. Tool execution: HTTP, artifact, MCP, and function tools supported. Built-in Tools v1 is live with global templates + tenant instances (Core 8: retrieval_pipeline, http_request, function_call, mcp_call, web_fetch, web_search, json_transform, datetime_utils). Tool invocation in agent nodes supports structured tool calls with JSON fallback (native LLM tool calling is still a roadmap item).
 - **UI**: Visual Builder (xyflow, BaseNode, ConfigPanel) and Agent Playground (streaming, execution sidebar, same chat components as production). Builder Execute mode now overlays runtime topology (orchestration decisions + child runs) from SSE with periodic `/agents/runs/{run_id}/tree` reconciliation; overlay is ephemeral per run and never persisted into draft `graph_definition`. Memory: short-term active; long-term/vector in development.
-- **Platform Architect v2**: Multi-agent orchestrator seeded with sub-agents (Catalog, Planner, Builder, Coder, Tester). The seed now uses a GraphSpec v2 orchestration graph (`spawn_run`, `spawn_group`, `join`, `router`, `judge`, `replan`, `cancel_subtree`) and auto-seeds orchestrator policy/target allowlist rows for those sub-agents. Platform SDK tool supports draft asset creation and multi-case tests; secure internal API flows use delegated workload tokens with scope enforcement (legacy service/API-key fallback removed on migrated secure paths).
+- **Platform Architect (linear staged GraphSpec v2)**: Multi-agent orchestrator seeded with sub-agents (Catalog, Planner, Builder, Coder, Tester). The current seed uses a stage-by-stage GraphSpec v2 orchestration graph (`spawn_group` + `join` per stage, then `replan`, optional replanner stage, `cancel_subtree`) and auto-seeds orchestrator policy/target allowlist rows for those sub-agents. Platform SDK tool supports draft asset creation and multi-case tests; secure internal API flows use delegated workload tokens with scope enforcement (legacy service/API-key fallback removed on migrated secure paths).
 
 ### B. RAG Domain
 
@@ -86,9 +86,9 @@ The platform is organized into independent domains communicating through stable 
 
 ## 5. Immediate Roadmap & Known Gaps
 
-- **Agent SOTA alignment**: Native LLM tool calling, MCP execution, RAG as callable tool, durable checkpointing, memory_config/execution_constraints enforcement, tool permissions (see `summary/agent_sota_architecture_gap_overview.md`).
+- **Agent SOTA alignment**: Native LLM tool calling, durable checkpointing, memory_config/execution_constraints enforcement, and deeper tool-governance policy (see `summary/agent_sota_architecture_gap_overview.md`).
 - **RAG**: Multi-store retrieval with score normalization; advanced metadata filtering UI; real-time metrics per node.
-- **Tools**: MCP and function execution now implemented; expand coverage and observability as needed.
-- **Platform Architect**: v2 multi-agent Architect (draft-only, test-first) is implemented; legacy linear flow remains as a fallback until v2 stabilizes.
+- **Tools**: Built-in Tools v1 shipped with tenant-configurable retrieval and mode-based publish guardrails (production requires published tools, debug allows drafts); continue hardening governance/policy and observability.
+- **Platform Architect**: Linear staged multi-agent Architect (draft-only, test-first) is implemented; future iterations should improve stage-to-stage contracts and richer adaptive replanning.
 - **Artifact CLI**: Scaffolding for new operator artifacts.
 - **Stats**: Performance metrics (e.g. token/latency per node) and deeper drilldowns.

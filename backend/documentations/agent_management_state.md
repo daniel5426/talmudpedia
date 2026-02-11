@@ -1,5 +1,7 @@
 # Agent Management Current State
 
+Last Updated: 2026-02-10
+
 ## Overview
 The Agent subsystem is a sophisticated, graph-based orchestration engine designed to build and deploy autonomous AI agents. Similar to the RAG pipeline, it utilizes a visual, node-based approach powered by LangGraph to manage complex conversational flows, tool usage, and multi-step reasoning.
 
@@ -51,6 +53,7 @@ The Agent subsystem is a sophisticated, graph-based orchestration engine designe
 
 ### Backend Stack
 - **API**: FastAPI providing endpoints for chat, management, and execution.
+- **Agent List Performance Mode**: `GET /agents` supports `compact=true` to return lightweight list payloads (empty graph/memory/constraint blobs) for management pages and large catalogs.
 - **Orchestration**: LangGraph for the underlying state machine logic.
 - **Database**: PostgreSQL with SQLAlchemy for persistence of agents, runs, and traces.
 - **Telemetry**: Custom tracing system for monitoring agent performance and step-level execution.

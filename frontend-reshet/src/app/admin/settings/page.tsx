@@ -4,16 +4,13 @@ import Link from "next/link"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useDirection } from "@/components/direction-provider"
 import { useTenant } from "@/contexts/TenantContext"
 import { useAuthStore } from "@/lib/store/useAuthStore"
@@ -29,7 +26,22 @@ import {
   LogicalModel,
 } from "@/services"
 import { cn } from "@/lib/utils"
-import { Loader2, Plus, RefreshCw, Trash2, Pencil, AlertTriangle, ShieldCheck, Building2, Search } from "lucide-react"
+import {
+  AlertTriangle,
+  Building2,
+  ChevronRight,
+  KeyRound,
+  Loader2,
+  Pencil,
+  Plus,
+  Settings,
+  ShieldCheck,
+  Sliders,
+  Trash2,
+  User,
+} from "lucide-react"
+
+/* ───────────────────────────── Constants ───────────────────────────── */
 
 const CATEGORY_LABELS: Record<IntegrationCredentialCategory, { title: string; description: string }> = {
   llm_provider: {
@@ -57,8 +69,16 @@ const RETRIEVAL_POLICIES: Array<{ value: RetrievalPolicy; label: string }> = [
   { value: "recency_boosted", label: "Recency Boosted" },
 ]
 
-type SettingsTabKey = "profile" | "integrations" | "defaults" | "security"
-const SETTINGS_TAB_ORDER: SettingsTabKey[] = ["profile", "integrations", "defaults", "security"]
+type SettingsSection = "profile" | "integrations" | "defaults" | "security"
+
+const NAV_ITEMS: Array<{ key: SettingsSection; label: string; icon: typeof User }> = [
+  { key: "profile", label: "General", icon: User },
+  { key: "integrations", label: "Integrations", icon: KeyRound },
+  { key: "defaults", label: "Defaults", icon: Sliders },
+  { key: "security", label: "Security", icon: ShieldCheck },
+]
+
+/* ───────────────────────────── Credential Dialog ───────────────────── */
 
 function CredentialFormDialog({
   mode,
@@ -74,7 +94,6 @@ function CredentialFormDialog({
   onSaved: () => void
 }) {
   const { direction } = useDirection()
-  const isRTL = direction === "rtl"
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -141,57 +160,57 @@ function CredentialFormDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {mode === "create" ? (
-          <Button size="sm" disabled={disabled}>
-            <Plus className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
-            Add Credential
+          <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" disabled={disabled}>
+            <Plus className="h-3 w-3" />
+            Add
           </Button>
         ) : (
-          <Button variant="ghost" size="icon" disabled={disabled}>
-            <Pencil className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={disabled}>
+            <Pencil className="h-3.5 w-3.5" />
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent dir={direction}>
+      <DialogContent dir={direction} className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle className={isRTL ? "text-right" : "text-left"}>
+          <DialogTitle>
             {mode === "create" ? "Add Credential" : "Edit Credential"}
           </DialogTitle>
-          <DialogDescription className={isRTL ? "text-right" : "text-left"}>
+          <DialogDescription>
             Credentials are stored securely and never shown after saving.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-4">
+        <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label>Provider Key</Label>
-            <Input value={providerKey} onChange={(e) => setProviderKey(e.target.value)} />
+            <Label className="text-xs font-medium text-muted-foreground">Provider Key</Label>
+            <Input value={providerKey} onChange={(e) => setProviderKey(e.target.value)} className="h-9" />
           </div>
           <div className="space-y-2">
-            <Label>Provider Variant (optional)</Label>
-            <Input value={providerVariant} onChange={(e) => setProviderVariant(e.target.value)} />
+            <Label className="text-xs font-medium text-muted-foreground">Provider Variant (optional)</Label>
+            <Input value={providerVariant} onChange={(e) => setProviderVariant(e.target.value)} className="h-9" />
           </div>
           <div className="space-y-2">
-            <Label>Display Name</Label>
-            <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+            <Label className="text-xs font-medium text-muted-foreground">Display Name</Label>
+            <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-9" />
           </div>
           <div className="space-y-2">
-            <Label>Credentials (JSON)</Label>
+            <Label className="text-xs font-medium text-muted-foreground">Credentials (JSON)</Label>
             <Textarea
               value={credentialsText}
               onChange={(e) => setCredentialsText(e.target.value)}
               className="font-mono text-xs"
-              rows={6}
+              rows={5}
             />
           </div>
-          <div className="flex items-center gap-3">
+          <label className="flex items-center gap-3 cursor-pointer">
             <Checkbox checked={isEnabled} onCheckedChange={(v) => setIsEnabled(v === true)} />
-            <Label>Enabled</Label>
-          </div>
+            <span className="text-sm">Enabled</span>
+          </label>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
           <Button onClick={handleSave} disabled={loading || !providerKey || !displayName}>
-            {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            {loading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
             Save
           </Button>
         </DialogFooter>
@@ -199,6 +218,58 @@ function CredentialFormDialog({
     </Dialog>
   )
 }
+
+/* ───────────────────────────── Settings Sections ──────────────────── */
+
+function SectionHeader({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="mb-6">
+      <h2 className="text-sm font-medium text-foreground">{title}</h2>
+      <p className="text-xs text-muted-foreground/70 mt-0.5">{description}</p>
+    </div>
+  )
+}
+
+function FieldRow({
+  label,
+  description,
+  children,
+}: {
+  label: string
+  description?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-6 py-4 border-b border-border/40 last:border-0">
+      <div className="sm:w-48 shrink-0">
+        <Label className="text-sm font-medium">{label}</Label>
+        {description && (
+          <p className="text-xs text-muted-foreground/60 mt-0.5">{description}</p>
+        )}
+      </div>
+      <div className="flex-1 max-w-md">{children}</div>
+    </div>
+  )
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-6 p-6">
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-3 w-56" />
+      </div>
+      {Array.from({ length: 3 }).map((_, i) => (
+        <div key={i} className="flex gap-6 py-4 border-b border-border/40">
+          <Skeleton className="h-4 w-28 shrink-0" />
+          <Skeleton className="h-9 flex-1 max-w-md" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* ───────────────────────────── Main Component ─────────────────────── */
 
 export default function SettingsPage() {
   const { direction } = useDirection()
@@ -208,8 +279,7 @@ export default function SettingsPage() {
 
   const canEdit = user?.role === "admin" || user?.org_role === "owner" || user?.org_role === "admin"
 
-  const [activeTab, setActiveTab] = useState<SettingsTabKey>("profile")
-  const [searchQuery, setSearchQuery] = useState("")
+  const [activeSection, setActiveSection] = useState<SettingsSection>("profile")
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
 
@@ -252,12 +322,6 @@ export default function SettingsPage() {
 
   const hasUnsavedChanges = profileDirty || defaultsDirty
   dirtyStateRef.current = hasUnsavedChanges
-  const normalizedSearch = searchQuery.trim().toLowerCase()
-
-  const matchesSearch = useCallback((...values: Array<string | null | undefined>) => {
-    if (!normalizedSearch) return true
-    return values.some((value) => (value || "").toLowerCase().includes(normalizedSearch))
-  }, [normalizedSearch])
 
   const fetchData = useCallback(async () => {
     if (!currentTenant?.slug) return
@@ -321,69 +385,6 @@ export default function SettingsPage() {
       custom: [],
     })
   }, [credentials])
-
-  const integrationsFiltered = useMemo(() => {
-    return (Object.keys(CATEGORY_LABELS) as IntegrationCredentialCategory[]).map((category) => {
-      const categoryInfo = CATEGORY_LABELS[category]
-      const items = (grouped[category] || []).filter((cred) =>
-        matchesSearch(
-          categoryInfo.title,
-          categoryInfo.description,
-          cred.display_name,
-          cred.provider_key,
-          cred.provider_variant || "",
-          cred.credential_keys.join(" "),
-          cred.is_enabled ? "enabled" : "disabled",
-        )
-      )
-      const categoryMatch = matchesSearch(categoryInfo.title, categoryInfo.description)
-      const shouldRender = categoryMatch || items.length > 0 || !normalizedSearch
-      return { category, categoryInfo, items, shouldRender }
-    })
-  }, [grouped, matchesSearch, normalizedSearch])
-
-  const sectionHasMatches = useMemo<Record<SettingsTabKey, boolean>>(() => ({
-    profile: matchesSearch(
-      "tenant profile",
-      "name",
-      "slug",
-      "status",
-      profileForm.name,
-      profileForm.slug,
-      profileForm.status,
-      "danger zone",
-      "tenant scoped routes",
-    ),
-    integrations: integrationsFiltered.some((entry) => entry.shouldRender),
-    defaults: matchesSearch(
-      "defaults",
-      "default chat model",
-      "default embedding model",
-      "default retrieval policy",
-      defaultsForm.default_chat_model_id || "",
-      defaultsForm.default_embedding_model_id || "",
-      defaultsForm.default_retrieval_policy || "",
-      chatModels.map((m) => m.name).join(" "),
-      embeddingModels.map((m) => m.name).join(" "),
-    ),
-    security: matchesSearch(
-      "security",
-      "organization",
-      "roles",
-      "policies",
-      "org unit hierarchy",
-      "member assignments",
-    ),
-  }), [matchesSearch, profileForm, integrationsFiltered, defaultsForm, chatModels, embeddingModels])
-
-  useEffect(() => {
-    if (!normalizedSearch) return
-    if (sectionHasMatches[activeTab]) return
-    const firstMatch = SETTINGS_TAB_ORDER.find((tab) => sectionHasMatches[tab])
-    if (firstMatch) {
-      setActiveTab(firstMatch)
-    }
-  }, [normalizedSearch, sectionHasMatches, activeTab])
 
   const handleDeleteCredential = async (credential: IntegrationCredential) => {
     if (!confirm("Delete this credential? This cannot be undone.")) return
@@ -453,384 +454,387 @@ export default function SettingsPage() {
   const chatDefaultMissing = !!defaultsForm.default_chat_model_id && !chatModels.find((m) => m.id === defaultsForm.default_chat_model_id)
   const embeddingDefaultMissing = !!defaultsForm.default_embedding_model_id && !embeddingModels.find((m) => m.id === defaultsForm.default_embedding_model_id)
 
+  /* ─────────────── Render sections ─────────────── */
+
+  function renderProfile() {
+    return (
+      <div>
+        <SectionHeader title="General" description="Core tenant identity and configuration." />
+
+        <FieldRow label="Tenant Name" description="Display name across the platform.">
+          <Input
+            value={profileForm.name}
+            onChange={(e) => setProfileForm((prev) => ({ ...prev, name: e.target.value }))}
+            disabled={!canEdit}
+            className="h-9"
+          />
+        </FieldRow>
+
+        <FieldRow label="Slug" description="URL-safe identifier for routing.">
+          <Input
+            value={profileForm.slug}
+            onChange={(e) => setProfileForm((prev) => ({ ...prev, slug: e.target.value }))}
+            disabled={!canEdit}
+            className="h-9 font-mono text-sm"
+          />
+        </FieldRow>
+
+        <FieldRow label="Status">
+          <Select
+            value={profileForm.status}
+            onValueChange={(value) => setProfileForm((prev) => ({ ...prev, status: value }))}
+            disabled={!canEdit}
+          >
+            <SelectTrigger className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="suspended">Suspended</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+            </SelectContent>
+          </Select>
+        </FieldRow>
+
+        {profileDirty && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm mt-4 flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-amber-700 text-xs">Danger Zone</p>
+              <p className="text-muted-foreground text-xs mt-0.5">
+                Changing the slug can break bookmarked URLs and tenant-scoped integrations.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!canEdit && (
+          <p className="text-xs text-muted-foreground/60 mt-4">Read-only access. Contact an admin to make changes.</p>
+        )}
+        {profileError && <p className="text-sm text-destructive mt-3">{profileError}</p>}
+
+        <div className={cn("flex gap-2 mt-6 pt-4 border-t border-border/40", isRTL ? "justify-start" : "justify-end")}>
+          <Button variant="outline" size="sm" onClick={fetchData} disabled={profileSaving}>Reset</Button>
+          <Button
+            size="sm"
+            onClick={handleSaveProfile}
+            disabled={!canEdit || !profileDirty || !profileForm.name.trim() || !profileForm.slug.trim() || profileSaving}
+          >
+            {profileSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
+            Save
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  function renderIntegrations() {
+    return (
+      <div>
+        <SectionHeader
+          title="Integrations"
+          description="Manage tenant-scoped credentials. Secret values are write-only."
+        />
+
+        {integrationsError && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive mb-4">
+            {integrationsError}
+          </div>
+        )}
+
+        <div className="space-y-6">
+          {(Object.keys(CATEGORY_LABELS) as IntegrationCredentialCategory[]).map((category) => {
+            const categoryInfo = CATEGORY_LABELS[category]
+            const items = grouped[category] || []
+
+            return (
+              <div key={category} className="rounded-lg border border-border/50">
+                {/* Category header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+                  <div>
+                    <h3 className="text-sm font-medium">{categoryInfo.title}</h3>
+                    <p className="text-xs text-muted-foreground/60 mt-0.5">{categoryInfo.description}</p>
+                  </div>
+                  <CredentialFormDialog
+                    mode="create"
+                    category={category}
+                    disabled={!canEdit}
+                    onSaved={fetchData}
+                  />
+                </div>
+
+                {/* Credential rows */}
+                {items.length === 0 ? (
+                  <div className="px-4 py-6 text-center">
+                    <p className="text-xs text-muted-foreground/50">No credentials configured.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border/30">
+                    {items.map((cred) => (
+                      <div key={cred.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium truncate">{cred.display_name}</span>
+                            <span className="flex items-center gap-1 shrink-0">
+                              <span className={cn("h-1.5 w-1.5 rounded-full", cred.is_enabled ? "bg-emerald-500" : "bg-zinc-400")} />
+                              <span className="text-xs text-muted-foreground/60">
+                                {cred.is_enabled ? "Active" : "Disabled"}
+                              </span>
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs text-muted-foreground/50 font-mono">{cred.provider_key}</span>
+                            {cred.provider_variant && (
+                              <>
+                                <span className="text-muted-foreground/30">·</span>
+                                <span className="text-xs text-muted-foreground/50 font-mono">{cred.provider_variant}</span>
+                              </>
+                            )}
+                            {cred.credential_keys.length > 0 && (
+                              <>
+                                <span className="text-muted-foreground/30">·</span>
+                                <span className="text-xs text-muted-foreground/40">
+                                  {cred.credential_keys.length} key{cred.credential_keys.length !== 1 ? "s" : ""}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <CredentialFormDialog
+                            mode="edit"
+                            category={category}
+                            credential={cred}
+                            disabled={!canEdit}
+                            onSaved={fetchData}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground/50 hover:text-destructive"
+                            disabled={!canEdit}
+                            onClick={() => handleDeleteCredential(cred)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  function renderDefaults() {
+    return (
+      <div>
+        <SectionHeader
+          title="Defaults"
+          description="Default model and retrieval configuration for tenant workflows."
+        />
+
+        <FieldRow label="Chat Model" description="Default model for conversational AI.">
+          <Select
+            value={defaultsForm.default_chat_model_id || "none"}
+            onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_chat_model_id: value === "none" ? null : value }))}
+            disabled={!canEdit}
+          >
+            <SelectTrigger className="h-9">
+              <SelectValue placeholder="Select chat model" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None</SelectItem>
+              {chatModels.map((model) => (
+                <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FieldRow>
+
+        <FieldRow label="Embedding Model" description="Default model for vector embeddings.">
+          <Select
+            value={defaultsForm.default_embedding_model_id || "none"}
+            onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_embedding_model_id: value === "none" ? null : value }))}
+            disabled={!canEdit}
+          >
+            <SelectTrigger className="h-9">
+              <SelectValue placeholder="Select embedding model" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None</SelectItem>
+              {embeddingModels.map((model) => (
+                <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FieldRow>
+
+        <FieldRow label="Retrieval Policy" description="Default strategy for RAG retrieval.">
+          <Select
+            value={defaultsForm.default_retrieval_policy || "none"}
+            onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_retrieval_policy: value === "none" ? null : value as RetrievalPolicy }))}
+            disabled={!canEdit}
+          >
+            <SelectTrigger className="h-9">
+              <SelectValue placeholder="Select policy" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None</SelectItem>
+              {RETRIEVAL_POLICIES.map((policy) => (
+                <SelectItem key={policy.value} value={policy.value}>{policy.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FieldRow>
+
+        {(chatDefaultMissing || embeddingDefaultMissing) && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 mt-4 flex items-start gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>One or more defaults point to missing or disabled models.</span>
+          </div>
+        )}
+
+        {!canEdit && (
+          <p className="text-xs text-muted-foreground/60 mt-4">Read-only access. Contact an admin to make changes.</p>
+        )}
+        {defaultsError && <p className="text-sm text-destructive mt-3">{defaultsError}</p>}
+
+        <div className={cn("flex gap-2 mt-6 pt-4 border-t border-border/40", isRTL ? "justify-start" : "justify-end")}>
+          <Button variant="outline" size="sm" onClick={fetchData} disabled={defaultsSaving}>Reset</Button>
+          <Button size="sm" onClick={handleSaveDefaults} disabled={!canEdit || !defaultsDirty || defaultsSaving}>
+            {defaultsSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
+            Save
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  function renderSecurity() {
+    return (
+      <div>
+        <SectionHeader
+          title="Security & Organization"
+          description="Manage org structure and security policies in their dedicated modules."
+        />
+
+        <div className="space-y-2">
+          <Link
+            href="/admin/organization"
+            className="group flex items-center gap-3 rounded-lg border border-border/50 px-4 py-3.5 hover:bg-muted/30 transition-colors"
+          >
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground/70 group-hover:border-border group-hover:bg-muted/50 transition-colors">
+              <Building2 className="h-4 w-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-medium text-foreground">Organization</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">Org unit hierarchy and member assignments.</p>
+            </div>
+            <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+          </Link>
+
+          <Link
+            href="/admin/security"
+            className="group flex items-center gap-3 rounded-lg border border-border/50 px-4 py-3.5 hover:bg-muted/30 transition-colors"
+          >
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground/70 group-hover:border-border group-hover:bg-muted/50 transition-colors">
+              <ShieldCheck className="h-4 w-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-medium text-foreground">Security & Roles</span>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">Roles, assignments, and workload security policies.</p>
+            </div>
+            <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const SECTION_RENDERERS: Record<SettingsSection, () => React.ReactNode> = {
+    profile: renderProfile,
+    integrations: renderIntegrations,
+    defaults: renderDefaults,
+    security: renderSecurity,
+  }
+
+  /* ─────────────── Main layout ─────────────── */
+
   return (
     <div className="flex flex-col h-full w-full" dir={direction}>
-      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
+      {/* Header */}
+      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0 border-b border-border/40">
         <CustomBreadcrumb items={[{ label: "Settings", href: "/admin/settings", active: true }]} />
-        <Button variant="outline" size="sm" className="h-9" onClick={fetchData}>
-          <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
-          Refresh
-        </Button>
+        {hasUnsavedChanges && (
+          <span className="text-xs text-amber-600 font-medium">Unsaved changes</span>
+        )}
       </header>
 
-      <div className="flex-1 overflow-auto p-4">
-        <div className="mx-auto w-full max-w-6xl space-y-4">
-        {fetchError && (
-          <Card className="border-destructive/40">
-            <CardContent className="py-4 text-sm text-destructive">{fetchError}</CardContent>
-          </Card>
-        )}
+      {/* Body: sidebar nav + content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar nav */}
+        <nav className="w-48 shrink-0 border-r border-border/40 p-3 overflow-y-auto hidden sm:block">
+          <div className="space-y-0.5">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon
+              const isActive = activeSection === item.key
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => setActiveSection(item.key)}
+                  className={cn(
+                    "flex items-center gap-2.5 w-full rounded-md px-2.5 py-1.5 text-sm transition-colors text-left",
+                    isActive
+                      ? "bg-muted/60 text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  {item.label}
+                </button>
+              )
+            })}
+          </div>
+        </nav>
 
-        {loading ? (
-          <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">Loading settings...</CardContent>
-          </Card>
-        ) : (
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SettingsTabKey)} className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3 justify-between">
-              <TabsList className="inline-flex h-auto flex-wrap gap-1 p-1">
-                <TabsTrigger className="px-3 py-1.5" value="profile">Tenant Profile</TabsTrigger>
-                <TabsTrigger className="px-3 py-1.5" value="integrations">Integrations</TabsTrigger>
-                <TabsTrigger className="px-3 py-1.5" value="defaults">Defaults</TabsTrigger>
-                <TabsTrigger className="px-3 py-1.5" value="security">Security & Organization</TabsTrigger>
-              </TabsList>
-              <div className="relative w-full sm:w-80">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search settings, sections, and fields..."
-                  className="h-9 pl-9"
-                />
+        {/* Mobile section picker */}
+        <div className="sm:hidden shrink-0 border-b border-border/40 px-4 py-2 flex gap-1 overflow-x-auto">
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.key}
+              onClick={() => setActiveSection(item.key)}
+              className={cn(
+                "px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors",
+                activeSection === item.key
+                  ? "bg-muted/60 text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Content area */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-2xl p-6">
+            {fetchError && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive mb-6">
+                {fetchError}
               </div>
-            </div>
+            )}
 
-            <TabsContent value="profile" className="space-y-4 m-0">
-              {!sectionHasMatches.profile ? (
-                <Card>
-                  <CardContent className="py-10 text-sm text-muted-foreground">No profile matches for this search.</CardContent>
-                </Card>
-              ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Tenant Profile</CardTitle>
-                  <CardDescription>Core tenant identity settings used across all tenant-scoped routes.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                    {matchesSearch("name", "tenant name", profileForm.name) && (
-                    <div className="space-y-2 md:col-span-5">
-                      <Label htmlFor="tenant-name">Name</Label>
-                      <Input
-                        id="tenant-name"
-                        value={profileForm.name}
-                        onChange={(e) => setProfileForm((prev) => ({ ...prev, name: e.target.value }))}
-                        disabled={!canEdit}
-                      />
-                    </div>
-                    )}
-                    {matchesSearch("slug", "namespace", profileForm.slug) && (
-                    <div className="space-y-2 md:col-span-5">
-                      <Label htmlFor="tenant-slug">Slug</Label>
-                      <Input
-                        id="tenant-slug"
-                        value={profileForm.slug}
-                        onChange={(e) => setProfileForm((prev) => ({ ...prev, slug: e.target.value }))}
-                        disabled={!canEdit}
-                      />
-                    </div>
-                    )}
-                    {matchesSearch("status", "active", "suspended", "pending", profileForm.status) && (
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Status</Label>
-                      <Select
-                        value={profileForm.status}
-                        onValueChange={(value) => setProfileForm((prev) => ({ ...prev, status: value }))}
-                        disabled={!canEdit}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="active">Active</SelectItem>
-                          <SelectItem value="suspended">Suspended</SelectItem>
-                          <SelectItem value="pending">Pending</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    )}
-                  </div>
-
-                  {matchesSearch("danger zone", "slug", "bookmarked urls", "tenant scoped integrations") && (
-                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm space-y-2">
-                    <div className="font-medium flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
-                      Danger Zone
-                    </div>
-                    <p className="text-muted-foreground">
-                      Changing the tenant slug can break bookmarked admin URLs and tenant-scoped integrations.
-                    </p>
-                  </div>
-                  )}
-
-                  {!canEdit && (
-                    <p className="text-sm text-muted-foreground">You have read-only access to tenant profile settings.</p>
-                  )}
-                  {profileError && <p className="text-sm text-destructive">{profileError}</p>}
-
-                  <div className={cn("flex gap-2", isRTL ? "justify-start" : "justify-end")}>
-                    <Button variant="outline" onClick={fetchData} disabled={profileSaving}>Reset</Button>
-                    <Button
-                      onClick={handleSaveProfile}
-                      disabled={!canEdit || !profileDirty || !profileForm.name.trim() || !profileForm.slug.trim() || profileSaving}
-                    >
-                      {profileSaving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                      Save Profile
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-              )}
-            </TabsContent>
-
-            <TabsContent value="integrations" className="space-y-4 m-0">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Integrations</CardTitle>
-                  <CardDescription>
-                    Manage tenant-scoped credentials. Secret values are write-only and never returned after save.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-
-              {integrationsError && (
-                <Card className="border-destructive/40">
-                  <CardContent className="py-4 text-sm text-destructive">{integrationsError}</CardContent>
-                </Card>
-              )}
-
-              {integrationsFiltered.filter((entry) => entry.shouldRender).length === 0 ? (
-                <Card>
-                  <CardContent className="py-10 text-sm text-muted-foreground">No integration matches for this search.</CardContent>
-                </Card>
-              ) : (
-              integrationsFiltered.filter((entry) => entry.shouldRender).map(({ category, categoryInfo, items }) => {
-                return (
-                  <Card key={category}>
-                    <CardHeader className="pb-2">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <CardTitle className="text-lg">{categoryInfo.title}</CardTitle>
-                          <CardDescription>{categoryInfo.description}</CardDescription>
-                        </div>
-                        <CredentialFormDialog
-                          mode="create"
-                          category={category}
-                          disabled={!canEdit}
-                          onSaved={fetchData}
-                        />
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      {items.length === 0 ? (
-                        <div className="text-sm text-muted-foreground">No credentials configured.</div>
-                      ) : (
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Display Name</TableHead>
-                              <TableHead>Provider</TableHead>
-                              <TableHead>Variant</TableHead>
-                              <TableHead>Keys</TableHead>
-                              <TableHead>Status</TableHead>
-                              <TableHead className="w-[80px]"></TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {items.map((cred) => (
-                              <TableRow key={cred.id}>
-                                <TableCell>{cred.display_name}</TableCell>
-                                <TableCell className="font-mono text-xs">{cred.provider_key}</TableCell>
-                                <TableCell className="font-mono text-xs">{cred.provider_variant || "-"}</TableCell>
-                                <TableCell className="text-xs text-muted-foreground">
-                                  {cred.credential_keys.length ? cred.credential_keys.join(", ") : "None"}
-                                </TableCell>
-                                <TableCell>
-                                  <Badge variant={cred.is_enabled ? "default" : "outline"}>
-                                    {cred.is_enabled ? "Enabled" : "Disabled"}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex items-center gap-1">
-                                    <CredentialFormDialog
-                                      mode="edit"
-                                      category={category}
-                                      credential={cred}
-                                      disabled={!canEdit}
-                                      onSaved={fetchData}
-                                    />
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      disabled={!canEdit}
-                                      onClick={() => handleDeleteCredential(cred)}
-                                    >
-                                      <Trash2 className="h-4 w-4 text-muted-foreground" />
-                                    </Button>
-                                  </div>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      )}
-                    </CardContent>
-                  </Card>
-                )
-              }))}
-            </TabsContent>
-
-            <TabsContent value="defaults" className="space-y-4 m-0">
-              {!sectionHasMatches.defaults ? (
-                <Card>
-                  <CardContent className="py-10 text-sm text-muted-foreground">No defaults matches for this search.</CardContent>
-                </Card>
-              ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Tenant Defaults</CardTitle>
-                  <CardDescription>
-                    Define default pointers used by tenant workflows without duplicating model-specific configuration pages.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                    {matchesSearch("default chat model", "chat", chatModels.map((model) => model.name).join(" ")) && (
-                    <div className="space-y-2 md:col-span-5">
-                      <Label>Default Chat Model</Label>
-                      <Select
-                        value={defaultsForm.default_chat_model_id || "none"}
-                        onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_chat_model_id: value === "none" ? null : value }))}
-                        disabled={!canEdit}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select chat model" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          {chatModels.map((model) => (
-                            <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    )}
-
-                    {matchesSearch("default embedding model", "embedding", embeddingModels.map((model) => model.name).join(" ")) && (
-                    <div className="space-y-2 md:col-span-5">
-                      <Label>Default Embedding Model</Label>
-                      <Select
-                        value={defaultsForm.default_embedding_model_id || "none"}
-                        onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_embedding_model_id: value === "none" ? null : value }))}
-                        disabled={!canEdit}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select embedding model" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          {embeddingModels.map((model) => (
-                            <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    )}
-
-                    {matchesSearch("default retrieval policy", "retrieval", RETRIEVAL_POLICIES.map((policy) => policy.label).join(" ")) && (
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Default Retrieval Policy</Label>
-                      <Select
-                        value={defaultsForm.default_retrieval_policy || "none"}
-                        onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_retrieval_policy: value === "none" ? null : value as RetrievalPolicy }))}
-                        disabled={!canEdit}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select retrieval policy" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          {RETRIEVAL_POLICIES.map((policy) => (
-                            <SelectItem key={policy.value} value={policy.value}>{policy.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    )}
-                  </div>
-
-                  {(chatDefaultMissing || embeddingDefaultMissing) && (
-                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm text-amber-700">
-                      One or more current defaults point to missing or disabled models. Reassign and save to clear this warning.
-                    </div>
-                  )}
-
-                  {!canEdit && (
-                    <p className="text-sm text-muted-foreground">You have read-only access to tenant defaults.</p>
-                  )}
-                  {defaultsError && <p className="text-sm text-destructive">{defaultsError}</p>}
-
-                  <div className={cn("flex gap-2", isRTL ? "justify-start" : "justify-end")}>
-                    <Button variant="outline" onClick={fetchData} disabled={defaultsSaving}>Reset</Button>
-                    <Button onClick={handleSaveDefaults} disabled={!canEdit || !defaultsDirty || defaultsSaving}>
-                      {defaultsSaving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                      Save Defaults
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-              )}
-            </TabsContent>
-
-            <TabsContent value="security" className="space-y-4 m-0">
-              {!sectionHasMatches.security ? (
-                <Card>
-                  <CardContent className="py-10 text-sm text-muted-foreground">No security or organization matches for this search.</CardContent>
-                </Card>
-              ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Security & Organization</CardTitle>
-                  <CardDescription>
-                    Manage org structure and security policies in their dedicated modules. This settings page links to them without duplicating their UIs.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <Building2 className="h-4 w-4" />
-                        Organization
-                      </CardTitle>
-                      <CardDescription>Org unit hierarchy and member assignments.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <Button asChild variant="outline">
-                        <Link href="/admin/organization">Open Organization</Link>
-                      </Button>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <ShieldCheck className="h-4 w-4" />
-                        Security
-                      </CardTitle>
-                      <CardDescription>Roles, assignments, and workload security policies.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <Button asChild variant="outline">
-                        <Link href="/admin/security">Open Security</Link>
-                      </Button>
-                    </CardContent>
-                  </Card>
-                </CardContent>
-              </Card>
-              )}
-            </TabsContent>
-          </Tabs>
-        )}
+            {loading ? (
+              <LoadingSkeleton />
+            ) : (
+              SECTION_RENDERERS[activeSection]()
+            )}
+          </div>
         </div>
       </div>
     </div>

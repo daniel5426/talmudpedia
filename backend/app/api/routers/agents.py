@@ -131,7 +131,7 @@ async def get_agent_context(
     raise HTTPException(status_code=403, detail="Not authorized to manage agents")
 
 
-def agent_to_response(agent) -> AgentResponse:
+def agent_to_response(agent, compact: bool = False) -> AgentResponse:
     """Convert Agent model to response."""
     return AgentResponse(
         id=str(agent.id),
@@ -139,9 +139,9 @@ def agent_to_response(agent) -> AgentResponse:
         name=agent.name,
         slug=agent.slug,
         description=agent.description,
-        graph_definition=agent.graph_definition or {"nodes": [], "edges": []},
-        memory_config=agent.memory_config or {},
-        execution_constraints=agent.execution_constraints or {},
+        graph_definition={"nodes": [], "edges": []} if compact else (agent.graph_definition or {"nodes": [], "edges": []}),
+        memory_config={} if compact else (agent.memory_config or {}),
+        execution_constraints={} if compact else (agent.execution_constraints or {}),
         version=agent.version,
         status=agent.status.value if hasattr(agent.status, "value") else (agent.status or "draft"),
 
@@ -198,6 +198,7 @@ async def list_agents(
     status: str = None,
     skip: int = 0,
     limit: int = 50,
+    compact: bool = Query(False),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -205,10 +206,10 @@ async def list_agents(
     tenant_id = context["tenant_id"]
     service = AgentService(db=db, tenant_id=tenant_id)
     
-    agents, total = await service.list_agents(status=status, skip=skip, limit=limit)
+    agents, total = await service.list_agents(status=status, skip=skip, limit=limit, compact=compact)
     
     return AgentListResponse(
-        agents=[agent_to_response(a) for a in agents],
+        agents=[agent_to_response(a, compact=compact) for a in agents],
         total=total
     )
 

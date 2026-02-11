@@ -1,5 +1,14 @@
 import { httpClient } from "./http";
-import { ToolDefinition, ToolsListResponse, ToolImplementationType, ToolStatus, CreateToolRequest, UpdateToolRequest } from "./agent";
+import {
+  ToolDefinition,
+  ToolsListResponse,
+  ToolImplementationType,
+  ToolStatus,
+  CreateToolRequest,
+  UpdateToolRequest,
+  CreateBuiltinToolInstanceRequest,
+  UpdateBuiltinToolInstanceRequest,
+} from "./agent";
 
 function toUpperEnum(value?: string): string | undefined {
   return value ? value.toUpperCase() : undefined;
@@ -82,5 +91,48 @@ export const toolsService = {
 
   async testTool(id: string, input: Record<string, unknown>): Promise<unknown> {
     return httpClient.post(`/tools/${id}/test`, { input });
+  },
+
+  async listBuiltinTemplates(skip = 0, limit = 100): Promise<ToolsListResponse> {
+    const query = new URLSearchParams();
+    query.set("skip", String(skip));
+    query.set("limit", String(limit));
+    const response = await httpClient.get<ToolsListResponse>(`/tools/builtins/templates?${query.toString()}`);
+    return {
+      ...response,
+      tools: response.tools.map(normalizeTool),
+    };
+  },
+
+  async createBuiltinInstance(builtinKey: string, data: CreateBuiltinToolInstanceRequest): Promise<ToolDefinition> {
+    const payload = normalizeToolPayload(data as CreateToolRequest) as CreateBuiltinToolInstanceRequest;
+    const tool = await httpClient.post<ToolDefinition>(
+      `/tools/builtins/templates/${encodeURIComponent(builtinKey)}/instances`,
+      payload
+    );
+    return normalizeTool(tool);
+  },
+
+  async listBuiltinInstances(status?: ToolStatus, skip = 0, limit = 100): Promise<ToolsListResponse> {
+    const query = new URLSearchParams();
+    if (status) query.set("status", toUpperEnum(status)!);
+    query.set("skip", String(skip));
+    query.set("limit", String(limit));
+    const response = await httpClient.get<ToolsListResponse>(`/tools/builtins/instances?${query.toString()}`);
+    return {
+      ...response,
+      tools: response.tools.map(normalizeTool),
+    };
+  },
+
+  async updateBuiltinInstance(id: string, data: UpdateBuiltinToolInstanceRequest): Promise<ToolDefinition> {
+    const payload = normalizeToolPayload(data as UpdateToolRequest) as UpdateBuiltinToolInstanceRequest;
+    const tool = await httpClient.patch<ToolDefinition>(`/tools/builtins/instances/${id}`, payload);
+    return normalizeTool(tool);
+  },
+
+  async publishBuiltinInstance(id: string): Promise<ToolDefinition> {
+    const tool = await httpClient.post<ToolDefinition>(`/tools/builtins/instances/${id}/publish`, {});
+    return normalizeTool(tool);
   },
 };

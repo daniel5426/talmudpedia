@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable
 from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -5,6 +6,7 @@ from pydantic import BaseModel
 from .routers.auth import get_current_user
 from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgMembership
 from app.db.postgres.models.security import ApprovalDecision, ApprovalStatus
+from app.db.postgres.models.published_apps import PublishedAppSession, PublishedApp
 from app.db.postgres.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,6 +14,7 @@ from uuid import UUID
 import jwt
 from app.core.security import SECRET_KEY, ALGORITHM
 from app.core.workload_jwt import decode_workload_token
+from app.core.security import decode_published_app_session_token
 from app.services.token_broker_service import TokenBrokerService
 
 class AuthContext(BaseModel):
@@ -31,6 +34,8 @@ SECURITY_SCOPES_ADMIN = {
     "artifacts.write",
     "agents.execute",
     "agents.run_tests",
+    "apps.read",
+    "apps.write",
 }
 SECURITY_SCOPES_MEMBER = {
     "pipelines.catalog.read",
@@ -234,3 +239,71 @@ async def ensure_sensitive_action_approved(
             status_code=403,
             detail=f"Sensitive action '{action_scope}' requires explicit approval",
         )
+
+
+async def get_optional_published_app_principal(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[Dict[str, Any]]:
+    if credentials is None or not credentials.credentials:
+        return None
+
+    token = credentials.credentials
+    try:
+        payload = decode_published_app_session_token(token)
+        session_id = UUID(str(payload["session_id"]))
+        app_id = UUID(str(payload["app_id"]))
+        user_id = UUID(str(payload["sub"]))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid published app session token")
+
+    result = await db.execute(
+        select(PublishedAppSession).where(PublishedAppSession.id == session_id).limit(1)
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=401, detail="Published app session not found")
+    if str(session.published_app_id) != str(app_id) or str(session.user_id) != str(user_id):
+        raise HTTPException(status_code=401, detail="Published app session mismatch")
+    if session.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Published app session revoked")
+    expiry = session.expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    if expiry <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Published app session expired")
+
+    app_result = await db.execute(select(PublishedApp).where(PublishedApp.id == app_id).limit(1))
+    app = app_result.scalar_one_or_none()
+    if app is None:
+        raise HTTPException(status_code=401, detail="Published app not found")
+
+    user_result = await db.execute(select(User).where(User.id == user_id).limit(1))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    return {
+        "type": "published_app_user",
+        "tenant_id": str(app.tenant_id),
+        "app_id": str(app.id),
+        "app_slug": app.slug,
+        "session_id": str(session.id),
+        "user_id": str(user.id),
+        "user": user,
+        "provider": payload.get("provider", "password"),
+        "scopes": payload.get("scope", []),
+        "auth_token": token,
+    }
+
+
+async def get_current_published_app_principal(
+    principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
+) -> Dict[str, Any]:
+    if principal is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return principal

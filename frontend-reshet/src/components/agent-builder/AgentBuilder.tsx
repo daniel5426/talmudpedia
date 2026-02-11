@@ -224,7 +224,7 @@ function AgentBuilderInner({
     }, [initialNodes, normalizeNode])
 
     const normalizedInitialEdges = useMemo(() => normalizeBuilderEdges(initialEdges || []), [initialEdges])
-    const [nodes, setNodes, onNodesChange] = useNodesState(normalizedInitialNodes)
+    const [nodes, setNodes, onNodesChange] = useNodesState<Node<AgentNodeData>>(normalizedInitialNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(normalizedInitialEdges)
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [mode, setMode] = useState<"build" | "execute">("build")
@@ -427,6 +427,7 @@ function AgentBuilderInner({
             matchesStepToNode(step, selectedNode as Node<AgentNodeData>, safeSelectedNodeData)
         )
         const orchestrationSteps = executionEvents
+            .filter((event) => typeof event.event === "string" && event.event.startsWith("orchestration."))
             .filter((event) => matchesEventToNode(event, selectedNode as Node<AgentNodeData>, safeSelectedNodeData))
             .map((event, index) => mapOrchestrationEventToExecutionStep(event, index))
 
@@ -461,17 +462,17 @@ function AgentBuilderInner({
         ]
     }, [selectedNode, safeSelectedNodeData, executionSteps, executionEvents])
 
-    const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    const handleNodesChange = useCallback((changes: NodeChange<Node<AgentNodeData>>[]) => {
         if (mode !== "execute") {
             onNodesChange(changes)
             return
         }
 
-        const staticChanges: NodeChange[] = []
-        const runtimeChanges: NodeChange[] = []
+        const staticChanges: NodeChange<Node<AgentNodeData>>[] = []
+        const runtimeChanges: NodeChange<Node<AgentNodeData>>[] = []
 
         changes.forEach((change) => {
-            if (change.id && isRuntimeNodeId(change.id)) {
+            if ("id" in change && isRuntimeNodeId(change.id)) {
                 runtimeChanges.push(change)
                 return
             }

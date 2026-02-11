@@ -12,7 +12,6 @@ import {
 } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -30,6 +29,7 @@ import {
     MoreHorizontal,
     Archive,
     AlertTriangle,
+    FileText,
 } from "lucide-react"
 import {
     Dialog,
@@ -56,107 +56,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 
-const STATUS_COLORS: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600 border-green-500/20",
-    syncing: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-    initializing: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20",
-    error: "bg-red-500/10 text-red-600 border-red-500/20",
-    archived: "bg-gray-500/10 text-gray-600 border-gray-500/20",
-}
-
-const BACKEND_ICONS: Record<string, React.ReactNode> = {
-    pinecone: <Database className="h-4 w-4" />,
-    pgvector: <Database className="h-4 w-4" />,
-    qdrant: <Database className="h-4 w-4" />,
-}
-
-function KnowledgeStoreCard({
-    store,
-    onDelete,
-    onSettings
-}: {
-    store: KnowledgeStore
-    onDelete: () => void
-    onSettings: () => void
-}) {
-    const { direction } = useDirection()
-    const isRTL = direction === "rtl"
-
-    return (
-        <Card className="relative group justify-center text-center hover:shadow-md transition-shadow">
-            <CardHeader className="pb-3">
-                <div className={cn("flex items-start justify-between", isRTL && "flex-row-reverse")}>
-                    <div className={cn("space-y-1", isRTL && "text-right")}>
-                        <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                            <Box className="h-5 w-5 text-primary" />
-                            {store.name}
-                        </CardTitle>
-                        {store.description && (
-                            <CardDescription className="line-clamp-2">{store.description}</CardDescription>
-                        )}
-                    </div>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align={isRTL ? "start" : "end"}>
-                            <DropdownMenuItem onClick={onSettings}>
-                                <Settings className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
-                                Settings
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={onDelete} className="text-destructive">
-                                <Trash2 className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
-                                Delete
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-                {/* Status and Backend */}
-                <div className={cn("flex items-center gap-2 flex-wrap", isRTL && "flex-row-reverse")}>
-                    <Badge variant="outline" className={STATUS_COLORS[store.status]}>
-                        {store.status}
-                    </Badge>
-                    <Badge variant="outline" className="bg-background">
-                        {BACKEND_ICONS[store.backend]}
-                        <span className="ml-1.5">{store.backend}</span>
-                    </Badge>
-                </div>
-
-                {/* Metrics */}
-                <div className={cn("grid grid-cols-2 gap-4 pt-2 border-t", isRTL && "text-right")}>
-                    <div>
-                        <p className="text-2xl font-bold">{store.document_count.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">Documents</p>
-                    </div>
-                    <div>
-                        <p className="text-2xl font-bold">{store.chunk_count.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">Chunks</p>
-                    </div>
-                </div>
-
-                {/* Config pills */}
-                <div className={cn("flex flex-wrap gap-1.5 pt-2 border-t", isRTL && "flex-row-reverse")}>
-                    <Badge variant="secondary" className="text-xs font-normal">
-                        {store.embedding_model_id}
-                    </Badge>
-                    <Badge variant="secondary" className="text-xs font-normal">
-                        {store.retrieval_policy.replace(/_/g, " ")}
-                    </Badge>
-                    {store.chunking_strategy?.strategy && (
-                        <Badge variant="secondary" className="text-xs font-normal">
-                            {store.chunking_strategy.strategy}
-                        </Badge>
-                    )}
-                </div>
-            </CardContent>
-        </Card>
-    )
-}
+import {
+    KnowledgeStoreCard,
+    KnowledgeStoreMetric
+} from "@/components/knowledge-store-card"
 
 function CreateKnowledgeStoreDialog({
     onCreated,
@@ -599,6 +502,35 @@ export default function KnowledgeStoresPage() {
     const activeStores = filteredStores.filter(s => s.status !== "archived")
     const archivedStores = filteredStores.filter(s => s.status === "archived")
 
+    // Stats Calculations
+    const totalDocs = stores.reduce((sum, s) => sum + s.document_count, 0)
+    const totalChunks = stores.reduce((sum, s) => sum + s.chunk_count, 0)
+
+    // Calculate Top Backend
+    const backendCounts = stores.reduce((acc, store) => {
+        acc[store.backend] = (acc[store.backend] || 0) + 1
+        return acc
+    }, {} as Record<string, number>)
+    const topBackend = Object.entries(backendCounts).sort((a, b) => b[1] - a[1])[0]
+
+    // Calculate Top Model
+    const modelCounts = stores.reduce((acc, store) => {
+        // Find the model object to get its name, or use the ID
+        const model = embeddingModels.find(m => m.id === store.embedding_model_id)
+        const modelName = model ? model.name : (store.embedding_model_id.split('/').pop() || store.embedding_model_id)
+
+        acc[modelName] = (acc[modelName] || 0) + 1
+        return acc
+    }, {} as Record<string, number>)
+    const topModel = Object.entries(modelCounts).sort((a, b) => b[1] - a[1])[0]
+
+
+    const getModelName = (store: KnowledgeStore) => {
+        const model = embeddingModels.find(m => m.id === store.embedding_model_id)
+        return model ? model.name : undefined
+    }
+
+
     return (
         <div className="flex flex-col h-full w-full" dir={direction}>
             <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
@@ -619,52 +551,44 @@ export default function KnowledgeStoresPage() {
 
             <div className="flex-1 overflow-auto p-6">
                 {loading ? (
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                        {[...Array(6)].map((_, i) => (
-                            <Skeleton key={i} className="h-64 w-full" />
+                    <div className="space-y-4">
+                        {[...Array(5)].map((_, i) => (
+                            <Skeleton key={i} className="h-24 w-full rounded-xl" />
                         ))}
                     </div>
                 ) : (
-                    <div className="space-y-6">
-                        {/* Stats Summary */}
-                        <div className="grid gap-4 md:grid-cols-3">
-                            <Card>
-                                <CardHeader className="pb-2">
-                                    <CardTitle className="text-sm font-medium flex items-center gap-2">
-                                        <Box className="h-4 w-4 text-muted-foreground" />
-                                        Active Stores
-                                    </CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="text-2xl font-bold">{activeStores.length}</div>
-                                </CardContent>
-                            </Card>
-                            <Card>
-                                <CardHeader className="pb-2">
-                                    <CardTitle className="text-sm font-medium flex items-center gap-2">
-                                        <Layers className="h-4 w-4 text-muted-foreground" />
-                                        Total Chunks
-                                    </CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="text-2xl font-bold">
-                                        {stores.reduce((sum, s) => sum + s.chunk_count, 0).toLocaleString()}
-                                    </div>
-                                </CardContent>
-                            </Card>
-                            <Card>
-                                <CardHeader className="pb-2">
-                                    <CardTitle className="text-sm font-medium flex items-center gap-2">
-                                        <Database className="h-4 w-4 text-muted-foreground" />
-                                        Total Documents
-                                    </CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="text-2xl font-bold">
-                                        {stores.reduce((sum, s) => sum + s.document_count, 0).toLocaleString()}
-                                    </div>
-                                </CardContent>
-                            </Card>
+                    <div className="space-y-8">
+                        {/* Stats Summary - 6 Compact Blocks */}
+                        <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+                            <KnowledgeStoreMetric
+                                label="Active Stores"
+                                value={activeStores.length}
+                                subValue={`${archivedStores.length} Archived`}
+                                icon={Box}
+                            />
+                            <KnowledgeStoreMetric
+                                label="Total Documents"
+                                value={totalDocs.toLocaleString()}
+                                icon={Database}
+                            />
+                            <KnowledgeStoreMetric
+                                label="Total Chunks"
+                                value={totalChunks.toLocaleString()}
+                                icon={Layers}
+                            />
+                            <KnowledgeStoreMetric
+                                label="Top Backend"
+                                value={topBackend ? topBackend[0] : "-"}
+                                subValue={topBackend ? `${topBackend[1]} Stores` : undefined}
+                                icon={Database}
+                            />
+                            <KnowledgeStoreMetric
+                                label="Top Model"
+                                value={topModel ? topModel[0] : "-"}
+                                subValue={topModel ? `${topModel[1]} Stores` : undefined}
+                                className="col-span-2 truncate"
+                                icon={Box}
+                            />
                         </div>
 
                         {/* Search */}
@@ -683,21 +607,22 @@ export default function KnowledgeStoresPage() {
 
                         {/* Store Grid */}
                         {activeStores.length === 0 && archivedStores.length === 0 ? (
-                            <Card className="p-12 text-center">
-                                <Box className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                            <div className="p-12 text-center border-2 border-dashed rounded-xl bg-muted/10">
+                                <Box className="h-12 w-12 mx-auto text-muted-foreground mb-4 opacity-50" />
                                 <h3 className="text-lg font-semibold mb-2">No Knowledge Stores</h3>
-                                <p className="text-muted-foreground mb-4">
+                                <p className="text-muted-foreground mb-4 max-w-sm mx-auto">
                                     Create your first knowledge store to start organizing your vectorized documents.
                                 </p>
                                 <CreateKnowledgeStoreDialog onCreated={fetchData} embeddingModels={embeddingModels} />
-                            </Card>
+                            </div>
                         ) : (
                             <>
-                                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                <div className="space-y-4">
                                     {activeStores.map((store) => (
                                         <KnowledgeStoreCard
                                             key={store.id}
                                             store={store}
+                                            modelName={getModelName(store)}
                                             onDelete={() => handleDelete(store)}
                                             onSettings={() => setEditingStore(store)}
                                         />
@@ -705,16 +630,17 @@ export default function KnowledgeStoresPage() {
                                 </div>
 
                                 {archivedStores.length > 0 && (
-                                    <div className="space-y-4 pt-6 border-t">
-                                        <h3 className="text-lg font-medium flex items-center gap-2">
-                                            <Archive className="h-5 w-5" />
-                                            Archived ({archivedStores.length})
+                                    <div className="space-y-4 pt-8 border-t">
+                                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                                            <Archive className="h-4 w-4" />
+                                            Archived Stores ({archivedStores.length})
                                         </h3>
-                                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 opacity-60">
+                                        <div className="space-y-4 opacity-75 hover:opacity-100 transition-opacity">
                                             {archivedStores.map((store) => (
                                                 <KnowledgeStoreCard
                                                     key={store.id}
                                                     store={store}
+                                                    modelName={getModelName(store)}
                                                     onDelete={() => handleDelete(store)}
                                                     onSettings={() => setEditingStore(store)}
                                                 />

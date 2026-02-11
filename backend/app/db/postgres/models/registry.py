@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index, and_
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -87,6 +87,11 @@ class ToolRegistry(Base):
     # Artifact Integration
     artifact_id = Column(String, nullable=True, index=True)
     artifact_version = Column(String, nullable=True)
+
+    # Built-in templates/instances metadata
+    builtin_key = Column(String, nullable=True, index=True)
+    builtin_template_id = Column(UUID(as_uuid=True), ForeignKey("tool_registry.id", ondelete="SET NULL"), nullable=True, index=True)
+    is_builtin_template = Column(Boolean, default=False, nullable=False)
     
     is_active = Column(Boolean, default=True, nullable=False)
     is_system = Column(Boolean, default=False, nullable=False)
@@ -96,7 +101,18 @@ class ToolRegistry(Base):
 
     # Relationships
     tenant = relationship("Tenant")
+    builtin_template = relationship("ToolRegistry", remote_side=[id])
     versions = relationship("ToolVersion", back_populates="tool", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index(
+            "uq_tool_registry_global_builtin_key",
+            "builtin_key",
+            unique=True,
+            postgresql_where=and_(tenant_id == None, is_builtin_template == True, builtin_key != None),
+            sqlite_where=and_(tenant_id == None, is_builtin_template == True, builtin_key != None),
+        ),
+    )
 
 
 class ToolVersion(Base):

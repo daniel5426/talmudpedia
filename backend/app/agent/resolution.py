@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 from typing import Optional, Dict, Any
-from sqlalchemy import select, text
+from sqlalchemy import select, text, and_, or_
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,16 +42,26 @@ class ToolResolver(ComponentResolver):
             except Exception:
                 return False
 
-    async def resolve(self, tool_id: UUID) -> Dict[str, Any]:
+    async def resolve(self, tool_id: UUID, require_published: bool = False) -> Dict[str, Any]:
         """
         Verify tool exists and return minimal execution metadata.
         """
         tool = None
         try:
             if await self._has_artifact_columns():
-                stmt = select(ToolRegistry).where(ToolRegistry.id == tool_id)
-                # Note: We should assume tenant check is needed, or allow system tools (tenant_id=None)
-                # The existing query in standard executors didn't check tenant carefully enough
+                if self.tenant_id is None:
+                    scope_condition = ToolRegistry.tenant_id == None
+                else:
+                    scope_condition = or_(
+                        ToolRegistry.tenant_id == self.tenant_id,
+                        ToolRegistry.tenant_id == None,
+                    )
+                stmt = select(ToolRegistry).where(
+                    and_(
+                        ToolRegistry.id == tool_id,
+                        scope_condition,
+                    )
+                )
                 result = await self.db.execute(stmt)
                 tool = result.scalar_one_or_none()
             else:
@@ -88,6 +98,12 @@ class ToolResolver(ComponentResolver):
         # Optional: Check if active?
         if not tool.is_active:
              raise ResolutionError(f"Tool {tool_id} is inactive")
+
+        if require_published:
+            status_val = getattr(tool, "status", None)
+            status_text = str(getattr(status_val, "value", status_val or "")).lower()
+            if status_text != "published":
+                raise ResolutionError(f"Tool {tool_id} must be published for production execution")
              
         impl_type = getattr(tool, "implementation_type", None)
         if hasattr(impl_type, "value"):
@@ -99,7 +115,8 @@ class ToolResolver(ComponentResolver):
         return {
             "id": str(tool.id),
             "name": tool.name,
-            "implementation_type": impl_type
+            "implementation_type": impl_type,
+            "status": str(getattr(getattr(tool, "status", None), "value", getattr(tool, "status", ""))),
         }
 
 class RAGPipelineResolver(ComponentResolver):

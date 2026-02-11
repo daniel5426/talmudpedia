@@ -143,6 +143,7 @@ class LangGraphAdapter(RuntimeAdapter):
         configurable = {
             "thread_id": config.get("thread_id"),
             "run_id": config.get("run_id"),
+            "mode": config.get("mode"),
             "root_run_id": config.get("root_run_id"),
             "parent_run_id": config.get("parent_run_id"),
             "parent_node_id": config.get("parent_node_id"),

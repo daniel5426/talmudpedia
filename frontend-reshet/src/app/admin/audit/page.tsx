@@ -9,15 +9,13 @@ import {
   Search,
   User,
   Activity,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
   Eye,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  AlertCircle,
+  Calendar,
 } from "lucide-react"
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -27,22 +25,82 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
+/* ------------------------------------------------------------------ */
+/*  Row skeleton – matches the list layout                            */
+/* ------------------------------------------------------------------ */
+function LogRowSkeleton() {
+  return (
+    <div className="flex items-center gap-4 px-4 py-3.5 border-b border-border/40">
+      <div className="w-[88px] shrink-0 space-y-1.5">
+        <Skeleton className="h-3.5 w-16" />
+        <Skeleton className="h-3 w-12" />
+      </div>
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <Skeleton className="h-7 w-7 rounded-full shrink-0" />
+        <Skeleton className="h-3.5 w-32" />
+      </div>
+      <Skeleton className="h-3.5 w-14 hidden md:block" />
+      <div className="hidden lg:block w-[120px] space-y-1.5">
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-3.5 w-24" />
+      </div>
+      <Skeleton className="h-3.5 w-16" />
+      <Skeleton className="h-7 w-7 rounded-md" />
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Result indicator – colored dot + label                            */
+/* ------------------------------------------------------------------ */
+function ResultBadge({ result }: { result: string }) {
+  const config: Record<string, { dot: string; text: string; label: string }> = {
+    success: { dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400", label: "Success" },
+    failure: { dot: "bg-red-500", text: "text-red-600 dark:text-red-400", label: "Failure" },
+    denied:  { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400", label: "Denied" },
+  }
+  const c = config[result] || { dot: "bg-zinc-400", text: "text-muted-foreground", label: result }
+
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={cn("h-1.5 w-1.5 rounded-full", c.dot)} />
+      <span className={cn("text-xs", c.text)}>{c.label}</span>
+    </span>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  JSON viewer                                                       */
+/* ------------------------------------------------------------------ */
+function JsonView({ data, title }: { data: any; title: string }) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-[10px] uppercase text-muted-foreground/50">{title}</Label>
+      <pre className="bg-muted/50 p-3 rounded-lg text-[10px] overflow-auto max-h-48 border border-border/40 font-mono">
+        {JSON.stringify(data, null, 2)}
+      </pre>
+    </div>
+  )
+}
+
+/* ================================================================== */
+/*  Main page                                                         */
+/* ================================================================== */
 export default function AuditPage() {
   const { currentTenant } = useTenant()
   const { direction } = useDirection()
   const isRTL = direction === "rtl"
+
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
@@ -50,13 +108,14 @@ export default function AuditPage() {
   const [selectedLog, setSelectedLog] = useState<AuditLogDetail | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
 
+  /* ---- data fetching ---- */
   const fetchData = useCallback(async () => {
     if (!currentTenant) return
     setIsLoading(true)
     try {
       const [logsData, countData] = await Promise.all([
         auditService.listAuditLogs(currentTenant.slug, filters),
-        auditService.countAuditLogs(currentTenant.slug, filters)
+        auditService.countAuditLogs(currentTenant.slug, filters),
       ])
       setLogs(logsData)
       setTotal(countData.count)
@@ -71,6 +130,7 @@ export default function AuditPage() {
     fetchData()
   }, [fetchData])
 
+  /* ---- detail ---- */
   const handleViewDetail = async (logId: string) => {
     if (!currentTenant) return
     try {
@@ -82,32 +142,18 @@ export default function AuditPage() {
     }
   }
 
+  /* ---- pagination ---- */
+  const pageSize = filters.limit || 20
+  const currentSkip = filters.skip || 0
+
   const nextPage = () => {
-    setFilters(prev => ({ ...prev, skip: (prev.skip || 0) + (prev.limit || 20) }))
+    setFilters((prev) => ({ ...prev, skip: (prev.skip || 0) + (prev.limit || 20) }))
   }
-
   const prevPage = () => {
-    setFilters(prev => ({ ...prev, skip: Math.max(0, (prev.skip || 0) - (prev.limit || 20)) }))
+    setFilters((prev) => ({ ...prev, skip: Math.max(0, (prev.skip || 0) - (prev.limit || 20)) }))
   }
 
-  const ResultBadge = ({ result }: { result: string }) => {
-    switch (result) {
-      case "success": return <Badge variant="default" className="bg-emerald-500 hover:bg-emerald-600 gap-1"><CheckCircle2 className="size-3" /> Success</Badge>
-      case "failure": return <Badge variant="destructive" className="gap-1"><XCircle className="size-3" /> Failure</Badge>
-      case "denied": return <Badge variant="secondary" className="bg-amber-500 text-white hover:bg-amber-600 gap-1"><AlertCircle className="size-3" /> Denied</Badge>
-      default: return <Badge variant="outline">{result}</Badge>
-    }
-  }
-
-  const JsonView = ({ data, title }: { data: any, title: string }) => (
-    <div className="space-y-2">
-      <Label className="text-xs uppercase opacity-50">{title}</Label>
-      <pre className="bg-muted p-3 rounded-lg text-[10px] overflow-auto max-h-48 border">
-        {JSON.stringify(data, null, 2)}
-      </pre>
-    </div>
-  )
-
+  /* ---- no tenant guard ---- */
   if (!currentTenant) {
     return (
       <div className="p-8 text-center text-muted-foreground">
@@ -117,181 +163,251 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="flex flex-col h-full w-full" dir={direction}>
-      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
-        <div className="flex items-center gap-3">
-          <CustomBreadcrumb items={[
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-background" dir={direction}>
+      {/* ============================================================ */}
+      {/*  Header                                                      */}
+      {/* ============================================================ */}
+      <header className="h-12 shrink-0 bg-background px-4 flex items-center justify-between border-b border-border/40">
+        <CustomBreadcrumb
+          items={[
             { label: "Security & Org", href: "/admin/organization" },
-            { label: "Audit Logs", active: true }
-          ]} />
-        </div>
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-muted/50 px-2 py-0.5 rounded-full border">
-          <Activity className="size-3 text-primary" />
-          <span className="font-medium whitespace-nowrap">Total: {total.toLocaleString()} entries</span>
-        </div>
+            { label: "Audit Logs", active: true },
+          ]}
+        />
+        <span className="text-xs text-muted-foreground/60 tabular-nums">
+          {total.toLocaleString()} entries
+        </span>
       </header>
 
-      <div className="flex-1 min-h-0 p-6 overflow-hidden">
-        <div className="flex flex-col h-full gap-6 min-h-0">
-          <div className={cn("space-y-2", isRTL ? "text-right" : "text-left")}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold">Audit Logs</h2>
-                <p className="text-sm text-muted-foreground">Track security events, access attempts, and data changes.</p>
-              </div>
-              <Badge variant="outline" className="text-xs">{total.toLocaleString()} entries</Badge>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-              <div className="lg:col-span-4 relative">
-                <Search className={cn("absolute top-2.5 size-4 text-muted-foreground", isRTL ? "right-2.5" : "left-2.5")} />
-                <Input
-                  placeholder="Actor ID"
-                  className={cn("bg-background", isRTL ? "pr-9 text-right" : "pl-9 text-left")}
-                  onChange={e => setFilters(prev => ({ ...prev, actor_id: e.target.value, skip: 0 }))}
-                />
-              </div>
-              <div className="lg:col-span-2">
-                <select
-                  className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm", isRTL ? "text-right" : "text-left")}
-                  onChange={e => setFilters(prev => ({ ...prev, action: e.target.value || undefined, skip: 0 }))}
-                  dir={direction}
-                >
-                  <option value="">Action</option>
-                  {["read", "write", "delete", "execute", "admin"].map(a => <option key={a} value={a}>{a.toUpperCase()}</option>)}
-                </select>
-              </div>
-              <div className="lg:col-span-2">
-                <select
-                  className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm", isRTL ? "text-right" : "text-left")}
-                  onChange={e => setFilters(prev => ({ ...prev, resource_type: e.target.value || undefined, skip: 0 }))}
-                  dir={direction}
-                >
-                  <option value="">Resource</option>
-                  {["index", "pipeline", "job", "org_unit", "role", "membership", "audit"].map(r => <option key={r} value={r}>{r.toUpperCase()}</option>)}
-                </select>
-              </div>
-              <div className="lg:col-span-2">
-                <select
-                  className={cn("w-full h-10 px-3 rounded-md border border-input bg-background text-sm", isRTL ? "text-right" : "text-left")}
-                  onChange={e => setFilters(prev => ({ ...prev, result: e.target.value || undefined, skip: 0 }))}
-                  dir={direction}
-                >
-                  <option value="">Result</option>
-                  {["success", "failure", "denied"].map(r => <option key={r} value={r}>{r.toUpperCase()}</option>)}
-                </select>
-              </div>
-              <div className="lg:col-span-2 grid grid-cols-2 gap-2">
-                <Input
-                  type="date"
-                  className={cn(isRTL ? "text-right" : "text-left")}
-                  onChange={e => setFilters(prev => ({ ...prev, start_date: e.target.value || undefined, skip: 0 }))}
-                />
-                <Input
-                  type="date"
-                  className={cn(isRTL ? "text-right" : "text-left")}
-                  onChange={e => setFilters(prev => ({ ...prev, end_date: e.target.value || undefined, skip: 0 }))}
-                />
-              </div>
-            </div>
+      {/* ============================================================ */}
+      {/*  Filter bar                                                  */}
+      {/* ============================================================ */}
+      <div className="shrink-0 border-b border-border/40 px-4 py-3">
+        <div className={cn("flex flex-wrap items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}>
+          {/* Actor search */}
+          <div className="relative w-full max-w-[220px]">
+            <Search className={cn(
+              "absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60",
+              isRTL ? "right-2.5" : "left-2.5"
+            )} />
+            <Input
+              placeholder="Search actor..."
+              className={cn(
+                "h-9 bg-muted/30 border-border/50 text-sm placeholder:text-muted-foreground/50",
+                isRTL ? "pr-8 text-right" : "pl-8 text-left"
+              )}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, actor_id: e.target.value || undefined, skip: 0 }))
+              }
+            />
           </div>
 
-          <Card className="border-none shadow-sm ring-1 ring-border/50 overflow-hidden flex-1 min-h-0 flex flex-col">
-            <CardContent className="p-0 flex-1 overflow-auto custom-scrollbar">
-            {isLoading ? (
-              <div className="p-6 space-y-4">
-                {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-12 w-full rounded-xl" />)}
-              </div>
-            ) : logs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-                <div className="p-4 rounded-full bg-muted">
-                  <Activity className="size-8 text-muted-foreground/40" />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold">No audit logs found</p>
-                  <p className="text-xs text-muted-foreground">Adjust your filters to see more results.</p>
-                </div>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader className="bg-muted/30 sticky top-0 z-10">
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className={cn("text-[11px] font-bold uppercase tracking-wider py-3", isRTL ? "text-right" : "text-left")}>Timestamp</TableHead>
-                    <TableHead className={cn("text-[11px] font-bold uppercase tracking-wider py-3", isRTL ? "text-right" : "text-left")}>Actor</TableHead>
-                    <TableHead className={cn("text-[11px] font-bold uppercase tracking-wider py-3", isRTL ? "text-right" : "text-left")}>Action</TableHead>
-                    <TableHead className={cn("text-[11px] font-bold uppercase tracking-wider py-3", isRTL ? "text-right" : "text-left")}>Resource</TableHead>
-                    <TableHead className={cn("text-[11px] font-bold uppercase tracking-wider py-3", isRTL ? "text-right" : "text-left")}>Result</TableHead>
-                    <TableHead className={cn("text-[11px] font-bold uppercase tracking-wider py-3", isRTL ? "text-left" : "text-right")}>View</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {logs.map(log => (
-                    <TableRow key={log.id} className="cursor-pointer hover:bg-muted/10 transition-colors" onClick={() => handleViewDetail(log.id)}>
-                      <TableCell className={cn("text-xs whitespace-nowrap py-4", isRTL ? "text-right" : "text-left")}> 
-                        <div className="font-medium text-muted-foreground/80">
-                          {new Date(log.timestamp).toLocaleDateString()}
-                        </div>
-                        <div className="text-[10px] opacity-60">
-                          {new Date(log.timestamp).toLocaleTimeString()}
-                        </div>
-                      </TableCell>
-                      <TableCell className={isRTL ? "text-right" : "text-left"}>
-                        <div className="flex items-center gap-2">
-                          <div className="size-7 rounded-full bg-muted flex items-center justify-center">
-                            <User className="size-3.5 text-muted-foreground" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[13px] font-semibold">{log.actor_email}</span>
-                            <Badge variant="outline" className="text-[8px] h-3.5 px-1 w-fit uppercase font-bold tracking-tighter">{log.actor_type}</Badge>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className={isRTL ? "text-right" : "text-left"}>
-                        <Badge variant="secondary" className="bg-muted/50 text-[10px] font-bold uppercase px-2 py-0.5 border-none shadow-none">
-                          {log.action}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className={isRTL ? "text-right" : "text-left"}>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="opacity-50 uppercase text-[9px] font-black tracking-widest">{log.resource_type}</span>
-                          <span className="text-xs font-mono truncate max-w-[150px]">{log.resource_name || log.resource_id || "N/A"}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className={isRTL ? "text-right" : "text-left"}>
-                        <ResultBadge result={log.result} />
-                      </TableCell>
-                      <TableCell className={isRTL ? "text-left" : "text-right"}>
-                        <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:bg-background hover:shadow-sm">
-                          <Eye className="size-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-          <div className="p-4 border-t bg-muted/5 flex items-center justify-between">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground opacity-70">
-              Showing {filters.skip! + 1}-{Math.min(filters.skip! + (filters.limit || 20), total)} of {total}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" className="size-8 shadow-sm" onClick={prevPage} disabled={filters.skip === 0}>
-                {isRTL ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
-              </Button>
-              <Button variant="outline" size="icon" className="size-8 shadow-sm" onClick={nextPage} disabled={filters.skip! + (filters.limit || 20) >= total}>
-                {isRTL ? <ChevronLeft className="size-4" /> : <ChevronRight className="size-4" />}
-              </Button>
-            </div>
-          </div>
-          </Card>
+          {/* Action */}
+          <Select
+            onValueChange={(value) =>
+              setFilters((prev) => ({ ...prev, action: value === "__all__" ? undefined : value, skip: 0 }))
+            }
+            dir={direction}
+          >
+            <SelectTrigger className="h-9 w-[130px] bg-muted/30 border-border/50 text-sm">
+              <SelectValue placeholder="Action" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Actions</SelectItem>
+              {["read", "write", "delete", "execute", "admin"].map((a) => (
+                <SelectItem key={a} value={a}>
+                  {a.charAt(0).toUpperCase() + a.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
+          {/* Resource type */}
+          <Select
+            onValueChange={(value) =>
+              setFilters((prev) => ({ ...prev, resource_type: value === "__all__" ? undefined : value, skip: 0 }))
+            }
+            dir={direction}
+          >
+            <SelectTrigger className="h-9 w-[130px] bg-muted/30 border-border/50 text-sm">
+              <SelectValue placeholder="Resource" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Resources</SelectItem>
+              {["index", "pipeline", "job", "org_unit", "role", "membership", "audit"].map((r) => (
+                <SelectItem key={r} value={r}>
+                  {r.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Result */}
+          <Select
+            onValueChange={(value) =>
+              setFilters((prev) => ({ ...prev, result: value === "__all__" ? undefined : value, skip: 0 }))
+            }
+            dir={direction}
+          >
+            <SelectTrigger className="h-9 w-[130px] bg-muted/30 border-border/50 text-sm">
+              <SelectValue placeholder="Result" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Results</SelectItem>
+              {["success", "failure", "denied"].map((r) => (
+                <SelectItem key={r} value={r}>
+                  {r.charAt(0).toUpperCase() + r.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Date range */}
+          <div className="flex items-center gap-1.5">
+            <Calendar className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+            <Input
+              type="date"
+              className={cn("h-9 w-[140px] bg-muted/30 border-border/50 text-sm", isRTL ? "text-right" : "text-left")}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, start_date: e.target.value || undefined, skip: 0 }))
+              }
+            />
+            <span className="text-muted-foreground/40 text-xs">-</span>
+            <Input
+              type="date"
+              className={cn("h-9 w-[140px] bg-muted/30 border-border/50 text-sm", isRTL ? "text-right" : "text-left")}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, end_date: e.target.value || undefined, skip: 0 }))
+              }
+            />
+          </div>
         </div>
       </div>
 
+      {/* ============================================================ */}
+      {/*  Log list                                                    */}
+      {/* ============================================================ */}
+      <main className="flex-1 overflow-y-auto">
+        {isLoading ? (
+          <div>
+            {Array.from({ length: 8 }).map((_, i) => (
+              <LogRowSkeleton key={i} />
+            ))}
+          </div>
+        ) : logs.length === 0 ? (
+          /* ---- empty state ---- */
+          <div className="flex flex-col items-center justify-center py-24 px-4 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-dashed border-border/60 mb-4">
+              <Activity className="h-6 w-6 text-muted-foreground/40" />
+            </div>
+            <h3 className="text-sm font-medium text-foreground mb-1">No audit logs found</h3>
+            <p className="text-sm text-muted-foreground/70 max-w-[300px]">
+              Adjust your filters or date range to see results.
+            </p>
+          </div>
+        ) : (
+          /* ---- log rows ---- */
+          <div className="divide-y divide-border/40">
+            {logs.map((log) => (
+              <div
+                key={log.id}
+                className="group flex items-center gap-4 px-4 py-3.5 transition-colors hover:bg-muted/40 cursor-pointer"
+                onClick={() => handleViewDetail(log.id)}
+              >
+                {/* Timestamp */}
+                <div className={cn("w-[88px] shrink-0", isRTL ? "text-right" : "text-left")}>
+                  <div className="text-xs text-muted-foreground/80 font-medium">
+                    {new Date(log.timestamp).toLocaleDateString()}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground/50">
+                    {new Date(log.timestamp).toLocaleTimeString()}
+                  </div>
+                </div>
+
+                {/* Actor */}
+                <div className={cn("flex items-center gap-2 flex-1 min-w-0", isRTL ? "flex-row-reverse" : "flex-row")}>
+                  <div className="h-7 w-7 rounded-full bg-muted/60 border border-border/50 flex items-center justify-center shrink-0">
+                    <User className="h-3.5 w-3.5 text-muted-foreground/60" />
+                  </div>
+                  <span className="text-sm text-foreground truncate">{log.actor_email}</span>
+                </div>
+
+                {/* Action */}
+                <span className="hidden md:block text-xs text-muted-foreground/60 uppercase tracking-wide w-[64px] shrink-0">
+                  {log.action}
+                </span>
+
+                {/* Resource */}
+                <div className={cn("hidden lg:block w-[120px] shrink-0", isRTL ? "text-right" : "text-left")}>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium">
+                    {log.resource_type}
+                  </div>
+                  <div className="text-xs text-foreground/80 font-mono truncate" title={log.resource_name || log.resource_id || ""}>
+                    {log.resource_name || log.resource_id || "N/A"}
+                  </div>
+                </div>
+
+                {/* Result */}
+                <div className="w-[72px] shrink-0">
+                  <ResultBadge result={log.result} />
+                </div>
+
+                {/* Detail button */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleViewDetail(log.id)
+                  }}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+
+      {/* ============================================================ */}
+      {/*  Pagination footer                                           */}
+      {/* ============================================================ */}
+      {!isLoading && logs.length > 0 && (
+        <footer className="h-11 shrink-0 border-t border-border/40 px-4 flex items-center justify-between bg-background">
+          <span className="text-xs text-muted-foreground/60 tabular-nums">
+            {currentSkip + 1}-{Math.min(currentSkip + pageSize, total)} of {total.toLocaleString()}
+          </span>
+          <div className={cn("flex items-center gap-1.5", isRTL ? "flex-row-reverse" : "flex-row")}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={prevPage}
+              disabled={currentSkip === 0}
+            >
+              {isRTL ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={nextPage}
+              disabled={currentSkip + pageSize >= total}
+            >
+              {isRTL ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </Button>
+          </div>
+        </footer>
+      )}
+
+      {/* ============================================================ */}
+      {/*  Detail dialog                                               */}
+      {/* ============================================================ */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-auto" dir={direction}>
           <DialogHeader>
-            <DialogTitle className={cn("flex items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}> 
+            <DialogTitle className={cn("flex items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}>
               Audit Entry Details
               {selectedLog && <ResultBadge result={selectedLog.result} />}
             </DialogTitle>
@@ -299,40 +415,54 @@ export default function AuditPage() {
 
           {selectedLog && (
             <div className="space-y-6 py-4">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm border p-4 rounded-xl bg-muted/10">
+              {/* Metadata grid */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm border border-border/40 p-4 rounded-xl bg-muted/10">
                 <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
-                  <Label className="text-[10px] uppercase opacity-50 block">Timestamp</Label>
+                  <Label className="text-[10px] uppercase text-muted-foreground/50 block">Timestamp</Label>
                   <p className="font-medium">{new Date(selectedLog.timestamp).toLocaleString()}</p>
                 </div>
                 <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
-                  <Label className="text-[10px] uppercase opacity-50 block">Action</Label>
-                  <p className="font-medium">{selectedLog.action.toUpperCase()} on {selectedLog.resource_type.toUpperCase()}</p>
+                  <Label className="text-[10px] uppercase text-muted-foreground/50 block">Action</Label>
+                  <p className="font-medium">
+                    {selectedLog.action.toUpperCase()} on {selectedLog.resource_type.toUpperCase()}
+                  </p>
                 </div>
                 <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
-                  <Label className="text-[10px] uppercase opacity-50 block">Duration</Label>
+                  <Label className="text-[10px] uppercase text-muted-foreground/50 block">Duration</Label>
                   <p className="font-medium">{selectedLog.duration_ms || 0}ms</p>
                 </div>
                 <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
-                  <Label className="text-[10px] uppercase opacity-50 block">Actor</Label>
-                  <p className="font-medium truncate" title={selectedLog.actor_email}>{selectedLog.actor_email}</p>
+                  <Label className="text-[10px] uppercase text-muted-foreground/50 block">Actor</Label>
+                  <p className="font-medium truncate" title={selectedLog.actor_email}>
+                    {selectedLog.actor_email}
+                  </p>
                 </div>
                 <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
-                  <Label className="text-[10px] uppercase opacity-50 block">IP Address</Label>
+                  <Label className="text-[10px] uppercase text-muted-foreground/50 block">IP Address</Label>
                   <p className="font-medium">{selectedLog.ip_address || "Unknown"}</p>
                 </div>
                 <div className={cn("space-y-1 min-w-0", isRTL ? "text-right" : "text-left")}>
-                  <Label className="text-[10px] uppercase opacity-50 block">Resource ID</Label>
-                  <p className="font-mono text-[10px] truncate" title={selectedLog.resource_id || ""}>{selectedLog.resource_id}</p>
+                  <Label className="text-[10px] uppercase text-muted-foreground/50 block">Resource ID</Label>
+                  <p className="font-mono text-[10px] truncate" title={selectedLog.resource_id || ""}>
+                    {selectedLog.resource_id}
+                  </p>
                 </div>
               </div>
 
+              {/* Failure reason */}
               {selectedLog.failure_reason && (
-                <div className={cn("p-3 bg-destructive/10 border-destructive/20 border rounded-lg text-destructive text-sm flex gap-2", isRTL ? "flex-row-reverse text-right" : "flex-row text-left")}>
-                  <AlertCircle className="size-4 shrink-0" />
+                <div
+                  className={cn(
+                    "p-3 bg-destructive/10 border-destructive/20 border rounded-lg text-destructive text-sm flex gap-2",
+                    isRTL ? "flex-row-reverse text-right" : "flex-row text-left"
+                  )}
+                >
+                  <AlertCircle className="h-4 w-4 shrink-0" />
                   <p>{selectedLog.failure_reason}</p>
                 </div>
               )}
 
+              {/* JSON views */}
               <div dir={direction}>
                 {selectedLog.request_params && (
                   <JsonView title="Request Parameters" data={selectedLog.request_params} />
@@ -348,9 +478,12 @@ export default function AuditPage() {
                 </div>
               </div>
 
+              {/* User agent */}
               <div className={cn("space-y-1", isRTL ? "text-right" : "text-left")}>
-                <Label className="text-[10px] uppercase opacity-50 block">User Agent</Label>
-                <p className="text-[10px] text-muted-foreground bg-muted p-2 rounded-md">{selectedLog.user_agent}</p>
+                <Label className="text-[10px] uppercase text-muted-foreground/50 block">User Agent</Label>
+                <p className="text-[10px] text-muted-foreground bg-muted/50 p-2 rounded-lg border border-border/40">
+                  {selectedLog.user_agent}
+                </p>
               </div>
             </div>
           )}

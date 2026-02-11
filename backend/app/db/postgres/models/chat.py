@@ -20,6 +20,7 @@ class Chat(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
     
     title = Column(String, nullable=True)
     is_archived = Column(Boolean, default=False, nullable=False)
@@ -34,6 +35,7 @@ class Chat(Base):
     # Relationships
     tenant = relationship("Tenant")
     user = relationship("User")
+    published_app = relationship("PublishedApp")
     messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan", order_by="Message.index")
 
 class Message(Base):

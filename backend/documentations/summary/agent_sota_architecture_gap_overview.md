@@ -1,6 +1,6 @@
 # SOTA Agent Architectures vs. Current Platform Fit
 
-Last Updated: 2026-02-05
+Last Updated: 2026-02-10
 
 ## Scope
 This memo summarizes current state-of-the-art (SOTA) agent architecture patterns and assesses how the platform currently maps to those patterns. It includes codebase research findings and an abstract set of requirements to upgrade the platform for SOTA-style agents.
@@ -15,9 +15,9 @@ Sources (external):
 - `backend/app/agent/executors/standard.py`  
   `ReasoningNodeExecutor` parses JSON from model output, then manually invokes `ToolNodeExecutor`. There is an explicit TODO for tool binding.
 - `backend/app/agent/executors/tool.py`  
-  Tool execution supports `http` and `artifact`. `function` is a stub and `mcp` raises `NotImplementedError`.
+  Tool execution supports `http`, `artifact`, `function`, `mcp`, `rag_retrieval`, and Built-in Tools v1 dispatch (`retrieval_pipeline`, `web_fetch`, `web_search`, `json_transform`, `datetime_utils`).
 - `backend/app/agent/executors/rag.py`  
-  Retrieval is implemented as dedicated nodes, not as callable tools inside agent prompts.
+  Retrieval node execution is implemented and now shares runtime logic with retrieval tool execution via `retrieval_runtime.py`.
 - `backend/app/agent/components/tools/retrieval_tool.py`  
   A LangChain-style retrieval tool exists but is not wired into the agent runtime.
 - `backend/app/agent/core/llm_adapter.py` + `backend/app/agent/components/llm/*.py`  
@@ -27,7 +27,7 @@ Sources (external):
 - `backend/app/agent/execution/service.py`  
   Uses `langgraph.checkpoint.memory.MemorySaver` (in-memory) with no persistent checkpointer.
 - `backend/app/db/postgres/models/registry.py` + `backend/app/api/routers/tools.py`  
-  Tool registry supports `MCP` and other implementation types, but execution does not.
+  Tool registry and execution paths are implemented for MCP/function plus built-in template/instance APIs; production publish guardrails are enforced at runtime.
 
 ## SOTA Architecture Patterns (Today, External Research)
 1. **Sandboxed, permissioned execution environment**
@@ -60,15 +60,15 @@ The platform already has strong pieces of a graph-based agent system, but tool u
 - **Pause/resume** for approval and human input via `interrupt_before`.
 - **Execution events** (node start/end, tool start/end, token streaming) for UI traceability.
 - **RAG pipelines** and vector search are implemented as first-class nodes.
-- **Tool registry** supports multiple implementation types (HTTP, artifact, MCP, etc.) even if runtime does not.
+- **Tool registry + runtime** support MCP/function/core built-ins with tenant-scoped execution.
 
 **Gaps vs SOTA**
 1. **Tool invocation is not native LLM tool calling**
    - Agent nodes do **not** bind tools to the LLM runtime. Tool calls are inferred by parsing JSON from text output.
-2. **Tool execution types are incomplete**
-   - `http` and `artifact` are implemented. `function` is a stub and `mcp` is not implemented.
-3. **RAG is a node, not a tool**
-   - Retrieval happens in dedicated nodes, not as callable tools inside agent prompts.
+2. **Tool invocation remains non-native**
+   - Runtime tool execution exists, but agent reasoning still relies on parsed outputs rather than first-class provider-native tool-calling contracts.
+3. **RAG as tool exists, but orchestration policy remains basic**
+   - Retrieval is callable via built-in tooling, but advanced routing, policy, and observability patterns are still limited compared to SOTA systems.
 4. **Memory and constraints are stored but not enforced**
    - `memory_config` and `execution_constraints` are not wired into runtime behavior.
 5. **No standardized tool permission model**
@@ -86,17 +86,17 @@ The platform already has strong pieces of a graph-based agent system, but tool u
 1. **Tool calling architecture**
    - Add native tool binding to LLM providers and route tool calls via model-side tool protocols.
    - Unify tool schemas and tool result typing across providers.
-2. **Tool runtime + protocol support**
-   - Implement MCP server registry, auth, and execution paths.
-   - Add first-class `function` tools and sandboxed `artifact` execution with timeouts and budgets.
+2. **Tool runtime + protocol governance**
+   - Expand MCP/provider governance (registry, auth lifecycle, approvals), beyond the current execution bridge.
+   - Harden sandbox/policy controls for function/artifact/networked built-ins.
 3. **Permissions & safety**
    - Introduce per-tool permissions (allow/deny), read-only vs auto-execution modes, and explicit approval gates.
    - Enforce `execution_constraints` (token limits, timeouts, max iterations, concurrency).
 4. **Memory & persistence**
    - Implement durable checkpointing (DB-backed) for pause/resume.
    - Wire `memory_config` into runtime, and add file-based memory ingestion (project/user scope).
-5. **RAG as a tool**
-   - Expose retrieval as a callable tool so agents can decide when to retrieve.
+5. **RAG/tool convergence**
+   - Extend retrieval-tool policy/routing and surface richer traceability for retrieval decisions.
 6. **Code intelligence**
    - Integrate LSP services and expose diagnostics/navigation as tools.
 7. **Multi-agent roles**
@@ -117,18 +117,18 @@ The platform already has strong pieces of a graph-based agent system, but tool u
 - Normalize tool call event emission (start/end/error) with structured payloads.
 
 **Phase 2: Tool Runtime Expansion (2-3 sprints)**
-- Implement MCP server registry and execution path.
-- Implement `function` tools (internal registry) with execution sandboxing.
-- Harden `artifact` execution (timeouts, resource limits, file/network policy).
+- Add MCP server governance (registry, allowlists, lifecycle) on top of existing execution path.
+- Harden `function` and `artifact` execution with stricter sandbox/resource policy.
+- Add policy controls for networked built-ins (`web_fetch`, `web_search`).
 
 **Phase 3: Memory + Persistence (1-2 sprints)**
 - Wire `memory_config` into runtime (short-term + optional long-term index).
 - Add file-based memory ingestion (project/user scope).
 - Switch from `MemorySaver` to a DB-backed checkpoint saver for durable resume.
 
-**Phase 4: RAG as Tool (1-2 sprints)**
-- Expose retrieval as a callable tool.
-- Add routing from tool calls into RAG pipeline executor.
+**Phase 4: Retrieval Tool Maturity (1-2 sprints)**
+- Expand retrieval tool routing/policies and metadata filters.
+- Add richer retrieval provenance in traces/events.
 
 **Phase 5: Code Intelligence (2-4 sprints)**
 - Integrate LSP server management.
@@ -141,9 +141,9 @@ The platform already has strong pieces of a graph-based agent system, but tool u
 ## Minimum Viable SOTA (MV‑SOTA) Checklist
 - Native tool calling for at least one provider (OpenAI or Anthropic).
 - Tool permissions model with allow/ask/deny + approvals.
-- MCP server registry + execution path.
+- MCP server registry/governance layer (execution path already exists).
 - Durable checkpointing for pause/resume.
-- RAG callable as a tool.
+- Retrieval tool production hardening (callable path exists).
 - File-based memory support with `memory_config` integration.
 - LSP diagnostics tool available to agents.
 

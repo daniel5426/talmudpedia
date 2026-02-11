@@ -1,12 +1,13 @@
 # Architecture Tree
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-11
 
 ```
 backend
 backend/.env
 backend/all_fks.txt
 backend/documentations
+backend/documentations/Apps.md
 backend/documentations/tools_overview.md
 backend/documentations/mcp_tools_overview.md
 backend/documentations/pipeline_execution_transparency.md
@@ -21,7 +22,7 @@ backend/documentations/agent_domain_architecture(1).md
 backend/documentations/rag_custom_operators.md
 backend/documentations/backend_dev_rules.md
 backend/documentations/rag_management_state.md
-backend/documentations/architect_agent_debug_report.md
+backend/documentations/platform_architect_current_architecture.md
 backend/documentations/platform_agent_strategy.md
 backend/documentations/current_platform_status.md
 backend/documentations/platform_current_state.md
@@ -180,6 +181,7 @@ backend/app/agent/executors/interaction.py
 backend/app/agent/executors/standard.py
 backend/app/agent/executors/logic.py
 backend/app/agent/executors/rag.py
+backend/app/agent/executors/retrieval_runtime.py
 backend/app/agent/executors/tool.py
 backend/app/agent/executors/base.py
 backend/app/agent/executors/data.py
@@ -314,6 +316,8 @@ backend/app/services/library
 backend/app/services/library/tree_builder.py
 backend/app/services/rag_admin_service.py
 backend/app/services/registry_seeding.py
+backend/app/services/builtin_tools.py
+backend/app/services/web_search.py
 backend/app/services/workload_identity_service.py
 backend/app/services/delegation_service.py
 backend/app/services/token_broker_service.py
@@ -434,6 +438,10 @@ backend/tests/tool_execution
 backend/tests/tool_execution/test_function_tool_execution.py
 backend/tests/tool_execution/test_mcp_tool_execution.py
 backend/tests/tool_execution/test_state.md
+backend/tests/tools_guardrails
+backend/tests/tools_guardrails/test_tools_api_guardrails.py
+backend/tests/tools_guardrails/test_tool_tenant_scoping.py
+backend/tests/tools_guardrails/test_state.md
 backend/tests/settings_hub
 backend/tests/settings_hub/test_tenant_profile_update.py
 backend/tests/settings_hub/test_tenant_defaults_settings.py
@@ -591,6 +599,7 @@ backend/alembic/versions/a13fc6223d86_add_paused_runstatus.py
 backend/alembic/versions/6206ad312420_normalize_tool_registry_enums.py
 backend/alembic/versions/7c9f1c2d3e4f_add_cost_columns_to_model_provider_bindings.py
 backend/alembic/versions/e6f1a9b4c2d0_add_orchestration_kernel_tables_and_lineage.py
+backend/alembic/versions/b2f4c6d8e9a1_add_builtin_tool_metadata.py
 backend/alembic/README
 backend/COMPLEX_TEXT_SUPPORT.md
 backend/Procfile
@@ -599,7 +608,21 @@ backend/tests
 backend/tests/agent_execution_events
 backend/tests/agent_builder_large_agents
 backend/tests/agent_tool_agents
+backend/tests/agent_tool_usecases
+backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py
+backend/tests/agent_tool_usecases/test_state.md
 backend/tests/model_registry
+backend/tests/builtin_tools_registry
+backend/tests/builtin_tools_registry/test_builtin_registry_api.py
+backend/tests/builtin_tools_registry/test_state.md
+backend/tests/builtin_tool_execution
+backend/tests/builtin_tool_execution/test_builtin_tool_executor.py
+backend/tests/builtin_tool_execution/test_state.md
+backend/tests/tools_guardrails
+backend/tests/tools_guardrails/test_tools_api_guardrails.py
+backend/tests/tools_guardrails/test_tool_tenant_scoping.py
+backend/tests/tools_guardrails/test_tools_runtime_guardrails.py
+backend/tests/tools_guardrails/test_state.md
 backend/tests_legacy
 backend/tests_legacy/test_agents_api.py
 backend/tests_legacy/test_pinecone_openai_rag.py
@@ -635,6 +658,10 @@ frontend-reshet/src/__tests__/agent_builder_v2/run_tree_reconcile.test.ts
 frontend-reshet/src/__tests__/agent_builder_v2/execute_mode_merge_graph.test.tsx
 frontend-reshet/src/__tests__/agent_builder_v2/test_state.md
 frontend-reshet/src/__tests__/models_registry
+frontend-reshet/src/__tests__/tools_builtin
+frontend-reshet/src/__tests__/tools_builtin/tools_builtin_page.test.tsx
+frontend-reshet/src/__tests__/tools_builtin/tool_bucket_filtering.test.ts
+frontend-reshet/src/__tests__/tools_builtin/test_state.md
 frontend-reshet/src/__tests__/settings_hub
 frontend-reshet/src/__tests__/settings_hub/settings_hub.test.tsx
 frontend-reshet/src/__tests__/settings_hub/tenant_profile_tab.test.tsx
@@ -668,6 +695,8 @@ frontend-reshet/src/components/admin/stats/BarChart.tsx
 frontend-reshet/src/components/admin/stats/MetricBlock.tsx
 frontend-reshet/src/components/admin/stats/MetricDetailPanel.tsx
 frontend-reshet/src/components/admin/stats/StatsBreadcrumb.tsx
+frontend-reshet/src/components/shared
+frontend-reshet/src/components/shared/SearchableResourceInput.tsx
 frontend-reshet/src/hooks
 frontend-reshet/src/hooks/useAgentRunController.ts
 frontend-reshet/src/hooks/useAgentRuntimeGraph.ts
@@ -687,3 +716,34 @@ frontend-reshet/src/services/agent-runtime-graph.ts
 frontend-reshet/src/services/credentials.ts
 frontend-reshet/src/services/index.ts
 frontend-reshet/src/services/workload-security.ts
+backend/app/api/routers/published_apps_admin.py
+backend/app/api/routers/published_apps_public.py
+backend/app/db/postgres/models/published_apps.py
+backend/app/services/published_app_auth_service.py
+backend/alembic/versions/9a4c7e21b3d5_add_published_apps_phase1_3.py
+backend/tests/published_apps
+backend/tests/published_apps/__init__.py
+backend/tests/published_apps/_helpers.py
+backend/tests/published_apps/test_admin_apps_crud.py
+backend/tests/published_apps/test_admin_apps_publish_rules.py
+backend/tests/published_apps/test_public_app_resolve_and_config.py
+backend/tests/published_apps/test_public_auth_email_password.py
+backend/tests/published_apps/test_public_auth_google_oauth.py
+backend/tests/published_apps/test_public_chat_scope_and_persistence.py
+backend/tests/published_apps/test_state.md
+frontend-reshet/src/middleware.ts
+frontend-reshet/src/app/admin/apps/page.tsx
+frontend-reshet/src/app/admin/apps/[id]/page.tsx
+frontend-reshet/src/app/published/[appSlug]/page.tsx
+frontend-reshet/src/app/published/[appSlug]/login/page.tsx
+frontend-reshet/src/app/published/[appSlug]/signup/page.tsx
+frontend-reshet/src/app/published/[appSlug]/auth/callback/page.tsx
+frontend-reshet/src/__tests__/published_apps
+frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx
+frontend-reshet/src/__tests__/published_apps/published_auth_flows.test.tsx
+frontend-reshet/src/__tests__/published_apps/published_runtime_gate.test.tsx
+frontend-reshet/src/__tests__/published_apps/published_chat_template.test.tsx
+frontend-reshet/src/__tests__/published_apps/test_state.md
+frontend-reshet/src/lib/store/usePublishedAppAuthStore.ts
+frontend-reshet/src/services/published-apps.ts
+frontend-reshet/src/services/published-runtime.ts
