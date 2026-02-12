@@ -119,6 +119,14 @@ Upgrade the Apps Builder `Builder Chat` from a v1 patch-demo flow into a product
 6. Security baseline exists and is a strength.
 - Revision conflict contract (`REVISION_CONFLICT`), preview-token model, published snapshot isolation.
 
+7. Template pack loading now excludes generated build/vendor artifacts.
+- Loader ignores `node_modules`, `dist`, and generated config/build artifacts so builder validation operates on policy-managed project source only.
+- `backend/app/services/published_app_templates.py`
+
+8. Build enqueue is now resilient when worker infrastructure is unavailable.
+- Revision creation/reset still succeeds if Celery/Redis enqueue fails at request time; enqueue failure is logged instead of failing admin APIs.
+- `backend/app/api/routers/published_apps_admin.py`
+
 ## Parity Bar (What "Lovable/Base44-Level" Means Here)
 1. Reliable multi-turn coding agent that reads codebase context before editing and can recover from compile/runtime failures.
 2. Tool-augmented edit loop (search/read/edit/compile/test) with deterministic guardrails.
@@ -333,12 +341,20 @@ Exit criteria:
   - `POST /admin/apps/{app_id}/builder/validate` includes worker-style preflight in validation.
   - `POST /admin/apps/{app_id}/builder/chat/stream` blocks patch apply emission if worker-style preflight fails.
 
-### Validation Results
-1. `pytest backend/tests/published_apps/test_admin_apps_publish_rules.py backend/tests/published_apps/test_builder_revisions.py -q`
-- PASS (16 passed)
+3. Queue-unavailable safety path added for builder build automation:
+- `APPS_BUILDER_BUILD_AUTOMATION_ENABLED` may be enabled in runtime environments; enqueue failures no longer break synchronous admin API flows.
+- Enqueue failures are downgraded to warnings with revision/app/build context for observability.
 
-2. `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
-- PASS (3 tests)
+### Validation Results
+1. `pytest backend/tests/published_apps/test_builder_revisions.py -q`
+- PASS (12 passed)
+
+2. `pytest backend/tests/published_apps/test_admin_apps_publish_rules.py backend/tests/published_apps/test_public_app_resolve_and_config.py -q`
+- PASS (8 passed)
+
+3. Test runtime stabilization for backend suites:
+- Default pytest env now forces `APPS_BUILDER_BUILD_AUTOMATION_ENABLED=0` unless explicitly overridden, preventing Redis/Celery dependency leakage in local/in-memory test runs.
+- `backend/tests/conftest.py`
 
 ### In Progress
 1. Phase 2 loop currently uses lightweight project tools and no external worker build/test execution; deeper tool autonomy/evals are pending.

@@ -566,8 +566,9 @@ async def test_builder_revision_build_status_and_retry_endpoints(client, db_sess
     assert build_resp.status_code == 200
     build_payload = build_resp.json()
     assert build_payload["revision_id"] == draft_revision_id
-    assert build_payload["build_status"] == "queued"
+    assert build_payload["build_status"] == "failed"
     assert build_payload["build_seq"] == 1
+    assert "Build automation is disabled" in (build_payload["build_error"] or "")
     assert build_payload["template_runtime"] == "vite_static"
 
     retry_resp = await client.post(
@@ -578,8 +579,9 @@ async def test_builder_revision_build_status_and_retry_endpoints(client, db_sess
     assert retry_resp.status_code == 200
     retry_payload = retry_resp.json()
     assert retry_payload["revision_id"] == draft_revision_id
-    assert retry_payload["build_status"] == "queued"
+    assert retry_payload["build_status"] == "failed"
     assert retry_payload["build_seq"] == 2
+    assert "Build automation is disabled" in (retry_payload["build_error"] or "")
 
 
 @pytest.mark.asyncio

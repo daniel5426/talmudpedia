@@ -37,6 +37,7 @@ Last Updated: 2026-02-12
 - Builder revision build lifecycle endpoints expose build state and retry sequence bumps:
 - `GET /admin/apps/{app_id}/builder/revisions/{revision_id}/build`
 - `POST /admin/apps/{app_id}/builder/revisions/{revision_id}/build/retry`
+- Build enqueue failures (or disabled automation) mark revision `build_status=failed` with actionable `build_error` instead of leaving draft revisions indefinitely pending.
 - Builder chat stream emits richer envelopes with `stage` and `request_id`.
 - Builder chat stream persists conversation turns for replay/audit, including success and failure metadata.
 - Builder conversation replay endpoint (`GET /admin/apps/{app_id}/builder/conversations`) returns persisted turns newest-first.
@@ -59,10 +60,19 @@ Last Updated: 2026-02-12
 - Public mode chat is ephemeral and does not persist chat rows.
 
 ## Last run command + date/time + result
-- Command: `pytest backend/tests/published_apps/test_builder_revisions.py backend/tests/published_apps/test_admin_apps_publish_rules.py -q`
-- Date: 2026-02-12 11:46 UTC
-- Result: PASS (16 passed)
-- Notes: includes worker-build preflight gate coverage for revision save and chat-stream apply paths, plus publish build-status gate behavior.
+- Command: `pytest -q backend/tests/published_apps/test_admin_apps_crud.py::test_admin_apps_crud`
+- Date: 2026-02-12 22:23 UTC
+- Result: PASS (1 passed)
+- Command: `pytest -q backend/tests/published_apps/test_builder_revisions.py::test_builder_revision_build_status_and_retry_endpoints`
+- Date: 2026-02-12 22:22 UTC
+- Result: PASS (1 passed)
+- Command: `pytest backend/tests/published_apps/test_builder_revisions.py -q`
+- Date: 2026-02-12 21:08 UTC
+- Result: PASS (12 passed)
+- Command: `pytest backend/tests/published_apps/test_admin_apps_publish_rules.py backend/tests/published_apps/test_public_app_resolve_and_config.py -q`
+- Date: 2026-02-12 21:08 UTC
+- Result: PASS (8 passed)
+- Notes: verifies builder revision/chat reliability contracts plus publish/runtime descriptor and preview asset flows.
 
 ## Known gaps or follow-ups
 - Add negative tests for cross-app token replay attempts.

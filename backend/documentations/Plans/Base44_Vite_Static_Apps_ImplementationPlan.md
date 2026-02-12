@@ -1,6 +1,6 @@
 # Base44-Style Option A Implementation Plan (Vite Static Apps + Shared Backend)
 
-Last Updated: 2026-02-11
+Last Updated: 2026-02-12
 
 ## Summary
 Move Apps Builder from “virtual React files compiled in-browser” to “full Vite React projects built by backend workers and deployed as static assets,” with big-bang runtime migration.
@@ -33,6 +33,7 @@ Partially implemented:
 
 Pending:
 - Migration/backfill script for existing revisions and big-bang cutover execution.
+- Fast-create prebuilt artifact path for initial app creation (chat-classic pilot) is not implemented yet.
 
 Locked choices:
 - Build engine: Celery queue + dedicated Node build worker image.
@@ -213,6 +214,73 @@ Status: Pending.
 - set app status `paused` with actionable build error; do not silently serve broken runtime.
 - Rollback switch:
 - No source-UI rollback path; static runtime is canonical.
+
+## 10) Fast-create plan for prebuilt artifacts (`chat-classic` pilot)
+Status: Planned (targeted next).
+
+Goal:
+- Remove worker build latency from initial create for `chat-classic` by reusing CI-built immutable artifacts.
+
+Scope:
+- In scope now: `chat-classic` only.
+- Out of scope now: `chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`.
+
+### A) CI prebuild + immutable artifact publication
+- Add CI job to build only `backend/app/templates/published_apps/chat-classic` and publish `dist/` once per template hash.
+- Compute canonical template hash from the same normalized file set used by loader/build seeding (`build_template_files("chat-classic")`), serialized with sorted keys.
+- Publish under immutable prefix:
+- `apps/templates/chat-classic/{template_hash}/dist/...`
+- Persist build metadata object:
+- `apps/templates/chat-classic/{template_hash}/artifact.json`
+- Include at minimum:
+- `template_key`, `template_hash`, `dist_manifest`, `created_at`, `build_tool_versions`.
+
+### B) App creation fast path (no worker build)
+- Change create flow in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_admin.py`:
+- `POST /admin/apps` for `template_key=chat-classic` first resolves latest published template artifact metadata.
+- Create draft revision with:
+- `build_status=succeeded`
+- `build_seq=1`
+- `dist_manifest` from artifact metadata
+- `dist_storage_prefix` set after copy
+- Copy artifact into per-revision prefix using storage copy:
+- source: `apps/templates/chat-classic/{template_hash}/dist`
+- destination: `apps/{tenant_id}/{app_id}/revisions/{revision_id}/dist`
+- Keep `files` snapshot seeded from template source (for future edits), but skip enqueueing `build_published_app_revision_task`.
+- Fallback behavior:
+- If artifact metadata is missing/corrupt or copy fails, fallback to current worker build path and emit structured fallback reason in logs/metrics.
+
+### C) Runtime config injection (avoid template rebuild per app metadata)
+- Add runtime config payload endpoint for published runtime:
+- `GET /public/apps/{slug}/runtime-config`
+- Add preview variant for draft runtime:
+- `GET /public/apps/preview/revisions/{revision_id}/runtime-config`
+- `chat-classic` runtime bootstrap should fetch this payload at startup and derive per-app values from it (for example: app slug, runtime mode, API base path, auth settings, display name).
+- Keep immutable assets tenant-agnostic; move app-specific values out of compiled JS/HTML.
+
+### D) Keep worker builds for user code edits only
+- Initial create (`POST /admin/apps`) for `chat-classic`: no worker build.
+- Keep worker builds on builder mutations (`POST /admin/apps/{app_id}/builder/revisions`) because user source changed.
+- Optional optimization after pilot:
+- if a new revision hash matches the base/template artifact hash, copy artifacts and mark succeeded without worker build.
+
+### E) Data/API additions
+- Add internal template artifact resolver service (new module under `backend/app/services/`) that maps `(template_key, template_hash)` to artifact metadata/prefix.
+- Add build status diagnostics fields/messages to indicate fast-path vs worker-path provenance.
+- No breaking public API contract changes required for this pilot; runtime-config endpoints are additive.
+
+### F) Acceptance criteria for pilot
+- Creating a `chat-classic` app returns a draft revision already in `build_status=succeeded`.
+- No `apps_build` Celery task is enqueued during initial create for `chat-classic`.
+- Builder preview URL is available immediately after create (no build poll wait).
+- Publish still promotes immutable artifacts by prefix copy and does not rebuild.
+- If fast path cannot run, fallback path still preserves current correctness.
+
+### G) Rollout plan
+- Phase 1: shadow mode in CI (publish artifact metadata + dist, no runtime usage).
+- Phase 2: enable fast-create for internal tenants only via env flag.
+- Phase 3: enable for all `chat-classic` creates once fallback/error rate and latency are acceptable.
+- Phase 4: decide expansion template-by-template (`chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`).
 
 ## Public APIs / Interfaces / Types (explicit changes)
 - Added admin endpoints:

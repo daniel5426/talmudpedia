@@ -5,11 +5,248 @@ from fastapi import FastAPI
 import multiprocessing
 import os
 import asyncio
+import logging
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from urllib.parse import urlparse
 # Load environment variables BEFORE importing any modules that might need them
 load_dotenv(Path(__file__).parent / ".env")
 
 from app.db.connection import MongoDatabase
 from vector_store import VectorStore
+
+logger = logging.getLogger("backend.startup")
+_INFRA_BOOTSTRAPPED = False
+
+
+def _is_truthy(raw: str) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _auto_infra_bootstrap_enabled() -> bool:
+    explicit = os.getenv("BACKEND_AUTO_INFRA_BOOTSTRAP")
+    if explicit is not None:
+        return _is_truthy(explicit)
+
+    # Keep tests deterministic and fast.
+    if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+
+    # Local-dev default.
+    return True
+
+
+def _is_port_open(host: str, port: int, timeout_seconds: float = 0.35) -> bool:
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
+
+
+def _wait_for_port(host: str, port: int, timeout_seconds: float = 8.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if _is_port_open(host, port):
+            return True
+        time.sleep(0.25)
+    return _is_port_open(host, port)
+
+
+def _try_start_brew_service(service_name: str, host: str, port: int) -> bool:
+    if _is_port_open(host, port):
+        return True
+    if shutil.which("brew") is None:
+        logger.warning(
+            "brew is unavailable; cannot auto-start %s (%s:%s)",
+            service_name,
+            host,
+            port,
+        )
+        return False
+
+    subprocess.run(
+        ["brew", "services", "start", service_name],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    ready = _wait_for_port(host, port)
+    if ready:
+        logger.info("Started %s via brew services", service_name)
+    else:
+        logger.warning("Service %s is still unavailable on %s:%s", service_name, host, port)
+    return ready
+
+
+def _is_local_host(host: str) -> bool:
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _parse_endpoint_host_port(endpoint: str) -> tuple[str, int] | None:
+    parsed = urlparse((endpoint or "").strip())
+    if not parsed.scheme or not parsed.hostname:
+        return None
+    default_port = 443 if parsed.scheme == "https" else 80
+    return parsed.hostname, int(parsed.port or default_port)
+
+
+def _ensure_local_moto_server_if_needed() -> None:
+    endpoint = (os.getenv("APPS_BUNDLE_ENDPOINT") or "").strip()
+    if not endpoint:
+        return
+    parsed = _parse_endpoint_host_port(endpoint)
+    if not parsed:
+        return
+    host, port = parsed
+    if not _is_local_host(host):
+        return
+    if _is_port_open(host, port):
+        return
+
+    moto_bin = os.getenv("MOTO_SERVER_BIN", "moto_server")
+    if shutil.which(moto_bin) is None:
+        logger.warning("Moto endpoint is local (%s) but `%s` is not installed", endpoint, moto_bin)
+        return
+
+    moto_log_path = Path(os.getenv("MOTO_LOG_PATH", "/tmp/talmudpedia-moto.log"))
+    bind_host = "127.0.0.1"
+    with moto_log_path.open("ab") as log_file:
+        subprocess.Popen(
+            [moto_bin, "-H", bind_host, "-p", str(port)],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    if _wait_for_port(host, port):
+        logger.info("Started local moto server on %s:%s", host, port)
+    else:
+        logger.warning("Failed to start local moto server on %s:%s", host, port)
+
+
+def _ensure_local_bundle_bucket_if_needed() -> None:
+    endpoint = (os.getenv("APPS_BUNDLE_ENDPOINT") or "").strip()
+    bucket = (os.getenv("APPS_BUNDLE_BUCKET") or "").strip()
+    if not endpoint or not bucket:
+        return
+
+    parsed = _parse_endpoint_host_port(endpoint)
+    if not parsed:
+        return
+    host, _ = parsed
+    if not _is_local_host(host):
+        return
+
+    try:
+        import boto3
+    except Exception:
+        logger.warning("boto3 unavailable; cannot ensure local bundle bucket")
+        return
+
+    region = (os.getenv("APPS_BUNDLE_REGION") or "us-east-1").strip()
+    access_key = (os.getenv("APPS_BUNDLE_ACCESS_KEY") or "test").strip() or "test"
+    secret_key = (os.getenv("APPS_BUNDLE_SECRET_KEY") or "test").strip() or "test"
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name=region,
+    )
+    try:
+        existing = [item["Name"] for item in client.list_buckets().get("Buckets", [])]
+        if bucket in existing:
+            return
+
+        create_kwargs = {"Bucket": bucket}
+        if region != "us-east-1":
+            create_kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
+        client.create_bucket(**create_kwargs)
+        logger.info("Created local apps bundle bucket: %s", bucket)
+    except Exception as exc:
+        logger.warning("Failed ensuring local apps bundle bucket `%s`: %s", bucket, exc)
+
+
+def _celery_worker_running() -> bool:
+    if shutil.which("pgrep") is None:
+        return False
+    result = subprocess.run(
+        ["pgrep", "-f", "celery -A app.workers.celery_app.celery_app worker"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def _ensure_celery_worker_if_needed() -> None:
+    if not _is_truthy(os.getenv("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", "0")):
+        return
+    if _celery_worker_running():
+        return
+
+    redis_url = (os.getenv("REDIS_URL") or "redis://127.0.0.1:6379/0").strip()
+    parsed = urlparse(redis_url)
+    redis_host = parsed.hostname or "127.0.0.1"
+    redis_port = int(parsed.port or 6379)
+    if _is_local_host(redis_host) and not _is_port_open(redis_host, redis_port):
+        logger.warning(
+            "Redis is not reachable at %s:%s; skipping Celery auto-start",
+            redis_host,
+            redis_port,
+        )
+        return
+
+    celery_log_path = Path(os.getenv("CELERY_LOG_PATH", "/tmp/talmudpedia-celery.log"))
+    backend_dir = Path(__file__).resolve().parent
+    celery_cmd = [
+        sys.executable,
+        "-m",
+        "celery",
+        "-A",
+        "app.workers.celery_app.celery_app",
+        "worker",
+        "-Q",
+        "apps_build,default,ingestion,embedding",
+        "-l",
+        "info",
+    ]
+    with celery_log_path.open("ab") as log_file:
+        subprocess.Popen(
+            celery_cmd,
+            cwd=str(backend_dir),
+            env=os.environ.copy(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    time.sleep(1.0)
+    if _celery_worker_running():
+        logger.info("Started Celery worker for apps builder queues")
+    else:
+        logger.warning("Failed to auto-start Celery worker; check %s", celery_log_path)
+
+
+def _bootstrap_local_infra_once() -> None:
+    global _INFRA_BOOTSTRAPPED
+    if _INFRA_BOOTSTRAPPED:
+        return
+    _INFRA_BOOTSTRAPPED = True
+
+    if not _auto_infra_bootstrap_enabled():
+        logger.info("Local infra bootstrap disabled")
+        return
+
+    logger.info("Running local infra bootstrap checks")
+    _try_start_brew_service("postgresql@17", "127.0.0.1", 5432)
+    _try_start_brew_service("redis", "127.0.0.1", 6379)
+    _ensure_local_moto_server_if_needed()
+    _ensure_local_bundle_bucket_if_needed()
+    _ensure_celery_worker_if_needed()
 
 
 def start_livekit_worker():
@@ -26,6 +263,8 @@ def start_livekit_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Bootstraps shared services for the FastAPI lifecycle."""
+    _bootstrap_local_infra_once()
+
     await MongoDatabase.connect()
     app.state.vector_store = VectorStore()
     

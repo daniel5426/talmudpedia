@@ -45,6 +45,7 @@ type WorkspaceProps = {
 };
 
 type RevisionBuildStatus = "queued" | "running" | "succeeded" | "failed";
+const BUILD_PENDING_TIMEOUT_MS = 120_000;
 
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const { setOpen } = useSidebar();
@@ -114,6 +115,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   useEffect(() => {
     let cancelled = false;
     let timer: number | null = null;
+    const pendingSinceMs = Date.now();
 
     const pollBuildStatus = async () => {
       if (!currentRevisionId) return;
@@ -135,6 +137,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
         setPreviewAssetUrl(null);
         if (nextStatus === "queued" || nextStatus === "running") {
+          const elapsedMs = Date.now() - pendingSinceMs;
+          if (elapsedMs >= BUILD_PENDING_TIMEOUT_MS) {
+            setBuildError(
+              "Build is still pending. Ensure Redis/Celery apps-build worker is running, then retry build.",
+            );
+            return;
+          }
           timer = window.setTimeout(pollBuildStatus, 2000);
         }
       } catch (err) {

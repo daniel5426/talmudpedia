@@ -8,6 +8,16 @@ Last Updated: 2026-02-12
 - Loader behavior: templates are loaded from disk on each call (no in-memory `lru_cache`), so file edits are picked up without restarting just for template file reads.
 - Strategy currently implemented: clean implementation only (no legacy fallback paths kept).
 
+## Fast-Create Direction (Current Planning Scope)
+- Active planning scope: `chat-classic` only.
+- Goal: make initial app creation fast by removing worker build from the create path.
+- Planned strategy:
+  - prebuild immutable `chat-classic` `dist/` artifacts in CI, keyed by template hash
+  - create app by storage prefix copy (template artifact -> app revision prefix), then mark revision build as succeeded immediately
+  - move per-app/per-tenant mutable values to runtime config payload (no per-app template rebuild)
+  - keep worker builds for user-edited revisions only
+- Other templates (`chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`) remain on current behavior for now.
+
 ## Template Catalog (Manifest State)
 
 | Key | Name | Description | Tags | Entry |
@@ -44,6 +54,8 @@ Last Updated: 2026-02-12
   - `preview_token` query param
   - `published_app_preview_token` cookie
 - Result: built template previews can load `index.html` + JS assets when opened from builder preview flow.
+- Planned addition for `chat-classic` pilot:
+  - runtime config endpoint consumption at template startup so app-specific values are injected at runtime, not build time.
 
 ## Operational Notes
 - For local testing through the builder, backend + worker must be running and using latest code.
@@ -68,8 +80,29 @@ Last Updated: 2026-02-12
 - Class syntax that was Tailwind v4-style (`w-(--var)`, `origin-(--var)`, `max-h-(--var)`) was normalized to Tailwind v3-compatible arbitrary values (`w-[var(--...)]`, `origin-[var(--...)]`, `max-h-[var(--...)]`).
 - Result: Tailwind utility classes used by `chat-classic` UI components are now emitted in local/worker builds instead of being silently skipped.
 
+## LayoutShell Replication Progress (`chat-classic`)
+- `chat-classic/src/App.tsx` now uses a `LayoutShell`-style structure:
+  - `SidebarProvider` + floating/collapsible `Sidebar`
+  - `SidebarInset` chat workspace
+  - source viewer pane removed for this phase
+- Sidebar now mirrors production structure more closely:
+  - brand/header + collapse trigger
+  - `Platform` nav group
+  - `Previous Chats` group with per-item dropdown actions
+  - footer runtime status panel + desktop sidebar rail
+- Chat workspace now follows ChatPane rhythm:
+  - top bar removed (to match ChatPane workspace behavior more closely)
+  - centered message column using AI elements (`Message`, `ChainOfThought`, `BotInputArea`)
+  - inline sources card instead of side source viewer
+  - empty state now uses centered heading + centered input area (instead of a welcome card block)
+- Styling foundation was cleaned up:
+  - `chat-classic/src/styles.css` legacy handcrafted class blocks were replaced with a minimal Tailwind-token base stylesheet
+  - token compatibility vars (`--border`, `--panel`, `--muted`) are retained for inline-style helper components
+  - result: template visuals are now driven by shadcn/Tailwind classes instead of old template CSS overrides
+
 ## Source of Truth Files
 - Template loader: `backend/app/services/published_app_templates.py`
 - Dependency policy: `backend/app/services/apps_builder_dependency_policy.py`
 - Template packs: `backend/app/templates/published_apps/*`
 - Plan tracking: `backend/documentations/Plans/Base44_Vite_Static_Apps_ImplementationPlan.md`
+- Fast-create pilot scope: `chat-classic` only until rollout criteria are met.

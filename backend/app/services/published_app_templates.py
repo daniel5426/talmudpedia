@@ -11,6 +11,8 @@ TEMPLATE_MANIFEST_NAME = "template.manifest.json"
 VITE_BASE_PATTERN = re.compile(r"base\s*:\s*['\"]\./['\"]")
 TEMPLATE_PACKS_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_apps"
 IGNORED_TEMPLATE_DIRS = {"node_modules", "dist", "build", "__pycache__"}
+IGNORED_TEMPLATE_FILE_NAMES = {"vite.config.js", "vite.config.d.ts"}
+IGNORED_TEMPLATE_FILE_SUFFIXES = {".tsbuildinfo"}
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,10 @@ def _load_template_files(pack_dir: Path) -> Dict[str, str]:
         if any(part.startswith(".") for part in rel_parts):
             continue
         if any(part in IGNORED_TEMPLATE_DIRS for part in rel_parts):
+            continue
+        if rel_path in IGNORED_TEMPLATE_FILE_NAMES:
+            continue
+        if any(rel_path.endswith(suffix) for suffix in IGNORED_TEMPLATE_FILE_SUFFIXES):
             continue
         if rel_path == TEMPLATE_MANIFEST_NAME:
             continue
