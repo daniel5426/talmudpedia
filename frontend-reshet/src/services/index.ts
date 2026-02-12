@@ -111,7 +111,6 @@ export type {
   PublicAuthResponse,
   PublicChatHistory,
   PublicChatItem,
-  PublishedRuntimeUI,
   PublishedRuntimeDescriptor,
   PreviewRuntimeDescriptor,
 } from "./published-runtime";

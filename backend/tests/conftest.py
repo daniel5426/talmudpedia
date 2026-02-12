@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import types
+from sqlalchemy.dialects import postgresql
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -30,6 +32,43 @@ from app.db.postgres.models.identity import User, OrgMembership, MembershipStatu
 
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+
+class SQLiteUUID(types.TypeDecorator):
+    impl = types.String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        import uuid as _uuid
+
+        return _uuid.UUID(value)
+
+
+def _normalize_sqlite_metadata_types() -> None:
+    """Make SQLAlchemy metadata SQLite-friendly before tests build ORM expressions."""
+    for table in Base.metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, (postgresql.ENUM, types.Enum)):
+                column.type = types.String(50)
+            elif isinstance(column.type, postgresql.UUID):
+                column.type = SQLiteUUID()
+            elif isinstance(column.type, postgresql.JSONB):
+                column.type = types.JSON()
+
+
+if not USE_REAL_DB:
+    # Load all model tables and coerce types eagerly so early ORM expression
+    # construction (before test_engine fixture) uses SQLite-safe types.
+    import app.db.postgres.models  # noqa: F401
+
+    _normalize_sqlite_metadata_types()
 
 
 @pytest.fixture(scope="session")
@@ -60,35 +99,6 @@ async def test_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-
-    from sqlalchemy import event, types
-    from sqlalchemy.dialects import postgresql
-    import uuid as _uuid
-
-    class SQLiteUUID(types.TypeDecorator):
-        impl = types.String(36)
-        cache_ok = True
-
-        def process_bind_param(self, value, dialect):
-            if value is None:
-                return value
-            return str(value)
-
-        def process_result_value(self, value, dialect):
-            if value is None:
-                return value
-            return _uuid.UUID(value)
-
-    @event.listens_for(Base.metadata, "before_create")
-    def receive_before_create(target, connection, **kw):
-        for table in target.tables.values():
-            for column in table.columns:
-                if isinstance(column.type, (postgresql.ENUM, types.Enum)):
-                    column.type = types.String(50)
-                elif isinstance(column.type, postgresql.UUID):
-                    column.type = SQLiteUUID()
-                elif isinstance(column.type, postgresql.JSONB):
-                    column.type = types.JSON()
 
     async with engine.begin() as conn:
         import app.db.postgres.models

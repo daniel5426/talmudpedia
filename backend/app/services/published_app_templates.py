@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -11,6 +10,7 @@ from typing import Dict, List, Tuple
 TEMPLATE_MANIFEST_NAME = "template.manifest.json"
 VITE_BASE_PATTERN = re.compile(r"base\s*:\s*['\"]\./['\"]")
 TEMPLATE_PACKS_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_apps"
+IGNORED_TEMPLATE_DIRS = {"node_modules", "dist", "build", "__pycache__"}
 
 
 @dataclass(frozen=True)
@@ -82,7 +82,10 @@ def _load_template_files(pack_dir: Path) -> Dict[str, str]:
         if not path.is_file():
             continue
         rel_path = _normalize_file_path(pack_dir, path)
-        if any(part.startswith(".") for part in Path(rel_path).parts):
+        rel_parts = Path(rel_path).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        if any(part in IGNORED_TEMPLATE_DIRS for part in rel_parts):
             continue
         if rel_path == TEMPLATE_MANIFEST_NAME:
             continue
@@ -113,7 +116,6 @@ def _load_pack(pack_dir: Path) -> _TemplatePack:
     return _TemplatePack(template=template, files=files)
 
 
-@lru_cache(maxsize=1)
 def _load_all_packs() -> Tuple[_TemplatePack, ...]:
     if not TEMPLATE_PACKS_ROOT.exists():
         raise ValueError(f"Template packs root not found: {TEMPLATE_PACKS_ROOT}")

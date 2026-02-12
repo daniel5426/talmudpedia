@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-02-11
+Last Updated: 2026-02-12
 
 ## Scope of the feature
 - Admin control plane CRUD and publish lifecycle for tenant published apps.
@@ -40,16 +40,17 @@ Last Updated: 2026-02-11
 - Builder chat stream emits richer envelopes with `stage` and `request_id`.
 - Builder chat stream persists conversation turns for replay/audit, including success and failure metadata.
 - Builder conversation replay endpoint (`GET /admin/apps/{app_id}/builder/conversations`) returns persisted turns newest-first.
-- Publish endpoint can enforce build-status gate contract (`BUILD_PENDING`/`BUILD_FAILED`) when `APPS_BUILDER_PUBLISH_BUILD_GUARD_ENABLED=1`.
+- Publish endpoint enforces build-status gate contract (`BUILD_PENDING`/`BUILD_FAILED`) for every publish request.
+- Worker-build preflight gate (`APPS_BUILDER_WORKER_BUILD_GATE_ENABLED=1`) blocks revision save, validate, and chat patch apply on failed `npm`/`vite` preflight.
 - Publish clones draft into immutable published revision snapshot.
 - Public runtime descriptor endpoint returns static runtime contract:
 - `GET /public/apps/{slug}/runtime`
 - Preview runtime descriptor endpoint returns preview asset base URL:
 - `GET /public/apps/preview/revisions/{revision_id}/runtime`
+- Preview runtime descriptor now returns `preview_url` pointing to entry HTML (for iframe loading), with `asset_base_url` kept for static asset resolution.
 - Preview asset proxy endpoint streams dist assets with preview token auth:
 - `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
-- Public `/public/apps/{slug}/ui` only serves published snapshot payload.
-- Public `/public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED` when `APPS_RUNTIME_MODE=static`.
+- Public `/public/apps/{slug}/ui` is permanently removed and returns `410 UI_SOURCE_MODE_REMOVED`.
 - Publish returns `500 BUILD_ARTIFACT_COPY_FAILED` when dist artifact promotion fails and leaves existing publish pointer unchanged.
 - Hostname resolve and app config retrieval for public runtime.
 - Signup/login/logout and auth-me using published app session tokens.
@@ -58,10 +59,10 @@ Last Updated: 2026-02-11
 - Public mode chat is ephemeral and does not persist chat rows.
 
 ## Last run command + date/time + result
-- Command: `pytest backend/tests/published_apps -q`
-- Date: 2026-02-11 23:59 UTC
-- Result: PASS (25 passed)
-- Notes: includes runtime descriptor/static UI mode, revision build lifecycle endpoints, preview asset proxy, and publish artifact-copy failure coverage.
+- Command: `pytest backend/tests/published_apps/test_builder_revisions.py backend/tests/published_apps/test_admin_apps_publish_rules.py -q`
+- Date: 2026-02-12 11:46 UTC
+- Result: PASS (16 passed)
+- Notes: includes worker-build preflight gate coverage for revision save and chat-stream apply paths, plus publish build-status gate behavior.
 
 ## Known gaps or follow-ups
 - Add negative tests for cross-app token replay attempts.

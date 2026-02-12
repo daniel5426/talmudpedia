@@ -126,7 +126,6 @@ V1 is now defined as:
 
 ### Deferred
 1. Removal of deprecated `compiled_bundle` column in follow-up migration.
-2. Legacy runtime path deletion until migration verification is complete.
 
 ## Validation Targets
 1. Backend tests:

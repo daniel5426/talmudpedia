@@ -1,6 +1,5 @@
 import logging
 from typing import AsyncGenerator, Dict, Any, Union
-import json
 
 from .types import ExecutionMode, EventVisibility, ExecutionEvent
 
@@ -11,6 +10,50 @@ class StreamAdapter:
     Adapts the internal agent execution stream for different consumers (Modes).
     Enforces filtering rules based on EventVisibility.
     """
+
+    _PRODUCTION_LEGACY_ALLOW = {"on_chat_model_stream", "run_status"}
+    _TOOL_LIFECYCLE_EVENTS = {"on_tool_start", "on_tool_end"}
+
+    @classmethod
+    def _is_client_safe(cls, visibility: Any) -> bool:
+        if isinstance(visibility, EventVisibility):
+            return visibility == EventVisibility.CLIENT_SAFE
+        if isinstance(visibility, str):
+            return visibility.strip().lower() == EventVisibility.CLIENT_SAFE.value
+        return False
+
+    @classmethod
+    def _reasoning_event(
+        cls,
+        *,
+        event_type: str,
+        event_name: str | None,
+        step_id: str | None,
+        data: Dict[str, Any] | None,
+    ) -> Dict[str, Any] | None:
+        payload = data or {}
+        if event_type == "on_tool_start":
+            return {
+                "type": "reasoning",
+                "data": {
+                    "step": event_name or "Tool",
+                    "step_id": step_id,
+                    "status": "active",
+                    "message": payload.get("message") or f"Calling tool {event_name}...",
+                },
+            }
+        if event_type == "on_tool_end":
+            return {
+                "type": "reasoning",
+                "data": {
+                    "step": event_name or "Tool",
+                    "step_id": step_id,
+                    "status": "complete",
+                    "message": f"Tool {event_name} completed",
+                    "output": payload.get("output"),
+                },
+            }
+        return None
     
     @staticmethod
     async def filter_stream(
@@ -27,75 +70,55 @@ class StreamAdapter:
                 # This handles legacy events or those not yet fully migrated to ExecutionEvent
                 visibility = chunk.get("visibility", EventVisibility.INTERNAL)
                 event_type = chunk.get("event", "")
+                is_tool_lifecycle = event_type in StreamAdapter._TOOL_LIFECYCLE_EVENTS
                 
                 # Heuristics for untagged events (Safety net during refactor)
                 if mode == ExecutionMode.PRODUCTION:
-                    # In PROD, rely strictly on explicit tags or known allow-list
-                    if event_type in ("on_chat_model_stream", "run_status"):
-                         # Even these should ideally be explicitly tagged CLIENT_SAFE by the engine
-                        pass 
-                    elif visibility != EventVisibility.CLIENT_SAFE:
+                    # PROD includes client-safe events + explicit tool lifecycle + narrow legacy allow-list.
+                    if not (
+                        StreamAdapter._is_client_safe(visibility)
+                        or is_tool_lifecycle
+                        or event_type in StreamAdapter._PRODUCTION_LEGACY_ALLOW
+                    ):
                         continue
                 
                 # If we are here, it's allowed or we are in DEBUG
                 yield chunk
                 
-                # Synthesize Reasoning Events for Chain of Thought UI (for dicts)
-                if mode != ExecutionMode.PRODUCTION:
-                    evt_type = chunk.get("event")
-                    evt_name = chunk.get("name")
-                    if evt_type == "on_tool_start":
-                        yield {
-                            "type": "reasoning",
-                            "data": {
-                                "step": evt_name or "Tool",
-                                "step_id": chunk.get("span_id"),
-                                "status": "active",
-                                "message": chunk.get("data", {}).get("message") or f"Calling tool {evt_name}...",
-                            }
-                        }
-                    elif evt_type == "on_tool_end":
-                        data = chunk.get("data", {})
-                        yield {
-                            "type": "reasoning",
-                            "data": {
-                                "step": evt_name or "Tool",
-                                "step_id": chunk.get("span_id"),
-                                "status": "complete",
-                                "message": f"Tool {evt_name} completed",
-                                "output": data.get("output") if data else None
-                            }
-                        }
+                # Synthesize reasoning for tool lifecycle in both DEBUG and PRODUCTION.
+                reasoning = StreamAdapter._reasoning_event(
+                    event_type=event_type,
+                    event_name=chunk.get("name"),
+                    step_id=chunk.get("span_id"),
+                    data=chunk.get("data", {}),
+                )
+                if reasoning:
+                    yield reasoning
                 continue
 
             if isinstance(chunk, ExecutionEvent):
                 if mode == ExecutionMode.PRODUCTION:
-                    if chunk.visibility == EventVisibility.CLIENT_SAFE:
-                        yield chunk.model_dump(mode='json')
+                    is_tool_lifecycle = chunk.event in StreamAdapter._TOOL_LIFECYCLE_EVENTS
+                    if chunk.visibility == EventVisibility.CLIENT_SAFE or is_tool_lifecycle:
+                        payload = chunk.model_dump(mode="json")
+                        yield payload
+                        reasoning = StreamAdapter._reasoning_event(
+                            event_type=chunk.event,
+                            event_name=chunk.name,
+                            step_id=chunk.span_id,
+                            data=chunk.data,
+                        )
+                        if reasoning:
+                            yield reasoning
                 else:
                     # DEBUG mode: Yield everything
                     # PLUS: Synthesize "reasoning" events for better UI
-                    yield chunk.model_dump(mode='json')
-                    
-                    # Synthesize Reasoning Events for Chain of Thought UI
-                    if chunk.event == "on_tool_start":
-                        yield {
-                            "type": "reasoning",
-                            "data": {
-                                "step": chunk.name or "Tool",
-                                "step_id": chunk.span_id,
-                                "status": "active",
-                                "message": chunk.data.get("message") or f"Calling tool {chunk.name}...",
-                            }
-                        }
-                    elif chunk.event == "on_tool_end":
-                        yield {
-                            "type": "reasoning",
-                            "data": {
-                                "step": chunk.name or "Tool",
-                                "step_id": chunk.span_id,
-                                "status": "complete",
-                                "message": f"Tool {chunk.name} completed",
-                                "output": chunk.data.get("output") if chunk.data else None
-                            }
-                        }
+                    yield chunk.model_dump(mode="json")
+                    reasoning = StreamAdapter._reasoning_event(
+                        event_type=chunk.event,
+                        event_name=chunk.name,
+                        step_id=chunk.span_id,
+                        data=chunk.data,
+                    )
+                    if reasoning:
+                        yield reasoning

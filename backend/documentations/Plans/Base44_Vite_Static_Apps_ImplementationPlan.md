@@ -17,21 +17,22 @@ Implemented:
   - `GET /public/apps/{slug}/runtime`
   - `GET /public/apps/preview/revisions/{revision_id}/runtime`
   - `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
-- `/public/apps/{slug}/ui` runtime-mode behavior (`legacy` payload, `static` -> `410 UI_SOURCE_MODE_REMOVED`).
+- Preview runtime URL now resolves to entry HTML (`.../assets/index.html`) and derives path from request context (no hardcoded `/api/py` prefix).
+- Preview iframe auth bridge implemented: runtime appends one-time `preview_token` query, asset route mints HttpOnly cookie, subsequent chunk/css requests authenticate via cookie.
 - Publish artifact promotion wiring via storage service with `BUILD_ARTIFACT_COPY_FAILED` failure contract.
-- Queue wiring for `apps_build` and placeholder `build_published_app_revision_task` lifecycle handling.
+- Queue wiring for `apps_build` and real `build_published_app_revision_task` execution flow (`npm ci`, `npm run build`, `dist` manifest, object upload).
 - Frontend service contracts for runtime/build status endpoints.
 - Builder preview switched from in-browser compile to runtime URL + build-status polling in apps builder workspace.
+- Published runtime page is static-only and redirect-only (`/public/apps/{slug}/runtime` -> `published_url`).
+- Publish build-status gate (`BUILD_PENDING` / `BUILD_FAILED`) is always-on.
+- Public source UI endpoints are hard-removed and return `410 UI_SOURCE_MODE_REMOVED`.
 
 Partially implemented:
-- Worker task exists and updates lifecycle, but real isolated `npm ci`/`npm run build` + dist upload is still pending.
-- Publish build-status gate (`BUILD_PENDING` / `BUILD_FAILED`) is currently feature-flagged (`APPS_BUILDER_PUBLISH_BUILD_GUARD_ENABLED`) instead of always-on.
-- Published runtime route now performs runtime descriptor lookup and redirects to static `published_url`, while keeping legacy auth/chat fallback when runtime URL is unavailable.
+- Worker hard-isolation controls (container hardening, resource quotas, restricted egress policy) and dedicated Node worker image rollout.
+- Build queue locking strategy (`apps_build:{app_id}` single-flight lock) is not implemented yet.
 
 Pending:
-- End-to-end static artifact production pipeline (real build execution, dist manifest generation, object upload).
 - Migration/backfill script for existing revisions and big-bang cutover execution.
-- Worker hard-isolation controls (resource/egress/container hardening) and dedicated Node worker image rollout.
 
 Locked choices:
 - Build engine: Celery queue + dedicated Node build worker image.
@@ -50,7 +51,7 @@ Locked choices:
 ## Current-State Grounding (from repo)
 - Builder policy now enforces Vite project + curated dependency rules in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_admin.py`.
 - Builder preview now uses preview runtime descriptor + asset URL polling flow in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/AppsBuilderWorkspace.tsx`.
-- Published runtime page now performs runtime-based redirect first in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/published/[appSlug]/page.tsx`, with legacy auth/chat UI kept as fallback.
+- Published runtime page now uses static-only redirect behavior in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/published/[appSlug]/page.tsx`.
 - Public runtime API now includes runtime descriptor and preview asset proxy endpoints in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_public.py`.
 - Celery + Redis already exist in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/workers/celery_app.py` and `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/workers/tasks.py`.
 
@@ -114,7 +115,7 @@ Status: Partially implemented.
 - Use a per-app lock (`apps_build:{app_id}`) so only one build runs per app at a time; newest queued sequence is authoritative.
 - Add worker runtime image (new Dockerfile) with Python + Node LTS + npm for Celery worker pods/containers.
 Current gap:
-- Task exists and handles lifecycle placeholders, but real build/upload flow and worker runtime image deployment are not completed yet.
+- Worker runtime image + isolation controls (resource/egress/container hardening) are not completed yet.
 
 ## 5) Object storage + CDN integration
 Status: Partially implemented.
@@ -138,7 +139,7 @@ Current gap:
 - Full CDN published URL contract is not final yet (`_build_published_url` still drives runtime URL in current admin router).
 
 ## 6) Admin API contract updates
-Status: Implemented with one flagged behavior.
+Status: Implemented.
 - In `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_admin.py`:
 - Update builder revision create/reset flows to:
 - create revision with `build_status=queued`
@@ -155,9 +156,6 @@ Status: Implemented with one flagged behavior.
 - If `succeeded` -> clone to published revision, copy/promote built artifacts to published revision prefix, set `published_url` (no rebuild during publish).
 - Remove React-only import allowlist enforcement in project validator.
 - Replace with Vite project + dependency policy validation.
-Note:
-- Publish build gate is currently behind `APPS_BUILDER_PUBLISH_BUILD_GUARD_ENABLED`.
-
 ## 7) Public runtime API contract updates
 Status: Implemented.
 - In `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_public.py`:
@@ -166,15 +164,17 @@ Status: Implemented.
 - Response fields:
 - `app_id`, `slug`, `revision_id`, `runtime_mode: "vite_static"`, `published_url`, `asset_base_url`, `api_base_path: "/api/py"`.
 - Keep `/public/apps/{slug}/config` for auth/status metadata.
-- `/public/apps/{slug}/ui` behavior by runtime mode:
-- `APPS_RUNTIME_MODE=legacy`: keep existing UI-source response for rollback compatibility.
-- `APPS_RUNTIME_MODE=static`: return `410 UI_SOURCE_MODE_REMOVED`.
+- `/public/apps/{slug}/ui` is removed and returns `410 UI_SOURCE_MODE_REMOVED` in all modes.
 - Add draft preview asset proxy endpoint:
 - `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
 - Requires preview token principal validation, then streams object storage asset.
 - Add preview runtime descriptor endpoint:
 - `GET /public/apps/preview/revisions/{revision_id}/runtime`
-- Returns `preview_url` pointing to proxy asset base.
+- Returns `preview_url` pointing to proxy entry HTML (`index.html` or manifest `entry_html`) and `asset_base_url` for asset root.
+- Preview auth sources supported for draft assets:
+- `Authorization: Bearer <preview_token>`
+- `preview_token` query parameter (used by iframe bootstrap)
+- HttpOnly cookie `published_app_preview_token` (set on first asset response)
 
 ## 8) Frontend changes
 Status: Partially implemented.
@@ -193,9 +193,8 @@ Status: Partially implemented.
 - big-bang: replace client compile path with redirect flow:
 - fetch config/runtime
 - if published + runtime available -> `window.location.replace(published_url)`
-- keep auth gating routes only as fallback until static app auth UI is fully migrated.
 Current gap:
-- Legacy auth/chat fallback still exists in the published route and should be removed once static app auth UX is fully migrated.
+- Dedicated static app auth UX migration on runtime host is still pending.
 
 ## 9) Migration plan (big-bang)
 Status: Pending.
@@ -213,8 +212,7 @@ Status: Pending.
 - If any published revision fails build:
 - set app status `paused` with actionable build error; do not silently serve broken runtime.
 - Rollback switch:
-- Feature flag `APPS_RUNTIME_MODE=legacy|static`.
-- keep legacy code path available until migration completion verification, then remove.
+- No source-UI rollback path; static runtime is canonical.
 
 ## Public APIs / Interfaces / Types (explicit changes)
 - Added admin endpoints:
@@ -225,9 +223,7 @@ Status: Pending.
 - `GET /public/apps/preview/revisions/{revision_id}/runtime`
 - `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
 - Changed behavior:
-- `GET /public/apps/{slug}/ui`:
-- `legacy` mode -> existing source-UI payload.
-- `static` mode -> `410 UI_SOURCE_MODE_REMOVED`.
+- `GET /public/apps/{slug}/ui` always returns `410 UI_SOURCE_MODE_REMOVED`.
 - `POST /admin/apps/{id}/publish` may return:
 - `409 BUILD_PENDING`
 - `422 BUILD_FAILED`
@@ -265,7 +261,7 @@ Status: Pending.
 - publish blocked on `BUILD_PENDING` and `BUILD_FAILED`.
 - publish artifact promotion copies draft dist to published revision prefix (no rebuild).
 - public runtime descriptor returns `vite_static` + `published_url`.
-- `/ui` serves legacy payload when `APPS_RUNTIME_MODE=legacy`, returns 410 when `APPS_RUNTIME_MODE=static`.
+- `/ui` always returns `410 UI_SOURCE_MODE_REMOVED`.
 - preview token allows draft asset proxy; invalid token rejected.
 - Update `test_state.md` with new command/date/result.
 Status:
@@ -285,13 +281,15 @@ Status:
 - remove compileReactArtifact dependency in published runtime tests.
 Status:
 - Builder workspace preview/build-status tests updated for runtime descriptor flow.
-- Published runtime redirect migration tests are still pending with the page migration.
+- Published runtime redirect tests updated for static-only runtime resolution behavior.
 
 ## End-to-end acceptance
 - create app -> edit -> auto-build -> preview works.
 - publish -> URL points to CDN path with revision id.
 - static app loads and can call shared backend chat/auth via `/api/py`.
-- rollback check: flip `APPS_RUNTIME_MODE=legacy` and verify old `/ui` runtime path remains functional.
+- verify `/public/apps/{slug}/ui` consistently returns `410 UI_SOURCE_MODE_REMOVED`.
+Status:
+- Verified locally against live app/revision (`f6aae6d2-39b0-4fe7-81c3-43ce409f2270` / `4dbde79d-699d-4ab3-861f-dc56238995d6`): rebuild succeeded, runtime preview URL resolved to `/public/apps/.../assets/index.html?preview_token=...`, iframe-style load returned `200`, and JS asset follow-up returned `200`.
 
 ## Documentation updates required
 - Update `/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/Plans/AppsBuilderV1Plan.md`.
@@ -307,5 +305,5 @@ Status:
 - Package manager is npm (`package-lock.json`) for build workers.
 - Object storage is S3-compatible and CDN sits in front of storage paths.
 - API gateway can route `/api/py` on app runtime domains to backend.
-- Big-bang means static runtime is default after migration; legacy source-UI path is retained only behind `APPS_RUNTIME_MODE=legacy` rollback flag until final removal.
+- Big-bang means static runtime is canonical and source-UI path remains removed.
 - Existing template keys remain unchanged; only implementation source changes.

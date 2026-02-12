@@ -1,6 +1,6 @@
 # Architecture Tree
 
-Last Updated: 2026-02-11
+Last Updated: 2026-02-12
 
 ```
 backend
@@ -342,6 +342,9 @@ backend/app/services/stt/factory.py
 backend/app/services/stt/base.py
 backend/app/templates
 backend/app/templates/published_apps
+backend/app/templates/published_apps/chat-classic
+backend/app/templates/published_apps/chat-classic/tailwind.config.ts
+backend/app/templates/published_apps/chat-classic/postcss.config.cjs
 backend/frontend
 backend/frontend/package-lock.json
 backend/frontend/package.json
@@ -491,6 +494,9 @@ backend/sdk/graph_builder.py
 backend/sdk/fuzzer.py
 backend/.env
 backend/scripts
+backend/scripts/dev-services
+backend/scripts/dev-services/template_local_dev.sh
+backend/scripts/dev-services/template_build_all.sh
 backend/scripts/debug_agent_streaming.py
 backend/scripts/reproduce_smg_404.py
 backend/scripts/test_pagination_full.py
@@ -624,6 +630,8 @@ backend/tests/agent_builder_large_agents
 backend/tests/agent_tool_agents
 backend/tests/agent_tool_usecases
 backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py
+backend/tests/agent_tool_usecases/test_agent_execution_panel_stream_api.py
+backend/tests/agent_tool_usecases/test_agent_tool_reasoning_stream.py
 backend/tests/agent_tool_usecases/test_state.md
 backend/tests/model_registry
 backend/tests/builtin_tools_registry
@@ -780,11 +788,11 @@ frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx
 frontend-reshet/src/__tests__/published_apps/apps_builder_workspace.test.tsx
 frontend-reshet/src/__tests__/published_apps/published_auth_flows.test.tsx
 frontend-reshet/src/__tests__/published_apps/published_runtime_gate.test.tsx
-frontend-reshet/src/__tests__/published_apps/published_chat_template.test.tsx
 frontend-reshet/src/__tests__/published_apps/test_state.md
 frontend-reshet/src/lib/store/usePublishedAppAuthStore.ts
 frontend-reshet/src/services/published-apps.ts
 frontend-reshet/src/services/published-runtime.ts
 backend/documentations/Plans
 backend/documentations/Plans/AppsBuilderV1Plan.md
+backend/documentations/Plans/Agents_Tools_Production_Readiness_Refinement_Testing_Plan.md
 backend/documentations/Plans/ChatBuilderProductionRoadmap.md

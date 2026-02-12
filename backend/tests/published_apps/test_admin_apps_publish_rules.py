@@ -51,6 +51,13 @@ async def test_publish_unpublish_and_runtime_preview(client, db_session):
     )
     assert create_resp.status_code == 200
     app_id = create_resp.json()["id"]
+    app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
+    assert app_row is not None
+    draft_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
+    assert draft_row is not None
+    draft_row.build_status = PublishedAppRevisionBuildStatus.succeeded
+    draft_row.build_error = None
+    await db_session.commit()
 
     publish_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
     assert publish_resp.status_code == 200
@@ -67,8 +74,7 @@ async def test_publish_unpublish_and_runtime_preview(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_publish_guard_enforces_build_pending_and_failed_contracts(client, db_session, monkeypatch):
-    monkeypatch.setenv("APPS_BUILDER_PUBLISH_BUILD_GUARD_ENABLED", "1")
+async def test_publish_guard_enforces_build_pending_and_failed_contracts(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -119,7 +125,6 @@ async def test_publish_guard_enforces_build_pending_and_failed_contracts(client,
 
 @pytest.mark.asyncio
 async def test_publish_returns_copy_failed_when_artifact_promotion_errors(client, db_session, monkeypatch):
-    monkeypatch.setenv("APPS_BUILDER_PUBLISH_BUILD_GUARD_ENABLED", "1")
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 

@@ -102,7 +102,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     async (revisionId: string, previewToken: string) => {
       try {
         const runtime = await publishedRuntimeService.getPreviewRuntime(revisionId, previewToken);
-        const nextUrl = runtime.asset_base_url || runtime.preview_url;
+        const nextUrl = runtime.preview_url || runtime.asset_base_url;
         setPreviewAssetUrl(nextUrl || null);
       } catch {
         setPreviewAssetUrl(null);

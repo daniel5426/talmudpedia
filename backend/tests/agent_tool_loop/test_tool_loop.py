@@ -307,3 +307,47 @@ async def test_concurrency_group_limit(monkeypatch):
     )
 
     assert active["max"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_call_chunk_index_continuations_merge_into_single_call(monkeypatch):
+    tool_id = str(uuid4())
+
+    provider = FakeProvider(
+        responses=[
+            [
+                AIMessageChunk(content="", tool_call_chunks=[{"id": "call-1", "name": "tool_one", "args": "", "index": 0}]),
+                AIMessageChunk(content="", tool_call_chunks=[{"index": 0, "args": "{\"query\":\"latest"}]),
+                AIMessageChunk(content="", tool_call_chunks=[{"index": 0, "args": " AI news\"}"}]),
+            ],
+            [AIMessageChunk(content="done")],
+        ]
+    )
+    patch_resolver(monkeypatch, provider)
+
+    captured_inputs = []
+
+    async def fake_execute(self, state, config, context):
+        captured_inputs.append(state.get("context"))
+        return {"context": {"tool_id": config["tool_id"], "input": state.get("context")}}
+
+    monkeypatch.setattr(ToolNodeExecutor, "execute", fake_execute)
+
+    tool_record = make_tool_record(tool_id, "tool_one", {"is_pure": True})
+    db = FakeDB([tool_record])
+
+    executor = ReasoningNodeExecutor(tenant_id=None, db=db)
+
+    result = await executor.execute(
+        {"messages": [{"role": "user", "content": "hi"}]},
+        {
+            "model_id": "model-1",
+            "tools": [tool_id],
+            "tool_execution_mode": "sequential",
+        },
+        {"node_id": "agent-chunk-merge"},
+    )
+
+    assert result.get("error") is None
+    assert len(captured_inputs) == 1
+    assert captured_inputs[0]["query"] == "latest AI news"

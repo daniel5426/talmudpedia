@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable
-from fastapi import Depends, HTTPException, Header, status
+from fastapi import Depends, HTTPException, Header, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from .routers.auth import get_current_user
@@ -310,11 +310,26 @@ async def get_current_published_app_principal(
 
 
 async def get_optional_published_app_preview_principal(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> Optional[Dict[str, Any]]:
-    if credentials is None or not credentials.credentials:
+    token: Optional[str] = None
+    if credentials is not None and credentials.credentials:
+        token = credentials.credentials.strip()
+
+    if not token:
+        query_token = (request.query_params.get("preview_token") or "").strip()
+        if query_token:
+            token = query_token
+
+    if not token:
+        cookie_token = (request.cookies.get("published_app_preview_token") or "").strip()
+        if cookie_token:
+            token = cookie_token
+
+    if not token:
         return None
-    token = credentials.credentials
+
     try:
         payload = decode_published_app_preview_token(token)
     except Exception:

@@ -554,16 +554,51 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 chunk_args = getattr(chunk, "args", None)
                 chunk_index = getattr(chunk, "index", None)
 
-            key = chunk_id or (f"index:{chunk_index}" if chunk_index is not None else None)
-            if key is None:
+            def _find_key_by_index(idx: Any) -> Optional[str]:
+                if idx is None:
+                    return None
+                for existing_key, existing in buffers.items():
+                    if existing.get("index") == idx:
+                        return existing_key
+                return None
+
+            existing_index_key = _find_key_by_index(chunk_index)
+            key: Optional[str] = None
+
+            if chunk_id:
+                if chunk_id in buffers:
+                    key = chunk_id
+                elif existing_index_key is not None:
+                    key = existing_index_key
+                else:
+                    key = chunk_id
+            elif existing_index_key is not None:
+                key = existing_index_key
+            elif chunk_index is not None:
+                key = f"index:{chunk_index}"
+            else:
                 key = f"pos:{len(order)}"
+
             if key not in buffers:
-                buffers[key] = {"id": chunk_id, "name": chunk_name, "args": ""}
+                buffers[key] = {"id": chunk_id, "name": chunk_name, "args": "", "index": chunk_index}
                 order.append(key)
+
+            # Promote index-keyed partial buffer to canonical chunk id when id later arrives.
+            if chunk_id and key != chunk_id and chunk_id not in buffers:
+                buffers[chunk_id] = buffers.pop(key)
+                for i, existing_key in enumerate(order):
+                    if existing_key == key:
+                        order[i] = chunk_id
+                        break
+                key = chunk_id
 
             buf = buffers[key]
             if chunk_name:
                 buf["name"] = chunk_name
+            if chunk_index is not None and buf.get("index") is None:
+                buf["index"] = chunk_index
+            if chunk_id and not buf.get("id"):
+                buf["id"] = chunk_id
             if chunk_args:
                 if not isinstance(chunk_args, str):
                     try:

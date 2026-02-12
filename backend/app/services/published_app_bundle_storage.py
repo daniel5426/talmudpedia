@@ -158,6 +158,32 @@ class PublishedAppBundleStorage:
 
         return copied
 
+    def write_asset_bytes(
+        self,
+        *,
+        dist_storage_prefix: str,
+        asset_path: str,
+        payload: bytes,
+        content_type: Optional[str] = None,
+        cache_control: Optional[str] = None,
+    ) -> str:
+        key = self.build_asset_key(dist_storage_prefix=dist_storage_prefix, asset_path=asset_path)
+        client = self._get_client()
+        resolved_content_type = content_type or mimetypes.guess_type(PurePosixPath(asset_path).name)[0] or "application/octet-stream"
+        kwargs = {
+            "Bucket": self._config.bucket,
+            "Key": key,
+            "Body": payload,
+            "ContentType": resolved_content_type,
+        }
+        if cache_control:
+            kwargs["CacheControl"] = cache_control
+        try:
+            client.put_object(**kwargs)
+        except Exception as exc:
+            raise PublishedAppBundleStorageError(f"Failed to upload asset `{asset_path}`: {exc}") from exc
+        return key
+
     def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str) -> Tuple[bytes, str]:
         key = self.build_asset_key(dist_storage_prefix=dist_storage_prefix, asset_path=asset_path)
         client = self._get_client()

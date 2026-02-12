@@ -1,11 +1,11 @@
 export const theme = {
-  fontDisplay: "'IBM Plex Serif', serif",
-  fontBody: "'IBM Plex Sans', sans-serif",
-  bg: "#f4f5f7",
+  fontDisplay: "'Fraunces', 'Iowan Old Style', serif",
+  fontBody: "'IBM Plex Sans', 'Avenir Next', sans-serif",
+  bg: "#f5f7fb",
   panel: "#ffffff",
-  border: "#dde2ea",
+  border: "#dde3ef",
   accent: "#0f6cff",
-  accentSoft: "#dce8ff",
-  text: "#141c2b",
-  muted: "#5a6b85",
+  accentSoft: "#dfe9ff",
+  text: "#182131",
+  muted: "#66758f",
 };

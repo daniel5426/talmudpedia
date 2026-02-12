@@ -1,6 +1,6 @@
 # ChatBuilder Production Roadmap (Lovable/Base44 Parity Target)
 
-Last Updated: 2026-02-11
+Last Updated: 2026-02-12
 
 ## Goal
 Upgrade the Apps Builder `Builder Chat` from a v1 patch-demo flow into a production-grade AI coding assistant with reliability, autonomy, and UX quality comparable to Lovable/Base44 class products, aligned with the platform move to full backend-built Vite projects deployed as static assets.
@@ -320,16 +320,22 @@ Exit criteria:
 - Stream includes structured tool/status events for chat timeline rendering.
 
 ### Completed (Phase 2.5 - Initial Start)
-1. Publish gate contract (feature-flagged) added:
-- Flag: `APPS_BUILDER_PUBLISH_BUILD_GUARD_ENABLED` (default off).
+1. Publish gate contract added (always-on):
 - `POST /admin/apps/{id}/publish` returns:
   - `409` with `code: BUILD_PENDING` when draft build status is `queued|running`,
   - `422` with `code: BUILD_FAILED` + diagnostics when draft build status is `failed`,
   - success when draft build status is `succeeded`.
 
+2. Worker-build preflight gate added (feature-flagged) for draft save/apply validation:
+- Flag: `APPS_BUILDER_WORKER_BUILD_GATE_ENABLED` (default off).
+- When enabled:
+  - `POST /admin/apps/{app_id}/builder/revisions` runs worker-style `npm install/npm ci` + `npm run build` preflight before persistence.
+  - `POST /admin/apps/{app_id}/builder/validate` includes worker-style preflight in validation.
+  - `POST /admin/apps/{app_id}/builder/chat/stream` blocks patch apply emission if worker-style preflight fails.
+
 ### Validation Results
 1. `pytest backend/tests/published_apps/test_admin_apps_publish_rules.py backend/tests/published_apps/test_builder_revisions.py -q`
-- PASS (13 passed)
+- PASS (16 passed)
 
 2. `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
 - PASS (3 tests)
@@ -337,7 +343,7 @@ Exit criteria:
 ### In Progress
 1. Phase 2 loop currently uses lightweight project tools and no external worker build/test execution; deeper tool autonomy/evals are pending.
 2. Big-bang migration alignment is pending:
-- Replace compile-style validation with worker `vite build` gating in revision save/chat apply.
+- Make worker-build preflight gate default-on after rollout hardening and latency budget confirmation.
 - Expand patch policy to full Vite project file set and dependency-aware constraints.
 - Ensure preview/runtime paths consume backend-produced static assets only.
-3. Publish build-status gate is currently feature-flagged; full cutover needs flag default-on + rollout safeguards after worker build pipeline is production-ready.
+3. Phase 2 agent loop still relies on compile-style tool checks (`compile_project`) and does not yet run worker build/test tools in-loop.

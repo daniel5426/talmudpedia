@@ -85,7 +85,7 @@ Migration:
 - Cross-app access is prevented by filtering all app runtime reads/writes with app scope.
 - Membership model enforces which users can access authenticated app data.
 - Builder preview uses short-lived preview tokens and revision/app/tenant claims.
-- Public UI endpoint serves published snapshot only (never draft); when `APPS_RUNTIME_MODE=static`, `/public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED`.
+- Public source-UI endpoint is removed; `/public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED` and runtime consumers must use `/public/apps/{slug}/runtime`.
 - Publish artifact promotion copies built dist assets from draft revision prefix to published revision prefix; copy failures return `500 BUILD_ARTIFACT_COPY_FAILED` and leave app publish pointer unchanged.
 
 ## Current Constraints

@@ -1,9 +1,10 @@
 import json
 import os
 import re
+import tempfile
 from datetime import datetime, timezone
 from hashlib import sha256
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID, uuid4
 
@@ -57,6 +58,8 @@ BUILDER_ALLOWED_EXTENSIONS = {
     ".tsx",
     ".js",
     ".jsx",
+    ".mjs",
+    ".cjs",
     ".css",
     ".json",
     ".md",
@@ -72,6 +75,7 @@ BUILDER_ALLOWED_EXTENSIONS = {
 BUILDER_MAX_FILES = int(os.getenv("BUILDER_MAX_FILES", "200"))
 BUILDER_MAX_OPS = int(os.getenv("BUILDER_MAX_OPS", "200"))
 BUILDER_MAX_FILE_BYTES = int(os.getenv("BUILDER_MAX_FILE_BYTES", str(256 * 1024)))
+BUILDER_MAX_LOCKFILE_BYTES = int(os.getenv("BUILDER_MAX_LOCKFILE_BYTES", str(2 * 1024 * 1024)))
 BUILDER_MAX_PROJECT_BYTES = int(os.getenv("BUILDER_MAX_PROJECT_BYTES", str(2 * 1024 * 1024)))
 BUILDER_MODEL_NAME = os.getenv("BUILDER_MODEL_NAME", "gpt-5-mini")
 BUILDER_MODEL_MAX_RETRIES = int(os.getenv("BUILDER_MODEL_MAX_RETRIES", "2"))
@@ -80,6 +84,7 @@ BUILDER_CONTEXT_MAX_FILE_BYTES = int(os.getenv("BUILDER_CONTEXT_MAX_FILE_BYTES",
 BUILDER_AGENT_MAX_ITERATIONS = int(os.getenv("BUILDER_AGENT_MAX_ITERATIONS", "3"))
 BUILDER_AGENT_MAX_SEARCH_RESULTS = int(os.getenv("BUILDER_AGENT_MAX_SEARCH_RESULTS", "8"))
 IMPORT_RE = re.compile(r'^\s*(?:import|export)\s+(?:[^"\']*?\s+from\s+)?["\']([^"\']+)["\']', re.MULTILINE)
+BUILDER_LOCKFILE_NAMES = {"package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 
 
 class PublishedAppResponse(BaseModel):
@@ -633,8 +638,8 @@ def _builder_auto_enqueue_enabled() -> bool:
     return _env_flag("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", False)
 
 
-def _builder_publish_build_guard_enabled() -> bool:
-    return _env_flag("APPS_BUILDER_PUBLISH_BUILD_GUARD_ENABLED", False)
+def _builder_worker_build_gate_enabled() -> bool:
+    return _env_flag("APPS_BUILDER_WORKER_BUILD_GATE_ENABLED", False)
 
 
 def _enqueue_revision_build(
@@ -657,6 +662,61 @@ def _enqueue_revision_build(
         slug=app.slug,
         build_kind=build_kind,
     )
+
+
+async def _run_worker_build_preflight(files: Dict[str, str]) -> None:
+    from app.workers.tasks import _materialize_project_files, _run_subprocess
+
+    npm_ci_timeout = int(os.getenv("APPS_BUILD_NPM_CI_TIMEOUT_SECONDS", "300"))
+    npm_build_timeout = int(os.getenv("APPS_BUILD_NPM_BUILD_TIMEOUT_SECONDS", "300"))
+
+    with tempfile.TemporaryDirectory(prefix="apps-builder-preflight-") as temp_dir:
+        project_dir = Path(temp_dir)
+        _materialize_project_files(project_dir, files)
+
+        has_lockfile = (project_dir / "package-lock.json").exists()
+        install_command = ["npm", "ci"] if has_lockfile else ["npm", "install", "--no-audit", "--no-fund"]
+        install_code, install_stdout, install_stderr = await _run_subprocess(
+            install_command,
+            cwd=project_dir,
+            timeout_seconds=npm_ci_timeout,
+        )
+        if install_code != 0:
+            install_name = "npm ci" if has_lockfile else "npm install"
+            raise RuntimeError(
+                f"`{install_name}` failed with exit code {install_code}\n{install_stderr or install_stdout}"
+            )
+
+        build_code, build_stdout, build_stderr = await _run_subprocess(
+            ["npm", "run", "build"],
+            cwd=project_dir,
+            timeout_seconds=npm_build_timeout,
+        )
+        if build_code != 0:
+            raise RuntimeError(
+                f"`npm run build` failed with exit code {build_code}\n{build_stderr or build_stdout}"
+            )
+
+        dist_dir = project_dir / "dist"
+        if not dist_dir.exists() or not dist_dir.is_dir():
+            raise RuntimeError("Build succeeded but dist directory was not produced")
+
+
+async def _validate_worker_build_gate_or_raise(files: Dict[str, str]) -> None:
+    if not _builder_worker_build_gate_enabled():
+        return
+    try:
+        await _run_worker_build_preflight(files)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        message = str(exc).strip() or "Worker build validation failed"
+        if len(message) > 4000:
+            message = message[:4000] + "... [truncated]"
+        raise _builder_compile_error(
+            "Worker build validation failed",
+            diagnostics=[{"message": message}],
+        )
 
 
 def _promote_revision_dist_artifacts(
@@ -1335,9 +1395,10 @@ def _validate_builder_project_or_raise(files: Dict[str, str], entry_file: str) -
     for path, content in files.items():
         _assert_builder_path_allowed(path, field="files")
         encoded_size = len(content.encode("utf-8"))
-        if encoded_size > BUILDER_MAX_FILE_BYTES:
+        max_bytes = BUILDER_MAX_LOCKFILE_BYTES if path in BUILDER_LOCKFILE_NAMES else BUILDER_MAX_FILE_BYTES
+        if encoded_size > max_bytes:
             raise _builder_policy_error(
-                f"File exceeds size limit ({BUILDER_MAX_FILE_BYTES} bytes): {path}",
+                f"File exceeds size limit ({max_bytes} bytes): {path}",
                 field="files",
             )
         total_size += encoded_size
@@ -1715,6 +1776,7 @@ async def create_builder_revision(
             payload.entry_file or current.entry_file,
             payload.operations,
         )
+    await _validate_worker_build_gate_or_raise(next_files)
 
     revision = PublishedAppRevision(
         published_app_id=app.id,
@@ -1838,6 +1900,7 @@ async def validate_builder_revision(
         )
 
     diagnostics = _validate_builder_project_or_raise(next_files, next_entry)
+    await _validate_worker_build_gate_or_raise(next_files)
     return BuilderValidationResponse(
         ok=True,
         entry_file=next_entry,
@@ -1976,7 +2039,8 @@ async def builder_chat_stream(
                 summary=patch_summary,
             )
         patch_ops_payload = _serialize_patch_ops(generation_result.operations)
-        _apply_patch_operations(existing_files, draft.entry_file, generation_result.operations)
+        next_files, _ = _apply_patch_operations(existing_files, draft.entry_file, generation_result.operations)
+        await _validate_worker_build_gate_or_raise(next_files)
     except HTTPException as exc:
         _, diagnostics = _extract_http_error_details(exc)
         await _persist_builder_conversation_turn(
@@ -2139,39 +2203,38 @@ async def publish_published_app(
 
     current_draft = await _ensure_current_draft_revision(db, app, actor_id)
     current_draft_id = str(current_draft.id)
-    if _builder_publish_build_guard_enabled():
-        current_build_status = (
-            current_draft.build_status.value
-            if hasattr(current_draft.build_status, "value")
-            else str(current_draft.build_status)
+    current_build_status = (
+        current_draft.build_status.value
+        if hasattr(current_draft.build_status, "value")
+        else str(current_draft.build_status)
+    )
+    if current_build_status in {
+        PublishedAppRevisionBuildStatus.queued.value,
+        PublishedAppRevisionBuildStatus.running.value,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "BUILD_PENDING",
+                "message": "Draft build is still in progress",
+                "build_status": current_build_status,
+                "revision_id": current_draft_id,
+            },
         )
-        if current_build_status in {
-            PublishedAppRevisionBuildStatus.queued.value,
-            PublishedAppRevisionBuildStatus.running.value,
-        }:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "BUILD_PENDING",
-                    "message": "Draft build is still in progress",
-                    "build_status": current_build_status,
-                    "revision_id": current_draft_id,
-                },
-            )
-        if current_build_status == PublishedAppRevisionBuildStatus.failed.value:
-            diagnostics = []
-            if current_draft.build_error:
-                diagnostics.append({"message": current_draft.build_error})
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "BUILD_FAILED",
-                    "message": "Draft build failed",
-                    "build_status": current_build_status,
-                    "revision_id": current_draft_id,
-                    "diagnostics": diagnostics,
-                },
-            )
+    if current_build_status == PublishedAppRevisionBuildStatus.failed.value:
+        diagnostics = []
+        if current_draft.build_error:
+            diagnostics.append({"message": current_draft.build_error})
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "BUILD_FAILED",
+                "message": "Draft build failed",
+                "build_status": current_build_status,
+                "revision_id": current_draft_id,
+                "diagnostics": diagnostics,
+            },
+        )
     published_revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.published,

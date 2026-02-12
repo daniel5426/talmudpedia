@@ -1,6 +1,6 @@
 # Tools Guardrails Tests
 
-Last Updated: 2026-02-10
+Last Updated: 2026-02-11
 
 ## Scope
 Covers tool control-plane guardrails and tenant-isolation behavior.
@@ -19,9 +19,9 @@ Covers tool control-plane guardrails and tenant-isolation behavior.
 - Built-in instances are tenant-isolated in `/tools/builtins/instances` routes.
 
 ## Last run command + result
-- Command: `pytest -q backend/tests/builtin_tools_registry backend/tests/builtin_tool_execution backend/tests/tools_guardrails`
-- Date/Time: 2026-02-10 22:44 EET
-- Result: pass (18 passed)
+- Command: `for i in 1 2 3 4 5; do pytest -q backend/tests/agent_execution_events backend/tests/agent_tool_loop backend/tests/builtin_tool_execution backend/tests/tools_guardrails backend/tests/tool_execution backend/tests/agent_api_context backend/tests/builtin_tools_registry || exit 1; done`
+- Date/Time: 2026-02-11 22:38 EET
+- Result: pass (5 consecutive runs; each run `30 passed, 1 skipped`)
 
 ## Known gaps / follow-ups
 - Add coverage for workload-principal publish/delete approval gates on `/tools` routes.

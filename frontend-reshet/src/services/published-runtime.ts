@@ -17,15 +17,6 @@ export interface PublishedRuntimeConfig {
   ui_runtime_mode?: "legacy_template" | "custom_bundle";
 }
 
-export interface PublishedRuntimeUI {
-  app_id: string;
-  revision_id: string;
-  template_key: string;
-  entry_file: string;
-  files: Record<string, string>;
-  compiled_bundle?: string | null;
-}
-
 export interface PublishedRuntimeDescriptor {
   app_id: string;
   slug: string;
@@ -123,10 +114,6 @@ export const publishedRuntimeService = {
 
   async getRuntime(appSlug: string): Promise<PublishedRuntimeDescriptor> {
     return runtimeRequest<PublishedRuntimeDescriptor>(`/public/apps/${encodeURIComponent(appSlug)}/runtime`);
-  },
-
-  async getUI(appSlug: string): Promise<PublishedRuntimeUI> {
-    return runtimeRequest<PublishedRuntimeUI>(`/public/apps/${encodeURIComponent(appSlug)}/ui`);
   },
 
   async getPreviewRuntime(revisionId: string, token: string): Promise<PreviewRuntimeDescriptor> {

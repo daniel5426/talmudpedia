@@ -17,8 +17,27 @@ CURATED_DEPENDENCY_CATALOG: Dict[str, str] = {
     "@types/react-dom": "18.3.1",
     "@types/node": "22.10.1",
     "tailwindcss": "3.4.14",
+    "tailwindcss-animate": "1.0.7",
     "postcss": "8.4.47",
     "autoprefixer": "10.4.20",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.4.0",
+    "lucide-react": "0.554.0",
+    "nanoid": "5.1.6",
+    "ai": "5.0.95",
+    "streamdown": "1.5.1",
+    "cmdk": "1.1.1",
+    "@radix-ui/react-slot": "1.2.4",
+    "@radix-ui/react-tooltip": "1.2.8",
+    "@radix-ui/react-collapsible": "1.1.12",
+    "@radix-ui/react-use-controllable-state": "1.2.2",
+    "@radix-ui/react-dialog": "1.1.15",
+    "@radix-ui/react-dropdown-menu": "2.1.16",
+    "@radix-ui/react-hover-card": "1.1.15",
+    "@radix-ui/react-select": "2.2.6",
+    "@radix-ui/react-label": "2.1.8",
+    "@radix-ui/react-separator": "1.1.8",
 }
 
 IMPORT_EXPORT_RE = re.compile(
@@ -112,8 +131,12 @@ def validate_builder_dependency_policy(files: Dict[str, str]) -> List[Dict[str, 
             if spec.startswith(("http://", "https://")):
                 diagnostics.append({"path": path, "message": f"Network import is not allowed: {spec}"})
                 continue
+            if spec.startswith("node:"):
+                continue
             if spec.startswith("/"):
                 diagnostics.append({"path": path, "message": f"Absolute import is not allowed: {spec}"})
+                continue
+            if spec.startswith("@/"):
                 continue
             if spec.startswith("."):
                 continue

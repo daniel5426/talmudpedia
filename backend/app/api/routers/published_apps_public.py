@@ -32,6 +32,8 @@ from app.services.published_app_auth_service import PublishedAppAuthError, Publi
 
 
 router = APIRouter(prefix="/public/apps", tags=["published-apps-public"])
+PREVIEW_TOKEN_QUERY_PARAM = "preview_token"
+PREVIEW_TOKEN_COOKIE_NAME = "published_app_preview_token"
 
 
 class PublicAppConfigResponse(BaseModel):
@@ -47,15 +49,6 @@ class PublicAppConfigResponse(BaseModel):
     has_custom_ui: bool = False
     published_revision_id: Optional[str] = None
     ui_runtime_mode: str = "legacy_template"
-
-
-class PublicAppUIResponse(BaseModel):
-    app_id: str
-    revision_id: str
-    template_key: str
-    entry_file: str
-    files: Dict[str, str]
-    compiled_bundle: Optional[str] = None
 
 
 class PublicAppRuntimeResponse(BaseModel):
@@ -97,11 +90,6 @@ def _is_enabled(flag_name: str, default: str = "1") -> bool:
 
 def _apps_base_domain() -> str:
     return os.getenv("APPS_BASE_DOMAIN", "apps.localhost")
-
-
-def _apps_runtime_mode() -> str:
-    value = (os.getenv("APPS_RUNTIME_MODE") or "legacy").strip().lower()
-    return value if value in {"legacy", "static"} else "legacy"
 
 
 def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
@@ -260,56 +248,38 @@ async def get_published_runtime(
     )
 
 
-@router.get("/{app_slug}/ui", response_model=PublicAppUIResponse)
+@router.get("/{app_slug}/ui")
 async def get_published_ui(
     app_slug: str,
-    db: AsyncSession = Depends(get_db),
 ):
-    if _apps_runtime_mode() == "static":
-        raise HTTPException(
-            status_code=410,
-            detail={
-                "code": "UI_SOURCE_MODE_REMOVED",
-                "message": "UI source mode is disabled in static runtime mode",
-            },
-        )
-
-    app = await _assert_published(db, app_slug)
-    revision = await _get_published_ui_revision(db, app)
-    return PublicAppUIResponse(
-        app_id=str(app.id),
-        revision_id=str(revision.id),
-        template_key=revision.template_key,
-        entry_file=revision.entry_file,
-        files=dict(revision.files or {}),
-        compiled_bundle=revision.compiled_bundle,
+    _ = app_slug
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "UI_SOURCE_MODE_REMOVED",
+            "message": "UI source mode is removed; use /public/apps/{slug}/runtime instead",
+        },
     )
 
 
-@router.get("/preview/ui/{revision_id}", response_model=PublicAppUIResponse)
+@router.get("/preview/ui/{revision_id}")
 async def get_preview_ui(
     revision_id: UUID,
     principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
-    db: AsyncSession = Depends(get_db),
 ):
-    app, revision = await _get_preview_revision_for_principal(
-        db=db,
-        revision_id=revision_id,
-        principal=principal,
-    )
-
-    return PublicAppUIResponse(
-        app_id=str(app.id),
-        revision_id=str(revision.id),
-        template_key=revision.template_key,
-        entry_file=revision.entry_file,
-        files=dict(revision.files or {}),
-        compiled_bundle=revision.compiled_bundle,
+    _ = (revision_id, principal)
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "UI_SOURCE_MODE_REMOVED",
+            "message": "Preview UI source mode is removed; use /public/apps/preview/revisions/{revision_id}/runtime instead",
+        },
     )
 
 
 @router.get("/preview/revisions/{revision_id}/assets/{asset_path:path}")
 async def get_preview_asset(
+    request: Request,
     revision_id: UUID,
     asset_path: str,
     principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
@@ -339,11 +309,22 @@ async def get_preview_asset(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return Response(
+    response = Response(
         content=payload,
         media_type=content_type,
         headers={"Cache-Control": "no-store"},
     )
+    query_token = (request.query_params.get(PREVIEW_TOKEN_QUERY_PARAM) or "").strip()
+    if query_token:
+        response.set_cookie(
+            key=PREVIEW_TOKEN_COOKIE_NAME,
+            value=query_token,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            path=f"/public/apps/preview/revisions/{revision_id}/assets",
+        )
+    return response
 
 
 @router.get("/preview/revisions/{revision_id}/runtime", response_model=PreviewAppRuntimeResponse)
@@ -360,14 +341,30 @@ async def get_preview_runtime(
     )
 
     base_url = str(request.base_url).rstrip("/")
-    preview_url = f"{base_url}/api/py/public/apps/preview/revisions/{revision_id}/assets/"
+    request_path = request.url.path
+    runtime_suffix = f"/preview/revisions/{revision_id}/runtime"
+    if request_path.endswith(runtime_suffix):
+        asset_base_path = f"{request_path[: -len('/runtime')]}/assets/"
+    else:
+        asset_base_path = f"/public/apps/preview/revisions/{revision_id}/assets/"
+    asset_base_url = f"{base_url}{asset_base_path}"
+    entry_html = "index.html"
+    manifest = revision.dist_manifest or {}
+    if isinstance(manifest, dict):
+        manifest_entry = manifest.get("entry_html")
+        if isinstance(manifest_entry, str) and manifest_entry.strip():
+            entry_html = manifest_entry.lstrip("/")
+    preview_url = f"{asset_base_url}{entry_html}"
+    token = (principal.get("auth_token") or "").strip()
+    if token:
+        preview_url = _append_query(preview_url, {PREVIEW_TOKEN_QUERY_PARAM: token})
     return PreviewAppRuntimeResponse(
         app_id=str(app.id),
         slug=app.slug,
         revision_id=str(revision.id),
         runtime_mode=revision.template_runtime or "vite_static",
         preview_url=preview_url,
-        asset_base_url=preview_url,
+        asset_base_url=asset_base_url,
         api_base_path="/api/py",
     )
 
