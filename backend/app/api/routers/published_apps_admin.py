@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import os
@@ -26,6 +27,10 @@ from app.db.postgres.models.published_apps import (
     BuilderConversationTurnStatus,
     PublishedApp,
     PublishedAppBuilderConversationTurn,
+    PublishedAppDraftDevSession,
+    PublishedAppDraftDevSessionStatus,
+    PublishedAppPublishJob,
+    PublishedAppPublishJobStatus,
     PublishedAppRevision,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
@@ -36,6 +41,10 @@ from app.services.apps_builder_dependency_policy import validate_builder_depende
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleStorage,
     PublishedAppBundleStorageError,
+)
+from app.services.published_app_draft_dev_runtime import (
+    PublishedAppDraftDevRuntimeDisabled,
+    PublishedAppDraftDevRuntimeService,
 )
 from app.services.published_app_templates import (
     build_template_files,
@@ -108,6 +117,7 @@ BUILDER_AGENT_MAX_SEARCH_RESULTS = int(os.getenv("BUILDER_AGENT_MAX_SEARCH_RESUL
 IMPORT_RE = re.compile(r'^\s*(?:import|export)\s+(?:[^"\']*?\s+from\s+)?["\']([^"\']+)["\']', re.MULTILINE)
 BUILDER_FILE_MENTION_RE = re.compile(r"@([A-Za-z0-9._/\-]+)")
 BUILDER_LOCKFILE_NAMES = {"package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
+PUBLISH_POLL_MAX_DIAGNOSTICS = 12
 
 
 class PublishedAppResponse(BaseModel):
@@ -167,6 +177,7 @@ class BuilderStateResponse(BaseModel):
     current_draft_revision: Optional[PublishedAppRevisionResponse] = None
     current_published_revision: Optional[PublishedAppRevisionResponse] = None
     preview_token: Optional[str] = None
+    draft_dev: Optional["DraftDevSessionResponse"] = None
 
 
 class BuilderPatchOp(BaseModel):
@@ -229,6 +240,48 @@ class RevisionBuildStatusResponse(BaseModel):
     dist_storage_prefix: Optional[str] = None
     dist_manifest: Optional[Dict[str, Any]] = None
     template_runtime: str = "vite_static"
+
+
+class DraftDevSessionResponse(BaseModel):
+    session_id: str
+    app_id: str
+    revision_id: Optional[str] = None
+    status: str
+    preview_url: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    idle_timeout_seconds: int = 180
+    last_activity_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+
+
+class DraftDevSyncRequest(BaseModel):
+    files: Dict[str, str]
+    entry_file: str
+    revision_id: Optional[UUID] = None
+
+
+class PublishJobResponse(BaseModel):
+    job_id: str
+    app_id: str
+    status: str
+    source_revision_id: Optional[str] = None
+    saved_draft_revision_id: Optional[str] = None
+    published_revision_id: Optional[str] = None
+    error: Optional[str] = None
+    diagnostics: List[Dict[str, str]] = Field(default_factory=list)
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
+class PublishJobStatusResponse(PublishJobResponse):
+    pass
+
+
+class PublishRequest(BaseModel):
+    base_revision_id: Optional[UUID] = None
+    files: Optional[Dict[str, str]] = None
+    entry_file: Optional[str] = None
 
 
 class BuilderConversationTurnResponse(BaseModel):
@@ -388,6 +441,38 @@ def _revision_build_status_to_response(revision: PublishedAppRevision) -> Revisi
     )
 
 
+def _draft_dev_session_to_response(session: PublishedAppDraftDevSession) -> DraftDevSessionResponse:
+    return DraftDevSessionResponse(
+        session_id=str(session.id),
+        app_id=str(session.published_app_id),
+        revision_id=str(session.revision_id) if session.revision_id else None,
+        status=session.status.value if hasattr(session.status, "value") else str(session.status),
+        preview_url=session.preview_url,
+        expires_at=session.expires_at,
+        idle_timeout_seconds=int(session.idle_timeout_seconds or 180),
+        last_activity_at=session.last_activity_at,
+        last_error=session.last_error,
+    )
+
+
+def _publish_job_to_response(job: PublishedAppPublishJob) -> PublishJobResponse:
+    diagnostics = list(job.diagnostics or [])
+    normalized = [item for item in diagnostics if isinstance(item, dict)]
+    return PublishJobResponse(
+        job_id=str(job.id),
+        app_id=str(job.published_app_id),
+        status=job.status.value if hasattr(job.status, "value") else str(job.status),
+        source_revision_id=str(job.source_revision_id) if job.source_revision_id else None,
+        saved_draft_revision_id=str(job.saved_draft_revision_id) if job.saved_draft_revision_id else None,
+        published_revision_id=str(job.published_revision_id) if job.published_revision_id else None,
+        error=job.error,
+        diagnostics=normalized[:PUBLISH_POLL_MAX_DIAGNOSTICS],
+        created_at=job.created_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+    )
+
+
 async def _resolve_tenant_admin_context(
     request: Request,
     principal: Dict[str, Any],
@@ -528,6 +613,43 @@ async def _get_revision_for_app(db: AsyncSession, app_id: UUID, revision_id: UUI
     return revision
 
 
+async def _get_draft_dev_session_for_scope(
+    db: AsyncSession,
+    *,
+    app_id: UUID,
+    user_id: UUID,
+) -> Optional[PublishedAppDraftDevSession]:
+    result = await db.execute(
+        select(PublishedAppDraftDevSession).where(
+            and_(
+                PublishedAppDraftDevSession.published_app_id == app_id,
+                PublishedAppDraftDevSession.user_id == user_id,
+            )
+        ).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_publish_job_for_app(
+    db: AsyncSession,
+    *,
+    app_id: UUID,
+    job_id: UUID,
+) -> PublishedAppPublishJob:
+    result = await db.execute(
+        select(PublishedAppPublishJob).where(
+            and_(
+                PublishedAppPublishJob.id == job_id,
+                PublishedAppPublishJob.published_app_id == app_id,
+            )
+        ).limit(1)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Publish job not found")
+    return job
+
+
 async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, actor_id: Optional[UUID]) -> PublishedAppRevision:
     draft = await _get_revision(db, app.current_draft_revision_id)
     if draft is not None:
@@ -556,10 +678,41 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
     db.add(created)
     await db.flush()
     app.current_draft_revision_id = created.id
-    enqueue_error = _enqueue_revision_build(revision=created, app=app, build_kind="draft")
-    if enqueue_error:
-        _mark_revision_build_enqueue_failed(revision=created, reason=enqueue_error)
     return created
+
+
+async def _create_draft_revision_snapshot(
+    *,
+    db: AsyncSession,
+    app: PublishedApp,
+    current: PublishedAppRevision,
+    actor_id: Optional[UUID],
+    files: Dict[str, str],
+    entry_file: str,
+) -> PublishedAppRevision:
+    revision = PublishedAppRevision(
+        published_app_id=app.id,
+        kind=PublishedAppRevisionKind.draft,
+        template_key=app.template_key,
+        entry_file=entry_file,
+        files=files,
+        build_status=PublishedAppRevisionBuildStatus.queued,
+        build_seq=_next_build_seq(current),
+        build_error=None,
+        build_started_at=None,
+        build_finished_at=None,
+        dist_storage_prefix=None,
+        dist_manifest=None,
+        template_runtime="vite_static",
+        compiled_bundle=None,
+        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+        source_revision_id=current.id,
+        created_by=actor_id,
+    )
+    db.add(revision)
+    await db.flush()
+    app.current_draft_revision_id = revision.id
+    return revision
 
 
 def _builder_policy_error(message: str, *, field: Optional[str] = None) -> HTTPException:
@@ -671,6 +824,14 @@ def _builder_worker_build_gate_enabled() -> bool:
     return _env_flag("APPS_BUILDER_WORKER_BUILD_GATE_ENABLED", False)
 
 
+def _publish_full_build_enabled() -> bool:
+    return _env_flag("APPS_PUBLISH_FULL_BUILD_ENABLED", True)
+
+
+def _publish_job_eager_enabled() -> bool:
+    return _env_flag("APPS_PUBLISH_JOB_EAGER", False)
+
+
 def _mark_revision_build_enqueue_failed(
     *,
     revision: PublishedAppRevision,
@@ -722,6 +883,52 @@ def _enqueue_revision_build(
             },
         )
         return f"Failed to enqueue build task: {exc}"
+    return None
+
+
+def _enqueue_publish_job(
+    *,
+    job: PublishedAppPublishJob,
+) -> Optional[str]:
+    try:
+        from app.workers.tasks import publish_published_app_task
+    except Exception as exc:
+        return f"Publish worker task import failed: {exc}"
+
+    if _publish_job_eager_enabled():
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    publish_published_app_task.run,
+                    str(job.id),
+                )
+                future.result()
+        except Exception as exc:
+            logger.warning(
+                "Failed to run published app publish task eagerly",
+                extra={
+                    "publish_job_id": str(job.id),
+                    "app_id": str(job.published_app_id),
+                    "error": str(exc),
+                },
+            )
+            return f"Failed to run publish task eagerly: {exc}"
+        return None
+
+    try:
+        publish_published_app_task.delay(
+            job_id=str(job.id),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to enqueue published app publish task",
+            extra={
+                "publish_job_id": str(job.id),
+                "app_id": str(job.published_app_id),
+                "error": str(exc),
+            },
+        )
+        return f"Failed to enqueue publish task: {exc}"
     return None
 
 
@@ -2100,9 +2307,6 @@ async def create_published_app(
         db.add(revision)
         await db.flush()
         app.current_draft_revision_id = revision.id
-        enqueue_error = _enqueue_revision_build(revision=revision, app=app, build_kind="draft")
-        if enqueue_error:
-            _mark_revision_build_enqueue_failed(revision=revision, reason=enqueue_error)
 
         await db.commit()
     except IntegrityError:
@@ -2142,6 +2346,15 @@ async def get_builder_state(
 
     draft = await _ensure_current_draft_revision(db, app, actor_id)
     published = await _get_revision(db, app.current_published_revision_id)
+    draft_dev_session: Optional[PublishedAppDraftDevSession] = None
+    if actor_id:
+        runtime_service = PublishedAppDraftDevRuntimeService(db)
+        await runtime_service.expire_idle_sessions(app_id=app.id, user_id=actor_id)
+        draft_dev_session = await _get_draft_dev_session_for_scope(
+            db,
+            app_id=app.id,
+            user_id=actor_id,
+        )
     await db.commit()
     await db.refresh(app)
 
@@ -2161,6 +2374,7 @@ async def get_builder_state(
         current_draft_revision=_revision_to_response(draft) if draft else None,
         current_published_revision=_revision_to_response(published) if published else None,
         preview_token=preview_token,
+        draft_dev=_draft_dev_session_to_response(draft_dev_session) if draft_dev_session else None,
     )
 
 
@@ -2202,7 +2416,6 @@ async def create_builder_revision(
             payload.entry_file or current.entry_file,
             payload.operations,
         )
-    await _validate_worker_build_gate_or_raise(next_files)
 
     revision = PublishedAppRevision(
         published_app_id=app.id,
@@ -2227,13 +2440,173 @@ async def create_builder_revision(
     await db.flush()
 
     app.current_draft_revision_id = revision.id
-    enqueue_error = _enqueue_revision_build(revision=revision, app=app, build_kind="draft")
-    if enqueue_error:
-        _mark_revision_build_enqueue_failed(revision=revision, reason=enqueue_error)
     await db.commit()
     await db.refresh(app)
     await db.refresh(revision)
     return _revision_to_response(revision)
+
+
+@router.get(
+    "/{app_id}/builder/draft-dev/session",
+    response_model=DraftDevSessionResponse,
+)
+async def get_builder_draft_dev_session(
+    app_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    if actor is None:
+        raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    await runtime_service.expire_idle_sessions(app_id=app.id, user_id=actor.id)
+    session = await _get_draft_dev_session_for_scope(
+        db,
+        app_id=app.id,
+        user_id=actor.id,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft dev session not found")
+    await db.commit()
+    return _draft_dev_session_to_response(session)
+
+
+@router.post(
+    "/{app_id}/builder/draft-dev/session/ensure",
+    response_model=DraftDevSessionResponse,
+)
+async def ensure_builder_draft_dev_session(
+    app_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    if actor is None:
+        raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    draft = await _ensure_current_draft_revision(db, app, actor.id)
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    try:
+        session = await runtime_service.ensure_session(
+            app=app,
+            revision=draft,
+            user_id=actor.id,
+        )
+    except PublishedAppDraftDevRuntimeDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await db.commit()
+    return _draft_dev_session_to_response(session)
+
+
+@router.patch(
+    "/{app_id}/builder/draft-dev/session/sync",
+    response_model=DraftDevSessionResponse,
+)
+async def sync_builder_draft_dev_session(
+    app_id: UUID,
+    payload: DraftDevSyncRequest,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    if actor is None:
+        raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    draft = await _ensure_current_draft_revision(db, app, actor.id)
+    files = _coerce_files_payload(payload.files)
+    entry_file = _normalize_builder_path(payload.entry_file or draft.entry_file)
+    _assert_builder_path_allowed(entry_file, field="entry_file")
+    _validate_builder_project_or_raise(files, entry_file)
+
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    try:
+        session = await runtime_service.sync_session(
+            app=app,
+            revision=draft,
+            user_id=actor.id,
+            files=files,
+            entry_file=entry_file,
+        )
+    except PublishedAppDraftDevRuntimeDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    await db.commit()
+    return _draft_dev_session_to_response(session)
+
+
+@router.post(
+    "/{app_id}/builder/draft-dev/session/heartbeat",
+    response_model=DraftDevSessionResponse,
+)
+async def heartbeat_builder_draft_dev_session(
+    app_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    if actor is None:
+        raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor.id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft dev session not found")
+
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    try:
+        session = await runtime_service.heartbeat_session(session=session)
+    except PublishedAppDraftDevRuntimeDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await db.commit()
+    return _draft_dev_session_to_response(session)
+
+
+@router.delete(
+    "/{app_id}/builder/draft-dev/session",
+    response_model=DraftDevSessionResponse,
+)
+async def delete_builder_draft_dev_session(
+    app_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    if actor is None:
+        raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor.id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft dev session not found")
+
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    await runtime_service.stop_session(
+        session=session,
+        reason=PublishedAppDraftDevSessionStatus.stopped,
+    )
+    await db.commit()
+    return _draft_dev_session_to_response(session)
 
 
 @router.get(
@@ -2330,7 +2703,6 @@ async def validate_builder_revision(
         )
 
     diagnostics = _validate_builder_project_or_raise(next_files, next_entry)
-    await _validate_worker_build_gate_or_raise(next_files)
     return BuilderValidationResponse(
         ok=True,
         entry_file=next_entry,
@@ -2382,9 +2754,6 @@ async def reset_builder_template(
 
     app.template_key = template_key
     app.current_draft_revision_id = revision.id
-    enqueue_error = _enqueue_revision_build(revision=revision, app=app, build_kind="draft")
-    if enqueue_error:
-        _mark_revision_build_enqueue_failed(revision=revision, reason=enqueue_error)
 
     await db.commit()
     await db.refresh(revision)
@@ -2471,8 +2840,7 @@ async def builder_chat_stream(
                 summary=patch_summary,
             )
         patch_ops_payload = _serialize_patch_ops(generation_result.operations)
-        next_files, _ = _apply_patch_operations(existing_files, draft.entry_file, generation_result.operations)
-        await _validate_worker_build_gate_or_raise(next_files)
+        _apply_patch_operations(existing_files, draft.entry_file, generation_result.operations)
     except HTTPException as exc:
         loop_trace_events = getattr(exc, "builder_trace_events", None)
         if isinstance(loop_trace_events, list) and loop_trace_events:
@@ -2621,14 +2989,24 @@ async def update_published_app(
     return _app_to_response(app)
 
 
-@router.post("/{app_id}/publish", response_model=PublishedAppResponse)
+@router.post("/{app_id}/publish", response_model=PublishJobResponse)
 async def publish_published_app(
     app_id: UUID,
     request: Request,
+    payload: Optional[PublishRequest] = None,
     _: Dict[str, Any] = Depends(require_scopes("apps.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
+    if not _publish_full_build_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PUBLISH_FULL_BUILD_DISABLED",
+                "message": "Publish full-build mode is disabled (`APPS_PUBLISH_FULL_BUILD_ENABLED=0`).",
+            },
+        )
+
     ctx = await _resolve_tenant_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
 
@@ -2636,89 +3014,80 @@ async def publish_published_app(
     await _validate_agent(db, ctx["tenant_id"], app.agent_id)
     actor_id = ctx["user"].id if ctx["user"] else None
 
+    payload = payload or PublishRequest()
     current_draft = await _ensure_current_draft_revision(db, app, actor_id)
-    current_draft_id = str(current_draft.id)
-    current_build_status = (
-        current_draft.build_status.value
-        if hasattr(current_draft.build_status, "value")
-        else str(current_draft.build_status)
-    )
-    if current_build_status in {
-        PublishedAppRevisionBuildStatus.queued.value,
-        PublishedAppRevisionBuildStatus.running.value,
-    }:
+    if payload.base_revision_id and str(payload.base_revision_id) != str(current_draft.id):
         raise HTTPException(
             status_code=409,
             detail={
-                "code": "BUILD_PENDING",
-                "message": "Draft build is still in progress",
-                "build_status": current_build_status,
-                "revision_id": current_draft_id,
+                "code": "REVISION_CONFLICT",
+                "latest_revision_id": str(current_draft.id),
+                "latest_updated_at": current_draft.created_at.isoformat(),
+                "message": "Draft revision is stale",
             },
         )
-    if current_build_status == PublishedAppRevisionBuildStatus.failed.value:
-        diagnostics = []
-        if current_draft.build_error:
-            diagnostics.append({"message": current_draft.build_error})
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "BUILD_FAILED",
-                "message": "Draft build failed",
-                "build_status": current_build_status,
-                "revision_id": current_draft_id,
-                "diagnostics": diagnostics,
-            },
-        )
-    published_revision = PublishedAppRevision(
-        published_app_id=app.id,
-        kind=PublishedAppRevisionKind.published,
-        template_key=current_draft.template_key,
-        entry_file=current_draft.entry_file,
-        files=dict(current_draft.files or {}),
-        build_status=current_draft.build_status,
-        build_seq=current_draft.build_seq,
-        build_error=current_draft.build_error,
-        build_started_at=current_draft.build_started_at,
-        build_finished_at=current_draft.build_finished_at,
-        dist_storage_prefix=None,
-        dist_manifest=dict(current_draft.dist_manifest or {}) if current_draft.dist_manifest else None,
-        template_runtime=current_draft.template_runtime or "vite_static",
-        compiled_bundle=current_draft.compiled_bundle,
-        bundle_hash=current_draft.bundle_hash,
-        source_revision_id=current_draft.id,
-        created_by=actor_id,
-    )
-    db.add(published_revision)
-    await db.flush()
 
-    try:
-        promoted_prefix = _promote_revision_dist_artifacts(
+    source_revision = current_draft
+    saved_draft_revision_id: Optional[UUID] = None
+    if payload.files is not None or payload.entry_file is not None:
+        files = _coerce_files_payload(payload.files or dict(current_draft.files or {}))
+        next_entry = _normalize_builder_path(payload.entry_file or current_draft.entry_file)
+        _assert_builder_path_allowed(next_entry, field="entry_file")
+        _validate_builder_project_or_raise(files, next_entry)
+        source_revision = await _create_draft_revision_snapshot(
+            db=db,
             app=app,
-            source_revision=current_draft,
-            destination_revision=published_revision,
+            current=current_draft,
+            actor_id=actor_id,
+            files=files,
+            entry_file=next_entry,
         )
-        if promoted_prefix:
-            published_revision.dist_storage_prefix = promoted_prefix
-    except (PublishedAppBundleStorageError, ValueError) as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "code": "BUILD_ARTIFACT_COPY_FAILED",
-                "message": "Failed to promote build artifacts during publish",
-                "revision_id": current_draft_id,
-                "error": str(exc),
-            },
-        )
+        saved_draft_revision_id = source_revision.id
 
-    app.current_published_revision_id = published_revision.id
-    app.status = PublishedAppStatus.published
-    app.published_at = datetime.now(timezone.utc)
-    app.published_url = _build_published_url(app.slug)
+    publish_job = PublishedAppPublishJob(
+        published_app_id=app.id,
+        tenant_id=app.tenant_id,
+        requested_by=actor_id,
+        source_revision_id=source_revision.id,
+        saved_draft_revision_id=saved_draft_revision_id,
+        published_revision_id=None,
+        status=PublishedAppPublishJobStatus.queued,
+        error=None,
+        diagnostics=[],
+        started_at=None,
+        finished_at=None,
+    )
+    db.add(publish_job)
+    await db.flush()
     await db.commit()
-    await db.refresh(app)
-    return _app_to_response(app)
+    await db.refresh(publish_job)
+
+    enqueue_error = _enqueue_publish_job(job=publish_job)
+    if enqueue_error:
+        publish_job.status = PublishedAppPublishJobStatus.failed
+        publish_job.error = enqueue_error
+        publish_job.finished_at = datetime.now(timezone.utc)
+        publish_job.diagnostics = [{"message": enqueue_error}]
+        await db.commit()
+        await db.refresh(publish_job)
+
+    return _publish_job_to_response(publish_job)
+
+
+@router.get("/{app_id}/publish/jobs/{job_id}", response_model=PublishJobStatusResponse)
+async def get_publish_job_status(
+    app_id: UUID,
+    job_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    job = await _get_publish_job_for_app(db, app_id=app.id, job_id=job_id)
+    return PublishJobStatusResponse(**_publish_job_to_response(job).model_dump())
 
 
 @router.post("/{app_id}/unpublish", response_model=PublishedAppResponse)

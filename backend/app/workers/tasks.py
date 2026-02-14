@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from celery import shared_task
 from celery.utils.log import get_task_logger
@@ -97,6 +97,33 @@ def _build_dist_manifest(dist_dir: Path) -> Dict[str, Any]:
         "assets": assets,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _apps_base_domain() -> str:
+    return os.getenv("APPS_BASE_DOMAIN", "apps.localhost")
+
+
+def _apps_url_scheme() -> str:
+    configured = (os.getenv("APPS_URL_SCHEME") or "").strip().lower()
+    if configured in {"http", "https"}:
+        return configured
+    return "https"
+
+
+def _apps_url_port() -> str:
+    configured = (os.getenv("APPS_URL_PORT") or "").strip()
+    if configured:
+        return configured if configured.startswith(":") else f":{configured}"
+    return ""
+
+
+def _build_published_url(slug: str) -> str:
+    return f"{_apps_url_scheme()}://{slug}.{_apps_base_domain()}{_apps_url_port()}"
+
+
+def _publish_mock_mode_enabled() -> bool:
+    raw = (os.getenv("APPS_PUBLISH_MOCK_MODE") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 @celery_app.task(bind=True, name="app.workers.tasks.ingest_documents_task")
@@ -615,5 +642,305 @@ def build_published_app_revision_task(
             "build_kind": build_kind,
             "dist_storage_prefix": dist_storage_prefix,
         }
+
+    return run_async(_run())
+
+
+@celery_app.task(bind=True, name="app.workers.tasks.publish_published_app_task")
+def publish_published_app_task(
+    self,
+    job_id: str,
+):
+    async def _run():
+        from app.db.postgres.models.published_apps import (
+            PublishedApp,
+            PublishedAppPublishJob,
+            PublishedAppPublishJobStatus,
+            PublishedAppRevision,
+            PublishedAppRevisionBuildStatus,
+            PublishedAppRevisionKind,
+            PublishedAppStatus,
+        )
+        from app.db.postgres.session import sessionmaker
+        from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
+        from app.services.published_app_bundle_storage import PublishedAppBundleStorage
+
+        job_uuid = UUID(str(job_id))
+        source_files: Dict[str, str] = {}
+        source_entry_file = "src/main.tsx"
+        app_uuid: Optional[UUID] = None
+        tenant_uuid: Optional[UUID] = None
+        slug = ""
+        source_revision_uuid: Optional[UUID] = None
+        published_revision_uuid = uuid4()
+        dist_storage_prefix: Optional[str] = None
+        dist_manifest: Optional[Dict[str, Any]] = None
+        build_started_at = datetime.now(timezone.utc)
+        build_finished_at: Optional[datetime] = None
+
+        async with sessionmaker() as db:
+            result = await db.execute(
+                select(PublishedAppPublishJob).where(PublishedAppPublishJob.id == job_uuid).limit(1)
+            )
+            job = result.scalar_one_or_none()
+            if job is None:
+                return {"status": "missing", "publish_job_id": job_id}
+
+            app_result = await db.execute(
+                select(PublishedApp).where(PublishedApp.id == job.published_app_id).limit(1)
+            )
+            app = app_result.scalar_one_or_none()
+            if app is None:
+                job.status = PublishedAppPublishJobStatus.failed
+                job.error = "Published app not found"
+                job.finished_at = datetime.now(timezone.utc)
+                job.diagnostics = [{"message": "Published app not found"}]
+                await db.commit()
+                return {"status": "failed", "publish_job_id": job_id, "error": "Published app not found"}
+
+            if not job.source_revision_id:
+                job.status = PublishedAppPublishJobStatus.failed
+                job.error = "Source draft revision is missing"
+                job.finished_at = datetime.now(timezone.utc)
+                job.diagnostics = [{"message": "Source draft revision is missing"}]
+                await db.commit()
+                return {"status": "failed", "publish_job_id": job_id, "error": "Source draft revision is missing"}
+
+            revision_result = await db.execute(
+                select(PublishedAppRevision).where(
+                    and_(
+                        PublishedAppRevision.id == job.source_revision_id,
+                        PublishedAppRevision.published_app_id == app.id,
+                    )
+                ).limit(1)
+            )
+            source_revision = revision_result.scalar_one_or_none()
+            if source_revision is None:
+                job.status = PublishedAppPublishJobStatus.failed
+                job.error = "Source draft revision not found"
+                job.finished_at = datetime.now(timezone.utc)
+                job.diagnostics = [{"message": "Source draft revision not found"}]
+                await db.commit()
+                return {"status": "failed", "publish_job_id": job_id, "error": "Source draft revision not found"}
+
+            job.status = PublishedAppPublishJobStatus.running
+            job.started_at = build_started_at
+            job.finished_at = None
+            job.error = None
+            job.diagnostics = []
+            await db.commit()
+
+            source_files = dict(source_revision.files or {})
+            source_entry_file = source_revision.entry_file or "src/main.tsx"
+            app_uuid = app.id
+            tenant_uuid = app.tenant_id
+            slug = app.slug
+            source_revision_uuid = source_revision.id
+
+        try:
+            diagnostics = validate_builder_dependency_policy(source_files)
+            if diagnostics:
+                raise ValueError("; ".join(item.get("message", "Build policy violation") for item in diagnostics))
+
+            if _publish_mock_mode_enabled():
+                dist_storage_prefix = PublishedAppBundleStorage.build_revision_dist_prefix(
+                    tenant_id=str(tenant_uuid),
+                    app_id=str(app_uuid),
+                    revision_id=str(published_revision_uuid),
+                )
+                dist_manifest = {
+                    "entry_html": "index.html",
+                    "assets": [],
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "mock_publish_build": True,
+                }
+                build_finished_at = datetime.now(timezone.utc)
+            else:
+                npm_install_timeout = int(os.getenv("APPS_BUILD_NPM_INSTALL_TIMEOUT_SECONDS", "360"))
+                npm_build_timeout = int(os.getenv("APPS_BUILD_NPM_BUILD_TIMEOUT_SECONDS", "300"))
+
+                with tempfile.TemporaryDirectory(prefix=f"apps-publish-{job_id[:8]}-") as temp_dir:
+                    project_dir = Path(temp_dir)
+                    _materialize_project_files(project_dir, source_files)
+
+                    install_code, install_stdout, install_stderr = await _run_subprocess(
+                        ["npm", "install", "--no-audit", "--no-fund"],
+                        cwd=project_dir,
+                        timeout_seconds=npm_install_timeout,
+                    )
+                    if install_code != 0:
+                        raise RuntimeError(
+                            f"`npm install` failed with exit code {install_code}\n{install_stderr or install_stdout}"
+                        )
+
+                    npm_build_code, npm_build_stdout, npm_build_stderr = await _run_subprocess(
+                        ["npm", "run", "build"],
+                        cwd=project_dir,
+                        timeout_seconds=npm_build_timeout,
+                    )
+                    if npm_build_code != 0:
+                        raise RuntimeError(
+                            f"`npm run build` failed with exit code {npm_build_code}\n{npm_build_stderr or npm_build_stdout}"
+                        )
+
+                    dist_dir = project_dir / "dist"
+                    if not dist_dir.exists() or not dist_dir.is_dir():
+                        raise RuntimeError("Build succeeded but dist directory was not produced")
+
+                    dist_manifest = _build_dist_manifest(dist_dir)
+                    if str(source_entry_file).strip() and str(source_entry_file).endswith(".tsx"):
+                        dist_manifest["source_entry_file"] = source_entry_file
+
+                    storage = PublishedAppBundleStorage.from_env()
+                    dist_storage_prefix = PublishedAppBundleStorage.build_revision_dist_prefix(
+                        tenant_id=str(tenant_uuid),
+                        app_id=str(app_uuid),
+                        revision_id=str(published_revision_uuid),
+                    )
+
+                    uploaded = 0
+                    for file_path in sorted(dist_dir.rglob("*")):
+                        if not file_path.is_file():
+                            continue
+                        relative_path = file_path.relative_to(dist_dir).as_posix()
+                        cache_control = "public, max-age=31536000, immutable"
+                        if relative_path.endswith(".html"):
+                            cache_control = "no-store"
+                        storage.write_asset_bytes(
+                            dist_storage_prefix=dist_storage_prefix,
+                            asset_path=relative_path,
+                            payload=file_path.read_bytes(),
+                            content_type=mimetypes.guess_type(file_path.name)[0] or "application/octet-stream",
+                            cache_control=cache_control,
+                        )
+                        uploaded += 1
+                    dist_manifest["uploaded_assets"] = uploaded
+                    build_finished_at = datetime.now(timezone.utc)
+
+        except Exception as exc:
+            failure_message = _truncate_error(str(exc) or repr(exc))
+            async with sessionmaker() as db:
+                result = await db.execute(
+                    select(PublishedAppPublishJob).where(PublishedAppPublishJob.id == job_uuid).limit(1)
+                )
+                job = result.scalar_one_or_none()
+                if job is None:
+                    return {"status": "missing_after_failure", "publish_job_id": job_id}
+                job.status = PublishedAppPublishJobStatus.failed
+                job.error = failure_message
+                job.finished_at = datetime.now(timezone.utc)
+                job.diagnostics = [{"message": failure_message}]
+                await db.commit()
+            logger.error(
+                "published app publish failed",
+                extra={
+                    "publish_job_id": job_id,
+                    "app_id": str(app_uuid) if app_uuid else None,
+                    "source_revision_id": str(source_revision_uuid) if source_revision_uuid else None,
+                    "error": failure_message,
+                },
+            )
+            return {"status": "failed", "publish_job_id": job_id, "error": failure_message}
+
+        async with sessionmaker() as db:
+            job_result = await db.execute(
+                select(PublishedAppPublishJob).where(PublishedAppPublishJob.id == job_uuid).limit(1)
+            )
+            job = job_result.scalar_one_or_none()
+            if job is None:
+                return {"status": "missing_after_success", "publish_job_id": job_id}
+
+            app_result = await db.execute(
+                select(PublishedApp).where(PublishedApp.id == job.published_app_id).limit(1)
+            )
+            app = app_result.scalar_one_or_none()
+            if app is None:
+                job.status = PublishedAppPublishJobStatus.failed
+                job.error = "Published app not found during finalize"
+                job.finished_at = datetime.now(timezone.utc)
+                job.diagnostics = [{"message": "Published app not found during finalize"}]
+                await db.commit()
+                return {"status": "failed", "publish_job_id": job_id, "error": "Published app not found during finalize"}
+
+            source_revision_result = await db.execute(
+                select(PublishedAppRevision).where(
+                    and_(
+                        PublishedAppRevision.id == job.source_revision_id,
+                        PublishedAppRevision.published_app_id == app.id,
+                    )
+                ).limit(1)
+            )
+            source_revision = source_revision_result.scalar_one_or_none()
+            if source_revision is None:
+                job.status = PublishedAppPublishJobStatus.failed
+                job.error = "Source draft revision disappeared before finalize"
+                job.finished_at = datetime.now(timezone.utc)
+                job.diagnostics = [{"message": "Source draft revision disappeared before finalize"}]
+                await db.commit()
+                return {
+                    "status": "failed",
+                    "publish_job_id": job_id,
+                    "error": "Source draft revision disappeared before finalize",
+                }
+
+            published_revision = PublishedAppRevision(
+                id=published_revision_uuid,
+                published_app_id=app.id,
+                kind=PublishedAppRevisionKind.published,
+                template_key=source_revision.template_key,
+                entry_file=source_revision.entry_file,
+                files=dict(source_revision.files or {}),
+                build_status=PublishedAppRevisionBuildStatus.succeeded,
+                build_seq=int(source_revision.build_seq or 0) + 1,
+                build_error=None,
+                build_started_at=build_started_at,
+                build_finished_at=build_finished_at or datetime.now(timezone.utc),
+                dist_storage_prefix=dist_storage_prefix,
+                dist_manifest=dist_manifest,
+                template_runtime=source_revision.template_runtime or "vite_static",
+                compiled_bundle=source_revision.compiled_bundle,
+                bundle_hash=source_revision.bundle_hash,
+                source_revision_id=source_revision.id,
+                created_by=job.requested_by,
+            )
+            db.add(published_revision)
+            await db.flush()
+
+            app.current_published_revision_id = published_revision.id
+            app.status = PublishedAppStatus.published
+            app.published_at = datetime.now(timezone.utc)
+            app.published_url = _build_published_url(app.slug)
+
+            job.status = PublishedAppPublishJobStatus.succeeded
+            job.error = None
+            job.diagnostics = []
+            job.published_revision_id = published_revision.id
+            job.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        return {
+            "status": "succeeded",
+            "publish_job_id": job_id,
+            "app_id": str(app_uuid) if app_uuid else None,
+            "source_revision_id": str(source_revision_uuid) if source_revision_uuid else None,
+            "published_revision_id": str(published_revision_uuid),
+            "dist_storage_prefix": dist_storage_prefix,
+            "slug": slug,
+        }
+
+    return run_async(_run())
+
+
+@celery_app.task(name="app.workers.tasks.reap_published_app_draft_dev_sessions_task")
+def reap_published_app_draft_dev_sessions_task():
+    async def _run():
+        from app.db.postgres.session import sessionmaker
+        from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
+
+        async with sessionmaker() as db:
+            service = PublishedAppDraftDevRuntimeService(db)
+            expired = await service.expire_idle_sessions()
+            await db.commit()
+        return {"status": "ok", "expired_sessions": expired}
 
     return run_async(_run())

@@ -4,8 +4,7 @@ from uuid import UUID
 
 from app.db.postgres.models.agents import AgentStatus
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision, PublishedAppRevisionBuildStatus
-from app.services.published_app_bundle_storage import PublishedAppBundleStorageError
-from ._helpers import admin_headers, seed_admin_tenant_and_agent
+from ._helpers import admin_headers, seed_admin_tenant_and_agent, start_publish_and_wait
 
 
 @pytest.mark.asyncio
@@ -51,18 +50,15 @@ async def test_publish_unpublish_and_runtime_preview(client, db_session):
     )
     assert create_resp.status_code == 200
     app_id = create_resp.json()["id"]
-    app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
-    assert app_row is not None
-    draft_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
-    assert draft_row is not None
-    draft_row.build_status = PublishedAppRevisionBuildStatus.succeeded
-    draft_row.build_error = None
-    await db_session.commit()
+    _, publish_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
+    assert publish_status["status"] == "succeeded"
+    assert publish_status["published_revision_id"]
 
-    publish_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
-    assert publish_resp.status_code == 200
-    assert publish_resp.json()["status"] == "published"
-    assert publish_resp.json()["published_url"] == "https://runtime-app.apps.localhost"
+    app_resp = await client.get(f"/admin/apps/{app_id}", headers=headers)
+    assert app_resp.status_code == 200
+    app_payload = app_resp.json()
+    assert app_payload["status"] == "published"
+    assert app_payload["published_url"] == "https://runtime-app.apps.localhost"
 
     preview_resp = await client.get(f"/admin/apps/{app_id}/runtime-preview", headers=headers)
     assert preview_resp.status_code == 200
@@ -74,7 +70,7 @@ async def test_publish_unpublish_and_runtime_preview(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_publish_guard_enforces_build_pending_and_failed_contracts(client, db_session):
+async def test_publish_no_longer_gates_on_draft_build_status(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -93,12 +89,6 @@ async def test_publish_guard_enforces_build_pending_and_failed_contracts(client,
     assert create_resp.status_code == 200
     app_id = create_resp.json()["id"]
 
-    publish_pending_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
-    assert publish_pending_resp.status_code == 409
-    pending_payload = publish_pending_resp.json()["detail"]
-    assert pending_payload["code"] == "BUILD_PENDING"
-    assert pending_payload["build_status"] == "queued"
-
     app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
     assert app_row is not None
     draft_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
@@ -107,24 +97,13 @@ async def test_publish_guard_enforces_build_pending_and_failed_contracts(client,
     draft_row.build_error = "npm run build exited with code 1"
     await db_session.commit()
 
-    publish_failed_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
-    assert publish_failed_resp.status_code == 422
-    failed_payload = publish_failed_resp.json()["detail"]
-    assert failed_payload["code"] == "BUILD_FAILED"
-    assert failed_payload["build_status"] == "failed"
-    assert any("exited with code 1" in item["message"] for item in failed_payload["diagnostics"])
-
-    draft_row.build_status = PublishedAppRevisionBuildStatus.succeeded
-    draft_row.build_error = None
-    await db_session.commit()
-
-    publish_ok_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
-    assert publish_ok_resp.status_code == 200
-    assert publish_ok_resp.json()["status"] == "published"
+    _, publish_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
+    assert publish_status["status"] == "succeeded"
+    assert publish_status["published_revision_id"]
 
 
 @pytest.mark.asyncio
-async def test_publish_returns_copy_failed_when_artifact_promotion_errors(client, db_session, monkeypatch):
+async def test_publish_failure_keeps_current_published_revision(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -143,31 +122,21 @@ async def test_publish_returns_copy_failed_when_artifact_promotion_errors(client
     assert create_resp.status_code == 200
     app_id = create_resp.json()["id"]
 
-    app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
-    assert app_row is not None
-    draft_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
-    assert draft_row is not None
-    draft_row.build_status = PublishedAppRevisionBuildStatus.succeeded
-    draft_row.build_error = None
-    draft_row.dist_storage_prefix = "apps/t/a/revisions/draft-revision/dist"
-    await db_session.commit()
+    _, first_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
+    assert first_status["status"] == "succeeded"
+    published_revision_id = first_status["published_revision_id"]
 
-    class _FailingStorage:
-        def copy_prefix(self, *, source_prefix: str, destination_prefix: str) -> int:
-            raise PublishedAppBundleStorageError("copy failed for test")
+    monkeypatch.setenv("APPS_PUBLISH_MOCK_MODE", "0")
 
-    monkeypatch.setattr(
-        "app.api.routers.published_apps_admin.PublishedAppBundleStorage.from_env",
-        staticmethod(lambda: _FailingStorage()),
-    )
+    async def _failing_subprocess(*_args, **_kwargs):
+        return 1, "", "mock publish failure"
 
-    publish_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
-    assert publish_resp.status_code == 500
-    detail = publish_resp.json()["detail"]
-    assert detail["code"] == "BUILD_ARTIFACT_COPY_FAILED"
+    monkeypatch.setattr("app.workers.tasks._run_subprocess", _failing_subprocess)
+
+    _, failed_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
+    assert failed_status["status"] == "failed"
+    assert "mock publish failure" in (failed_status.get("error") or "")
 
     refreshed_app = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
     assert refreshed_app is not None
-    refreshed_status = refreshed_app.status.value if hasattr(refreshed_app.status, "value") else str(refreshed_app.status)
-    assert refreshed_status == "draft"
-    assert refreshed_app.current_published_revision_id is None
+    assert str(refreshed_app.current_published_revision_id) == published_revision_id

@@ -82,8 +82,6 @@ export type {
   ToolTypeBucket,
   CreateToolRequest,
   UpdateToolRequest,
-  CreateBuiltinToolInstanceRequest,
-  UpdateBuiltinToolInstanceRequest,
   ToolsListResponse,
 } from "./agent";
 
@@ -97,6 +95,12 @@ export type {
   BuilderChatEvent,
   BuilderStateResponse,
   BuilderValidationResponse,
+  DraftDevSessionResponse,
+  DraftDevSessionStatus,
+  DraftDevSyncRequest,
+  PublishRequest,
+  PublishJobResponse,
+  PublishJobStatusResponse,
   RevisionBuildStatusResponse,
   RevisionConflictResponse,
   CreatePublishedAppRequest,

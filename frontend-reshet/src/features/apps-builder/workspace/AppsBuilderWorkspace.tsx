@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ExternalLink, Loader2, Rocket, Save, Sparkles } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -17,11 +17,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSidebar } from "@/components/ui/sidebar";
-import { publishedAppsService, publishedRuntimeService } from "@/services";
+import { publishedAppsService } from "@/services";
 import type {
   BuilderChatEvent,
   BuilderPatchOp,
   BuilderStateResponse,
+  DraftDevSessionResponse,
+  DraftDevSessionStatus,
   PublishedAppRevision,
   RevisionConflictResponse,
 } from "@/services";
@@ -40,12 +42,20 @@ const parseSse = (raw: string): BuilderChatEvent | null => {
   }
 };
 
+const DRAFT_DEV_SYNC_DEBOUNCE_MS = 800;
+const DRAFT_DEV_HEARTBEAT_MS = 45_000;
+const PUBLISH_POLL_INTERVAL_MS = 2_000;
+const PUBLISH_POLL_TIMEOUT_MS = 15 * 60_000;
+
 type WorkspaceProps = {
   appId: string;
 };
 
-type RevisionBuildStatus = "queued" | "running" | "succeeded" | "failed";
-const BUILD_PENDING_TIMEOUT_MS = 120_000;
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const { setOpen } = useSidebar();
@@ -55,15 +65,18 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [entryFile, setEntryFile] = useState("src/main.tsx");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [currentRevisionId, setCurrentRevisionId] = useState<string | null>(null);
-  const [buildStatus, setBuildStatus] = useState<RevisionBuildStatus | null>(null);
-  const [buildError, setBuildError] = useState<string | null>(null);
+  const [draftDevSessionId, setDraftDevSessionId] = useState<string | null>(null);
+  const [draftDevStatus, setDraftDevStatus] = useState<DraftDevSessionStatus | null>(null);
+  const [draftDevError, setDraftDevError] = useState<string | null>(null);
   const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
+  const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatLog, setChatLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const syncFingerprintRef = useRef<string>("");
 
   useEffect(() => {
     setOpen(false);
@@ -71,14 +84,19 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
 
+  const applyDraftDevSession = useCallback((session?: DraftDevSessionResponse | null) => {
+    setDraftDevSessionId(session?.session_id || null);
+    setDraftDevStatus((session?.status as DraftDevSessionStatus | undefined) || null);
+    setDraftDevError(session?.last_error || null);
+    setPreviewAssetUrl(session?.preview_url || null);
+  }, []);
+
   const hydrateFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
     const nextFiles = revision?.files || {};
     setFiles(nextFiles);
     setEntryFile(revision?.entry_file || "src/main.tsx");
     setSelectedFile(Object.keys(nextFiles).sort()[0] || null);
     setCurrentRevisionId(revision?.id || null);
-    setBuildStatus((revision?.build_status as RevisionBuildStatus | undefined) || null);
-    setBuildError(revision?.build_error || null);
   }, []);
 
   const loadState = useCallback(async () => {
@@ -88,131 +106,104 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       const response = await publishedAppsService.getBuilderState(appId);
       setState(response);
       hydrateFromRevision(response.current_draft_revision);
+      applyDraftDevSession(response.draft_dev);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load builder state");
     } finally {
       setIsLoading(false);
     }
-  }, [appId, hydrateFromRevision]);
+  }, [appId, applyDraftDevSession, hydrateFromRevision]);
 
   useEffect(() => {
     loadState();
   }, [loadState]);
 
-  const refreshPreviewToken = useCallback(
-    async (revisionId: string) => {
-      try {
-        const latestState = await publishedAppsService.getBuilderState(appId);
-        const latestRevisionId = latestState.current_draft_revision?.id;
-        if (latestRevisionId && latestRevisionId === revisionId && latestState.preview_token) {
-          setState((prev) => {
-            if (!prev) return prev;
-            return {
-              ...prev,
-              preview_token: latestState.preview_token,
-            };
-          });
-        }
-      } catch {
-        // Best effort only; existing token may still be valid.
-      }
-    },
-    [appId],
-  );
-
-  const loadPreviewRuntime = useCallback(
-    async (revisionId: string, previewToken: string) => {
-      const resolveAndSetPreview = async (token: string) => {
-        const runtime = await publishedRuntimeService.getPreviewRuntime(revisionId, token);
-        const nextUrl = runtime.preview_url || runtime.asset_base_url;
-        setPreviewAssetUrl(nextUrl || null);
+  const ensureDraftDevSession = useCallback(async () => {
+    const session = await publishedAppsService.ensureDraftDevSession(appId);
+    applyDraftDevSession(session);
+    setState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        draft_dev: session,
       };
+    });
+  }, [appId, applyDraftDevSession]);
 
-      try {
-        await resolveAndSetPreview(previewToken);
-        return;
-      } catch {
-        // Retry once with a fresh preview token in case draft revision changed.
-      }
-
-      try {
-        const latestState = await publishedAppsService.getBuilderState(appId);
-        const latestToken = latestState.preview_token;
-        if (latestToken) {
-          setState((prev) => {
-            if (!prev) return prev;
-            return {
-              ...prev,
-              preview_token: latestToken,
-            };
-          });
-          await resolveAndSetPreview(latestToken);
-          return;
-        }
-      } catch {
-        // Keep preview unavailable if runtime token refresh fails.
-      }
-
-      setPreviewAssetUrl(null);
-    },
-    [appId],
-  );
+  const syncDraftDevSession = useCallback(async () => {
+    if (!currentRevisionId) return;
+    const session = await publishedAppsService.syncDraftDevSession(appId, {
+      files,
+      entry_file: entryFile,
+      revision_id: currentRevisionId,
+    });
+    applyDraftDevSession(session);
+    setState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        draft_dev: session,
+      };
+    });
+  }, [appId, applyDraftDevSession, currentRevisionId, entryFile, files]);
 
   useEffect(() => {
-    let cancelled = false;
-    let timer: number | null = null;
-    const pendingSinceMs = Date.now();
-
-    const pollBuildStatus = async () => {
-      if (!currentRevisionId) return;
-      try {
-        const status = await publishedAppsService.getRevisionBuildStatus(appId, currentRevisionId);
-        if (cancelled) return;
-
-        const nextStatus = status.build_status as RevisionBuildStatus;
-        setBuildStatus(nextStatus);
-        setBuildError(status.build_error || null);
-
-        if (nextStatus === "succeeded") {
-          const previewToken = state?.preview_token;
-          if (previewToken) {
-            await loadPreviewRuntime(currentRevisionId, previewToken);
-          }
-          return;
-        }
-
-        setPreviewAssetUrl(null);
-        if (nextStatus === "queued" || nextStatus === "running") {
-          const elapsedMs = Date.now() - pendingSinceMs;
-          if (elapsedMs >= BUILD_PENDING_TIMEOUT_MS) {
-            setBuildError(
-              "Build is still pending. Ensure Redis/Celery apps-build worker is running, then retry build.",
-            );
-            return;
-          }
-          timer = window.setTimeout(pollBuildStatus, 2000);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        setBuildError(err instanceof Error ? err.message : "Failed to load build status");
-      }
-    };
-
-    if (currentRevisionId) {
-      pollBuildStatus();
-    } else {
-      setBuildStatus(null);
-      setBuildError(null);
-      setPreviewAssetUrl(null);
+    if (activeTab !== "preview" || !currentRevisionId) {
+      return;
     }
+    ensureDraftDevSession().catch((err) => {
+      setDraftDevError(err instanceof Error ? err.message : "Failed to start draft preview");
+      setDraftDevStatus("error");
+      setPreviewAssetUrl(null);
+    });
+  }, [activeTab, currentRevisionId, ensureDraftDevSession]);
 
+  useEffect(() => {
+    if (activeTab !== "preview" || !currentRevisionId) {
+      syncFingerprintRef.current = "";
+      return;
+    }
+    const fingerprint = JSON.stringify({
+      revision: currentRevisionId,
+      entry: entryFile,
+      files,
+    });
+    if (syncFingerprintRef.current === fingerprint) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      syncDraftDevSession()
+        .then(() => {
+          syncFingerprintRef.current = fingerprint;
+        })
+        .catch((err) => {
+          setDraftDevError(err instanceof Error ? err.message : "Failed to sync draft dev session");
+          setDraftDevStatus("error");
+        });
+    }, DRAFT_DEV_SYNC_DEBOUNCE_MS);
     return () => {
-      cancelled = true;
-      if (timer !== null) {
-        window.clearTimeout(timer);
-      }
+      window.clearTimeout(timer);
     };
-  }, [appId, currentRevisionId, loadPreviewRuntime, state?.preview_token]);
+  }, [activeTab, currentRevisionId, entryFile, files, syncDraftDevSession]);
+
+  useEffect(() => {
+    if (activeTab !== "preview" || !draftDevSessionId) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      publishedAppsService
+        .heartbeatDraftDevSession(appId)
+        .then((session) => {
+          applyDraftDevSession(session);
+        })
+        .catch(() => {
+          // Heartbeat failure should not hard-break editing.
+        });
+    }, DRAFT_DEV_HEARTBEAT_MS);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [activeTab, appId, applyDraftDevSession, draftDevSessionId]);
 
   const saveDraft = useCallback(async () => {
     if (!currentRevisionId && Object.keys(files).length === 0) return;
@@ -226,9 +217,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         entry_file: entryFile,
       });
       setCurrentRevisionId(revision.id);
-      setBuildStatus((revision.build_status as RevisionBuildStatus | undefined) || "queued");
-      setBuildError(revision.build_error || null);
-      setPreviewAssetUrl(null);
       setState((prev) => {
         if (!prev) return prev;
         return {
@@ -240,7 +228,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           },
         };
       });
-      await refreshPreviewToken(revision.id);
+      if (activeTab === "preview") {
+        await ensureDraftDevSession();
+      }
     } catch (err: any) {
       const detail = err?.message || "Failed to save draft";
       try {
@@ -257,22 +247,45 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [appId, currentRevisionId, entryFile, files, loadState, refreshPreviewToken]);
+  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState]);
 
   const publish = useCallback(async () => {
     setIsPublishing(true);
     setError(null);
+    setPublishStatus("queued");
     try {
-      await saveDraft();
-      const updated = await publishedAppsService.publish(appId);
-      setState((prev) => (prev ? { ...prev, app: updated } : prev));
+      const job = await publishedAppsService.publish(appId, {
+        base_revision_id: currentRevisionId || undefined,
+        files,
+        entry_file: entryFile,
+      });
+
+      const startedAt = Date.now();
+      let status = job.status;
+      while (status === "queued" || status === "running") {
+        if (Date.now() - startedAt > PUBLISH_POLL_TIMEOUT_MS) {
+          throw new Error("Publish timed out while waiting for build completion");
+        }
+        await wait(PUBLISH_POLL_INTERVAL_MS);
+        const current = await publishedAppsService.getPublishJobStatus(appId, job.job_id);
+        status = current.status;
+        setPublishStatus(status);
+        if (status === "failed") {
+          const diagnostic = current.diagnostics?.[0];
+          const message = (diagnostic?.message as string | undefined) || current.error || "Publish failed";
+          throw new Error(message);
+        }
+      }
+
       await loadState();
+      setPublishStatus("succeeded");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to publish app");
+      setPublishStatus("failed");
     } finally {
       setIsPublishing(false);
     }
-  }, [appId, loadState, saveDraft]);
+  }, [appId, currentRevisionId, entryFile, files, loadState]);
 
   const resetTemplate = useCallback(
     async (templateKey: string) => {
@@ -368,7 +381,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       }
 
       if (traceLines.length > 0) {
-        setChatLog((prev) => [...prev, ...traceLines.map((line) => `Builder Trace${streamRequestId ? ` (${streamRequestId.slice(0, 8)})` : ""}: ${line}`)]);
+        setChatLog((prev) => [
+          ...prev,
+          ...traceLines.map((line) => `Builder Trace${streamRequestId ? ` (${streamRequestId.slice(0, 8)})` : ""}: ${line}`),
+        ]);
       }
       if (assistantText.trim() || patchSummary) {
         const responseText = assistantText.trim() || patchSummary;
@@ -389,9 +405,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           operations: pendingOps,
         });
         setCurrentRevisionId(saved.id);
-        setBuildStatus((saved.build_status as RevisionBuildStatus | undefined) || "queued");
-        setBuildError(saved.build_error || null);
-        setPreviewAssetUrl(null);
         setState((prev) => {
           if (!prev) return prev;
           return {
@@ -403,12 +416,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             },
           };
         });
-        await refreshPreviewToken(saved.id);
+        if (activeTab === "preview") {
+          await ensureDraftDevSession();
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to apply builder patch");
     }
-  }, [appId, chatInput, currentRevisionId, entryFile, files, refreshPreviewToken, selectedFile]);
+  }, [activeTab, appId, chatInput, currentRevisionId, ensureDraftDevSession, entryFile, files, selectedFile]);
 
   const createFile = (path: string) => {
     const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
@@ -465,17 +480,30 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
               /{state.app.slug}
             </Badge>
             <Badge variant={state.app.status === "published" ? "default" : "secondary"}>{state.app.status}</Badge>
-            {buildStatus && (
+            {draftDevStatus && (
               <Badge
                 variant={
-                  buildStatus === "succeeded"
+                  draftDevStatus === "running"
                     ? "default"
-                    : buildStatus === "failed"
+                    : draftDevStatus === "error"
                       ? "destructive"
                       : "secondary"
                 }
               >
-                build:{buildStatus}
+                draft:{draftDevStatus}
+              </Badge>
+            )}
+            {publishStatus && (
+              <Badge
+                variant={
+                  publishStatus === "succeeded"
+                    ? "default"
+                    : publishStatus === "failed"
+                      ? "destructive"
+                      : "secondary"
+                }
+              >
+                publish:{publishStatus}
               </Badge>
             )}
           </div>
@@ -525,8 +553,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
               {activeTab === "preview" ? (
                 <PreviewCanvas
                   previewUrl={previewAssetUrl}
-                  buildStatus={buildStatus}
-                  buildError={buildError}
+                  devStatus={draftDevStatus}
+                  devError={draftDevError}
                 />
               ) : (
                 <VirtualFileExplorer

@@ -1,12 +1,13 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-11
+Last Updated: 2026-02-14
 
 ## Scope
 Frontend coverage for:
 - Admin Apps management page behavior.
 - Builder workspace behavior (`Preview | Code`, template reset confirm, builder patch apply/save).
-- Builder preview runtime behavior (build-status polling + preview runtime descriptor URL usage).
+- Builder draft-dev preview behavior (session ensure/sync/heartbeat + sandbox iframe URL usage).
+- Async publish-job flow from workspace publish action.
 - Published runtime redirect behavior.
 - Published login flow token persistence.
 - Published runtime error handling when runtime descriptor cannot be resolved.
@@ -21,16 +22,23 @@ Frontend coverage for:
 - Apps admin page loads existing apps and submits create payload.
 - Apps admin create modal supports template selection and builder-route redirect on create.
 - Builder workspace renders tabs, persists draft revision saves, confirms template overwrite, and applies streamed patch ops to revision save.
-- Builder workspace fetches revision build status and loads preview iframe URL from preview runtime descriptor (`asset_base_url`) after successful builds.
+- Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
+- Builder code tab auto-expands ancestor folders when the selected file is nested.
+- Builder code tab maps `index.html` to Monaco `html` language and sets builder-only validation decoration suppression.
+- Builder workspace ensures draft-dev session on preview and uses sandbox `preview_url` for iframe rendering.
+- Builder workspace syncs draft files via draft-dev sync API without creating revisions per keystroke.
+- Publish action uses async publish-job contract (`publish` + `getPublishJobStatus`).
 - Runtime page redirects directly to static published runtime URL via `/public/apps/{slug}/runtime`.
 - Login stores app-scoped bearer token and redirects to runtime page.
 
 ## Last Run
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx src/__tests__/published_apps/published_runtime_gate.test.tsx src/__tests__/published_apps/published_auth_flows.test.tsx --runInBand`
-- Date: 2026-02-11 23:59 UTC
-- Result: PASS (3 suites, 5 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-14 17:29 UTC
+- Result: PASS (1 suite, 6 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
+- Date: 2026-02-14 18:12 UTC
+- Result: PASS (4 suites, 9 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for app detail publish/unpublish actions.
 - Add tests for Google OAuth callback page token ingestion.
-- Add tests for deterministic Preview/Code tab switching assertions tied to virtual file explorer rendering.

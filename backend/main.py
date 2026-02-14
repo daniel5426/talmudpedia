@@ -231,6 +231,24 @@ def _ensure_celery_worker_if_needed() -> None:
         logger.warning("Failed to auto-start Celery worker; check %s", celery_log_path)
 
 
+def _ensure_local_draft_dev_runtime_if_needed() -> None:
+    if not _is_truthy(os.getenv("APPS_BUILDER_DRAFT_DEV_ENABLED", "1")):
+        return
+    controller_url = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_URL") or "").strip()
+    embedded_enabled = _is_truthy(os.getenv("APPS_DRAFT_DEV_EMBEDDED_LOCAL_ENABLED", "1"))
+    if controller_url or not embedded_enabled:
+        return
+
+    try:
+        from app.services.published_app_draft_dev_local_runtime import get_local_draft_dev_runtime_manager
+
+        manager = get_local_draft_dev_runtime_manager()
+        manager.bootstrap()
+        logger.info("Embedded local draft-dev runtime is ready")
+    except Exception as exc:
+        logger.warning("Failed to bootstrap embedded local draft-dev runtime: %s", exc)
+
+
 def _bootstrap_local_infra_once() -> None:
     global _INFRA_BOOTSTRAPPED
     if _INFRA_BOOTSTRAPPED:
@@ -247,6 +265,7 @@ def _bootstrap_local_infra_once() -> None:
     _ensure_local_moto_server_if_needed()
     _ensure_local_bundle_bucket_if_needed()
     _ensure_celery_worker_if_needed()
+    _ensure_local_draft_dev_runtime_if_needed()
 
 
 def start_livekit_worker():
@@ -309,6 +328,14 @@ async def lifespan(app: FastAPI):
     #     worker_process.terminate()
     #     worker_process.join(timeout=5)
     
+    try:
+        from app.services.published_app_draft_dev_local_runtime import get_local_draft_dev_runtime_manager
+
+        await get_local_draft_dev_runtime_manager().stop_all()
+    except Exception:
+        # Cleanup failures should not block shutdown.
+        pass
+
     await MongoDatabase.close()
 
 

@@ -1,11 +1,18 @@
 # Base44-Style Option A Implementation Plan (Vite Static Apps + Shared Backend)
 
-Last Updated: 2026-02-12
+Last Updated: 2026-02-14
 
 ## Summary
-Move Apps Builder from “virtual React files compiled in-browser” to “full Vite React projects built by backend workers and deployed as static assets,” with big-bang runtime migration.
+Move Apps Builder to a dual-mode architecture:
+- Draft Dev Mode: persistent per-user+app Vite dev sandbox with HMR for instant preview.
+- Publish Build Mode: async full clean worker build (`npm install` + `npm run build`) on publish, then upload immutable artifacts for runtime serving.
 
-## Implementation Status Snapshot (as of 2026-02-11)
+## Contradiction Resolution (2026-02-14)
+This plan previously stated that publish promotes existing draft artifacts without rebuilding. That is now superseded.
+- Draft mode is non-deterministic and optimized for speed (sandbox dev server, incremental sync, no dist upload, no per-keystroke revisions).
+- Publish mode is deterministic and always runs a full clean build in an async publish job before switching `current_published_revision_id`.
+
+## Implementation Status Snapshot (as of 2026-02-14)
 Implemented:
 - Filesystem-backed template packs under `backend/app/templates/published_apps/` with manifest loading and Vite `base: "./"` validation.
 - Revision build lifecycle schema/model fields (`build_status`, `build_seq`, `build_error`, timing fields, `dist_storage_prefix`, `dist_manifest`, `template_runtime`) with Alembic migration.
@@ -19,12 +26,12 @@ Implemented:
   - `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
 - Preview runtime URL now resolves to entry HTML (`.../assets/index.html`) and derives path from request context (no hardcoded `/api/py` prefix).
 - Preview iframe auth bridge implemented: runtime appends one-time `preview_token` query, asset route mints HttpOnly cookie, subsequent chunk/css requests authenticate via cookie.
-- Publish artifact promotion wiring via storage service with `BUILD_ARTIFACT_COPY_FAILED` failure contract.
+- Async publish job schema and worker flow (`published_app_publish_jobs`) with full-build execution path.
 - Queue wiring for `apps_build` and real `build_published_app_revision_task` execution flow (`npm ci`, `npm run build`, `dist` manifest, object upload).
-- Frontend service contracts for runtime/build status endpoints.
-- Builder preview switched from in-browser compile to runtime URL + build-status polling in apps builder workspace.
+- Frontend service contracts for draft-dev session + publish job endpoints.
+- Builder preview switched from in-browser compile/build polling to draft-dev session lifecycle (`ensure/sync/heartbeat`) in apps builder workspace.
 - Published runtime page is static-only and redirect-only (`/public/apps/{slug}/runtime` -> `published_url`).
-- Publish build-status gate (`BUILD_PENDING` / `BUILD_FAILED`) is always-on.
+- Publish now enqueues async full-build jobs and no longer gates on draft `build_status`.
 - Public source UI endpoints are hard-removed and return `410 UI_SOURCE_MODE_REMOVED`.
 
 Partially implemented:
@@ -39,19 +46,19 @@ Locked choices:
 - Build engine: Celery queue + dedicated Node build worker image.
 - Asset storage/serving: object storage + CDN.
 - Dependency policy: curated semi-open package set.
-- Build trigger: auto on save; publish never rebuilds (publish promotes latest successful draft artifact).
+- Build trigger: Draft mode uses persistent sandbox dev sessions; Publish mode always rebuilds from latest saved snapshot.
 - Draft access: backend proxy with preview token.
 - Rollout: big-bang switch.
 - Published URL shape: CDN path per revision.
 - API origin: same-origin gateway (`/api/py` proxied on app domain).
 - Template source: filesystem template packs.
-- Artifact identity: immutable build outputs tied to source revision build; publish copies/promotes artifacts to published revision prefix.
+- Artifact identity: immutable outputs are produced during publish jobs and attached to published revisions.
 - Vite asset base: relative paths (`base: "./"`) so nested CDN/proxy paths resolve chunks correctly.
 - Build queue semantics: one active build per app; stale worker completions ignored via monotonic `build_seq`.
 
 ## Current-State Grounding (from repo)
 - Builder policy now enforces Vite project + curated dependency rules in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_admin.py`.
-- Builder preview now uses preview runtime descriptor + asset URL polling flow in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/AppsBuilderWorkspace.tsx`.
+- Builder preview now uses draft-dev sandbox session lifecycle in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/AppsBuilderWorkspace.tsx`.
 - Published runtime page now uses static-only redirect behavior in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/published/[appSlug]/page.tsx`.
 - Public runtime API now includes runtime descriptor and preview asset proxy endpoints in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_public.py`.
 - Celery + Redis already exist in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/workers/celery_app.py` and `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/workers/tasks.py`.
@@ -131,11 +138,12 @@ Status: Partially implemented.
 - `APPS_CDN_PUBLIC_PREFIX` (default `/apps`)
 - Published URL contract:
 - `published_url = {APPS_CDN_BASE_URL}{APPS_CDN_PUBLIC_PREFIX}/{slug}/{published_revision_id}/`
-- Publish flow for `build_status=succeeded`:
-- clone draft -> new immutable published revision row
-- copy dist objects from draft `dist_storage_prefix` to published revision prefix (`.../revisions/{published_revision_id}/dist/...`) without rebuild
-- persist copied `dist_storage_prefix` + `dist_manifest` on published revision, then write `published_url`
-- if artifact copy fails, publish fails with `500 BUILD_ARTIFACT_COPY_FAILED` and app remains on previous published revision.
+- Publish flow:
+- create async publish job from latest draft snapshot (auto-save payload optional)
+- run clean worker build (`npm install` + `npm run build`)
+- upload `dist/` to published revision prefix (`.../revisions/{published_revision_id}/dist/...`)
+- persist `dist_storage_prefix` + `dist_manifest`, then atomically switch published revision pointer and `published_url`
+- if full build/upload fails, publish job moves to `failed` and app remains on previous published revision.
 Current gap:
 - Full CDN published URL contract is not final yet (`_build_published_url` still drives runtime URL in current admin router).
 
@@ -145,16 +153,17 @@ Status: Implemented.
 - Update builder revision create/reset flows to:
 - create revision with `build_status=queued`
 - increment `build_seq`
-- enqueue build task immediately
+- do not enqueue heavy draft build task
 - return revision including build fields.
 - Add build status endpoint:
 - `GET /admin/apps/{app_id}/builder/revisions/{revision_id}/build`
 - Add retry endpoint:
 - `POST /admin/apps/{app_id}/builder/revisions/{revision_id}/build/retry`
 - Update publish endpoint behavior:
-- If current draft build status `queued|running` -> `409` with code `BUILD_PENDING`.
-- If `failed` -> `422` with code `BUILD_FAILED` + diagnostics.
-- If `succeeded` -> clone to published revision, copy/promote built artifacts to published revision prefix, set `published_url` (no rebuild during publish).
+- `POST /admin/apps/{app_id}/publish` returns `publish_job` immediately.
+- Optional autosave payload (`base_revision_id`, `files`, `entry_file`) is persisted before enqueue.
+- Publish jobs are tracked via `GET /admin/apps/{app_id}/publish/jobs/{job_id}`.
+- Publish no longer gates on draft revision `build_status`; determinism is enforced by full publish build.
 - Remove React-only import allowlist enforcement in project validator.
 - Replace with Vite project + dependency policy validation.
 ## 7) Public runtime API contract updates
@@ -180,13 +189,13 @@ Status: Implemented.
 ## 8) Frontend changes
 Status: Partially implemented.
 - In `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/services/published-apps.ts`:
-- extend `PublishedAppRevision` with build fields.
-- add calls for build status/retry endpoints.
+- extend builder state with `draft_dev`.
+- add draft-dev session and publish-job endpoint contracts.
 - In `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/preview/PreviewCanvas.tsx`:
 - remove `compileReactArtifactProject` path for app-builder preview.
-- iframe should load preview asset URL from backend runtime descriptor.
-- show build statuses: `queued/running/succeeded/failed`.
-- poll build status while pending.
+- iframe points directly to sandbox `draft_dev.preview_url`.
+- show dev-session statuses: `starting/running/stopped/expired/error`.
+- remove draft build-status polling from preview flow.
 - In `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/services/published-runtime.ts`:
 - add `getRuntime()` endpoint.
 - remove reliance on UI source files for public runtime.
@@ -260,7 +269,8 @@ Scope:
 
 ### D) Keep worker builds for user code edits only
 - Initial create (`POST /admin/apps`) for `chat-classic`: no worker build.
-- Keep worker builds on builder mutations (`POST /admin/apps/{app_id}/builder/revisions`) because user source changed.
+- Keep draft-dev sync on builder mutations (`POST /admin/apps/{app_id}/builder/revisions`) for preview speed.
+- Keep clean worker builds only in publish jobs (`POST /admin/apps/{app_id}/publish`).
 - Optional optimization after pilot:
 - if a new revision hash matches the base/template artifact hash, copy artifacts and mark succeeded without worker build.
 
@@ -273,7 +283,7 @@ Scope:
 - Creating a `chat-classic` app returns a draft revision already in `build_status=succeeded`.
 - No `apps_build` Celery task is enqueued during initial create for `chat-classic`.
 - Builder preview URL is available immediately after create (no build poll wait).
-- Publish still promotes immutable artifacts by prefix copy and does not rebuild.
+- Publish still runs a full clean async build before serving updated immutable artifacts.
 - If fast path cannot run, fallback path still preserves current correctness.
 
 ### G) Rollout plan
@@ -286,18 +296,21 @@ Scope:
 - Added admin endpoints:
 - `GET /admin/apps/{app_id}/builder/revisions/{revision_id}/build`
 - `POST /admin/apps/{app_id}/builder/revisions/{revision_id}/build/retry`
+- `POST /admin/apps/{app_id}/builder/draft-dev/session/ensure`
+- `PATCH /admin/apps/{app_id}/builder/draft-dev/session/sync`
+- `POST /admin/apps/{app_id}/builder/draft-dev/session/heartbeat`
+- `GET /admin/apps/{app_id}/builder/draft-dev/session`
+- `DELETE /admin/apps/{app_id}/builder/draft-dev/session`
+- `GET /admin/apps/{app_id}/publish/jobs/{job_id}`
 - Added public endpoints:
 - `GET /public/apps/{slug}/runtime`
 - `GET /public/apps/preview/revisions/{revision_id}/runtime`
 - `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
 - Changed behavior:
 - `GET /public/apps/{slug}/ui` always returns `410 UI_SOURCE_MODE_REMOVED`.
-- `POST /admin/apps/{id}/publish` may return:
-- `409 BUILD_PENDING`
-- `422 BUILD_FAILED`
-- `500 BUILD_ARTIFACT_COPY_FAILED`
+- `POST /admin/apps/{id}/publish` returns publish job metadata (`queued|running|succeeded|failed`) and accepts optional autosave payload.
 - Type updates in frontend service types:
-- revision build fields + runtime descriptor types.
+- draft-dev session fields + publish-job status fields.
 
 ## Security and Governance
 - Build worker isolation:
@@ -322,23 +335,23 @@ Scope:
 ## Backend tests
 - `/Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/published_apps/`:
 - create app seeds full Vite file baseline.
-- builder revision save queues build.
+- builder revision save does not enqueue heavy draft build.
 - unsupported package in `package.json` fails validation.
 - build success writes `dist_manifest` + storage prefix.
 - stale build completion (older `build_seq`) is discarded and does not overwrite newer status/artifacts.
-- publish blocked on `BUILD_PENDING` and `BUILD_FAILED`.
-- publish artifact promotion copies draft dist to published revision prefix (no rebuild).
+- publish enqueues async full-build job and tracks lifecycle (`queued/running/succeeded/failed`).
+- publish failure leaves existing published revision pointer unchanged.
 - public runtime descriptor returns `vite_static` + `published_url`.
 - `/ui` always returns `410 UI_SOURCE_MODE_REMOVED`.
 - preview token allows draft asset proxy; invalid token rejected.
 - Update `test_state.md` with new command/date/result.
 Status:
-- Core published-app backend tests currently pass (latest targeted run includes build endpoints, runtime descriptor, preview assets, and publish copy-failure contract).
+- Core published-app backend tests currently pass (latest targeted run includes async publish job flow, draft-dev-aware builder behavior, runtime descriptor, and preview assets).
 
 ## Worker/service tests
 - Task unit tests for subprocess/npm failure handling.
 - storage upload and manifest generation tests (mock boto3).
-- artifact-copy failure during publish returns `BUILD_ARTIFACT_COPY_FAILED` and leaves prior published revision unchanged.
+- publish job failure leaves prior published revision pointer unchanged.
 - Vite asset base/path test ensures built chunks resolve under nested `{slug}/{revision_id}/` URL and preview proxy URL.
 Status:
 - Pending dedicated worker/service unit tests for real npm build execution and storage upload pipeline.
@@ -352,8 +365,8 @@ Status:
 - Published runtime redirect tests updated for static-only runtime resolution behavior.
 
 ## End-to-end acceptance
-- create app -> edit -> auto-build -> preview works.
-- publish -> URL points to CDN path with revision id.
+- create app -> edit -> draft dev sandbox preview works with HMR path.
+- publish -> async full clean build -> URL points to runtime revision.
 - static app loads and can call shared backend chat/auth via `/api/py`.
 - verify `/public/apps/{slug}/ui` consistently returns `410 UI_SOURCE_MODE_REMOVED`.
 Status:
@@ -364,7 +377,7 @@ Status:
 - Update `/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/Apps.md`.
 - Update `/Users/danielbenassaya/Code/personal/talmudpedia/code_architect/architecture_tree.md` for new template/worker/storage modules and directories.
 - Update relevant test-state files in `backend/tests/published_apps/` and frontend published-app test state.
-- Ensure every edited `.md` includes `Last Updated: 2026-02-11`.
+- Ensure every edited `.md` includes `Last Updated: 2026-02-14`.
 
 ## Documentation contradiction alert
 - Current compile-policy section in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/Plans/AppsBuilderV1Plan.md` (React-only import allowlist) conflicts with this approved Option A architecture (full Vite project + curated semi-open deps). This must be explicitly replaced, not appended.

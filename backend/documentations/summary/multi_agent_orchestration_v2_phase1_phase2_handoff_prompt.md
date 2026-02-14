@@ -1,6 +1,6 @@
 # Multi-Agent Orchestration v2 Handoff Prompt (Post Phase 1-7)
 
-Last Updated: 2026-02-08
+Last Updated: 2026-02-14
 
 ## 1. Purpose
 Use this file as the start prompt for a fresh-context implementation chat.  
@@ -116,6 +116,22 @@ The following hardening is now in place:
 - Latest targeted validation:
   - `pytest -q backend/tests/orchestration_graphspec_v2/test_graphspec_v2_orchestration.py backend/tests/orchestration_runtime_primitives/test_runtime_events_and_flags.py backend/tests/orchestration_join_policies/test_join_policies.py backend/tests/orchestration_limits_and_cancellation/test_limits_and_cancellation.py backend/tests/orchestration_kernel/test_kernel_spawn_and_tree.py backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py`
   - Result: `29 passed`
+
+### 2.6 Tool-Based Agent-to-Agent Calls (Current Scope Update)
+The platform now also supports a first-class tool subtype for synchronous agent-to-agent calls:
+
+1. New tool implementation type:
+- `implementation_type = agent_call`
+
+2. Runtime contract:
+- tool config accepts `target_agent_id` or `target_agent_slug`
+- optional timeout via `execution.timeout_s`
+- target must be published and in tenant scope
+- execution returns compact sync payload (`mode`, target metadata, `run_id`, `status`, optional `output/context/error`)
+
+3. Retrieval pipeline tools:
+- retrieval is now selected through regular tool creation (`implementation_type = rag_retrieval`) with tenant pipeline validation
+- built-in instance management API/UI paths are removed; built-in templates remain read-only catalog data
 
 ## 3. What Is Not Done Yet (Critical Next Work)
 Remaining gaps are now mostly scale and production-burn-in focused:

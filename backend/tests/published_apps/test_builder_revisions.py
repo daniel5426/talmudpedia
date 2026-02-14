@@ -14,10 +14,9 @@ from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppBuilderConversationTurn,
     PublishedAppRevision,
-    PublishedAppRevisionBuildStatus,
 )
 
-from ._helpers import admin_headers, seed_admin_tenant_and_agent
+from ._helpers import admin_headers, seed_admin_tenant_and_agent, start_publish_and_wait
 
 
 def _parse_sse_events(payload: str) -> list[dict]:
@@ -119,17 +118,13 @@ async def test_builder_state_and_revision_workflow(client, db_session):
     assert "src/components/layout/SourceListPane.tsx" in reset_payload["files"]
     assert "src/components/layout/SourceViewerPane.tsx" in reset_payload["files"]
 
-    app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
-    assert app_row is not None
-    draft_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
-    assert draft_row is not None
-    draft_row.build_status = PublishedAppRevisionBuildStatus.succeeded
-    draft_row.build_error = None
-    await db_session.commit()
+    _, publish_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
+    assert publish_status["status"] == "succeeded"
+    assert publish_status["published_revision_id"]
 
-    publish_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
-    assert publish_resp.status_code == 200
-    published = publish_resp.json()
+    app_resp = await client.get(f"/admin/apps/{app_id}", headers=headers)
+    assert app_resp.status_code == 200
+    published = app_resp.json()
     assert published["status"] == "published"
     assert published["current_published_revision_id"]
 
@@ -647,9 +642,9 @@ async def test_builder_revision_build_status_and_retry_endpoints(client, db_sess
     assert build_resp.status_code == 200
     build_payload = build_resp.json()
     assert build_payload["revision_id"] == draft_revision_id
-    assert build_payload["build_status"] == "failed"
+    assert build_payload["build_status"] == "queued"
     assert build_payload["build_seq"] == 1
-    assert "Build automation is disabled" in (build_payload["build_error"] or "")
+    assert build_payload["build_error"] is None
     assert build_payload["template_runtime"] == "vite_static"
 
     retry_resp = await client.post(
@@ -666,13 +661,13 @@ async def test_builder_revision_build_status_and_retry_endpoints(client, db_sess
 
 
 @pytest.mark.asyncio
-async def test_builder_revision_worker_build_gate_blocks_failed_preflight(client, db_session, monkeypatch):
+async def test_builder_revision_worker_build_gate_does_not_block_draft_save_path(client, db_session, monkeypatch):
     monkeypatch.setenv("APPS_BUILDER_WORKER_BUILD_GATE_ENABLED", "1")
 
-    async def _fail_preflight(_files: dict[str, str]) -> None:
-        raise RuntimeError("`npm run build` failed with exit code 1")
+    async def _unexpected_preflight(_files: dict[str, str]) -> None:
+        raise AssertionError("worker preflight should not run for draft save path")
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _fail_preflight)
+    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _unexpected_preflight)
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -709,24 +704,24 @@ async def test_builder_revision_worker_build_gate_blocks_failed_preflight(client
             ],
         },
     )
-    assert revision_resp.status_code == 422
-    detail = revision_resp.json()["detail"]
-    assert detail["code"] == "BUILDER_COMPILE_FAILED"
-    assert any("npm run build" in item["message"] for item in detail["diagnostics"])
+    assert revision_resp.status_code == 200
+    revision_payload = revision_resp.json()
+    assert revision_payload["source_revision_id"] == base_revision_id
+    assert "Worker Gate" in revision_payload["files"]["src/App.tsx"]
 
     state_after = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_after.status_code == 200
-    assert state_after.json()["current_draft_revision"]["id"] == base_revision_id
+    assert state_after.json()["current_draft_revision"]["id"] == revision_payload["id"]
 
 
 @pytest.mark.asyncio
-async def test_builder_chat_stream_worker_build_gate_blocks_failed_preflight(client, db_session, monkeypatch):
+async def test_builder_chat_stream_worker_build_gate_does_not_block_chat_flow(client, db_session, monkeypatch):
     monkeypatch.setenv("APPS_BUILDER_WORKER_BUILD_GATE_ENABLED", "1")
 
-    async def _fail_preflight(_files: dict[str, str]) -> None:
-        raise RuntimeError("`npm run build` failed with exit code 1")
+    async def _unexpected_preflight(_files: dict[str, str]) -> None:
+        raise AssertionError("worker preflight should not run for chat stream draft updates")
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _fail_preflight)
+    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _unexpected_preflight)
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -756,10 +751,9 @@ async def test_builder_chat_stream_worker_build_gate_blocks_failed_preflight(cli
             "base_revision_id": draft_revision_id,
         },
     )
-    assert stream_resp.status_code == 422
-    detail = stream_resp.json()["detail"]
-    assert detail["code"] == "BUILDER_COMPILE_FAILED"
-    assert any("npm run build" in item["message"] for item in detail["diagnostics"])
+    assert stream_resp.status_code == 200
+    events = _parse_sse_events(stream_resp.text)
+    assert any(event.get("event") == "done" for event in events)
 
     persisted = await db_session.scalar(
         select(PublishedAppBuilderConversationTurn)
@@ -767,9 +761,8 @@ async def test_builder_chat_stream_worker_build_gate_blocks_failed_preflight(cli
         .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
     )
     assert persisted is not None
-    assert persisted.status == BuilderConversationTurnStatus.failed
-    assert persisted.failure_code == "BUILDER_COMPILE_FAILED"
-    assert any("npm run build" in item["message"] for item in (persisted.diagnostics or []))
+    assert persisted.status == BuilderConversationTurnStatus.succeeded
+    assert persisted.failure_code is None
 
 
 @pytest.mark.asyncio

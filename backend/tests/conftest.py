@@ -15,6 +15,10 @@ from sqlalchemy.pool import StaticPool
 USE_REAL_DB = os.getenv("TEST_USE_REAL_DB") == "1"
 sqlite3.register_adapter(UUID, lambda value: str(value))
 os.environ.setdefault("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", "0")
+os.environ.setdefault("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "0")
+os.environ.setdefault("BUILDER_AGENTIC_LOOP_ENABLED", "0")
+os.environ.setdefault("APPS_PUBLISH_JOB_EAGER", "1")
+os.environ.setdefault("APPS_PUBLISH_MOCK_MODE", "1")
 
 if USE_REAL_DB:
     try:
@@ -113,17 +117,21 @@ async def test_engine():
 async def db_session(test_engine):
     from app.db.postgres.engine import sessionmaker as global_sessionmaker
     import app.db.postgres.engine as engine_module
+    import app.db.postgres.session as session_module
 
     session_factory = async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
 
     original_factory = engine_module.sessionmaker
+    original_session_factory = session_module.sessionmaker
     engine_module.sessionmaker = session_factory
+    session_module.sessionmaker = session_factory
 
     async with session_factory() as session:
         yield session
         await session.rollback()
 
     engine_module.sessionmaker = original_factory
+    session_module.sessionmaker = original_session_factory
 
 
 @pytest_asyncio.fixture

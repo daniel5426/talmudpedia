@@ -25,6 +25,7 @@ class ToolImplementationType(str, enum.Enum):
     INTERNAL = "INTERNAL"
     HTTP = "HTTP"
     RAG_RETRIEVAL = "RAG_RETRIEVAL"
+    AGENT_CALL = "AGENT_CALL"
     FUNCTION = "FUNCTION"
     CUSTOM = "CUSTOM"
     ARTIFACT = "ARTIFACT"

@@ -7,7 +7,7 @@ jest.mock("@/services", () => ({
   toolsService: {
     listTools: jest.fn(),
     listBuiltinTemplates: jest.fn(),
-    createBuiltinInstance: jest.fn(),
+    createTool: jest.fn(),
     deleteTool: jest.fn(),
     publishTool: jest.fn(),
   },
@@ -84,7 +84,7 @@ describe("Tools built-in UI", () => {
       tools: [retrievalTemplate],
       total: 1,
     })
-    ;(toolsService.createBuiltinInstance as jest.Mock).mockResolvedValue({ ...baseTool, id: "instance-1" })
+    ;(toolsService.createTool as jest.Mock).mockResolvedValue({ ...baseTool, id: "tool-created-1" })
   })
 
   afterEach(() => {
@@ -100,23 +100,66 @@ describe("Tools built-in UI", () => {
     expect(await screen.findByText("Retrieval Pipeline")).toBeInTheDocument()
   })
 
-  it("creates retrieval built-in instance with selected pipeline", async () => {
+  it("removes create built-in instance action from tools page", async () => {
     render(<ToolsPage />)
 
     await waitFor(() => expect(toolsService.listBuiltinTemplates).toHaveBeenCalled())
+    expect(screen.queryByRole("button", { name: "Create Built-in Instance" })).not.toBeInTheDocument()
+  })
 
-    fireEvent.click(screen.getByRole("button", { name: "Create Built-in Instance" }))
+  it("creates rag_retrieval tool with selected retrieval pipeline", async () => {
+    render(<ToolsPage />)
+
+    await waitFor(() => expect(toolsService.listBuiltinTemplates).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole("button", { name: "New Tool" }))
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "RAG Tool" } })
+    fireEvent.change(screen.getByLabelText("Slug (unique identifier)"), { target: { value: "rag-tool" } })
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "retrieval tool" } })
+
+    const comboboxes = screen.getAllByRole("combobox")
+    const implementationSelect = comboboxes[comboboxes.length - 1]
+    fireEvent.mouseDown(implementationSelect)
+    fireEvent.click(await screen.findByText("RAG Retrieval"))
 
     const pipelineInput = await screen.findByTestId("retrieval-pipeline-select")
     fireEvent.change(pipelineInput, { target: { value: "pipeline-123" } })
 
-    fireEvent.click(screen.getByRole("button", { name: "Create Instance" }))
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
 
     await waitFor(() => {
-      expect(toolsService.createBuiltinInstance).toHaveBeenCalledWith(
-        "retrieval_pipeline",
+      expect(toolsService.createTool).toHaveBeenCalledWith(
         expect.objectContaining({
+          implementation_type: "rag_retrieval",
           implementation_config: expect.objectContaining({ pipeline_id: "pipeline-123" }),
+        })
+      )
+    })
+  })
+
+  it("creates agent_call tool with target slug and timeout", async () => {
+    render(<ToolsPage />)
+
+    await waitFor(() => expect(toolsService.listBuiltinTemplates).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole("button", { name: "New Tool" }))
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Agent Caller" } })
+    fireEvent.change(screen.getByLabelText("Slug (unique identifier)"), { target: { value: "agent-caller" } })
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "calls published agent" } })
+
+    const comboboxes = screen.getAllByRole("combobox")
+    const implementationSelect = comboboxes[comboboxes.length - 1]
+    fireEvent.mouseDown(implementationSelect)
+    fireEvent.click(await screen.findByText("Agent Call"))
+
+    fireEvent.change(screen.getByPlaceholderText("target_agent_slug (recommended)"), { target: { value: "child-agent" } })
+    fireEvent.change(screen.getByPlaceholderText("timeout_s (optional, default 60)"), { target: { value: "30" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+
+    await waitFor(() => {
+      expect(toolsService.createTool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          implementation_type: "agent_call",
+          implementation_config: expect.objectContaining({ target_agent_slug: "child-agent" }),
+          execution_config: expect.objectContaining({ timeout_s: 30 }),
         })
       )
     })

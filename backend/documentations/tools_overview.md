@@ -1,9 +1,9 @@
 # Tools Overview
 
 Date: 2026-02-03
-Last Updated: 2026-02-11
+Last Updated: 2026-02-14
 
-This document describes the full Tools domain in the app: data model, APIs, execution flow, UI, and tests. It reflects the current architecture after Built-in Tools v1 (global templates + tenant instances) and Tool taxonomy upgrades.
+This document describes the full Tools domain in the app: data model, APIs, execution flow, UI, and tests. It reflects the current architecture after removing built-in instance management and introducing first-class `agent_call`.
 
 ---
 
@@ -12,15 +12,16 @@ This document describes the full Tools domain in the app: data model, APIs, exec
 Tools are callable capabilities that agents can invoke. The system uses a **hybrid taxonomy**:
 
 ### Primary Buckets (tool_type)
-- `built_in`  - system tools and built-in templates/instances
+- `built_in`  - system tools and built-in templates (plus legacy instance rows)
 - `mcp`       - tools served from MCP servers
 - `artifact`  - tools backed by code artifacts
-- `custom`    - tenant-defined tools (http/function/rag/custom)
+- `custom`    - tenant-defined tools (http/function/rag/agent_call/custom)
 
 ### Subtypes (implementation_type)
 - `internal`
 - `http`
 - `rag_retrieval`
+- `agent_call`
 - `function`
 - `custom`
 - `artifact`
@@ -43,7 +44,7 @@ Key fields (non-exhaustive):
 - `published_at`       - publish timestamp
 - `artifact_id`, `artifact_version`
 - `builtin_key`                - built-in identifier (e.g. `retrieval_pipeline`)
-- `builtin_template_id`        - FK to global template row for tenant instances
+- `builtin_template_id`        - FK to global template row (used by legacy instance rows)
 - `is_builtin_template`        - marks global built-in template rows
 - `is_active`, `is_system`
 
@@ -84,17 +85,21 @@ Computed by the Tools API:
 - Guardrails:
   - Only `scope=tenant` is allowed on this endpoint
   - Direct creation with `status=published` is blocked; publish must use `POST /tools/{id}/publish`
+  - `rag_retrieval` requires `implementation.pipeline_id` and validates tenant ownership
 
 ### Update
 `PUT /tools/{id}`
 - Accepts updates to schema, config, status, implementation type, artifact link
 - Guardrail: direct transition to `published` is blocked; use `POST /tools/{id}/publish`
+- Guardrail: built-in instance rows are not manageable through this endpoint
 
 ### Publish
 `POST /tools/{id}/publish`
 - Sets status to `published`
 - Sets `published_at` if missing
 - Writes a ToolVersion snapshot
+- `rag_retrieval` validates tenant ownership of configured `implementation.pipeline_id`
+- Built-in instance rows are not manageable through this endpoint
 
 ### Version
 `POST /tools/{id}/version?new_version=X.Y.Z`
@@ -102,17 +107,12 @@ Computed by the Tools API:
 - Writes a ToolVersion snapshot
 - Updates `tool_registry.version`
 
-### Built-in Templates / Instances
+### Built-in Templates
 - `GET /tools/builtins/templates`
-- `POST /tools/builtins/templates/{builtin_key}/instances`
-- `GET /tools/builtins/instances`
-- `PATCH /tools/builtins/instances/{tool_id}`
-- `POST /tools/builtins/instances/{tool_id}/publish`
 - Rules:
   - Templates are global (`tenant_id = null`, `is_builtin_template = true`).
-  - Instances are tenant-scoped clones with tenant config.
-  - Built-in instance schema/type are immutable via generic `PUT /tools/{id}`.
-  - `retrieval_pipeline` validates that configured pipeline belongs to the tenant.
+  - Template surface is read-only.
+  - Retrieval tools are created in the regular tool flow (`POST /tools`) with `implementation_type=rag_retrieval`.
 
 ---
 
@@ -170,6 +170,19 @@ Backend-only execution metadata used by the Agent tool loop:
   - `json_transform`
   - `datetime_utils`
 
+### Agent Call Tools
+- `implementation_type: agent_call` executes a synchronous child-agent run.
+- Target resolution supports `target_agent_id` or `target_agent_slug`.
+- Target must be tenant-scoped and published.
+- Runtime accepts caller payload aliases: `input`, `text`, `messages`, `context`.
+- Compact runtime output includes:
+  - `mode`
+  - `target_agent_id` / `target_agent_slug`
+  - `run_id`
+  - `status`
+  - `output` and/or `context` (if present)
+  - `error` (for failure/timeout cases)
+
 ### Tool Resolver
 - Resolves tool metadata and returns the actual implementation type
 - Enforces tenant isolation (`tenant_id == current tenant` OR global `tenant_id is null`)
@@ -192,6 +205,8 @@ Key features:
   - MCP: server URL + tool name
   - HTTP: method, URL, headers
   - Function: function name
+  - RAG Retrieval: retrieval pipeline selector
+  - Agent Call: target slug/ID + optional timeout
 
 ### Shared Tool Taxonomy
 Location: `frontend-reshet/src/lib/tool-types.ts`
@@ -222,6 +237,7 @@ Integrated in `ConfigPanel` for `tool_list` field type.
 - `backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py`
 - `backend/tests/tool_execution/test_function_tool_execution.py`
 - `backend/tests/tool_execution/test_mcp_tool_execution.py`
+- `backend/tests/tool_execution/test_agent_call_tool_execution.py`
 - `backend/tests/agent_tool_loop/test_tool_loop.py`
 - `backend/tests/tools_guardrails/test_tools_api_guardrails.py`
 - `backend/tests/tools_guardrails/test_tool_tenant_scoping.py`

@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-02-12
+Last Updated: 2026-02-14
 
 ## Scope of the feature
 - Admin control plane CRUD and publish lifecycle for tenant published apps.
@@ -46,9 +46,11 @@ Last Updated: 2026-02-12
 - Agentic loop now parses prompt `@file` mentions and emits `read_file` tool events for the mentioned files during inspect stage.
 - Agentic loop now blocks patch generation success when targeted tests fail (`run_targeted_tests` tool status `failed`) and persists failure tool traces for replay.
 - Builder conversation replay endpoint (`GET /admin/apps/{app_id}/builder/conversations`) returns persisted turns newest-first.
-- Publish endpoint enforces build-status gate contract (`BUILD_PENDING`/`BUILD_FAILED`) for every publish request.
-- Worker-build preflight gate (`APPS_BUILDER_WORKER_BUILD_GATE_ENABLED=1`) blocks revision save, validate, and chat patch apply on failed `npm`/`vite` preflight.
-- Publish clones draft into immutable published revision snapshot.
+- Publish endpoint returns async job metadata and publish jobs move through `queued/running/succeeded/failed`.
+- Publish no longer gates on draft revision `build_status`; deterministic checks happen in publish worker full-build path.
+- Worker-build preflight gate does not block draft save/chat flows in draft mode.
+- Publish failures keep the previous `current_published_revision_id` unchanged.
+- Draft-dev session APIs support ensure/sync/heartbeat/read/stop lifecycle per `(app_id, user_id)`.
 - Public runtime descriptor endpoint returns static runtime contract:
 - `GET /public/apps/{slug}/runtime`
 - Preview runtime descriptor endpoint returns preview asset base URL:
@@ -59,7 +61,6 @@ Last Updated: 2026-02-12
 - Preview principal auth now falls back across bearer/query/cookie token sources and accepts a valid query token even when an invalid bearer token is present.
 - Preview HTML assets now rewrite relative `src`/`href` links to include `preview_token` query propagation, reducing iframe/cookie-related token failures for JS/CSS fetches.
 - Public `/public/apps/{slug}/ui` is permanently removed and returns `410 UI_SOURCE_MODE_REMOVED`.
-- Publish returns `500 BUILD_ARTIFACT_COPY_FAILED` when dist artifact promotion fails and leaves existing publish pointer unchanged.
 - Hostname resolve and app config retrieval for public runtime.
 - Signup/login/logout and auth-me using published app session tokens.
 - Google OAuth start and callback issuance path with tenant credentials.
@@ -83,6 +84,9 @@ Last Updated: 2026-02-12
 - Date: 2026-02-12 21:08 UTC
 - Result: PASS (8 passed)
 - Notes: verifies builder revision/chat reliability contracts plus publish/runtime descriptor and preview asset flows.
+- Command: `pytest -q backend/tests/published_apps`
+- Date: 2026-02-14 18:10 UTC
+- Result: PASS (34 passed)
 
 ## Known gaps or follow-ups
 - Add negative tests for cross-app token replay attempts.

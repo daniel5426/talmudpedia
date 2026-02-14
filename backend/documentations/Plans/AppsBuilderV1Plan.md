@@ -1,8 +1,9 @@
 # Apps Builder V1 (Vite Static Runtime, Big-Bang)
-Last Updated: 2026-02-11
+Last Updated: 2026-02-14
 
 ## Summary
 This plan supersedes the older "virtual React files compiled in-browser" V1 assumptions.
+It is now aligned with the Draft Dev Mode + Publish Build Mode split.
 
 V1 is now defined as:
 - full Vite React project files stored per revision,
@@ -15,7 +16,7 @@ V1 is now defined as:
 1. Build engine: Celery + dedicated Node-capable build workers.
 2. Asset serving: object storage + CDN.
 3. Dependency policy: curated semi-open allowlist with pinned versions.
-4. Build trigger: auto-build on save and publish checks.
+4. Build trigger: draft-dev sandbox sync on save/edit; async full clean build on publish.
 5. Draft preview: backend proxy with preview token.
 6. Rollout: big-bang runtime switch.
 7. Runtime API origin on app domain: `/api/py` gateway path.
@@ -34,11 +35,10 @@ V1 is now defined as:
 - `dist_storage_prefix`, `dist_manifest`
 - `template_runtime` default: `vite_static`
 
-3. Publish gate contract:
-- `POST /admin/apps/{id}/publish` returns:
-  - `409 BUILD_PENDING` when build is `queued|running`
-  - `422 BUILD_FAILED` with diagnostics when build is `failed`
-  - success only when build is `succeeded`
+3. Publish job contract:
+- `POST /admin/apps/{id}/publish` returns an async publish job (`queued|running|succeeded|failed`).
+- Optional autosave payload may be included in publish request.
+- `GET /admin/apps/{id}/publish/jobs/{job_id}` returns job status + diagnostics.
 
 4. Public runtime contract:
 - `GET /public/apps/{slug}/runtime` returns runtime descriptor.
@@ -101,9 +101,9 @@ V1 is now defined as:
 ## Public Interfaces / Types (V1 Target)
 1. `PublishedAppRevision` includes build lifecycle and dist metadata fields.
 2. Runtime descriptor types for published and preview runtime endpoints.
-3. Publish error contracts:
-- `BUILD_PENDING`
-- `BUILD_FAILED`
+3. Publish contracts:
+- async publish job status lifecycle: `queued | running | succeeded | failed`
+- publish job diagnostics payload on failure
 4. Legacy source-UI contract deprecation code:
 - `UI_SOURCE_MODE_REMOVED`
 
@@ -120,7 +120,7 @@ V1 is now defined as:
 3. Initial model-backed and agentic patch-generation framework is in place behind feature flags.
 
 ### In Progress
-1. Worker-backed Vite build lifecycle on revision save/publish path.
+1. Worker-backed Vite build lifecycle on publish path.
 2. Runtime descriptor/public static serving contracts and `/ui` cutover behavior.
 3. Curated dependency governance module and full Vite root file policy.
 
@@ -130,18 +130,18 @@ V1 is now defined as:
 ## Validation Targets
 1. Backend tests:
 - build lifecycle transitions,
-- publish gate codes,
+- publish job lifecycle/status transitions,
 - runtime descriptor responses,
 - `/ui` deprecation response,
 - preview asset auth.
 
 2. Frontend tests:
-- preview build status UX,
+- draft-dev session status UX,
 - runtime descriptor consumption,
 - published static redirect.
 
 3. End-to-end:
-- create -> edit -> build -> preview -> publish -> static runtime load.
+- create -> edit -> draft-dev preview -> async publish -> static runtime load.
 
 ## Contradiction Resolution
 This file intentionally replaces old React-only import allowlist and in-browser compile assumptions.

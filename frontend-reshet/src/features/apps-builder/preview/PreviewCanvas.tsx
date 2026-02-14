@@ -2,18 +2,18 @@
 
 import { Loader2 } from "lucide-react";
 
-type PreviewBuildStatus = "queued" | "running" | "succeeded" | "failed";
+type DraftDevStatus = "starting" | "running" | "stopped" | "expired" | "error";
 
 type PreviewCanvasProps = {
   previewUrl?: string | null;
-  buildStatus?: PreviewBuildStatus | null;
-  buildError?: string | null;
+  devStatus?: DraftDevStatus | null;
+  devError?: string | null;
 };
 
-export function PreviewCanvas({ previewUrl, buildStatus, buildError }: PreviewCanvasProps) {
-  const isPending = buildStatus === "queued" || buildStatus === "running";
-  const hasFailed = buildStatus === "failed";
-  const hasBuildError = Boolean(buildError);
+export function PreviewCanvas({ previewUrl, devStatus, devError }: PreviewCanvasProps) {
+  const isPending = devStatus === "starting";
+  const hasFailed = devStatus === "error" || devStatus === "expired";
+  const hasSessionError = Boolean(devError);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-white">
@@ -24,22 +24,22 @@ export function PreviewCanvas({ previewUrl, buildStatus, buildError }: PreviewCa
         src={previewUrl || "about:blank"}
       />
 
-      {isPending && !hasBuildError && (
+      {isPending && !hasSessionError && (
         <div className="absolute inset-0 flex items-center justify-center gap-2 bg-background/70 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Build in progress...
+          Starting draft preview...
         </div>
       )}
 
-      {(hasFailed || hasBuildError) && (
+      {(hasFailed || hasSessionError) && (
         <div className="absolute inset-0 overflow-auto bg-background/95 p-4 text-sm text-destructive">
-          {buildError || "Build failed. Retry from the builder controls."}
+          {devError || "Draft preview session failed. Re-open Preview to restart the sandbox."}
         </div>
       )}
 
       {!isPending && !hasFailed && !previewUrl && (
         <div className="absolute inset-0 flex items-center justify-center bg-background/70 px-6 text-center text-sm text-muted-foreground">
-          Preview is unavailable until this revision has a successful static build.
+          Preview is unavailable until the draft dev session is running.
         </div>
       )}
     </div>

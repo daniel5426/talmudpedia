@@ -1,24 +1,24 @@
 # Built-in Tools Registry Tests
 
-Last Updated: 2026-02-11
+Last Updated: 2026-02-14
 
 ## Scope
-Covers built-in template and tenant instance control-plane behavior in `/tools/builtins/*` routes.
+Covers built-in template catalog behavior and retrieval validation guardrails in the tools control-plane.
 
 ## Test files present
 - test_builtin_registry_api.py
 
 ## Key scenarios covered
 - Global template listing excludes tenant instances.
-- Tenant instance creation from a global template.
-- Built-in instance schema/type immutability through generic update endpoint.
-- Built-in retrieval instance publish flow with tenant pipeline validation.
-- Cross-tenant retrieval pipeline IDs are rejected.
+- Removed built-in instance routes return `404`.
+- Generic update/publish/delete reject legacy built-in instance rows (`404`).
+- Regular `rag_retrieval` tool create/update reject cross-tenant retrieval pipeline IDs.
+- Regular `rag_retrieval` publish validates tenant pipeline scope and creates a `ToolVersion` on success.
 
 ## Last run command + result
-- Command: `for i in 1 2 3 4 5; do pytest -q backend/tests/agent_execution_events backend/tests/agent_tool_loop backend/tests/builtin_tool_execution backend/tests/tools_guardrails backend/tests/tool_execution backend/tests/agent_api_context backend/tests/builtin_tools_registry || exit 1; done`
-- Date/Time: 2026-02-11 22:38 EET
-- Result: pass (5 consecutive runs; each run `30 passed, 1 skipped`)
+- Command: `pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_runtime_guardrails.py backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py`
+- Date/Time: 2026-02-14 20:47 EET
+- Result: pass (`16 passed`)
 
 ## Known gaps or follow-ups
-- Add negative coverage for feature flag disabled mode (`BUILTIN_TOOLS_V1=0`).
+- Add disabled-flag coverage for template list endpoint (`BUILTIN_TOOLS_V1=0`).

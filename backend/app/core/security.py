@@ -13,6 +13,8 @@ PUBLISHED_APP_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("PUBLISHED_APP_ACCESS_
 PUBLISHED_APP_TOKEN_USE = "published_app_session"
 PUBLISHED_APP_PREVIEW_TOKEN_EXPIRE_MINUTES = int(os.getenv("PUBLISHED_APP_PREVIEW_TOKEN_EXPIRE_MINUTES", "5"))
 PUBLISHED_APP_PREVIEW_TOKEN_USE = "published_app_preview"
+PUBLISHED_APP_DRAFT_DEV_TOKEN_EXPIRE_MINUTES = int(os.getenv("PUBLISHED_APP_DRAFT_DEV_TOKEN_EXPIRE_MINUTES", "5"))
+PUBLISHED_APP_DRAFT_DEV_TOKEN_USE = "published_app_draft_dev"
 
 # uses Argon2id for new hashes, but can verify old bcrypt hashes
 password_hash = PasswordHash((
@@ -116,4 +118,40 @@ def decode_published_app_preview_token(token: str) -> dict[str, Any]:
         raise jwt.InvalidTokenError("Invalid token_use")
     if not payload.get("tenant_id") or not payload.get("app_id") or not payload.get("revision_id"):
         raise jwt.InvalidTokenError("Invalid published app preview token claims")
+    return payload
+
+
+def create_published_app_draft_dev_token(
+    *,
+    subject: Union[str, Any],
+    tenant_id: str,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    scopes: Optional[list[str]] = None,
+    expires_delta: Optional[timedelta] = None,
+) -> str:
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(minutes=PUBLISHED_APP_DRAFT_DEV_TOKEN_EXPIRE_MINUTES)
+    )
+    to_encode: dict[str, Any] = {
+        "exp": expire,
+        "sub": str(subject),
+        "tenant_id": str(tenant_id),
+        "app_id": str(app_id),
+        "user_id": str(user_id),
+        "session_id": str(session_id),
+        "token_use": PUBLISHED_APP_DRAFT_DEV_TOKEN_USE,
+        "scope": scopes or ["apps.builder.preview.dev"],
+        "jti": str(uuid.uuid4()),
+    }
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_published_app_draft_dev_token(token: str) -> dict[str, Any]:
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    if payload.get("token_use") != PUBLISHED_APP_DRAFT_DEV_TOKEN_USE:
+        raise jwt.InvalidTokenError("Invalid token_use")
+    if not payload.get("tenant_id") or not payload.get("app_id") or not payload.get("session_id") or not payload.get("user_id"):
+        raise jwt.InvalidTokenError("Invalid published app draft dev token claims")
     return payload

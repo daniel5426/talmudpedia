@@ -155,6 +155,7 @@ async def _normalize_tool_impl_values(db):
         "internal": "INTERNAL",
         "http": "HTTP",
         "rag_retrieval": "RAG_RETRIEVAL",
+        "agent_call": "AGENT_CALL",
         "function": "FUNCTION",
         "custom": "CUSTOM",
         "artifact": "ARTIFACT",

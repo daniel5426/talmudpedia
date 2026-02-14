@@ -104,6 +104,24 @@ async def _seed_retrieval_pipeline(db_session, tenant_id) -> VisualPipeline:
     return pipeline
 
 
+async def _create_http_tool(client, user: User, tenant: Tenant, slug_suffix: str) -> dict:
+    response = await client.post(
+        "/tools",
+        json={
+            "name": f"HTTP Tool {slug_suffix}",
+            "slug": f"http-tool-{slug_suffix}",
+            "description": "test",
+            "input_schema": {"type": "object", "properties": {}},
+            "output_schema": {"type": "object", "properties": {}},
+            "implementation_type": "HTTP",
+            "implementation_config": {"type": "http", "url": "https://example.com", "method": "GET"},
+        },
+        headers=_headers(user, tenant),
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 @pytest.mark.asyncio
 async def test_list_builtin_templates_returns_only_global_templates(client, db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
@@ -148,10 +166,46 @@ async def test_list_builtin_templates_returns_only_global_templates(client, db_s
 
 
 @pytest.mark.asyncio
-async def test_create_builtin_instance_enforces_tenant_scope(client, db_session):
+async def test_builtin_instance_endpoints_removed_return_404(client, db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
+    key = f"removed_{uuid4().hex[:8]}"
+    await _ensure_builtin_template(
+        db_session,
+        builtin_key=key,
+        implementation_type=ToolImplementationType.HTTP,
+        implementation={"type": "http", "url": "https://example.com", "method": "GET"},
+    )
 
-    key = f"unit_create_{uuid4().hex[:8]}"
+    create_resp = await client.post(
+        f"/tools/builtins/templates/{key}/instances",
+        json={"name": "nope"},
+        headers=_headers(user, tenant),
+    )
+    assert create_resp.status_code == 404
+
+    list_resp = await client.get("/tools/builtins/instances", headers=_headers(user, tenant))
+    assert list_resp.status_code == 404
+
+    random_tool_id = uuid4()
+    patch_resp = await client.patch(
+        f"/tools/builtins/instances/{random_tool_id}",
+        json={"name": "still-nope"},
+        headers=_headers(user, tenant),
+    )
+    assert patch_resp.status_code == 404
+
+    publish_resp = await client.post(
+        f"/tools/builtins/instances/{random_tool_id}/publish",
+        json={},
+        headers=_headers(user, tenant),
+    )
+    assert publish_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_generic_tool_management_rejects_builtin_instance_rows(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    key = f"legacy_instance_{uuid4().hex[:8]}"
     template = await _ensure_builtin_template(
         db_session,
         builtin_key=key,
@@ -159,124 +213,155 @@ async def test_create_builtin_instance_enforces_tenant_scope(client, db_session)
         implementation={"type": "http", "url": "https://example.com", "method": "GET"},
     )
 
-    payload = {
-        "name": "Tenant HTTP Instance",
-        "description": "tenant-specific",
-        "implementation_config": {"type": "http", "url": "https://tenant.example.com", "method": "GET"},
-    }
-
-    response = await client.post(
-        f"/tools/builtins/templates/{key}/instances",
-        json=payload,
-        headers=_headers(user, tenant),
-    )
-    assert response.status_code == 200
-
-    body = response.json()
-    assert body["tenant_id"] == str(tenant.id)
-    assert body["builtin_key"] == key
-    assert body["is_builtin_template"] is False
-    assert body["is_builtin_instance"] is True
-    assert body["builtin_template_id"] == str(template.id)
-    assert body["status"] == "DRAFT"
-
-    saved = (
-        await db_session.execute(select(ToolRegistry).where(ToolRegistry.id == body["id"]))
-    ).scalar_one()
-    assert saved.tenant_id == tenant.id
-
-
-@pytest.mark.asyncio
-async def test_builtin_instance_schema_type_are_immutable_via_general_put(client, db_session):
-    tenant, user = await _seed_tenant_and_user(db_session)
-
-    key = f"unit_immutable_{uuid4().hex[:8]}"
-    await _ensure_builtin_template(
-        db_session,
-        builtin_key=key,
+    instance = ToolRegistry(
+        tenant_id=tenant.id,
+        name="Legacy Built-in Instance",
+        slug=f"legacy-builtin-instance-{uuid4().hex[:8]}",
+        description="legacy row",
+        scope=ToolDefinitionScope.TENANT,
+        schema={"input": {"type": "object"}, "output": {"type": "object"}},
+        config_schema={"implementation": {"type": "http", "url": "https://tenant.example.com", "method": "GET"}},
+        status=ToolStatus.DRAFT,
+        version="1.0.0",
         implementation_type=ToolImplementationType.HTTP,
-        implementation={"type": "http", "url": "https://example.com", "method": "GET"},
+        builtin_key=key,
+        builtin_template_id=template.id,
+        is_builtin_template=False,
+        is_active=True,
+        is_system=False,
     )
+    db_session.add(instance)
+    await db_session.commit()
 
-    create_response = await client.post(
-        f"/tools/builtins/templates/{key}/instances",
-        json={"name": "immutable-instance"},
+    update_resp = await client.put(
+        f"/tools/{instance.id}",
+        json={"description": "blocked"},
         headers=_headers(user, tenant),
     )
-    assert create_response.status_code == 200
-    instance_id = create_response.json()["id"]
+    assert update_resp.status_code == 404
 
-    denied = await client.put(
-        f"/tools/{instance_id}",
-        json={
-            "input_schema": {"type": "object", "properties": {"x": {"type": "string"}}},
-            "implementation_type": "FUNCTION",
-        },
-        headers=_headers(user, tenant),
-    )
-    assert denied.status_code == 400
-    assert "immutable schema/type" in denied.json()["detail"].lower()
-
-
-@pytest.mark.asyncio
-async def test_publish_builtin_retrieval_instance_with_tenant_pipeline(client, db_session):
-    tenant, user = await _seed_tenant_and_user(db_session)
-
-    await _ensure_builtin_template(
-        db_session,
-        builtin_key="retrieval_pipeline",
-        implementation_type=ToolImplementationType.RAG_RETRIEVAL,
-        implementation={"type": "rag_retrieval", "pipeline_id": ""},
-    )
-    pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
-
-    create_response = await client.post(
-        "/tools/builtins/templates/retrieval_pipeline/instances",
-        json={
-            "name": "tenant retrieval",
-            "implementation_config": {"type": "rag_retrieval", "pipeline_id": str(pipeline.id)},
-        },
-        headers=_headers(user, tenant),
-    )
-    assert create_response.status_code == 200
-    instance_id = create_response.json()["id"]
-
-    publish_response = await client.post(
-        f"/tools/builtins/instances/{instance_id}/publish",
+    publish_resp = await client.post(
+        f"/tools/{instance.id}/publish",
         json={},
         headers=_headers(user, tenant),
     )
-    assert publish_response.status_code == 200
-    body = publish_response.json()
-    assert body["status"] == "PUBLISHED"
-    assert body["is_active"] is True
+    assert publish_resp.status_code == 404
 
-    versions = (
-        await db_session.execute(select(ToolVersion).where(ToolVersion.tool_id == UUID(str(instance_id))))
-    ).scalars().all()
-    assert len(versions) == 1
+    delete_resp = await client.delete(
+        f"/tools/{instance.id}",
+        headers=_headers(user, tenant),
+    )
+    assert delete_resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_retrieval_instance_rejects_pipeline_from_other_tenant(client, db_session):
+async def test_rag_retrieval_regular_tool_rejects_pipeline_from_other_tenant_on_create(client, db_session):
     tenant_a, user_a = await _seed_tenant_and_user(db_session)
     tenant_b, _user_b = await _seed_tenant_and_user(db_session)
 
-    await _ensure_builtin_template(
-        db_session,
-        builtin_key="retrieval_pipeline",
-        implementation_type=ToolImplementationType.RAG_RETRIEVAL,
-        implementation={"type": "rag_retrieval", "pipeline_id": ""},
-    )
     foreign_pipeline = await _seed_retrieval_pipeline(db_session, tenant_b.id)
 
     response = await client.post(
-        "/tools/builtins/templates/retrieval_pipeline/instances",
+        "/tools",
         json={
             "name": "invalid retrieval",
+            "slug": f"invalid-retrieval-{uuid4().hex[:8]}",
+            "description": "invalid",
+            "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
+            "output_schema": {"type": "object", "properties": {"results": {"type": "array"}}},
+            "implementation_type": "RAG_RETRIEVAL",
             "implementation_config": {"type": "rag_retrieval", "pipeline_id": str(foreign_pipeline.id)},
         },
         headers=_headers(user_a, tenant_a),
     )
     assert response.status_code == 400
     assert "tenant scope" in response.json()["detail"].lower() or "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_rag_retrieval_regular_tool_rejects_pipeline_from_other_tenant_on_update(client, db_session):
+    tenant_a, user_a = await _seed_tenant_and_user(db_session)
+    tenant_b, _user_b = await _seed_tenant_and_user(db_session)
+
+    foreign_pipeline = await _seed_retrieval_pipeline(db_session, tenant_b.id)
+    tool = await _create_http_tool(client, user_a, tenant_a, slug_suffix=uuid4().hex[:8])
+
+    update = await client.put(
+        f"/tools/{tool['id']}",
+        json={
+            "implementation_type": "RAG_RETRIEVAL",
+            "implementation_config": {"type": "rag_retrieval", "pipeline_id": str(foreign_pipeline.id)},
+        },
+        headers=_headers(user_a, tenant_a),
+    )
+    assert update.status_code == 400
+    assert "tenant scope" in update.json()["detail"].lower() or "not found" in update.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_publish_regular_rag_retrieval_tool_validates_pipeline_scope(client, db_session):
+    tenant_a, user_a = await _seed_tenant_and_user(db_session)
+    tenant_b, _user_b = await _seed_tenant_and_user(db_session)
+
+    foreign_pipeline = await _seed_retrieval_pipeline(db_session, tenant_b.id)
+
+    tool = ToolRegistry(
+        tenant_id=tenant_a.id,
+        name=f"invalid-publish-{uuid4().hex[:6]}",
+        slug=f"invalid-publish-{uuid4().hex[:8]}",
+        description="invalid publish",
+        scope=ToolDefinitionScope.TENANT,
+        schema={"input": {"type": "object"}, "output": {"type": "object"}},
+        config_schema={"implementation": {"type": "rag_retrieval", "pipeline_id": str(foreign_pipeline.id)}},
+        status=ToolStatus.DRAFT,
+        version="1.0.0",
+        implementation_type=ToolImplementationType.RAG_RETRIEVAL,
+        is_active=True,
+        is_system=False,
+    )
+    db_session.add(tool)
+    await db_session.commit()
+    await db_session.refresh(tool)
+
+    publish_response = await client.post(
+        f"/tools/{tool.id}/publish",
+        json={},
+        headers=_headers(user_a, tenant_a),
+    )
+    assert publish_response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_publish_regular_rag_retrieval_tool_with_tenant_pipeline_creates_version(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
+
+    create_response = await client.post(
+        "/tools",
+        json={
+            "name": "valid retrieval",
+            "slug": f"valid-retrieval-{uuid4().hex[:8]}",
+            "description": "valid",
+            "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
+            "output_schema": {"type": "object", "properties": {"results": {"type": "array"}}},
+            "implementation_type": "RAG_RETRIEVAL",
+            "implementation_config": {"type": "rag_retrieval", "pipeline_id": str(pipeline.id)},
+        },
+        headers=_headers(user, tenant),
+    )
+    assert create_response.status_code == 200
+    tool_id = create_response.json()["id"]
+
+    publish_response = await client.post(
+        f"/tools/{tool_id}/publish",
+        json={},
+        headers=_headers(user, tenant),
+    )
+    assert publish_response.status_code == 200
+    body = publish_response.json()
+    assert body["status"] == "PUBLISHED"
+
+    versions = (
+        await db_session.execute(select(ToolVersion).where(ToolVersion.tool_id == UUID(str(tool_id))))
+    ).scalars().all()
+    assert len(versions) == 1

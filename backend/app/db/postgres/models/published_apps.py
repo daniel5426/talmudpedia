@@ -32,6 +32,21 @@ class PublishedAppRevisionBuildStatus(str, enum.Enum):
     failed = "failed"
 
 
+class PublishedAppDraftDevSessionStatus(str, enum.Enum):
+    starting = "starting"
+    running = "running"
+    stopped = "stopped"
+    expired = "expired"
+    error = "error"
+
+
+class PublishedAppPublishJobStatus(str, enum.Enum):
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+
+
 class BuilderConversationTurnStatus(str, enum.Enum):
     succeeded = "succeeded"
     failed = "failed"
@@ -77,6 +92,16 @@ class PublishedApp(Base):
     revisions = relationship("PublishedAppRevision", back_populates="published_app", cascade="all, delete-orphan")
     builder_conversations = relationship(
         "PublishedAppBuilderConversationTurn",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+    )
+    draft_dev_sessions = relationship(
+        "PublishedAppDraftDevSession",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+    )
+    publish_jobs = relationship(
+        "PublishedAppPublishJob",
         back_populates="published_app",
         cascade="all, delete-orphan",
     )
@@ -217,4 +242,115 @@ class PublishedAppBuilderConversationTurn(Base):
 
     __table_args__ = (
         Index("ix_builder_conversation_app_created_at", "published_app_id", "created_at"),
+    )
+
+
+class PublishedAppDraftDevSession(Base):
+    __tablename__ = "published_app_draft_dev_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status = Column(
+        SQLEnum(PublishedAppDraftDevSessionStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppDraftDevSessionStatus.starting,
+    )
+    sandbox_id = Column(String(128), nullable=True)
+    preview_url = Column(String, nullable=True)
+    idle_timeout_seconds = Column(Integer, nullable=False, default=180)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_activity_at = Column(DateTime(timezone=True), nullable=True)
+    dependency_hash = Column(String(64), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="draft_dev_sessions")
+    revision = relationship("PublishedAppRevision")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("published_app_id", "user_id", name="uq_published_app_draft_dev_session_scope"),
+        Index("ix_published_app_draft_dev_sessions_scope", "published_app_id", "user_id"),
+    )
+
+
+class PublishedAppPublishJob(Base):
+    __tablename__ = "published_app_publish_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tenant_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    requested_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    source_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    saved_draft_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    published_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status = Column(
+        SQLEnum(PublishedAppPublishJobStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppPublishJobStatus.queued,
+    )
+    error = Column(Text, nullable=True)
+    diagnostics = Column(JSONB, nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="publish_jobs")
+    tenant = relationship("Tenant")
+    requester = relationship("User")
+    source_revision = relationship("PublishedAppRevision", foreign_keys=[source_revision_id])
+    saved_draft_revision = relationship("PublishedAppRevision", foreign_keys=[saved_draft_revision_id])
+    published_revision = relationship("PublishedAppRevision", foreign_keys=[published_revision_id])
+
+    __table_args__ = (
+        Index("ix_published_app_publish_jobs_app_created_at", "published_app_id", "created_at"),
     )

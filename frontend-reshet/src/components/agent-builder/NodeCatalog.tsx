@@ -229,7 +229,7 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
     const categories: AgentNodeCategory[] = ["control", "reasoning", "action", "logic", "orchestration", "interaction", "data"]
 
     return (
-        <div className="flex flex-col">
+        <div className="flex flex-col h-full">
             <div className="p-3.5 space-y-3 flex-shrink-0">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -265,7 +265,7 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
                     <p className="text-xs text-muted-foreground">Loading catalog...</p>
                 </div>
             ) : (
-                <div className="flex-1 overflow-y-auto px-3.5 pb-6 space-y-6 scrollbar-none max-h-[70vh]">
+                <div className="flex-1 pb-2 overflow-y-auto px-3.5 pb-6 space-y-6 scrollbar-none">
                     {categories.map((category) => (
                         <CategorySection
                             key={category}

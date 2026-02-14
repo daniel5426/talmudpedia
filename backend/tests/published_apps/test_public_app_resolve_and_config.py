@@ -3,8 +3,8 @@ from sqlalchemy import select
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
-from ._helpers import admin_headers, seed_admin_tenant_and_agent, seed_published_app
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision, PublishedAppRevisionBuildStatus
+from ._helpers import admin_headers, seed_admin_tenant_and_agent, seed_published_app, start_publish_and_wait
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision
 
 
 @pytest.mark.asyncio
@@ -58,18 +58,9 @@ async def test_public_runtime_descriptor_and_ui_source_removed(client, db_sessio
     assert create_resp.status_code == 200
     app_id = create_resp.json()["id"]
 
-    app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
-    assert app_row is not None
-    draft_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
-    assert draft_row is not None
-    draft_row.build_status = PublishedAppRevisionBuildStatus.succeeded
-    draft_row.build_error = None
-    await db_session.commit()
-
-    publish_resp = await client.post(f"/admin/apps/{app_id}/publish", headers=headers)
-    assert publish_resp.status_code == 200
-    app_payload = publish_resp.json()
-    assert app_payload["current_published_revision_id"]
+    _, publish_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
+    assert publish_status["status"] == "succeeded"
+    assert publish_status["published_revision_id"]
 
     runtime_resp = await client.get("/public/apps/runtime-descriptor-app/runtime")
     assert runtime_resp.status_code == 200
@@ -77,7 +68,7 @@ async def test_public_runtime_descriptor_and_ui_source_removed(client, db_sessio
     assert runtime_payload["slug"] == "runtime-descriptor-app"
     assert runtime_payload["runtime_mode"] == "vite_static"
     assert runtime_payload["api_base_path"] == "/api/py"
-    assert runtime_payload["revision_id"] == app_payload["current_published_revision_id"]
+    assert runtime_payload["revision_id"] == publish_status["published_revision_id"]
 
     ui_resp = await client.get("/public/apps/runtime-descriptor-app/ui")
     assert ui_resp.status_code == 410

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,7 +8,7 @@ from langchain_core.messages import AIMessageChunk
 
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
-from app.db.postgres.models.agents import AgentRun, RunStatus
+from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.rag import (
     ExecutablePipeline,
@@ -50,7 +51,13 @@ async def _seed_tenant_and_user(db_session):
     return tenant, user
 
 
-async def _create_simple_agent(db_session, tenant_id: UUID, user_id: UUID, tool_id: UUID, slug_suffix: str):
+async def _create_simple_agent_with_tools(
+    db_session,
+    tenant_id: UUID,
+    user_id: UUID,
+    tool_ids: list[UUID],
+    slug_suffix: str,
+):
     graph = {
         "spec_version": "1.0",
         "nodes": [
@@ -62,7 +69,7 @@ async def _create_simple_agent(db_session, tenant_id: UUID, user_id: UUID, tool_
                 "config": {
                     "name": "Agent",
                     "model_id": "unit-model",
-                    "tools": [str(tool_id)],
+                    "tools": [str(tool_id) for tool_id in tool_ids],
                     "max_tool_iterations": 2,
                     "tool_execution_mode": "sequential",
                     "output_format": "text",
@@ -85,6 +92,16 @@ async def _create_simple_agent(db_session, tenant_id: UUID, user_id: UUID, tool_
             graph_definition=graph,
         ),
         user_id=user_id,
+    )
+
+
+async def _create_simple_agent(db_session, tenant_id: UUID, user_id: UUID, tool_id: UUID, slug_suffix: str):
+    return await _create_simple_agent_with_tools(
+        db_session=db_session,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        tool_ids=[tool_id],
+        slug_suffix=slug_suffix,
     )
 
 
@@ -318,3 +335,97 @@ async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, m
     assert context_payload["query"] == "sugya about eidim"
     assert context_payload["pipeline_id"] == str(visual.id)
     assert context_payload["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_reasoning_loop_invokes_agent_call_tool_and_consumes_compact_result(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+
+    child_agent = await _create_simple_agent_with_tools(
+        db_session=db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        tool_ids=[],
+        slug_suffix=f"child-{uuid4().hex[:8]}",
+    )
+    child_agent.status = AgentStatus.published
+    child_agent.published_at = datetime.now(timezone.utc)
+    await db_session.commit()
+    await db_session.refresh(child_agent)
+
+    tool = ToolRegistry(
+        tenant_id=tenant.id,
+        name="Agent Call Tool",
+        slug=f"agent-call-{uuid4().hex[:8]}",
+        description="call child agent",
+        scope=ToolDefinitionScope.TENANT,
+        schema={"input": {"type": "object"}, "output": {"type": "object"}},
+        config_schema={
+            "implementation": {
+                "type": "agent_call",
+                "target_agent_slug": child_agent.slug,
+            },
+            "execution": {"timeout_s": 30},
+        },
+        status=ToolStatus.PUBLISHED,
+        version="1.0.0",
+        implementation_type=ToolImplementationType.AGENT_CALL,
+        is_active=True,
+        is_system=False,
+    )
+    db_session.add(tool)
+    await db_session.commit()
+    await db_session.refresh(tool)
+
+    parent_agent = await _create_simple_agent(
+        db_session=db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        tool_id=tool.id,
+        slug_suffix=f"parent-{uuid4().hex[:8]}",
+    )
+
+    provider = _FakeProvider(
+        responses=[
+            _tool_call_chunks(tool.slug, '{"input":"ask child"}'),
+            [AIMessageChunk(content="child final output")],
+            [AIMessageChunk(content="parent final output")],
+        ]
+    )
+
+    async def fake_resolve(_self, _model_id):
+        return provider
+
+    monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
+
+    executor = AgentExecutorService(db=db_session)
+    run_id = await executor.start_run(
+        agent_id=parent_agent.id,
+        input_params={"messages": [{"role": "user", "content": "call child"}], "context": {}},
+        user_id=user.id,
+        background=False,
+        mode=ExecutionMode.DEBUG,
+    )
+    streamed_events = []
+    async for event in executor.run_and_stream(run_id, db_session, mode=ExecutionMode.DEBUG):
+        streamed_events.append(event)
+
+    run = await db_session.get(AgentRun, run_id)
+    assert run is not None
+    assert run.status == RunStatus.completed
+
+    tool_end_events = [e for e in streamed_events if getattr(e, "event", "") == "on_tool_end" and getattr(e, "name", "") == tool.name]
+    assert tool_end_events
+    output_payload = tool_end_events[-1].data.get("output") or {}
+    compact_payload = output_payload if isinstance(output_payload, dict) else {}
+    if isinstance(compact_payload.get("context"), dict) and "mode" in compact_payload["context"]:
+        compact_payload = compact_payload["context"]
+    if isinstance(compact_payload.get("tool_outputs"), list) and compact_payload["tool_outputs"]:
+        first_output = compact_payload["tool_outputs"][0]
+        if isinstance(first_output, dict):
+            compact_payload = first_output
+
+    assert compact_payload["mode"] == "sync"
+    assert compact_payload["target_agent_slug"] == child_agent.slug
+    assert compact_payload["status"] == "completed"
+    assert compact_payload.get("output") is not None

@@ -27,6 +27,212 @@ logger = logging.getLogger(__name__)
 
 
 class ToolNodeExecutor(BaseNodeExecutor):
+    def _resolve_execution_mode(self, node_context: dict[str, Any] | None):
+        from app.agent.execution.types import ExecutionMode
+
+        mode_raw = str((node_context or {}).get("mode") or "debug").strip().lower()
+        if mode_raw == "production":
+            return ExecutionMode.PRODUCTION
+        return ExecutionMode.DEBUG
+
+    def _parse_uuid(self, value: Any) -> UUID | None:
+        if value in (None, ""):
+            return None
+        try:
+            return UUID(str(value))
+        except Exception:
+            return None
+
+    async def _resolve_agent_target(
+        self,
+        *,
+        target_agent_id_raw: Any,
+        target_agent_slug_raw: Any,
+    ) -> Any:
+        if not self.tenant_id:
+            raise PermissionError("agent_call tools require tenant context")
+
+        from app.db.postgres.models.agents import Agent, AgentStatus
+
+        target_agent_id = self._parse_uuid(target_agent_id_raw)
+        target_agent_slug = str(target_agent_slug_raw or "").strip() or None
+        if target_agent_id is None and not target_agent_slug:
+            raise ValueError("agent_call tool requires target_agent_id or target_agent_slug")
+
+        stmt = select(Agent).where(Agent.tenant_id == self.tenant_id)
+        if target_agent_id is not None:
+            stmt = stmt.where(Agent.id == target_agent_id)
+        else:
+            stmt = stmt.where(Agent.slug == target_agent_slug)
+
+        target = (await self.db.execute(stmt)).scalar_one_or_none()
+        if target is None:
+            raise ValueError("Target agent not found in tenant scope")
+
+        status = getattr(getattr(target, "status", None), "value", getattr(target, "status", None))
+        if str(status or "").lower() != AgentStatus.published.value:
+            raise PermissionError("Target agent must be published for agent_call execution")
+        return target
+
+    def _resolve_agent_call_input(
+        self,
+        input_data: dict[str, Any],
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
+        input_text: str | None = None
+        messages: list[dict[str, Any]] = []
+        context: dict[str, Any] = {}
+
+        nested_input = input_data.get("input")
+        if isinstance(nested_input, dict):
+            input_text = (
+                nested_input.get("text")
+                or nested_input.get("input")
+                or nested_input.get("input_text")
+            )
+            raw_messages = nested_input.get("messages")
+            if isinstance(raw_messages, list):
+                messages = [m for m in raw_messages if isinstance(m, dict)]
+            nested_context = nested_input.get("context")
+            if isinstance(nested_context, dict):
+                context = dict(nested_context)
+        elif isinstance(nested_input, str):
+            input_text = nested_input
+
+        if input_text is None:
+            raw_input_text = input_data.get("text") or input_data.get("input_text")
+            if isinstance(raw_input_text, str):
+                input_text = raw_input_text
+
+        if not messages and isinstance(input_data.get("messages"), list):
+            messages = [m for m in input_data.get("messages", []) if isinstance(m, dict)]
+
+        if not context and isinstance(input_data.get("context"), dict):
+            context = dict(input_data.get("context") or {})
+
+        return input_text, messages, context
+
+    async def _execute_agent_call_tool(
+        self,
+        _tool: Any,
+        input_data: dict[str, Any],
+        implementation_config: dict[str, Any],
+        execution_config: dict[str, Any],
+        node_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        target = await self._resolve_agent_target(
+            target_agent_id_raw=implementation_config.get("target_agent_id") or input_data.get("target_agent_id"),
+            target_agent_slug_raw=implementation_config.get("target_agent_slug") or input_data.get("target_agent_slug"),
+        )
+
+        timeout_s = int(
+            execution_config.get("timeout_s")
+            or implementation_config.get("timeout_s")
+            or 60
+        )
+        mode = self._resolve_execution_mode(node_context)
+        input_text, messages, child_context = self._resolve_agent_call_input(input_data)
+
+        if not isinstance(child_context, dict):
+            child_context = {}
+
+        # Propagate delegated auth/runtime context so child run can call secure tools.
+        inherited_keys = (
+            "token",
+            "tenant_id",
+            "user_id",
+            "grant_id",
+            "principal_id",
+            "initiator_user_id",
+            "requested_scopes",
+            "root_run_id",
+            "parent_run_id",
+            "parent_node_id",
+            "depth",
+        )
+        for key in inherited_keys:
+            value = (node_context or {}).get(key)
+            if value is not None and key not in child_context:
+                child_context[key] = value
+        if self.tenant_id and not child_context.get("tenant_id"):
+            child_context["tenant_id"] = str(self.tenant_id)
+
+        state_context = (node_context or {}).get("state_context")
+        if isinstance(state_context, dict) and "requested_scopes" not in child_context:
+            req_scopes = state_context.get("requested_scopes")
+            if isinstance(req_scopes, list):
+                child_context["requested_scopes"] = req_scopes
+
+        requested_scopes = child_context.get("requested_scopes")
+        if not isinstance(requested_scopes, list):
+            requested_scopes = None
+
+        input_params = {
+            "input": input_text,
+            "messages": messages,
+            "context": child_context,
+        }
+
+        from app.agent.execution.service import AgentExecutorService
+        from app.db.postgres.models.agents import AgentRun, RunStatus
+
+        user_id = self._parse_uuid((node_context or {}).get("user_id"))
+        executor = AgentExecutorService(db=self.db)
+        run_id = await executor.start_run(
+            agent_id=target.id,
+            input_params=input_params,
+            user_id=user_id,
+            background=False,
+            mode=mode,
+            requested_scopes=requested_scopes,
+        )
+
+        try:
+            async def _run_sync() -> None:
+                async for _ in executor.run_and_stream(run_id, self.db, None, mode):
+                    pass
+
+            await asyncio.wait_for(_run_sync(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            run = await self.db.get(AgentRun, run_id)
+            if run is not None:
+                run.status = RunStatus.failed
+                run.error_message = f"agent_call timed out after {timeout_s}s"
+                run.completed_at = datetime.now(timezone.utc)
+                await self.db.commit()
+            return {
+                "mode": "sync",
+                "target_agent_id": str(target.id),
+                "target_agent_slug": str(getattr(target, "slug", "")),
+                "run_id": str(run_id),
+                "status": RunStatus.failed.value,
+                "error": f"agent_call timed out after {timeout_s}s",
+            }
+
+        run = await self.db.get(AgentRun, run_id)
+        if run is None:
+            raise RuntimeError("agent_call child run missing after execution")
+
+        output_result = run.output_result if isinstance(run.output_result, dict) else {}
+        state = output_result.get("state") if isinstance(output_result.get("state"), dict) else {}
+        compact_output = state.get("last_agent_output")
+        compact_context = output_result.get("context")
+        status_text = str(getattr(run.status, "value", run.status))
+
+        result = {
+            "mode": "sync",
+            "target_agent_id": str(target.id),
+            "target_agent_slug": str(getattr(target, "slug", "")),
+            "run_id": str(run.id),
+            "status": status_text,
+        }
+        if compact_output is not None:
+            result["output"] = compact_output
+        if compact_context is not None:
+            result["context"] = compact_context
+        if run.error_message:
+            result["error"] = run.error_message
+        return result
+
     async def _mint_workload_token(
         self,
         grant_id: str | None,
@@ -741,6 +947,14 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     output_data = await self._execute_mcp_tool(tool, input_data, implementation_config, timeout_s)
                 elif impl_type == "rag_retrieval":
                     output_data = await self._execute_retrieval_pipeline_tool(tool, input_data, implementation_config)
+                elif impl_type == "agent_call":
+                    output_data = await self._execute_agent_call_tool(
+                        tool,
+                        input_data,
+                        implementation_config,
+                        execution_config if isinstance(execution_config, dict) else {},
+                        context,
+                    )
                 else:
                     raise NotImplementedError(f"Unsupported tool implementation type: {impl_type}")
 

@@ -25,10 +25,11 @@ export const TOOL_SUBTYPES: ToolSubtypeMeta[] = [
   { id: "internal", label: "Internal", description: "Platform built-in", sort: 1 },
   { id: "http", label: "HTTP", description: "HTTP endpoint", sort: 2 },
   { id: "rag_retrieval", label: "RAG Retrieval", description: "Retrieval pipeline", sort: 3 },
-  { id: "function", label: "Function", description: "Code-backed", sort: 4 },
-  { id: "custom", label: "Custom", description: "Custom wrapper", sort: 5 },
-  { id: "artifact", label: "Artifact", description: "Artifact executor", sort: 6 },
-  { id: "mcp", label: "MCP", description: "MCP tool", sort: 7 },
+  { id: "agent_call", label: "Agent Call", description: "Invoke another published agent", sort: 4 },
+  { id: "function", label: "Function", description: "Code-backed", sort: 5 },
+  { id: "custom", label: "Custom", description: "Custom wrapper", sort: 6 },
+  { id: "artifact", label: "Artifact", description: "Artifact executor", sort: 7 },
+  { id: "mcp", label: "MCP", description: "MCP tool", sort: 8 },
 ]
 
 export function getToolBucket(tool: ToolDefinition): ToolTypeBucket {

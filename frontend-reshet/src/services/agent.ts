@@ -97,7 +97,7 @@ export interface ModelsListResponse {
 }
 
 // Tool Types
-export type ToolImplementationType = "internal" | "http" | "rag_retrieval" | "function" | "custom" | "artifact" | "mcp";
+export type ToolImplementationType = "internal" | "http" | "rag_retrieval" | "agent_call" | "function" | "custom" | "artifact" | "mcp";
 export type ToolStatus = "draft" | "published" | "deprecated" | "disabled";
 export type ToolTypeBucket = "built_in" | "mcp" | "artifact" | "custom";
 
@@ -155,26 +155,6 @@ export interface UpdateToolRequest {
     artifact_version?: string;
     status?: ToolStatus;
 }
-
-export interface CreateBuiltinToolInstanceRequest {
-  name?: string;
-  slug?: string;
-  description?: string;
-  implementation_config?: Record<string, unknown>;
-  execution_config?: Record<string, unknown>;
-  status?: ToolStatus;
-}
-
-export interface UpdateBuiltinToolInstanceRequest {
-  name?: string;
-  description?: string;
-  implementation_config?: Record<string, unknown>;
-  execution_config?: Record<string, unknown>;
-  status?: ToolStatus;
-  is_active?: boolean;
-}
-
-
 
 export interface ToolsListResponse {
   tools: ToolDefinition[];

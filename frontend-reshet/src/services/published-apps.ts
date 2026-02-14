@@ -86,7 +86,50 @@ export interface BuilderStateResponse {
   current_draft_revision?: PublishedAppRevision | null;
   current_published_revision?: PublishedAppRevision | null;
   preview_token?: string | null;
+  draft_dev?: DraftDevSessionResponse | null;
 }
+
+export type DraftDevSessionStatus = "starting" | "running" | "stopped" | "expired" | "error";
+
+export interface DraftDevSessionResponse {
+  session_id: string;
+  app_id: string;
+  revision_id?: string | null;
+  status: DraftDevSessionStatus;
+  preview_url?: string | null;
+  expires_at?: string | null;
+  idle_timeout_seconds: number;
+  last_activity_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface DraftDevSyncRequest {
+  files: Record<string, string>;
+  entry_file: string;
+  revision_id?: string;
+}
+
+export interface PublishRequest {
+  base_revision_id?: string;
+  files?: Record<string, string>;
+  entry_file?: string;
+}
+
+export interface PublishJobResponse {
+  job_id: string;
+  app_id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  source_revision_id?: string | null;
+  saved_draft_revision_id?: string | null;
+  published_revision_id?: string | null;
+  error?: string | null;
+  diagnostics: Array<{ message?: string; [key: string]: unknown }>;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface PublishJobStatusResponse extends PublishJobResponse {}
 
 export interface CreatePublishedAppRequest {
   name: string;
@@ -169,8 +212,12 @@ export const publishedAppsService = {
     return httpClient.delete<{ status: string; id: string }>(`/admin/apps/${appId}`);
   },
 
-  async publish(appId: string): Promise<PublishedApp> {
-    return httpClient.post<PublishedApp>(`/admin/apps/${appId}/publish`, {});
+  async publish(appId: string, payload: PublishRequest = {}): Promise<PublishJobResponse> {
+    return httpClient.post<PublishJobResponse>(`/admin/apps/${appId}/publish`, payload);
+  },
+
+  async getPublishJobStatus(appId: string, jobId: string): Promise<PublishJobStatusResponse> {
+    return httpClient.get<PublishJobStatusResponse>(`/admin/apps/${appId}/publish/jobs/${jobId}`);
   },
 
   async unpublish(appId: string): Promise<PublishedApp> {
@@ -183,6 +230,26 @@ export const publishedAppsService = {
 
   async createRevision(appId: string, payload: CreateBuilderRevisionRequest): Promise<PublishedAppRevision> {
     return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/builder/revisions`, payload);
+  },
+
+  async getDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {
+    return httpClient.get<DraftDevSessionResponse>(`/admin/apps/${appId}/builder/draft-dev/session`);
+  },
+
+  async ensureDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {
+    return httpClient.post<DraftDevSessionResponse>(`/admin/apps/${appId}/builder/draft-dev/session/ensure`, {});
+  },
+
+  async syncDraftDevSession(appId: string, payload: DraftDevSyncRequest): Promise<DraftDevSessionResponse> {
+    return httpClient.patch<DraftDevSessionResponse>(`/admin/apps/${appId}/builder/draft-dev/session/sync`, payload);
+  },
+
+  async heartbeatDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {
+    return httpClient.post<DraftDevSessionResponse>(`/admin/apps/${appId}/builder/draft-dev/session/heartbeat`, {});
+  },
+
+  async stopDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {
+    return httpClient.delete<DraftDevSessionResponse>(`/admin/apps/${appId}/builder/draft-dev/session`);
   },
 
   async getRevisionBuildStatus(appId: string, revisionId: string): Promise<RevisionBuildStatusResponse> {

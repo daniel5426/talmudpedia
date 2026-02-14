@@ -65,6 +65,36 @@ def admin_headers(user_id: str, tenant_id: str, org_unit_id: str) -> dict[str, s
     return {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_id}
 
 
+async def start_publish_and_wait(
+    client,
+    *,
+    app_id: str,
+    headers: dict[str, str],
+    payload: dict | None = None,
+    attempts: int = 12,
+):
+    publish_resp = await client.post(
+        f"/admin/apps/{app_id}/publish",
+        headers=headers,
+        json=payload or {},
+    )
+    assert publish_resp.status_code == 200
+    job_payload = publish_resp.json()
+    job_id = job_payload["job_id"]
+
+    status_payload = job_payload
+    for _ in range(attempts):
+        if status_payload["status"] in {"succeeded", "failed"}:
+            break
+        status_resp = await client.get(
+            f"/admin/apps/{app_id}/publish/jobs/{job_id}",
+            headers=headers,
+        )
+        assert status_resp.status_code == 200
+        status_payload = status_resp.json()
+    return job_payload, status_payload
+
+
 async def seed_published_app(db_session, tenant_id, agent_id, created_by, *, slug: str, auth_enabled: bool = True, auth_providers=None):
     app = PublishedApp(
         tenant_id=tenant_id,

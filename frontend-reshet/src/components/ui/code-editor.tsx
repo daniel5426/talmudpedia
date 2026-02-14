@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback } from "react"
 import Editor, { OnMount } from "@monaco-editor/react"
 import { useTheme } from "next-themes"
 import { cn } from "@/lib/utils"
@@ -13,6 +13,7 @@ interface CodeEditorProps {
     className?: string
     readOnly?: boolean
     framed?: boolean
+    suppressValidationDecorations?: boolean
 }
 
 export function CodeEditor({
@@ -23,14 +24,9 @@ export function CodeEditor({
     className,
     readOnly = false,
     framed = true,
+    suppressValidationDecorations = false,
 }: CodeEditorProps) {
     const { resolvedTheme } = useTheme()
-    const [mounted, setMounted] = useState(false)
-
-    // Wait for mount to avoid hydration mismatch when reading theme
-    useEffect(() => {
-        setMounted(true)
-    }, [])
 
     const handleMount: OnMount = useCallback((editor) => {
         // Focus the editor when it mounts
@@ -38,8 +34,6 @@ export function CodeEditor({
     }, [])
 
     const monacoTheme = resolvedTheme === "dark" ? "vs-dark" : "vs"
-
-    if (!mounted) return <div className={cn("bg-muted/10", className)} style={{ height }} />
 
     return (
         <div className={cn("relative overflow-hidden", framed && "rounded-md border", className)}>
@@ -66,6 +60,7 @@ export function CodeEditor({
                     cursorBlinking: "smooth",
                     folding: true,
                     bracketPairColorization: { enabled: true },
+                    renderValidationDecorations: suppressValidationDecorations ? "off" : "on",
                 }}
             />
         </div>

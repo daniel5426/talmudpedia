@@ -10,7 +10,6 @@ import {
     ToolImplementationType,
     ToolStatus,
     CreateToolRequest,
-    CreateBuiltinToolInstanceRequest,
     ToolTypeBucket,
 } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
@@ -40,7 +39,7 @@ import {
     Layers,
     Info,
     Server,
-    GitFork,
+    Bot,
 } from "lucide-react"
 import {
     Dialog,
@@ -68,6 +67,7 @@ const IMPLEMENTATION_ICONS: Record<ToolImplementationType, React.ElementType> = 
     internal: Cog,
     http: Globe,
     rag_retrieval: Database,
+    agent_call: Bot,
     function: Code,
     custom: Wrench,
     artifact: Package,
@@ -143,6 +143,12 @@ function CreateToolDialog({ onCreated }: { onCreated: () => void }) {
         }
         if (type === "function") {
             nextConfig = { type, function_name: "" }
+        }
+        if (type === "rag_retrieval") {
+            nextConfig = { type, pipeline_id: "" }
+        }
+        if (type === "agent_call") {
+            nextConfig = { type, target_agent_slug: "", target_agent_id: "" }
         }
         if (type === "artifact") {
             nextConfig = { type, artifact_id: "", artifact_version: "1.0.0" }
@@ -358,6 +364,54 @@ function CreateToolDialog({ onCreated }: { onCreated: () => void }) {
                         </div>
                     )}
 
+                    {form.implementation_type === "rag_retrieval" && (
+                        <div className="space-y-2">
+                            <Label>Retrieval Pipeline</Label>
+                            <RetrievalPipelineSelect
+                                value={String(implementationConfig.pipeline_id || "")}
+                                onChange={(value) => setForm({
+                                    ...form,
+                                    implementation_config: { ...implementationConfig, pipeline_id: value }
+                                })}
+                            />
+                        </div>
+                    )}
+
+                    {form.implementation_type === "agent_call" && (
+                        <div className="space-y-2">
+                            <Label>Agent Call Configuration</Label>
+                            <div className="grid gap-2">
+                                <Input
+                                    placeholder="target_agent_slug (recommended)"
+                                    value={String(implementationConfig.target_agent_slug || "")}
+                                    onChange={(e) => setForm({
+                                        ...form,
+                                        implementation_config: { ...implementationConfig, target_agent_slug: e.target.value }
+                                    })}
+                                />
+                                <Input
+                                    placeholder="target_agent_id (optional)"
+                                    value={String(implementationConfig.target_agent_id || "")}
+                                    onChange={(e) => setForm({
+                                        ...form,
+                                        implementation_config: { ...implementationConfig, target_agent_id: e.target.value }
+                                    })}
+                                />
+                                <Input
+                                    placeholder="timeout_s (optional, default 60)"
+                                    value={String((form.execution_config as Record<string, unknown> | undefined)?.timeout_s || "")}
+                                    onChange={(e) => setForm({
+                                        ...form,
+                                        execution_config: {
+                                            ...(form.execution_config || {}),
+                                            timeout_s: e.target.value ? Number(e.target.value) : undefined,
+                                        },
+                                    })}
+                                />
+                            </div>
+                        </div>
+                    )}
+
                     <div className="space-y-2">
                         <Label htmlFor="description">Description</Label>
                         <Textarea
@@ -396,167 +450,26 @@ function CreateToolDialog({ onCreated }: { onCreated: () => void }) {
                 </div>
                 <DialogFooter>
                     <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-                    <Button onClick={handleCreate} disabled={!form.name || !form.slug || !form.description || loading}>
+                    <Button
+                        onClick={handleCreate}
+                        disabled={
+                            !form.name
+                            || !form.slug
+                            || !form.description
+                            || loading
+                            || (
+                                form.implementation_type === "rag_retrieval"
+                                && !String((implementationConfig.pipeline_id as string) || "").trim()
+                            )
+                            || (
+                                form.implementation_type === "agent_call"
+                                && !String((implementationConfig.target_agent_slug as string) || "").trim()
+                                && !String((implementationConfig.target_agent_id as string) || "").trim()
+                            )
+                        }
+                    >
                         {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                         Create
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-    )
-}
-
-function CreateBuiltinInstanceDialog({
-    templates,
-    onCreated,
-}: {
-    templates: ToolDefinition[]
-    onCreated: () => void
-}) {
-    const { direction } = useDirection()
-    const [open, setOpen] = useState(false)
-    const [loading, setLoading] = useState(false)
-    const retrievalTemplate = templates.find((t) => t.builtin_key === "retrieval_pipeline")
-    const [selectedKey, setSelectedKey] = useState<string>("")
-    const [form, setForm] = useState<CreateBuiltinToolInstanceRequest>({
-        name: "",
-        slug: "",
-        description: "",
-    })
-    const selectedTemplate = templates.find((t) => t.builtin_key === selectedKey)
-    const implementationConfig = (form.implementation_config || {}) as Record<string, unknown>
-    const requiresRetrievalPipeline = selectedKey === "retrieval_pipeline"
-    const selectedPipelineId = (implementationConfig.pipeline_id as string) || ""
-
-    useEffect(() => {
-        if (!open) {
-            setSelectedKey("")
-            setForm({ name: "", slug: "", description: "" })
-            return
-        }
-        if (!selectedKey && retrievalTemplate?.builtin_key) {
-            setSelectedKey(retrievalTemplate.builtin_key)
-            if (retrievalTemplate.builtin_key === "retrieval_pipeline") {
-                setForm((prev) => ({
-                    ...prev,
-                    implementation_config: { pipeline_id: "" },
-                }))
-            }
-        }
-    }, [open, selectedKey, retrievalTemplate?.builtin_key])
-
-    const handleTemplateChange = (builtinKey: string) => {
-        setSelectedKey(builtinKey)
-        setForm((prev) => ({
-            ...prev,
-            implementation_config: builtinKey === "retrieval_pipeline" ? { pipeline_id: "" } : undefined,
-        }))
-    }
-
-    const handleCreate = async () => {
-        if (!selectedKey) return
-        setLoading(true)
-        try {
-            await toolsService.createBuiltinInstance(selectedKey, form)
-            setOpen(false)
-            onCreated()
-        } catch (error) {
-            console.error("Failed to create built-in instance", error)
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    return (
-        <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-                <Button variant="outline" size="sm">
-                    <GitFork className="h-4 w-4 mr-2" />
-                    Create Built-in Instance
-                </Button>
-            </DialogTrigger>
-            <DialogContent dir={direction} className="max-w-lg">
-                <DialogHeader>
-                    <DialogTitle>Create Built-in Instance</DialogTitle>
-                    <DialogDescription>
-                        Create a tenant-configured instance from a global built-in template.
-                    </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                        <Label>Template</Label>
-                        <Select value={selectedKey} onValueChange={handleTemplateChange}>
-                            <SelectTrigger className="w-full">
-                                <SelectValue placeholder="Select built-in template..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {templates.filter((tpl) => !!tpl.builtin_key).map((tpl) => (
-                                    <SelectItem key={tpl.id} value={tpl.builtin_key!}>
-                                        {tpl.name}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Name (optional)</Label>
-                        <Input
-                            placeholder={selectedTemplate ? `${selectedTemplate.name} Instance` : "Custom name"}
-                            value={form.name || ""}
-                            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Slug (optional)</Label>
-                        <Input
-                            placeholder="instance-slug"
-                            value={form.slug || ""}
-                            onChange={(e) => setForm((prev) => ({ ...prev, slug: e.target.value }))}
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Description (optional)</Label>
-                        <Textarea
-                            placeholder="Optional description override"
-                            value={form.description || ""}
-                            onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-                        />
-                    </div>
-                    {selectedKey === "retrieval_pipeline" && (
-                        <div className="space-y-2">
-                            <Label>Retrieval Pipeline</Label>
-                            <RetrievalPipelineSelect
-                                value={(implementationConfig.pipeline_id as string) || ""}
-                                onChange={(value) =>
-                                    setForm((prev) => ({
-                                        ...prev,
-                                        implementation_config: {
-                                            ...(prev.implementation_config || {}),
-                                            pipeline_id: value,
-                                        },
-                                    }))
-                                }
-                            />
-                        </div>
-                    )}
-                    {selectedKey === "web_fetch" && (
-                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                            <div className="flex items-start gap-2">
-                                <AlertCircle className="mt-0.5 h-3.5 w-3.5" />
-                                <span>
-                                    `web_fetch` currently allows any `http/https` URL in v1. Use only with trusted agent prompts and tenant policy controls.
-                                </span>
-                            </div>
-                        </div>
-                    )}
-                </div>
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => setOpen(false)}>
-                        Cancel
-                    </Button>
-                    <Button onClick={handleCreate} disabled={!selectedKey || loading || (requiresRetrievalPipeline && !selectedPipelineId)}>
-                        {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                        Create Instance
                     </Button>
                 </DialogFooter>
             </DialogContent>
@@ -674,7 +587,6 @@ export default function ToolsPage() {
                         <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
                         Refresh
                     </Button>
-                    <CreateBuiltinInstanceDialog onCreated={() => { fetchTools(); fetchBuiltinTemplates() }} templates={builtinTemplates} />
                     <CreateToolDialog onCreated={fetchTools} />
                 </div>
             </header>
@@ -692,7 +604,7 @@ export default function ToolsPage() {
                             <CardHeader className="pb-2">
                                 <CardTitle className="text-base">Built-in Templates</CardTitle>
                                 <CardDescription>
-                                    Global templates available to create tenant-scoped instances.
+                                    Global, read-only template catalog.
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="pt-0">
@@ -789,10 +701,9 @@ export default function ToolsPage() {
                                     <Wrench className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
                                     <h3 className="text-base font-semibold mb-2">No Tools Match Your Filters</h3>
                                     <p className="text-sm text-muted-foreground mb-4">
-                                        Create a built-in instance or custom tool to get started.
+                                        Create a tool to get started.
                                     </p>
                                     <div className="flex items-center justify-center gap-2">
-                                        <CreateBuiltinInstanceDialog onCreated={() => { fetchTools(); fetchBuiltinTemplates() }} templates={builtinTemplates} />
                                         <CreateToolDialog onCreated={fetchTools} />
                                     </div>
                                 </CardContent>

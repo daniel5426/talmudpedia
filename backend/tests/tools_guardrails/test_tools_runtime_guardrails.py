@@ -113,48 +113,25 @@ async def test_tool_resolver_can_require_published(db_session):
 
 
 @pytest.mark.asyncio
-async def test_builtin_instance_isolated_per_tenant_for_instances_routes(client, db_session):
+async def test_removed_builtin_instance_routes_return_404(client, db_session):
     tenant_a, user_a = await _seed_tenant_and_user(db_session)
-    tenant_b, _user_b = await _seed_tenant_and_user(db_session)
 
     key = f"tenant-iso-{uuid4().hex[:8]}"
-    template = await _seed_builtin_template(db_session, key)
-
-    b_instance = ToolRegistry(
-        tenant_id=tenant_b.id,
-        name="Tenant B Builtin",
-        slug=f"tenant-b-instance-{uuid4().hex[:8]}",
-        description="tenant b instance",
-        scope=ToolDefinitionScope.TENANT,
-        schema={"input": {"type": "object"}, "output": {"type": "object"}},
-        config_schema={"implementation": {"type": "http", "url": "https://b.example.com", "method": "GET"}},
-        status=ToolStatus.DRAFT,
-        version="1.0.0",
-        implementation_type=ToolImplementationType.HTTP,
-        builtin_key=key,
-        builtin_template_id=template.id,
-        is_builtin_template=False,
-        is_active=True,
-        is_system=False,
-    )
-    db_session.add(b_instance)
-    await db_session.commit()
-    await db_session.refresh(b_instance)
+    await _seed_builtin_template(db_session, key)
 
     listed = await client.get("/tools/builtins/instances", headers=_headers(user_a, tenant_a))
-    assert listed.status_code == 200
-    listed_ids = {item["id"] for item in listed.json()["tools"]}
-    assert str(b_instance.id) not in listed_ids
+    assert listed.status_code == 404
 
+    random_tool_id = uuid4()
     denied_patch = await client.patch(
-        f"/tools/builtins/instances/{b_instance.id}",
+        f"/tools/builtins/instances/{random_tool_id}",
         json={"name": "intrusion"},
         headers=_headers(user_a, tenant_a),
     )
     assert denied_patch.status_code == 404
 
     denied_publish = await client.post(
-        f"/tools/builtins/instances/{b_instance.id}/publish",
+        f"/tools/builtins/instances/{random_tool_id}/publish",
         json={},
         headers=_headers(user_a, tenant_a),
     )
