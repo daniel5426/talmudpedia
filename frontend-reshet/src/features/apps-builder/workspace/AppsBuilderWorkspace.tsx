@@ -99,17 +99,63 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     loadState();
   }, [loadState]);
 
-  const loadPreviewRuntime = useCallback(
-    async (revisionId: string, previewToken: string) => {
+  const refreshPreviewToken = useCallback(
+    async (revisionId: string) => {
       try {
-        const runtime = await publishedRuntimeService.getPreviewRuntime(revisionId, previewToken);
-        const nextUrl = runtime.preview_url || runtime.asset_base_url;
-        setPreviewAssetUrl(nextUrl || null);
+        const latestState = await publishedAppsService.getBuilderState(appId);
+        const latestRevisionId = latestState.current_draft_revision?.id;
+        if (latestRevisionId && latestRevisionId === revisionId && latestState.preview_token) {
+          setState((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              preview_token: latestState.preview_token,
+            };
+          });
+        }
       } catch {
-        setPreviewAssetUrl(null);
+        // Best effort only; existing token may still be valid.
       }
     },
-    [],
+    [appId],
+  );
+
+  const loadPreviewRuntime = useCallback(
+    async (revisionId: string, previewToken: string) => {
+      const resolveAndSetPreview = async (token: string) => {
+        const runtime = await publishedRuntimeService.getPreviewRuntime(revisionId, token);
+        const nextUrl = runtime.preview_url || runtime.asset_base_url;
+        setPreviewAssetUrl(nextUrl || null);
+      };
+
+      try {
+        await resolveAndSetPreview(previewToken);
+        return;
+      } catch {
+        // Retry once with a fresh preview token in case draft revision changed.
+      }
+
+      try {
+        const latestState = await publishedAppsService.getBuilderState(appId);
+        const latestToken = latestState.preview_token;
+        if (latestToken) {
+          setState((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              preview_token: latestToken,
+            };
+          });
+          await resolveAndSetPreview(latestToken);
+          return;
+        }
+      } catch {
+        // Keep preview unavailable if runtime token refresh fails.
+      }
+
+      setPreviewAssetUrl(null);
+    },
+    [appId],
   );
 
   useEffect(() => {
@@ -194,6 +240,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           },
         };
       });
+      await refreshPreviewToken(revision.id);
     } catch (err: any) {
       const detail = err?.message || "Failed to save draft";
       try {
@@ -210,7 +257,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [appId, currentRevisionId, entryFile, files, loadState]);
+  }, [appId, currentRevisionId, entryFile, files, loadState, refreshPreviewToken]);
 
   const publish = useCallback(async () => {
     setIsPublishing(true);
@@ -356,11 +403,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             },
           };
         });
+        await refreshPreviewToken(saved.id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to apply builder patch");
     }
-  }, [appId, chatInput, currentRevisionId, entryFile, files, selectedFile]);
+  }, [appId, chatInput, currentRevisionId, entryFile, files, refreshPreviewToken, selectedFile]);
 
   const createFile = (path: string) => {
     const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");

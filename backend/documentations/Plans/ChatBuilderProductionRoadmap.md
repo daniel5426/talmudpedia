@@ -127,6 +127,12 @@ Upgrade the Apps Builder `Builder Chat` from a v1 patch-demo flow into a product
 - Revision creation/reset still succeeds if Celery/Redis enqueue fails at request time; enqueue failure is logged instead of failing admin APIs.
 - `backend/app/api/routers/published_apps_admin.py`
 
+9. Builder policy now supports wider Vite root-level workflow files.
+- Allowed builder-managed root paths now include common lockfiles and test/lint/format/build configs (e.g., `pnpm-lock.yaml`, `yarn.lock`, `vite.config.*`, `vitest.config.*`, `eslint/prettier/jest/playwright` config families).
+- Import/dependency validation now treats `.mts`/`.cts` files as code files for dependency and local-import diagnostics.
+- `backend/app/api/routers/published_apps_admin.py`
+- `backend/app/services/apps_builder_dependency_policy.py`
+
 ## Parity Bar (What "Lovable/Base44-Level" Means Here)
 1. Reliable multi-turn coding agent that reads codebase context before editing and can recover from compile/runtime failures.
 2. Tool-augmented edit loop (search/read/edit/compile/test) with deterministic guardrails.
@@ -318,14 +324,28 @@ Exit criteria:
 ### Completed (Phase 2 - Initial Continuation)
 1. Agentic tool primitives added behind feature flag:
 - Flag: `BUILDER_AGENTIC_LOOP_ENABLED`.
-- `list_files`, `read_file`, `search_code`, `apply_patch_dry_run`, `compile_project`, `run_targeted_tests`.
-- Current state: `compile_project` is compile-style validation and `run_targeted_tests` is a placeholder; worker-backed build/test tools are pending.
+- `list_files`, `read_file`, `search_code`, `apply_patch_dry_run`, `compile_project`, `run_targeted_tests`, `build_project_worker`, `prepare_static_bundle`.
+- Current state:
+  - `compile_project` remains compile-style validation.
+  - `run_targeted_tests` now supports real execution behind `APPS_BUILDER_TARGETED_TESTS_ENABLED`.
+  - Targeted test runner uses project scripts + discovered test files and returns `passed|failed|skipped` with diagnostics.
+  - `build_project_worker` and `prepare_static_bundle` now run in-loop with structured tool trace events.
+  - Worker build execution is controlled by `APPS_BUILDER_WORKER_BUILD_GATE_ENABLED` (`succeeded` when enabled and preflight passes, `skipped` when disabled).
 
 2. Bounded iterative loop added:
 - Iterative patch generation + dry-run + compile checks with bounded retries/iterations.
 
 3. UI transparency path started:
 - Stream includes structured tool/status events for chat timeline rendering.
+
+4. Prompt file-focus support added for targeted multi-file edits.
+- Agentic context selection now prioritizes prompt `@file` mentions.
+- Loop inspect stage reads prompt-mentioned files through `read_file` tool events before generation.
+- Mention resolver supports exact paths and unique basename matching.
+
+5. Agentic loop failure semantics tightened.
+- Loop no longer returns partial patch success when downstream gates fail repeatedly.
+- On in-loop failures, tool trace events are propagated into persisted conversation failure rows for replay/debug (`run_targeted_tests`, `build_project_worker`, etc.).
 
 ### Completed (Phase 2.5 - Initial Start)
 1. Publish gate contract added (always-on):
@@ -347,7 +367,7 @@ Exit criteria:
 
 ### Validation Results
 1. `pytest backend/tests/published_apps/test_builder_revisions.py -q`
-- PASS (12 passed)
+- PASS (17 passed)
 
 2. `pytest backend/tests/published_apps/test_admin_apps_publish_rules.py backend/tests/published_apps/test_public_app_resolve_and_config.py -q`
 - PASS (8 passed)
@@ -357,9 +377,9 @@ Exit criteria:
 - `backend/tests/conftest.py`
 
 ### In Progress
-1. Phase 2 loop currently uses lightweight project tools and no external worker build/test execution; deeper tool autonomy/evals are pending.
+1. Phase 2 loop now includes worker-build/static-bundle plus targeted-tests stages; remaining work is richer tool autonomy/evals and smarter test targeting heuristics.
 2. Big-bang migration alignment is pending:
 - Make worker-build preflight gate default-on after rollout hardening and latency budget confirmation.
 - Expand patch policy to full Vite project file set and dependency-aware constraints.
 - Ensure preview/runtime paths consume backend-produced static assets only.
-3. Phase 2 agent loop still relies on compile-style tool checks (`compile_project`) and does not yet run worker build/test tools in-loop.
+3. Phase 2 agent loop still relies on compile-style checks for fast inner-loop validation (`compile_project`) ahead of worker build/test gates.

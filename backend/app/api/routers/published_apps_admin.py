@@ -1,8 +1,10 @@
+import asyncio
 import json
 import logging
 import os
 import re
 import tempfile
+import time
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
@@ -51,19 +53,37 @@ BUILDER_ALLOWED_ROOT_FILES = {
     "index.html",
     "package.json",
     "package-lock.json",
-    "vite.config.ts",
+    "pnpm-lock.yaml",
+    "yarn.lock",
 }
-BUILDER_ALLOWED_ROOT_GLOBS = ("tsconfig*.json", "postcss.config.*", "tailwind.config.*")
+BUILDER_ALLOWED_ROOT_GLOBS = (
+    "vite.config.*",
+    "tsconfig*.json",
+    "postcss.config.*",
+    "tailwind.config.*",
+    "vitest.config.*",
+    "jest.config.*",
+    "playwright.config.*",
+    "eslint.config.*",
+    "prettier.config.*",
+    ".eslintrc.*",
+    ".prettierrc.*",
+)
 BUILDER_ALLOWED_EXTENSIONS = {
     ".html",
     ".ts",
     ".tsx",
+    ".mts",
+    ".cts",
     ".js",
     ".jsx",
     ".mjs",
     ".cjs",
     ".css",
     ".json",
+    ".yaml",
+    ".yml",
+    ".lock",
     ".md",
     ".txt",
     ".svg",
@@ -86,6 +106,7 @@ BUILDER_CONTEXT_MAX_FILE_BYTES = int(os.getenv("BUILDER_CONTEXT_MAX_FILE_BYTES",
 BUILDER_AGENT_MAX_ITERATIONS = int(os.getenv("BUILDER_AGENT_MAX_ITERATIONS", "3"))
 BUILDER_AGENT_MAX_SEARCH_RESULTS = int(os.getenv("BUILDER_AGENT_MAX_SEARCH_RESULTS", "8"))
 IMPORT_RE = re.compile(r'^\s*(?:import|export)\s+(?:[^"\']*?\s+from\s+)?["\']([^"\']+)["\']', re.MULTILINE)
+BUILDER_FILE_MENTION_RE = re.compile(r"@([A-Za-z0-9._/\-]+)")
 BUILDER_LOCKFILE_NAMES = {"package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 
 
@@ -578,6 +599,10 @@ def _builder_agentic_loop_enabled() -> bool:
     return _env_flag("BUILDER_AGENTIC_LOOP_ENABLED", False)
 
 
+def _builder_targeted_tests_enabled() -> bool:
+    return _env_flag("APPS_BUILDER_TARGETED_TESTS_ENABLED", False)
+
+
 def _new_builder_request_id() -> str:
     return uuid4().hex
 
@@ -700,8 +725,32 @@ def _enqueue_revision_build(
     return None
 
 
-async def _run_worker_build_preflight(files: Dict[str, str]) -> None:
-    from app.workers.tasks import _materialize_project_files, _run_subprocess
+def _summarize_dist_manifest(dist_manifest: Dict[str, Any]) -> Dict[str, Any]:
+    assets = dist_manifest.get("assets")
+    normalized_assets = assets if isinstance(assets, list) else []
+    total_bytes = 0
+    asset_paths: List[str] = []
+    for item in normalized_assets:
+        if not isinstance(item, dict):
+            continue
+        total_bytes += int(item.get("size") or 0)
+        path = item.get("path")
+        if isinstance(path, str) and path:
+            asset_paths.append(path)
+    return {
+        "entry_html": str(dist_manifest.get("entry_html") or "index.html"),
+        "asset_count": len(normalized_assets),
+        "total_bytes": total_bytes,
+        "asset_paths_preview": asset_paths[:12],
+    }
+
+
+async def _run_worker_build_preflight(
+    files: Dict[str, str],
+    *,
+    include_dist_manifest: bool = False,
+) -> Optional[Dict[str, Any]]:
+    from app.workers.tasks import _build_dist_manifest, _materialize_project_files, _run_subprocess
 
     npm_ci_timeout = int(os.getenv("APPS_BUILD_NPM_CI_TIMEOUT_SECONDS", "300"))
     npm_build_timeout = int(os.getenv("APPS_BUILD_NPM_BUILD_TIMEOUT_SECONDS", "300"))
@@ -736,6 +785,9 @@ async def _run_worker_build_preflight(files: Dict[str, str]) -> None:
         dist_dir = project_dir / "dist"
         if not dist_dir.exists() or not dist_dir.is_dir():
             raise RuntimeError("Build succeeded but dist directory was not produced")
+        if include_dist_manifest:
+            return _build_dist_manifest(dist_dir)
+    return None
 
 
 async def _validate_worker_build_gate_or_raise(files: Dict[str, str]) -> None:
@@ -822,6 +874,8 @@ def _select_builder_context_paths(
     add("src/main.tsx")
     add("src/App.tsx")
     add("src/theme.ts")
+    for focus_path in _extract_prompt_focus_paths(files, user_prompt):
+        add(focus_path)
 
     queue = list(selected)
     visited: set[str] = set()
@@ -862,6 +916,45 @@ def _select_builder_context_paths(
                 break
             add(path)
     return selected
+
+
+def _extract_prompt_focus_paths(files: Dict[str, str], user_prompt: str, *, max_paths: int = 6) -> List[str]:
+    focus_paths: List[str] = []
+    candidates: List[str] = []
+
+    for raw_match in BUILDER_FILE_MENTION_RE.findall(user_prompt or ""):
+        cleaned = raw_match.strip().strip(".,:;!?)]}>")
+        if cleaned:
+            candidates.append(cleaned)
+
+    for candidate in candidates:
+        normalized_input = candidate[2:] if candidate.startswith("./") else candidate
+        normalized_path: Optional[str] = None
+        try:
+            normalized_path = _normalize_builder_path(normalized_input)
+        except HTTPException:
+            normalized_path = None
+
+        if normalized_path and normalized_path in files and normalized_path not in focus_paths:
+            focus_paths.append(normalized_path)
+            if len(focus_paths) >= max_paths:
+                break
+            continue
+
+        basename = PurePosixPath(normalized_input).name
+        if not basename:
+            continue
+        basename_matches = [
+            path
+            for path in sorted(files.keys())
+            if PurePosixPath(path).name == basename
+        ]
+        if len(basename_matches) == 1 and basename_matches[0] not in focus_paths:
+            focus_paths.append(basename_matches[0])
+            if len(focus_paths) >= max_paths:
+                break
+
+    return focus_paths[:max_paths]
 
 
 def _serialize_patch_ops(operations: List[BuilderPatchOp]) -> List[Dict[str, Any]]:
@@ -1161,12 +1254,256 @@ def _builder_tool_compile_project(files: Dict[str, str], entry_file: str) -> Dic
     return {"ok": True, "diagnostics": diagnostics}
 
 
-def _builder_tool_run_targeted_tests(changed_paths: List[str]) -> Dict[str, Any]:
+def _looks_like_test_file(path: str) -> bool:
+    lowered = path.lower()
+    if "/__tests__/" in lowered:
+        return True
+    return lowered.endswith(
+        (
+            ".test.ts",
+            ".test.tsx",
+            ".test.js",
+            ".test.jsx",
+            ".test.mts",
+            ".test.cts",
+            ".spec.ts",
+            ".spec.tsx",
+            ".spec.js",
+            ".spec.jsx",
+            ".spec.mts",
+            ".spec.cts",
+        )
+    )
+
+
+def _read_package_scripts(files: Dict[str, str]) -> Dict[str, str]:
+    package_source = files.get("package.json")
+    if not isinstance(package_source, str) or not package_source.strip():
+        return {}
+    try:
+        payload = json.loads(package_source)
+    except json.JSONDecodeError:
+        return {}
+    scripts = payload.get("scripts")
+    if not isinstance(scripts, dict):
+        return {}
+    normalized: Dict[str, str] = {}
+    for key, value in scripts.items():
+        if isinstance(key, str) and isinstance(value, str):
+            normalized[key] = value
+    return normalized
+
+
+def _select_test_script(files: Dict[str, str]) -> Optional[str]:
+    scripts = _read_package_scripts(files)
+    for key in ("test", "test:unit", "test:ci"):
+        if key in scripts:
+            return key
+    return None
+
+
+def _test_related_paths(files: Dict[str, str], changed_paths: List[str]) -> List[str]:
+    test_files = [path for path in sorted(files.keys()) if _looks_like_test_file(path)]
+    if not test_files:
+        return []
+    direct = [path for path in changed_paths if path in files and _looks_like_test_file(path)]
+    if direct:
+        return direct[:8]
+    return test_files[:6]
+
+
+async def _run_builder_targeted_tests(
+    files: Dict[str, str],
+    script_name: str,
+    related_paths: List[str],
+) -> Dict[str, Any]:
+    from app.workers.tasks import _materialize_project_files, _run_subprocess
+
+    npm_ci_timeout = int(os.getenv("APPS_BUILD_NPM_CI_TIMEOUT_SECONDS", "300"))
+    test_timeout = int(os.getenv("APPS_BUILD_TEST_TIMEOUT_SECONDS", "240"))
+    started_at = time.monotonic()
+
+    with tempfile.TemporaryDirectory(prefix="apps-builder-tests-") as temp_dir:
+        project_dir = Path(temp_dir)
+        _materialize_project_files(project_dir, files)
+
+        has_lockfile = (project_dir / "package-lock.json").exists()
+        install_command = ["npm", "ci"] if has_lockfile else ["npm", "install", "--no-audit", "--no-fund"]
+        install_code, install_stdout, install_stderr = await _run_subprocess(
+            install_command,
+            cwd=project_dir,
+            timeout_seconds=npm_ci_timeout,
+        )
+        if install_code != 0:
+            install_name = "npm ci" if has_lockfile else "npm install"
+            raise RuntimeError(
+                f"`{install_name}` failed with exit code {install_code}\\n{install_stderr or install_stdout}"
+            )
+
+        command = ["npm", "run", script_name, "--", "--run", "--passWithNoTests"]
+        if related_paths:
+            command.extend(related_paths[:6])
+
+        env = dict(os.environ)
+        env["CI"] = "1"
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(project_dir),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=test_timeout)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            raise RuntimeError(f"Targeted tests timed out after {test_timeout}s (elapsed {elapsed_ms}ms)")
+
+        return {
+            "code": process.returncode or 0,
+            "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+            "command": command,
+            "stdout": stdout.decode("utf-8", errors="replace"),
+            "stderr": stderr.decode("utf-8", errors="replace"),
+        }
+
+
+async def _builder_tool_run_targeted_tests(files: Dict[str, str], changed_paths: List[str]) -> Dict[str, Any]:
+    if not _builder_targeted_tests_enabled():
+        return {
+            "ok": True,
+            "status": "skipped",
+            "message": "targeted tests disabled (`APPS_BUILDER_TARGETED_TESTS_ENABLED=0`)",
+            "changed_paths": changed_paths[:6],
+        }
+
+    script_name = _select_test_script(files)
+    if not script_name:
+        return {
+            "ok": True,
+            "status": "skipped",
+            "message": "No test script found in package.json",
+            "changed_paths": changed_paths[:6],
+        }
+
+    related_paths = _test_related_paths(files, changed_paths)
+    if not related_paths:
+        return {
+            "ok": True,
+            "status": "skipped",
+            "message": "No test files detected in draft project",
+            "changed_paths": changed_paths[:6],
+        }
+
+    try:
+        result = await _run_builder_targeted_tests(files, script_name, related_paths)
+    except Exception as exc:
+        message = str(exc).strip() or "targeted test execution failed"
+        if len(message) > 4000:
+            message = message[:4000] + "... [truncated]"
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": message,
+            "changed_paths": changed_paths[:6],
+            "test_paths": related_paths,
+            "diagnostics": [{"message": message}],
+        }
+
+    code = int(result.get("code") or 0)
+    if code != 0:
+        output = str(result.get("stderr") or result.get("stdout") or "").strip()
+        message = output or f"targeted tests failed with exit code {code}"
+        if len(message) > 4000:
+            message = message[:4000] + "... [truncated]"
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": message,
+            "changed_paths": changed_paths[:6],
+            "test_paths": related_paths,
+            "command": result.get("command"),
+            "elapsed_ms": result.get("elapsed_ms"),
+            "diagnostics": [{"message": message}],
+        }
+
     return {
         "ok": True,
-        "status": "skipped",
-        "message": "targeted tests are not configured for builder drafts yet",
+        "status": "passed",
+        "message": "targeted tests passed",
         "changed_paths": changed_paths[:6],
+        "test_paths": related_paths,
+        "command": result.get("command"),
+        "elapsed_ms": result.get("elapsed_ms"),
+    }
+
+async def _builder_tool_build_project_worker(files: Dict[str, str]) -> Dict[str, Any]:
+    if not _builder_worker_build_gate_enabled():
+        return {
+            "ok": True,
+            "status": "skipped",
+            "message": "worker build tool disabled (`APPS_BUILDER_WORKER_BUILD_GATE_ENABLED=0`)",
+        }
+    try:
+        dist_manifest = await _run_worker_build_preflight(files, include_dist_manifest=True)
+    except Exception as exc:
+        message = str(exc).strip() or "worker build failed"
+        if len(message) > 4000:
+            message = message[:4000] + "... [truncated]"
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": message,
+            "diagnostics": [{"message": message}],
+        }
+    if not isinstance(dist_manifest, dict):
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": "worker build did not produce a dist manifest",
+            "diagnostics": [{"message": "worker build did not produce a dist manifest"}],
+        }
+    return {
+        "ok": True,
+        "status": "succeeded",
+        "dist_manifest": dist_manifest,
+        "summary": _summarize_dist_manifest(dist_manifest),
+    }
+
+
+def _builder_tool_prepare_static_bundle(worker_build_result: Dict[str, Any]) -> Dict[str, Any]:
+    status = str(worker_build_result.get("status") or "")
+    if status == "skipped":
+        return {
+            "ok": True,
+            "status": "skipped",
+            "message": "worker build was skipped; static bundle preparation skipped",
+        }
+    if not worker_build_result.get("ok"):
+        message = str(worker_build_result.get("message") or "worker build failed")
+        diagnostics = worker_build_result.get("diagnostics")
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": message,
+            "diagnostics": diagnostics if isinstance(diagnostics, list) else [{"message": message}],
+        }
+
+    manifest = worker_build_result.get("dist_manifest")
+    if not isinstance(manifest, dict):
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": "dist manifest is missing for static bundle preparation",
+            "diagnostics": [{"message": "dist manifest is missing for static bundle preparation"}],
+        }
+    return {
+        "ok": True,
+        "status": "ready",
+        "message": "static bundle manifest prepared",
+        "summary": _summarize_dist_manifest(manifest),
     }
 
 
@@ -1183,7 +1520,7 @@ async def _run_builder_agentic_loop(
     aggregate_ops: List[BuilderPatchOp] = []
     working_files = dict(files)
     working_entry = entry_file
-    last_result: Optional[BuilderPatchGenerationResult] = None
+    focus_paths = _extract_prompt_focus_paths(working_files, user_prompt, max_paths=4)
 
     for iteration in range(1, BUILDER_AGENT_MAX_ITERATIONS + 1):
         trace_events.append(
@@ -1199,7 +1536,15 @@ async def _run_builder_agentic_loop(
                 },
             )
         )
+        inspect_paths: List[str] = []
+        for path in focus_paths:
+            if path in working_files and path not in inspect_paths:
+                inspect_paths.append(path)
         if recent_paths:
+            recent_candidate = recent_paths[-1]
+            if recent_candidate in working_files and recent_candidate not in inspect_paths:
+                inspect_paths.append(recent_candidate)
+        for inspect_path in inspect_paths[:3]:
             trace_events.append(
                 _stream_event_payload(
                     event="tool",
@@ -1209,7 +1554,7 @@ async def _run_builder_agentic_loop(
                         "tool": "read_file",
                         "status": "ok",
                         "iteration": iteration,
-                        "result": _builder_tool_read_file(working_files, recent_paths[-1]),
+                        "result": _builder_tool_read_file(working_files, inspect_path),
                     },
                 )
             )
@@ -1227,14 +1572,19 @@ async def _run_builder_agentic_loop(
             )
         )
 
+        model_recent_paths: List[str] = []
+        for path in focus_paths + recent_paths:
+            if path and path not in model_recent_paths:
+                model_recent_paths.append(path)
+        model_recent_paths = model_recent_paths[:8]
+
         result = await _generate_builder_patch_with_model(
             user_prompt=user_prompt,
             files=working_files,
             entry_file=working_entry,
             repair_feedback=repair_feedback,
-            recent_paths=recent_paths,
+            recent_paths=model_recent_paths,
         )
-        last_result = result
 
         dry_run_result = _builder_tool_apply_patch_dry_run(
             working_files,
@@ -1276,6 +1626,7 @@ async def _run_builder_agentic_loop(
             if op.to_path
         ]
         recent_paths = [path for path in recent_paths if path][:8]
+        focus_paths = _extract_prompt_focus_paths(working_files, user_prompt, max_paths=4)
 
         compile_result = _builder_tool_compile_project(working_files, working_entry)
         trace_events.append(
@@ -1296,7 +1647,7 @@ async def _run_builder_agentic_loop(
             repair_feedback.append(str(compile_result.get("message") or "compile failed"))
             continue
 
-        test_result = _builder_tool_run_targeted_tests(recent_paths)
+        test_result = await _builder_tool_run_targeted_tests(working_files, recent_paths)
         trace_events.append(
             _stream_event_payload(
                 event="tool",
@@ -1304,12 +1655,54 @@ async def _run_builder_agentic_loop(
                 request_id=request_id,
                 data={
                     "tool": "run_targeted_tests",
-                    "status": "ok",
+                    "status": "ok" if test_result.get("ok") else "failed",
                     "iteration": iteration,
                     "result": test_result,
                 },
+                diagnostics=test_result.get("diagnostics") if not test_result.get("ok") else None,
             )
         )
+        if not test_result.get("ok"):
+            repair_feedback.append(str(test_result.get("message") or "targeted tests failed"))
+            continue
+
+        worker_build_result = await _builder_tool_build_project_worker(working_files)
+        trace_events.append(
+            _stream_event_payload(
+                event="tool",
+                stage="worker_build",
+                request_id=request_id,
+                data={
+                    "tool": "build_project_worker",
+                    "status": "ok" if worker_build_result.get("ok") else "failed",
+                    "iteration": iteration,
+                    "result": worker_build_result,
+                },
+                diagnostics=worker_build_result.get("diagnostics") if not worker_build_result.get("ok") else None,
+            )
+        )
+        if not worker_build_result.get("ok"):
+            repair_feedback.append(str(worker_build_result.get("message") or "worker build failed"))
+            continue
+
+        bundle_result = _builder_tool_prepare_static_bundle(worker_build_result)
+        trace_events.append(
+            _stream_event_payload(
+                event="tool",
+                stage="bundle",
+                request_id=request_id,
+                data={
+                    "tool": "prepare_static_bundle",
+                    "status": "ok" if bundle_result.get("ok") else "failed",
+                    "iteration": iteration,
+                    "result": bundle_result,
+                },
+                diagnostics=bundle_result.get("diagnostics") if not bundle_result.get("ok") else None,
+            )
+        )
+        if not bundle_result.get("ok"):
+            repair_feedback.append(str(bundle_result.get("message") or "bundle preparation failed"))
+            continue
 
         return (
             BuilderPatchGenerationResult(
@@ -1321,21 +1714,12 @@ async def _run_builder_agentic_loop(
             trace_events,
         )
 
-    if last_result is not None and aggregate_ops:
-        return (
-            BuilderPatchGenerationResult(
-                operations=aggregate_ops,
-                summary=last_result.summary,
-                rationale=last_result.rationale,
-                assumptions=last_result.assumptions,
-            ),
-            trace_events,
-        )
-
-    raise _builder_compile_error(
+    exc = _builder_compile_error(
         "Agentic loop could not produce a valid patch",
         diagnostics=[{"message": item} for item in repair_feedback[-6:]] or [{"message": "No valid patch generated"}],
     )
+    setattr(exc, "builder_trace_events", list(trace_events))
+    raise exc
 
 
 def _normalize_builder_path(path: str) -> str:
@@ -1398,11 +1782,15 @@ def _resolve_local_project_import(import_path: str, importer_path: str, files: D
         normalized,
         f"{normalized}.tsx",
         f"{normalized}.ts",
+        f"{normalized}.mts",
+        f"{normalized}.cts",
         f"{normalized}.jsx",
         f"{normalized}.js",
         f"{normalized}.css",
         f"{normalized}/index.tsx",
         f"{normalized}/index.ts",
+        f"{normalized}/index.mts",
+        f"{normalized}/index.cts",
         f"{normalized}/index.jsx",
         f"{normalized}/index.js",
     ]
@@ -1446,7 +1834,7 @@ def _validate_builder_project_or_raise(files: Dict[str, str], entry_file: str) -
 
     code_files = [
         path for path in files.keys()
-        if PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+        if PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}
     ]
     for path in code_files:
         source = files.get(path, "")
@@ -2086,6 +2474,9 @@ async def builder_chat_stream(
         next_files, _ = _apply_patch_operations(existing_files, draft.entry_file, generation_result.operations)
         await _validate_worker_build_gate_or_raise(next_files)
     except HTTPException as exc:
+        loop_trace_events = getattr(exc, "builder_trace_events", None)
+        if isinstance(loop_trace_events, list) and loop_trace_events:
+            trace_events = [item for item in loop_trace_events if isinstance(item, dict)]
         _, diagnostics = _extract_http_error_details(exc)
         await _persist_builder_conversation_turn(
             db,

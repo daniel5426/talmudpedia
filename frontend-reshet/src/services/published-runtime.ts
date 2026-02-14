@@ -117,9 +117,10 @@ export const publishedRuntimeService = {
   },
 
   async getPreviewRuntime(revisionId: string, token: string): Promise<PreviewRuntimeDescriptor> {
-    return runtimeRequest<PreviewRuntimeDescriptor>(`/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime`, {
-      token,
-    });
+    return runtimeRequest<PreviewRuntimeDescriptor>(
+      `/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime?preview_token=${encodeURIComponent(token)}`,
+      { token },
+    );
   },
 
   async signup(appSlug: string, payload: { email: string; password: string; full_name?: string }): Promise<PublicAuthResponse> {

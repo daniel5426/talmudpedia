@@ -313,27 +313,36 @@ async def get_optional_published_app_preview_principal(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> Optional[Dict[str, Any]]:
-    token: Optional[str] = None
+    token_candidates: list[str] = []
     if credentials is not None and credentials.credentials:
-        token = credentials.credentials.strip()
+        bearer_token = credentials.credentials.strip()
+        if bearer_token:
+            token_candidates.append(bearer_token)
 
-    if not token:
-        query_token = (request.query_params.get("preview_token") or "").strip()
-        if query_token:
-            token = query_token
+    query_token = (request.query_params.get("preview_token") or "").strip()
+    if query_token and query_token not in token_candidates:
+        token_candidates.append(query_token)
 
-    if not token:
-        cookie_token = (request.cookies.get("published_app_preview_token") or "").strip()
-        if cookie_token:
-            token = cookie_token
+    cookie_token = (request.cookies.get("published_app_preview_token") or "").strip()
+    if cookie_token and cookie_token not in token_candidates:
+        token_candidates.append(cookie_token)
 
-    if not token:
+    if not token_candidates:
         return None
 
-    try:
-        payload = decode_published_app_preview_token(token)
-    except Exception:
+    payload: Optional[Dict[str, Any]] = None
+    chosen_token: Optional[str] = None
+    for candidate in token_candidates:
+        try:
+            payload = decode_published_app_preview_token(candidate)
+            chosen_token = candidate
+            break
+        except Exception:
+            continue
+
+    if payload is None or chosen_token is None:
         raise HTTPException(status_code=401, detail="Invalid published app preview token")
+
     return {
         "type": "published_app_preview",
         "tenant_id": str(payload["tenant_id"]),
@@ -341,7 +350,7 @@ async def get_optional_published_app_preview_principal(
         "revision_id": str(payload["revision_id"]),
         "user_id": str(payload.get("sub")),
         "scopes": payload.get("scope", []),
-        "auth_token": token,
+        "auth_token": chosen_token,
     }
 
 

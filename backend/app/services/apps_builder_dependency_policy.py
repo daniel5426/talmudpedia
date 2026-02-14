@@ -122,7 +122,7 @@ def validate_builder_dependency_policy(files: Dict[str, str]) -> List[Dict[str, 
                 }
             )
 
-    code_file_suffixes = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+    code_file_suffixes = {".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}
     for path, source in files.items():
         if PurePosixPath(path).suffix.lower() not in code_file_suffixes:
             continue

@@ -4,7 +4,11 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from app.api.routers.published_apps_admin import BUILDER_MAX_FILE_BYTES
+from app.api.routers.published_apps_admin import (
+    BUILDER_MAX_FILE_BYTES,
+    BuilderPatchGenerationResult,
+    BuilderPatchOp,
+)
 from app.db.postgres.models.published_apps import (
     BuilderConversationTurnStatus,
     PublishedApp,
@@ -278,6 +282,83 @@ async def test_builder_validate_endpoint_returns_compile_diagnostics(client, db_
     bad_payload = bad_resp.json()["detail"]
     assert bad_payload["code"] == "BUILDER_COMPILE_FAILED"
     assert any("Network import is not allowed" in item["message"] for item in bad_payload["diagnostics"])
+
+
+@pytest.mark.asyncio
+async def test_builder_validate_accepts_vite_root_lock_and_test_config_files(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Vite Root Files App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    validate_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/validate",
+        headers=headers,
+        json={
+            "base_revision_id": draft_revision_id,
+            "operations": [
+                {
+                    "op": "upsert_file",
+                    "path": "pnpm-lock.yaml",
+                    "content": "lockfileVersion: '9.0'\n",
+                },
+                {
+                    "op": "upsert_file",
+                    "path": "yarn.lock",
+                    "content": "# yarn lockfile v1\n",
+                },
+                {
+                    "op": "upsert_file",
+                    "path": "vite.config.mts",
+                    "content": "export default { base: './' };\n",
+                },
+                {
+                    "op": "upsert_file",
+                    "path": "vitest.config.ts",
+                    "content": "export default { test: { environment: 'jsdom' } };\n",
+                },
+                {
+                    "op": "upsert_file",
+                    "path": "eslint.config.js",
+                    "content": "export default [];\n",
+                },
+                {
+                    "op": "upsert_file",
+                    "path": "prettier.config.cjs",
+                    "content": "module.exports = {};\n",
+                },
+                {
+                    "op": "upsert_file",
+                    "path": ".eslintrc.cjs",
+                    "content": "module.exports = {};\n",
+                },
+                {
+                    "op": "upsert_file",
+                    "path": "playwright.config.ts",
+                    "content": "export default {};\n",
+                },
+            ],
+        },
+    )
+    assert validate_resp.status_code == 200
+    payload = validate_resp.json()
+    assert payload["ok"] is True
+    assert payload["file_count"] >= 8
 
 
 @pytest.mark.asyncio
@@ -689,3 +770,299 @@ async def test_builder_chat_stream_worker_build_gate_blocks_failed_preflight(cli
     assert persisted.status == BuilderConversationTurnStatus.failed
     assert persisted.failure_code == "BUILDER_COMPILE_FAILED"
     assert any("npm run build" in item["message"] for item in (persisted.diagnostics or []))
+
+
+@pytest.mark.asyncio
+async def test_builder_chat_stream_agentic_loop_runs_worker_tools(client, db_session, monkeypatch):
+    monkeypatch.setenv("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "1")
+    monkeypatch.setenv("BUILDER_AGENTIC_LOOP_ENABLED", "1")
+    monkeypatch.setenv("APPS_BUILDER_WORKER_BUILD_GATE_ENABLED", "1")
+
+    async def _fake_model_patch(**_: object) -> BuilderPatchGenerationResult:
+        return BuilderPatchGenerationResult(
+            operations=[
+                BuilderPatchOp(
+                    op="upsert_file",
+                    path="src/App.tsx",
+                    content="export function App() { return <div>Agentic Worker Tool</div>; }",
+                )
+            ],
+            summary="updated app copy",
+            rationale="exercise worker tools in-loop",
+            assumptions=[],
+        )
+
+    async def _ok_preflight(_files: dict[str, str], *, include_dist_manifest: bool = False):
+        if include_dist_manifest:
+            return {
+                "entry_html": "index.html",
+                "assets": [
+                    {
+                        "path": "index.html",
+                        "size": 128,
+                        "sha256": "abc123",
+                        "content_type": "text/html",
+                    }
+                ],
+            }
+        return None
+
+    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _ok_preflight)
+
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Agentic Worker Tools App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={
+            "input": "Update the hero copy",
+            "base_revision_id": draft_revision_id,
+        },
+    )
+    assert stream_resp.status_code == 200
+    events = _parse_sse_events(stream_resp.text)
+    tool_events = [event for event in events if event.get("event") == "tool"]
+
+    build_event = next(item for item in tool_events if item.get("data", {}).get("tool") == "build_project_worker")
+    assert build_event["stage"] == "worker_build"
+    assert build_event["data"]["status"] == "ok"
+    assert build_event["data"]["result"]["status"] == "succeeded"
+
+    bundle_event = next(item for item in tool_events if item.get("data", {}).get("tool") == "prepare_static_bundle")
+    assert bundle_event["stage"] == "bundle"
+    assert bundle_event["data"]["status"] == "ok"
+    assert bundle_event["data"]["result"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_builder_chat_stream_agentic_loop_surfaces_worker_tool_failure(client, db_session, monkeypatch):
+    monkeypatch.setenv("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "1")
+    monkeypatch.setenv("BUILDER_AGENTIC_LOOP_ENABLED", "1")
+    monkeypatch.setenv("APPS_BUILDER_WORKER_BUILD_GATE_ENABLED", "1")
+
+    async def _fake_model_patch(**_: object) -> BuilderPatchGenerationResult:
+        return BuilderPatchGenerationResult(
+            operations=[
+                BuilderPatchOp(
+                    op="upsert_file",
+                    path="src/App.tsx",
+                    content="export function App() { return <div>Broken Worker Build</div>; }",
+                )
+            ],
+            summary="updated app copy",
+            rationale="trigger worker build failure",
+            assumptions=[],
+        )
+
+    async def _failing_preflight(_files: dict[str, str], *, include_dist_manifest: bool = False):
+        raise RuntimeError("`npm run build` failed with exit code 1")
+
+    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _failing_preflight)
+
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Agentic Worker Failure App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={
+            "input": "Update the hero copy",
+            "base_revision_id": draft_revision_id,
+        },
+    )
+    assert stream_resp.status_code == 422
+    detail = stream_resp.json()["detail"]
+    assert detail["code"] == "BUILDER_COMPILE_FAILED"
+    assert any("npm run build" in item["message"] for item in detail["diagnostics"])
+
+    persisted = await db_session.scalar(
+        select(PublishedAppBuilderConversationTurn)
+        .where(PublishedAppBuilderConversationTurn.published_app_id == UUID(app_id))
+        .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
+    )
+    assert persisted is not None
+    assert persisted.status == BuilderConversationTurnStatus.failed
+    assert persisted.failure_code == "BUILDER_COMPILE_FAILED"
+    assert any(
+        item.get("event") == "tool"
+        and item.get("data", {}).get("tool") == "build_project_worker"
+        and item.get("data", {}).get("status") == "failed"
+        for item in (persisted.tool_trace or [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_builder_chat_stream_agentic_loop_reads_prompt_mentioned_file(client, db_session, monkeypatch):
+    monkeypatch.setenv("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "1")
+    monkeypatch.setenv("BUILDER_AGENTIC_LOOP_ENABLED", "1")
+
+    async def _fake_model_patch(**_: object) -> BuilderPatchGenerationResult:
+        return BuilderPatchGenerationResult(
+            operations=[
+                BuilderPatchOp(
+                    op="upsert_file",
+                    path="src/App.tsx",
+                    content="export function App() { return <div>Prompt mention</div>; }",
+                )
+            ],
+            summary="updated app copy",
+            rationale="confirm @file focus read",
+            assumptions=[],
+        )
+
+    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
+
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Agentic Mention Read App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={
+            "input": "Update colors in @src/theme.ts and keep style consistent",
+            "base_revision_id": draft_revision_id,
+        },
+    )
+    assert stream_resp.status_code == 200
+    events = _parse_sse_events(stream_resp.text)
+    tool_events = [event for event in events if event.get("event") == "tool"]
+
+    assert any(
+        item.get("data", {}).get("tool") == "read_file"
+        and item.get("data", {}).get("result", {}).get("path") == "src/theme.ts"
+        for item in tool_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_builder_chat_stream_agentic_loop_blocks_on_targeted_test_failure(client, db_session, monkeypatch):
+    monkeypatch.setenv("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "1")
+    monkeypatch.setenv("BUILDER_AGENTIC_LOOP_ENABLED", "1")
+    monkeypatch.setenv("APPS_BUILDER_TARGETED_TESTS_ENABLED", "1")
+
+    async def _fake_model_patch(**_: object) -> BuilderPatchGenerationResult:
+        return BuilderPatchGenerationResult(
+            operations=[
+                BuilderPatchOp(
+                    op="upsert_file",
+                    path="src/App.tsx",
+                    content="export function App() { return <div>Targeted Test Failure</div>; }",
+                )
+            ],
+            summary="updated app copy",
+            rationale="force targeted test gate failure",
+            assumptions=[],
+        )
+
+    async def _failing_targeted_tests(_files: dict[str, str], _changed_paths: list[str]) -> dict[str, object]:
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": "vitest failure: 1 test failed",
+            "diagnostics": [{"message": "vitest failure: 1 test failed"}],
+        }
+
+    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin._builder_tool_run_targeted_tests", _failing_targeted_tests)
+
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Agentic Targeted Tests Failure App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={
+            "input": "Refactor home layout",
+            "base_revision_id": draft_revision_id,
+        },
+    )
+    assert stream_resp.status_code == 422
+    detail = stream_resp.json()["detail"]
+    assert detail["code"] == "BUILDER_COMPILE_FAILED"
+    assert any("vitest failure" in item["message"] for item in detail["diagnostics"])
+
+    persisted = await db_session.scalar(
+        select(PublishedAppBuilderConversationTurn)
+        .where(PublishedAppBuilderConversationTurn.published_app_id == UUID(app_id))
+        .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
+    )
+    assert persisted is not None
+    assert persisted.status == BuilderConversationTurnStatus.failed
+    assert persisted.failure_code == "BUILDER_COMPILE_FAILED"
+    assert any(
+        item.get("event") == "tool"
+        and item.get("data", {}).get("tool") == "run_targeted_tests"
+        and item.get("data", {}).get("status") == "failed"
+        for item in (persisted.tool_trace or [])
+    )

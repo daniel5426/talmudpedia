@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -34,6 +35,7 @@ from app.services.published_app_auth_service import PublishedAppAuthError, Publi
 router = APIRouter(prefix="/public/apps", tags=["published-apps-public"])
 PREVIEW_TOKEN_QUERY_PARAM = "preview_token"
 PREVIEW_TOKEN_COOKIE_NAME = "published_app_preview_token"
+HTML_ASSET_REF_RE = re.compile(r'(?P<prefix>\b(?:src|href)=["\'])(?P<url>[^"\']+)(?P<suffix>["\'])')
 
 
 class PublicAppConfigResponse(BaseModel):
@@ -188,6 +190,28 @@ def _append_query(url: str, params: dict[str, str]) -> str:
     return urlunparse(updated)
 
 
+def _inject_preview_token_into_html_assets(html: str, token: str) -> str:
+    if not html or not token:
+        return html
+
+    def _replace(match: re.Match[str]) -> str:
+        prefix = match.group("prefix")
+        url = match.group("url")
+        suffix = match.group("suffix")
+        stripped = (url or "").strip()
+        if not stripped:
+            return match.group(0)
+        lowered = stripped.lower()
+        if lowered.startswith(("http://", "https://", "data:", "javascript:", "mailto:", "#")):
+            return match.group(0)
+        if f"{PREVIEW_TOKEN_QUERY_PARAM}=" in stripped:
+            return match.group(0)
+        with_token = _append_query(stripped, {PREVIEW_TOKEN_QUERY_PARAM: token})
+        return f"{prefix}{with_token}{suffix}"
+
+    return HTML_ASSET_REF_RE.sub(_replace, html)
+
+
 def _chat_message_to_payload(message: Message) -> dict[str, Any]:
     return {
         "role": message.role.value if hasattr(message.role, "value") else str(message.role),
@@ -294,6 +318,8 @@ async def get_preview_asset(
     if not dist_prefix:
         raise HTTPException(status_code=404, detail="Preview assets are unavailable for this revision")
 
+    query_token = (request.query_params.get(PREVIEW_TOKEN_QUERY_PARAM) or "").strip()
+
     try:
         storage = PublishedAppBundleStorage.from_env()
         payload, content_type = storage.read_asset_bytes(
@@ -309,12 +335,20 @@ async def get_preview_asset(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    if query_token and content_type.startswith("text/html"):
+        try:
+            html = payload.decode("utf-8")
+            html = _inject_preview_token_into_html_assets(html, query_token)
+            payload = html.encode("utf-8")
+        except Exception:
+            # If rewriting fails, return original payload.
+            pass
+
     response = Response(
         content=payload,
         media_type=content_type,
         headers={"Cache-Control": "no-store"},
     )
-    query_token = (request.query_params.get(PREVIEW_TOKEN_QUERY_PARAM) or "").strip()
     if query_token:
         response.set_cookie(
             key=PREVIEW_TOKEN_COOKIE_NAME,
