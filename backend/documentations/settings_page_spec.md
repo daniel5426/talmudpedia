@@ -1,6 +1,6 @@
 # Settings Hub Spec (Tenant-Centric)
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-15
 
 ## Purpose
 Define `/admin/settings` as a tenant-centric hub for real settings, without duplicating analytics or activity surfaces that already exist elsewhere.
@@ -24,6 +24,15 @@ Define `/admin/settings` as a tenant-centric hub for real settings, without dupl
   - `artifact_secret`
   - `custom`
 - Credentials stay write-only.
+- Includes a dedicated simplified Web Search setup card:
+  - `Serper API Key` single input (no manual JSON required in UX)
+  - Persists to integration credentials as:
+    - `category=custom`
+    - `provider_key=web_search`
+    - `provider_variant=serper`
+    - `credentials.api_key=<value>`
+  - If present and enabled, this tenant key overrides platform default web-search key.
+  - If tenant key is not set, runtime falls back to platform-level `SERPER_API_KEY`.
 
 ### 3. Defaults
 - `default_chat_model_id`

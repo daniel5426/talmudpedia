@@ -87,6 +87,64 @@ class PublishedAppDraftDevRuntimeService:
     def _scope_error() -> PublishedAppDraftDevRuntimeError:
         return PublishedAppDraftDevRuntimeError("Draft dev mode requires an authenticated user scope")
 
+    @staticmethod
+    def _is_runtime_not_running_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return any(
+            token in message
+            for token in (
+                "sandbox is not running",
+                "draft dev sandbox is not running",
+                "session not found",
+            )
+        )
+
+    @staticmethod
+    def _mark_session_error(session: PublishedAppDraftDevSession, exc: Exception) -> PublishedAppDraftDevSession:
+        session.status = PublishedAppDraftDevSessionStatus.error
+        session.last_error = str(exc)
+        return session
+
+    async def _start_session_runtime(
+        self,
+        *,
+        app: PublishedApp,
+        revision: PublishedAppRevision,
+        session: PublishedAppDraftDevSession,
+        user_id: UUID,
+        files_payload: Dict[str, str],
+        entry_value: str,
+        dependency_hash: str,
+    ) -> PublishedAppDraftDevSession:
+        session.status = PublishedAppDraftDevSessionStatus.starting
+        session.last_error = None
+        session.sandbox_id = str(session.id)
+        token = create_published_app_draft_dev_token(
+            subject=str(user_id),
+            tenant_id=str(app.tenant_id),
+            app_id=str(app.id),
+            user_id=str(user_id),
+            session_id=str(session.id),
+        )
+        started = await self.client.start_session(
+            session_id=str(session.id),
+            tenant_id=str(app.tenant_id),
+            app_id=str(app.id),
+            user_id=str(user_id),
+            revision_id=str(revision.id),
+            entry_file=entry_value,
+            files=files_payload,
+            idle_timeout_seconds=self.settings.idle_timeout_seconds,
+            dependency_hash=dependency_hash,
+            draft_dev_token=token,
+        )
+        session.sandbox_id = str(started.get("sandbox_id") or session.id)
+        session.preview_url = str(started.get("preview_url") or "")
+        session.status = PublishedAppDraftDevSessionStatus.running
+        session.dependency_hash = dependency_hash
+        session.last_error = None
+        return session
+
     async def get_session(self, *, app_id: UUID, user_id: UUID) -> Optional[PublishedAppDraftDevSession]:
         result = await self.db.execute(
             select(PublishedAppDraftDevSession).where(
@@ -148,55 +206,59 @@ class PublishedAppDraftDevRuntimeService:
         session.expires_at = self._expires_at(now)
 
         if must_start:
-            session.status = PublishedAppDraftDevSessionStatus.starting
-            session.last_error = None
-            session.sandbox_id = str(session.id)
-            token = create_published_app_draft_dev_token(
-                subject=str(user_id),
-                tenant_id=str(app.tenant_id),
-                app_id=str(app.id),
-                user_id=str(user_id),
-                session_id=str(session.id),
-            )
             try:
-                started = await self.client.start_session(
-                    session_id=str(session.id),
-                    tenant_id=str(app.tenant_id),
-                    app_id=str(app.id),
-                    user_id=str(user_id),
-                    revision_id=str(revision.id),
-                    entry_file=entry_value,
-                    files=files_payload,
-                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                return await self._start_session_runtime(
+                    app=app,
+                    revision=revision,
+                    session=session,
+                    user_id=user_id,
+                    files_payload=files_payload,
+                    entry_value=entry_value,
                     dependency_hash=dependency_hash,
-                    draft_dev_token=token,
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
-                session.status = PublishedAppDraftDevSessionStatus.error
-                session.last_error = str(exc)
-                return session
-
-            session.sandbox_id = str(started.get("sandbox_id") or session.id)
-            session.preview_url = str(started.get("preview_url") or "")
-            session.status = PublishedAppDraftDevSessionStatus.running
-            session.dependency_hash = dependency_hash
-            return session
+                return self._mark_session_error(session, exc)
 
         install_dependencies = dependency_hash != (session.dependency_hash or "")
-        if session.sandbox_id:
+        if not session.sandbox_id:
             try:
-                await self.client.sync_session(
-                    sandbox_id=session.sandbox_id,
-                    entry_file=entry_value,
-                    files=files_payload,
-                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                return await self._start_session_runtime(
+                    app=app,
+                    revision=revision,
+                    session=session,
+                    user_id=user_id,
+                    files_payload=files_payload,
+                    entry_value=entry_value,
                     dependency_hash=dependency_hash,
-                    install_dependencies=install_dependencies,
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
-                session.status = PublishedAppDraftDevSessionStatus.error
-                session.last_error = str(exc)
-                return session
+                return self._mark_session_error(session, exc)
+
+        try:
+            await self.client.sync_session(
+                sandbox_id=session.sandbox_id,
+                entry_file=entry_value,
+                files=files_payload,
+                idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                dependency_hash=dependency_hash,
+                install_dependencies=install_dependencies,
+            )
+        except PublishedAppDraftDevRuntimeClientError as exc:
+            if not self._is_runtime_not_running_error(exc):
+                return self._mark_session_error(session, exc)
+            try:
+                return await self._start_session_runtime(
+                    app=app,
+                    revision=revision,
+                    session=session,
+                    user_id=user_id,
+                    files_payload=files_payload,
+                    entry_value=entry_value,
+                    dependency_hash=dependency_hash,
+                )
+            except PublishedAppDraftDevRuntimeClientError as restart_exc:
+                return self._mark_session_error(session, restart_exc)
+
         session.status = PublishedAppDraftDevSessionStatus.running
         session.dependency_hash = dependency_hash
         session.last_error = None

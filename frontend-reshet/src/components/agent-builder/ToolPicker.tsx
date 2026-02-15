@@ -26,12 +26,14 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
     const [selectedTool, setSelectedTool] = useState<ToolDefinition | null>(null)
     const [view, setView] = useState<"list" | "detail">("list")
 
-    const filteredTools = useMemo(() => filterTools(tools, {
-        query,
-        bucket: bucketFilter,
-        subtype: subtypeFilter,
-        status: "all" as ToolStatus | "all",
-    }), [tools, query, bucketFilter, subtypeFilter])
+    const filteredTools = useMemo(() => {
+        return filterTools(tools || [], {
+            query,
+            bucket: bucketFilter,
+            subtype: subtypeFilter,
+            status: "all" as ToolStatus | "all",
+        })
+    }, [tools, query, bucketFilter, subtypeFilter])
 
     const groupedTools = useMemo(() => {
         const groups: Record<ToolTypeBucket, ToolDefinition[]> = {

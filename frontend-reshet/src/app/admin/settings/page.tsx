@@ -302,6 +302,9 @@ export default function SettingsPage() {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [defaultsError, setDefaultsError] = useState<string | null>(null)
   const [integrationsError, setIntegrationsError] = useState<string | null>(null)
+  const [serperApiKey, setSerperApiKey] = useState("")
+  const [serperSaving, setSerperSaving] = useState(false)
+  const [serperError, setSerperError] = useState<string | null>(null)
   const [profileSaving, setProfileSaving] = useState(false)
   const [defaultsSaving, setDefaultsSaving] = useState(false)
 
@@ -386,6 +389,22 @@ export default function SettingsPage() {
     })
   }, [credentials])
 
+  const isSerperWebSearchCredential = useCallback((cred: IntegrationCredential) => {
+    if (cred.category !== "custom") return false
+    const providerKey = (cred.provider_key || "").trim().toLowerCase()
+    const providerVariant = (cred.provider_variant || "").trim().toLowerCase()
+    return (
+      (providerKey === "web_search" && providerVariant === "serper")
+      || (providerKey === "web_search" && providerVariant === "")
+      || (providerKey === "serper" && providerVariant === "")
+    )
+  }, [])
+
+  const serperCredential = useMemo(
+    () => credentials.find((cred) => isSerperWebSearchCredential(cred)),
+    [credentials, isSerperWebSearchCredential]
+  )
+
   const handleDeleteCredential = async (credential: IntegrationCredential) => {
     if (!confirm("Delete this credential? This cannot be undone.")) return
     setIntegrationsError(null)
@@ -400,6 +419,48 @@ export default function SettingsPage() {
       } else {
         setIntegrationsError("Failed to delete credential.")
       }
+    }
+  }
+
+  const handleSaveSerperCredential = async () => {
+    const nextKey = serperApiKey.trim()
+    if (!canEdit) return
+    if (!nextKey) {
+      setSerperError("Serper API key is required.")
+      return
+    }
+
+    setSerperSaving(true)
+    setSerperError(null)
+    setIntegrationsError(null)
+    try {
+      if (serperCredential) {
+        await credentialsService.updateCredential(serperCredential.id, {
+          category: "custom",
+          provider_key: "web_search",
+          provider_variant: "serper",
+          display_name: serperCredential.display_name || "Serper Web Search",
+          credentials: { api_key: nextKey },
+          is_enabled: true,
+        })
+      } else {
+        await credentialsService.createCredential({
+          category: "custom",
+          provider_key: "web_search",
+          provider_variant: "serper",
+          display_name: "Serper Web Search",
+          credentials: { api_key: nextKey },
+          is_enabled: true,
+        })
+      }
+      setSerperApiKey("")
+      await fetchData()
+    } catch (error: any) {
+      console.error("Failed to save Serper credential", error)
+      const detail = error?.response?.data?.detail
+      setSerperError(typeof detail === "string" ? detail : "Failed to save Serper API key.")
+    } finally {
+      setSerperSaving(false)
     }
   }
 
@@ -542,10 +603,61 @@ export default function SettingsPage() {
           </div>
         )}
 
+        <div className="rounded-lg border border-border/50 mb-6">
+          <div className="px-4 py-3 border-b border-border/40">
+            <h3 className="text-sm font-medium">Web Search (Serper)</h3>
+            <p className="text-xs text-muted-foreground/60 mt-0.5">
+              Simple setup for web search. The saved key overrides platform default for this tenant.
+            </p>
+          </div>
+          <div className="px-4 py-3 space-y-3">
+            <div className="flex items-center gap-2 text-xs">
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  serperCredential?.is_enabled ? "bg-emerald-500" : "bg-zinc-400"
+                )}
+              />
+              <span className="text-muted-foreground/70">
+                {serperCredential?.is_enabled ? "Configured for this tenant" : "Using platform default (if available)"}
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Serper API Key</Label>
+              <Input
+                type="password"
+                value={serperApiKey}
+                onChange={(e) => setSerperApiKey(e.target.value)}
+                placeholder={serperCredential ? "Enter new key to rotate" : "Enter API key"}
+                disabled={!canEdit || serperSaving}
+                className="h-9 font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground/60">
+                Stored values are write-only.
+              </p>
+            </div>
+            {serperError && (
+              <p className="text-xs text-destructive">{serperError}</p>
+            )}
+            <div className={cn("flex gap-2", isRTL ? "justify-start" : "justify-end")}>
+              <Button
+                size="sm"
+                onClick={handleSaveSerperCredential}
+                disabled={!canEdit || !serperApiKey.trim() || serperSaving}
+              >
+                {serperSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
+                Save Serper Key
+              </Button>
+            </div>
+          </div>
+        </div>
+
         <div className="space-y-6">
           {(Object.keys(CATEGORY_LABELS) as IntegrationCredentialCategory[]).map((category) => {
             const categoryInfo = CATEGORY_LABELS[category]
-            const items = grouped[category] || []
+            const items = category === "custom"
+              ? (grouped[category] || []).filter((cred) => !isSerperWebSearchCredential(cred))
+              : (grouped[category] || [])
 
             return (
               <div key={category} className="rounded-lg border border-border/50">

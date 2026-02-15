@@ -254,6 +254,100 @@ async def test_web_search_accepts_q_alias(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_web_search_uses_tenant_settings_credentials_when_tool_has_no_key(monkeypatch):
+    tool = _make_tool(
+        implementation_type="CUSTOM",
+        builtin_key="web_search",
+        config_schema={
+            "implementation": {
+                "type": "builtin",
+                "builtin": "web_search",
+                "provider": "serper",
+            }
+        },
+    )
+
+    async def fake_load_tool(_self, _tool_id):
+        return tool
+
+    class FakeProvider:
+        async def search(self, *, query: str, top_k: int = 5):
+            return {"query": query, "provider": "serper", "results": [{"query": query, "top_k": top_k}]}
+
+    def fake_provider_factory(_provider, *, api_key: str, endpoint=None, timeout_s: int = 15):
+        assert api_key == "tenant-settings-key"
+        return FakeProvider()
+
+    async def fake_get_by_provider(self, *, category, provider_key: str, provider_variant=None):
+        _ = category  # enum check is covered implicitly by runtime behavior
+        if provider_key == "web_search" and provider_variant == "serper":
+            return SimpleNamespace(
+                is_enabled=True,
+                credentials={"api_key": "tenant-settings-key"},
+            )
+        return None
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+    monkeypatch.setattr("app.agent.executors.tool.create_web_search_provider", fake_provider_factory)
+    monkeypatch.setattr("app.agent.executors.tool.CredentialsService.get_by_provider", fake_get_by_provider)
+
+    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    result = await executor.execute(
+        state={"context": {"query": "amud yomi", "top_k": 1}},
+        config={"tool_id": str(tool.id)},
+        context={"node_id": "tool-node"},
+    )
+
+    assert result["context"]["provider"] == "serper"
+    assert result["context"]["query"] == "amud yomi"
+
+
+@pytest.mark.asyncio
+async def test_web_search_falls_back_to_env_key_when_no_tenant_credential(monkeypatch):
+    tool = _make_tool(
+        implementation_type="CUSTOM",
+        builtin_key="web_search",
+        config_schema={
+            "implementation": {
+                "type": "builtin",
+                "builtin": "web_search",
+                "provider": "serper",
+            }
+        },
+    )
+
+    async def fake_load_tool(_self, _tool_id):
+        return tool
+
+    class FakeProvider:
+        async def search(self, *, query: str, top_k: int = 5):
+            return {"query": query, "provider": "serper", "results": [{"query": query, "top_k": top_k}]}
+
+    def fake_provider_factory(_provider, *, api_key: str, endpoint=None, timeout_s: int = 15):
+        assert api_key == "env-default-key"
+        return FakeProvider()
+
+    async def fake_get_by_provider(self, *, category, provider_key: str, provider_variant=None):
+        _ = (category, provider_key, provider_variant)
+        return None
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+    monkeypatch.setattr("app.agent.executors.tool.create_web_search_provider", fake_provider_factory)
+    monkeypatch.setattr("app.agent.executors.tool.CredentialsService.get_by_provider", fake_get_by_provider)
+    monkeypatch.setenv("SERPER_API_KEY", "env-default-key")
+
+    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    result = await executor.execute(
+        state={"context": {"query": "daf yomi news", "top_k": 2}},
+        config={"tool_id": str(tool.id)},
+        context={"node_id": "tool-node"},
+    )
+
+    assert result["context"]["provider"] == "serper"
+    assert result["context"]["query"] == "daf yomi news"
+
+
+@pytest.mark.asyncio
 async def test_json_transform_and_datetime_utils(monkeypatch):
     json_tool = _make_tool(
         implementation_type="CUSTOM",

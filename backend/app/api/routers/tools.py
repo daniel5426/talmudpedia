@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime
 import re
-from typing import Optional
+from typing import Any, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -131,6 +131,30 @@ class ToolListResponse(BaseModel):
     total: int
 
 
+_RETRIEVAL_DEFAULT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "Search query text"},
+        "top_k": {"type": "integer", "minimum": 1, "maximum": 50},
+        "filters": {"type": "object"},
+    },
+    "required": ["query"],
+    "additionalProperties": False,
+}
+
+_RETRIEVAL_DEFAULT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string"},
+        "pipeline_id": {"type": "string"},
+        "results": {"type": "array", "items": {"type": "object"}},
+        "count": {"type": "integer"},
+    },
+    "required": ["results"],
+    "additionalProperties": True,
+}
+
+
 def _ensure_builtin_tools_enabled() -> None:
     if not is_builtin_tools_v1_enabled():
         raise HTTPException(status_code=404, detail="Built-in tools v1 is disabled")
@@ -179,15 +203,97 @@ def _get_tool_impl_type(tool: ToolRegistry | object) -> ToolImplementationType:
 
 
 def _is_builtin_template(tool: ToolRegistry | object) -> bool:
-    return bool(getattr(tool, "is_builtin_template", False))
+    # Deprecated architecture: templates are no longer part of runtime behavior.
+    return False
 
 
 def _is_builtin_instance(tool: ToolRegistry | object) -> bool:
-    return bool(getattr(tool, "builtin_key", None)) and not _is_builtin_template(tool)
+    # Deprecated architecture: instances are no longer part of runtime behavior.
+    return False
 
 
 def _is_builtin(tool: ToolRegistry | object) -> bool:
-    return bool(getattr(tool, "builtin_key", None)) or bool(getattr(tool, "is_system", False)) or _is_builtin_template(tool)
+    return bool(getattr(tool, "builtin_key", None)) or bool(getattr(tool, "is_system", False))
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    text = key.strip().lower()
+    if text in {
+        "api_key",
+        "token",
+        "access_token",
+        "refresh_token",
+        "secret",
+        "password",
+        "authorization",
+    }:
+        return True
+    return text.endswith(("_api_key", "_token", "_secret", "_password"))
+
+
+def _redact_sensitive_config(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for k, v in value.items():
+            if _is_sensitive_config_key(str(k)):
+                redacted[k] = "***"
+            else:
+                redacted[k] = _redact_sensitive_config(v)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_sensitive_config(v) for v in value]
+    return value
+
+
+def _normalize_retrieval_tool_schemas(
+    input_schema: Optional[dict],
+    output_schema: Optional[dict],
+) -> tuple[dict, dict]:
+    normalized_input = deepcopy(input_schema) if isinstance(input_schema, dict) else {}
+    normalized_output = deepcopy(output_schema) if isinstance(output_schema, dict) else {}
+
+    if not normalized_input:
+        normalized_input = deepcopy(_RETRIEVAL_DEFAULT_INPUT_SCHEMA)
+    else:
+        normalized_input.setdefault("type", "object")
+        props = normalized_input.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+        if "query" not in props:
+            props["query"] = {"type": "string", "description": "Search query text"}
+        if "top_k" not in props:
+            props["top_k"] = {"type": "integer", "minimum": 1, "maximum": 50}
+        if "filters" not in props:
+            props["filters"] = {"type": "object"}
+        normalized_input["properties"] = props
+
+        required = normalized_input.get("required")
+        if not isinstance(required, list):
+            required = []
+        if "query" not in required:
+            required.append("query")
+        normalized_input["required"] = required
+        normalized_input.setdefault("additionalProperties", False)
+
+    if not normalized_output:
+        normalized_output = deepcopy(_RETRIEVAL_DEFAULT_OUTPUT_SCHEMA)
+    else:
+        normalized_output.setdefault("type", "object")
+        props = normalized_output.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+        props.setdefault("results", {"type": "array", "items": {"type": "object"}})
+        props.setdefault("count", {"type": "integer"})
+        normalized_output["properties"] = props
+        required = normalized_output.get("required")
+        if not isinstance(required, list):
+            required = []
+        if "results" not in required:
+            required.append("results")
+        normalized_output["required"] = required
+        normalized_output.setdefault("additionalProperties", True)
+
+    return normalized_input, normalized_output
 
 
 def _get_tool_type(tool: ToolRegistry | object, impl_type: ToolImplementationType) -> str:
@@ -211,7 +317,7 @@ def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
         scope=_serialize_scope(getattr(tool, "scope", None)),
         input_schema=((getattr(tool, "schema", None) or {}).get("input", {})),
         output_schema=((getattr(tool, "schema", None) or {}).get("output", {})),
-        config_schema=(getattr(tool, "config_schema", {}) or {}),
+        config_schema=_redact_sensitive_config(getattr(tool, "config_schema", {}) or {}),
         status=getattr(tool, "status"),
         version=str(getattr(tool, "version", "1.0.0")),
         implementation_type=impl_type,
@@ -381,6 +487,8 @@ async def list_tools(
     tid = uuid.UUID(tenant_ctx["tenant_id"])
 
     conditions = [or_(ToolRegistry.tenant_id == tid, ToolRegistry.tenant_id == None)]
+    # Hide legacy tenant-scoped built-in clones from standard list views.
+    conditions.append(~and_(ToolRegistry.tenant_id != None, ToolRegistry.builtin_key != None, ToolRegistry.is_system == False))
     if scope:
         conditions.append(ToolRegistry.scope == scope)
     if status is not None:
@@ -393,7 +501,6 @@ async def list_tools(
     if tool_type in {"built_in", "mcp", "artifact", "custom"}:
         built_in_pred = or_(
             ToolRegistry.is_system == True,
-            ToolRegistry.is_builtin_template == True,
             ToolRegistry.builtin_key != None,
             and_(ToolRegistry.tenant_id == None, ToolRegistry.implementation_type == ToolImplementationType.INTERNAL),
         )
@@ -433,12 +540,12 @@ async def list_builtin_templates(
 ):
     _ensure_builtin_tools_enabled()
 
+    # Backward-compatible endpoint name; returns global built-in catalog.
     stmt = (
         select(ToolRegistry)
         .where(
             ToolRegistry.tenant_id == None,
-            ToolRegistry.is_builtin_template == True,
-            ToolRegistry.builtin_key != None,
+            or_(ToolRegistry.builtin_key != None, ToolRegistry.is_system == True),
         )
         .order_by(ToolRegistry.name.asc())
         .offset(skip)
@@ -449,8 +556,7 @@ async def list_builtin_templates(
         await db.execute(
             select(func.count(ToolRegistry.id)).where(
                 ToolRegistry.tenant_id == None,
-                ToolRegistry.is_builtin_template == True,
-                ToolRegistry.builtin_key != None,
+                or_(ToolRegistry.builtin_key != None, ToolRegistry.is_system == True),
             )
         )
     ).scalar() or 0
@@ -497,6 +603,11 @@ async def create_tool(
         )
         impl_type = _get_tool_impl_type(probe)
 
+    input_schema = deepcopy(request.input_schema or {})
+    output_schema = deepcopy(request.output_schema or {})
+    if impl_type == ToolImplementationType.RAG_RETRIEVAL:
+        input_schema, output_schema = _normalize_retrieval_tool_schemas(input_schema, output_schema)
+
     requested_status = request.status or ToolStatus.DRAFT
     _maybe_validate_builtin_registry_status(requested_status)
     await _validate_retrieval_pipeline_config_if_needed(
@@ -512,7 +623,7 @@ async def create_tool(
         slug=request.slug,
         description=request.description,
         scope=request.scope,
-        schema={"input": request.input_schema, "output": request.output_schema},
+        schema={"input": input_schema, "output": output_schema},
         config_schema=config_schema,
         implementation_type=impl_type,
         status=requested_status,
@@ -613,6 +724,13 @@ async def update_tool(
         tool.is_active = request.is_active
 
     effective_impl_type = _get_tool_impl_type(tool)
+    if effective_impl_type == ToolImplementationType.RAG_RETRIEVAL:
+        normalized_input, normalized_output = _normalize_retrieval_tool_schemas(
+            (tool.schema or {}).get("input"),
+            (tool.schema or {}).get("output"),
+        )
+        tool.schema = {"input": normalized_input, "output": normalized_output}
+
     await _validate_retrieval_pipeline_config_if_needed(
         db=db,
         tenant_id=tid,

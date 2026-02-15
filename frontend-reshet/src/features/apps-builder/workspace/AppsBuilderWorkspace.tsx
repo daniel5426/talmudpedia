@@ -3,25 +3,34 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle,
   ArrowLeft,
-  CheckCircle2,
   ExternalLink,
-  FileCog,
-  History,
   Loader2,
   Rocket,
   RotateCcw,
   Save,
   Sparkles,
-  Terminal,
-  Wrench,
 } from "lucide-react";
 
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
+import { Loader } from "@/components/ai-elements/loader";
+import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputFooter,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+} from "@/components/ai-elements/prompt-input";
+import { Tool, ToolContent, ToolHeader, ToolOutput } from "@/components/ai-elements/tool";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -34,7 +43,6 @@ import { useSidebar } from "@/components/ui/sidebar";
 import { publishedAppsService } from "@/services";
 import type {
   BuilderChatEvent,
-  BuilderCheckpoint,
   BuilderPatchOp,
   BuilderStateResponse,
   DraftDevSessionResponse,
@@ -75,6 +83,15 @@ type TimelineItem = {
   raw?: Record<string, unknown> | string;
 };
 
+type TimelineToolState =
+  | "input-streaming"
+  | "input-available"
+  | "approval-requested"
+  | "approval-responded"
+  | "output-available"
+  | "output-error"
+  | "output-denied";
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -83,6 +100,28 @@ function wait(ms: number): Promise<void> {
 
 function timelineId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isUserTimelineItem(item: TimelineItem): boolean {
+  return item.title === "User request";
+}
+
+function toTimelineToolType(title: string): `tool-${string}` {
+  const normalized = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return `tool-${normalized || "builder-event"}`;
+}
+
+function toTimelineToolState(item: TimelineItem): TimelineToolState {
+  if (item.tone === "error") return "output-error";
+  if (item.title.toLowerCase().includes("started")) return "input-available";
+  if (item.title.toLowerCase().includes("status")) return "input-available";
+  return "output-available";
+}
+
+function toTimelineToolOutput(item: TimelineItem): Record<string, unknown> | string | undefined {
+  if (item.raw !== undefined) return item.raw;
+  if (item.tone === "error") return undefined;
+  return item.description || item.title;
 }
 
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
@@ -101,13 +140,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
-  const [isRevertingFile, setIsRevertingFile] = useState(false);
-  const [chatInput, setChatInput] = useState("");
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
-  const [checkpoints, setCheckpoints] = useState<BuilderCheckpoint[]>([]);
-  const [revertRevisionId, setRevertRevisionId] = useState<string>("latest");
   const [error, setError] = useState<string | null>(null);
   const syncFingerprintRef = useRef<string>("");
 
@@ -136,15 +172,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setCurrentRevisionId(revision?.id || null);
   }, []);
 
-  const loadCheckpoints = useCallback(async () => {
-    try {
-      const rows = await publishedAppsService.getBuilderCheckpoints(appId, 25);
-      setCheckpoints(rows);
-    } catch {
-      // Keep UI responsive if checkpoint list fails.
-    }
-  }, [appId]);
-
   const loadState = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -162,8 +189,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
   useEffect(() => {
     loadState();
-    loadCheckpoints();
-  }, [loadState, loadCheckpoints]);
+  }, [loadState]);
 
   const ensureDraftDevSession = useCallback(async () => {
     const session = await publishedAppsService.ensureDraftDevSession(appId);
@@ -211,7 +237,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       return;
     }
     const fingerprint = JSON.stringify({
-      revision: currentRevisionId,
       entry: entryFile,
       files,
     });
@@ -263,6 +288,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         files,
         entry_file: entryFile,
       });
+      syncFingerprintRef.current = JSON.stringify({
+        entry: entryFile,
+        files,
+      });
       setCurrentRevisionId(revision.id);
       setState((prev) => {
         if (!prev) return prev;
@@ -283,7 +312,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       if (activeTab === "preview") {
         await ensureDraftDevSession();
       }
-      await loadCheckpoints();
     } catch (err: any) {
       const detail = err?.message || "Failed to save draft";
       try {
@@ -300,7 +328,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadCheckpoints, loadState, pushTimeline]);
+  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, pushTimeline]);
 
   const publish = useCallback(async () => {
     setIsPublishing(true);
@@ -377,13 +405,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     [appId, hydrateFromRevision, pushTimeline],
   );
 
-  const sendBuilderChat = useCallback(async () => {
-    const input = chatInput.trim();
+  const sendBuilderChat = useCallback(async (rawInput: string) => {
+    const input = rawInput.trim();
     if (!input) return;
 
     setIsSending(true);
     setError(null);
-    setChatInput("");
     pushTimeline({ title: "User request", description: input });
 
     try {
@@ -520,7 +547,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       }
 
       await loadState();
-      await loadCheckpoints();
       if (activeTab === "preview") {
         await ensureDraftDevSession();
       }
@@ -542,10 +568,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [
     activeTab,
     appId,
-    chatInput,
     currentRevisionId,
     ensureDraftDevSession,
-    loadCheckpoints,
     loadState,
     pushTimeline,
   ]);
@@ -579,7 +603,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         description: `Restored from revision ${response.restored_from_revision_id.slice(0, 8)}.`,
         tone: "success",
       });
-      await loadCheckpoints();
       if (activeTab === "preview") {
         await ensureDraftDevSession();
       }
@@ -588,69 +611,36 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsUndoing(false);
     }
-  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, hydrateFromRevision, loadCheckpoints, pushTimeline]);
+  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, hydrateFromRevision, pushTimeline]);
 
-  const revertSelectedFile = useCallback(async () => {
-    const targetPath = selectedFile;
-    if (!targetPath) {
-      setError("Select a file first");
-      return;
-    }
-    const fromRevisionId =
-      revertRevisionId === "latest"
-        ? checkpoints[0]?.revision_id
-        : revertRevisionId;
-    if (!fromRevisionId) {
-      setError("No checkpoint revision available for file revert");
-      return;
-    }
-    setIsRevertingFile(true);
+  const openApp = useCallback(async () => {
     setError(null);
+    if (state?.app.status === "published" && state.app.published_url) {
+      window.open(state.app.published_url, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    setIsOpeningApp(true);
     try {
-      const response = await publishedAppsService.revertBuilderFile(appId, {
-        path: targetPath,
-        from_revision_id: fromRevisionId,
-        base_revision_id: currentRevisionId || undefined,
-      });
-      const revision = response.revision;
-      hydrateFromRevision(revision);
+      const session = await publishedAppsService.ensureDraftDevSession(appId);
+      applyDraftDevSession(session);
       setState((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
-          current_draft_revision: revision,
-          app: {
-            ...prev.app,
-            current_draft_revision_id: revision.id,
-          },
+          draft_dev: session,
         };
       });
-      pushTimeline({
-        title: "File reverted",
-        description: `${response.reverted_path} restored from ${response.from_revision_id.slice(0, 8)}.`,
-        tone: "success",
-      });
-      await loadCheckpoints();
-      if (activeTab === "preview") {
-        await ensureDraftDevSession();
+      if (!session.preview_url) {
+        throw new Error("Draft preview URL is unavailable");
       }
+      window.open(session.preview_url, "_blank", "noopener,noreferrer");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to revert selected file");
+      setError(err instanceof Error ? err.message : "Failed to open app");
     } finally {
-      setIsRevertingFile(false);
+      setIsOpeningApp(false);
     }
-  }, [
-    activeTab,
-    appId,
-    checkpoints,
-    currentRevisionId,
-    ensureDraftDevSession,
-    hydrateFromRevision,
-    loadCheckpoints,
-    pushTimeline,
-    revertRevisionId,
-    selectedFile,
-  ]);
+  }, [appId, applyDraftDevSession, state?.app.published_url, state?.app.status]);
 
   const createFile = (path: string) => {
     const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
@@ -684,8 +674,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   if (!state) {
     return <div className="p-6 text-sm text-destructive">Builder state unavailable.</div>;
   }
-
-  const runtimeHref = state.app.published_url || `/published/${state.app.slug}`;
 
   return (
     <Tabs
@@ -743,11 +731,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           </div>
 
           <div className="flex items-center justify-self-end gap-2">
-            <Button size="sm" variant="outline" asChild>
-              <a href={runtimeHref} target="_blank" rel="noreferrer">
+            <Button size="sm" variant="outline" onClick={openApp} disabled={isOpeningApp}>
+              {isOpeningApp ? (
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              ) : (
                 <ExternalLink className="mr-2 h-3.5 w-3.5" />
-                Open App
-              </a>
+              )}
+              {state.app.status === "published" ? "Open App" : "Open Preview"}
             </Button>
 
             <Select value={state.app.template_key} onValueChange={resetTemplate}>
@@ -813,101 +803,90 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     {isUndoing ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-2 h-3.5 w-3.5" />}
                     Undo Last Run
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={revertSelectedFile}
-                    disabled={isRevertingFile || !selectedFile || checkpoints.length === 0}
-                    className="flex-1"
-                  >
-                    {isRevertingFile ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <FileCog className="mr-2 h-3.5 w-3.5" />}
-                    Revert File
-                  </Button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <History className="h-3.5 w-3.5 text-muted-foreground" />
-                  <Select value={revertRevisionId} onValueChange={setRevertRevisionId}>
-                    <SelectTrigger className="h-8">
-                      <SelectValue placeholder="Choose checkpoint for file revert" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="latest">Latest checkpoint</SelectItem>
-                      {checkpoints.map((cp) => (
-                        <SelectItem key={cp.turn_id} value={cp.revision_id}>
-                          {(cp.checkpoint_label || cp.assistant_summary || cp.revision_id).slice(0, 56)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-2 overflow-auto px-3 py-3">
-              {timeline.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Ask for a code change to start a live run. You will see tool steps, edits, and checkpoint creation here.
-                </p>
-              ) : (
-                timeline.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`rounded-xl border p-2 text-xs ${
-                      item.tone === "error"
-                        ? "border-destructive/40 bg-destructive/5"
-                        : item.tone === "success"
-                          ? "border-emerald-500/30 bg-emerald-500/5"
-                          : "border-border/50 bg-background"
-                    }`}
-                  >
-                    <div className="mb-1 flex items-center gap-1.5 font-medium">
-                      {item.tone === "error" ? (
-                        <AlertCircle className="h-3.5 w-3.5" />
-                      ) : item.tone === "success" ? (
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                      ) : item.title.toLowerCase().includes("tool") ? (
-                        <Wrench className="h-3.5 w-3.5" />
-                      ) : item.title.toLowerCase().includes("assistant") ? (
-                        <Terminal className="h-3.5 w-3.5" />
-                      ) : (
-                        <Sparkles className="h-3.5 w-3.5" />
-                      )}
-                      <span>{item.title}</span>
-                    </div>
-                    {item.description ? <p className="text-[11px] text-muted-foreground">{item.description}</p> : null}
-                    {item.raw ? (
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-[10px] text-muted-foreground">raw</summary>
-                        <pre className="mt-1 max-h-36 overflow-auto rounded-md bg-muted/40 p-2 text-[10px] leading-tight">
-                          {typeof item.raw === "string" ? item.raw : JSON.stringify(item.raw, null, 2)}
-                        </pre>
-                      </details>
-                    ) : null}
-                  </div>
-                ))
-              )}
+            <div className="min-h-0 flex-1 overflow-hidden px-3 py-3">
+              <Conversation className="h-full rounded-xl border border-border/50 bg-background/80">
+                <ConversationContent className="gap-3 p-3">
+                  {timeline.length === 0 ? (
+                    <Message from="assistant" className="max-w-full">
+                      <MessageContent>
+                        <MessageResponse>
+                          Ask for a code change to start a live run. You will see tool steps, edits, and checkpoint creation here.
+                        </MessageResponse>
+                      </MessageContent>
+                    </Message>
+                  ) : (
+                    timeline.map((item) => {
+                      if (isUserTimelineItem(item)) {
+                        return (
+                          <Message key={item.id} from="user" className="max-w-full">
+                            <MessageContent>
+                              <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
+                            </MessageContent>
+                          </Message>
+                        );
+                      }
+
+                      return (
+                        <Message key={item.id} from="assistant" className="max-w-full">
+                          <MessageContent>
+                            <Tool defaultOpen={item.tone === "error"} className="mb-0 w-full">
+                              <ToolHeader
+                                title={item.title}
+                                type={toTimelineToolType(item.title)}
+                                state={toTimelineToolState(item)}
+                              />
+                              {(item.raw !== undefined || item.description) && (
+                                <ToolContent>
+                                  <ToolOutput
+                                    output={toTimelineToolOutput(item)}
+                                    errorText={item.tone === "error" ? item.description : undefined}
+                                  />
+                                </ToolContent>
+                              )}
+                            </Tool>
+                          </MessageContent>
+                        </Message>
+                      );
+                    })
+                  )}
+                  {isSending ? (
+                    <Message from="assistant" className="max-w-full">
+                      <MessageContent className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader size={14} />
+                        <span>Running builder agent...</span>
+                      </MessageContent>
+                    </Message>
+                  ) : null}
+                </ConversationContent>
+                <ConversationScrollButton />
+              </Conversation>
             </div>
 
             <div className="border-t border-border/60 p-3">
-              <div className="mb-1 text-[10px] text-muted-foreground">
-                {selectedFile ? `Selected file: ${selectedFile}` : "No file selected"}
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  placeholder="Refactor the header and align spacing with the hero..."
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      sendBuilderChat();
-                    }
-                  }}
-                />
-                <Button size="sm" onClick={sendBuilderChat} disabled={isSending || !chatInput.trim()}>
-                  {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Send"}
-                </Button>
-              </div>
+              <PromptInput
+                onSubmit={async (message) => {
+                  await sendBuilderChat(message.text);
+                }}
+                className="rounded-lg border border-border/60 bg-background"
+              >
+                <PromptInputBody>
+                  <PromptInputTextarea
+                    placeholder="Refactor the header and align spacing with the hero..."
+                    disabled={isSending}
+                    className="min-h-12 max-h-40"
+                  />
+                </PromptInputBody>
+                <PromptInputFooter className="pb-2">
+                  <PromptInputTools />
+                  <PromptInputSubmit size="sm" disabled={isSending} aria-label="Send">
+                    {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Send"}
+                  </PromptInputSubmit>
+                </PromptInputFooter>
+              </PromptInput>
             </div>
           </aside>
         </div>

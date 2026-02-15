@@ -1340,15 +1340,14 @@ export function ConfigPanel({
                     ragAdminService.listVisualPipelines(currentTenant?.slug),
                     agentService.listAgents({ skip: 0, limit: 500 }),
                 ])
-
                 setModels(modelsRes.models.map(m => ({
                     value: m.id,
                     label: m.name,
                     providerInfo: `${m.providers?.[0]?.provider} • ${m.providers?.[0]?.provider_model_id}`,
                     slug: m.slug,
                 })))
-                setToolCatalog(toolsRes.tools)
-                setToolOptions(toolsRes.tools.map(t => ({
+                setToolCatalog(toolsRes.tools || [])
+                setToolOptions((toolsRes.tools || []).map(t => ({
                     value: t.id,
                     label: t.name,
                     providerInfo: t.implementation_type

@@ -17,7 +17,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
-from app.db.postgres.models.registry import ToolRegistry
+from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
 from app.services.credentials_service import CredentialsService
 from app.services.mcp_client import call_mcp_tool
 from app.services.tool_function_registry import get_tool_function, run_tool_function
@@ -481,10 +481,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         api_key = implementation_config.get("api_key")
         endpoint = implementation_config.get("endpoint")
+        credentials_service = CredentialsService(self.db, self.tenant_id) if self.tenant_id else None
 
         cred_ref = implementation_config.get("credentials_ref")
-        if not api_key and cred_ref and self.tenant_id:
-            credentials_service = CredentialsService(self.db, self.tenant_id)
+        if not api_key and cred_ref and credentials_service:
             credential = await credentials_service.get_by_id(UUID(str(cred_ref)))
             if credential is None:
                 raise ValueError("web_search credential_ref not found")
@@ -494,13 +494,41 @@ class ToolNodeExecutor(BaseNodeExecutor):
             api_key = payload.get("api_key") or payload.get("token")
             endpoint = endpoint or payload.get("endpoint")
 
+        # Preferred tenant override path:
+        # IntegrationCredential(category=custom, provider_key="web_search", provider_variant="{provider}")
+        # For backward compatibility, also accept provider_key={provider} with no variant.
+        if not api_key and credentials_service:
+            provider_credential_pairs = [
+                ("web_search", provider_name),
+                ("web_search", None),
+                (provider_name, None),
+            ]
+            for provider_key, provider_variant in provider_credential_pairs:
+                credential = await credentials_service.get_by_provider(
+                    category=IntegrationCredentialCategory.CUSTOM,
+                    provider_key=provider_key,
+                    provider_variant=provider_variant,
+                )
+                if credential is None or not credential.is_enabled:
+                    continue
+                payload = credential.credentials or {}
+                candidate_api_key = payload.get("api_key") or payload.get("token")
+                if candidate_api_key:
+                    api_key = candidate_api_key
+                    endpoint = endpoint or payload.get("endpoint")
+                    break
+
         if not api_key and provider_name == "serper":
             import os
 
             api_key = os.getenv("SERPER_API_KEY")
 
         if not api_key:
-            raise ValueError("web_search provider credentials are missing")
+            raise ValueError(
+                "web_search provider credentials are missing. "
+                "Set SERPER_API_KEY or add tenant credentials "
+                "(category=custom, provider_key=web_search, provider_variant=serper, credentials.api_key)."
+            )
 
         provider = create_web_search_provider(
             provider_name,

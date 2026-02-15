@@ -219,7 +219,7 @@ async def seed_platform_sdk_tool(db):
                     ToolRegistry.tenant_id == None,
                 )
             )
-            tool = result.scalar_one_or_none()
+            tool = result.scalars().first()
         except ProgrammingError:
             await db.rollback()
             use_orm = False
@@ -285,7 +285,7 @@ async def seed_platform_sdk_tool(db):
                 artifact_version="1.0.0",
                 builtin_key="platform_sdk",
                 builtin_template_id=None,
-                is_builtin_template=True,
+                is_builtin_template=False,
                 is_active=True,
                 is_system=True,
                 published_at=datetime.utcnow(),
@@ -304,7 +304,7 @@ async def seed_platform_sdk_tool(db):
             tool.artifact_version = "1.0.0"
             tool.builtin_key = "platform_sdk"
             tool.builtin_template_id = None
-            tool.is_builtin_template = True
+            tool.is_builtin_template = False
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.utcnow()
@@ -349,10 +349,9 @@ async def seed_builtin_tool_templates(db):
             select(ToolRegistry).where(
                 ToolRegistry.tenant_id == None,
                 ToolRegistry.builtin_key == spec.key,
-                ToolRegistry.is_builtin_template == True,
             )
         )
-        tool = result.scalar_one_or_none()
+        tool = result.scalars().first()
 
         schema = {
             "input": spec.input_schema,
@@ -379,7 +378,7 @@ async def seed_builtin_tool_templates(db):
                 artifact_version=None,
                 builtin_key=spec.key,
                 builtin_template_id=None,
-                is_builtin_template=True,
+                is_builtin_template=False,
                 is_active=True,
                 is_system=True,
                 published_at=datetime.utcnow(),
@@ -399,7 +398,7 @@ async def seed_builtin_tool_templates(db):
             tool.artifact_version = None
             tool.builtin_key = spec.key
             tool.builtin_template_id = None
-            tool.is_builtin_template = True
+            tool.is_builtin_template = False
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.utcnow()

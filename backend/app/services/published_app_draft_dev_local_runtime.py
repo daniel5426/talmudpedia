@@ -439,6 +439,13 @@ class LocalDraftDevRuntimeManager:
 
         for path, content in normalized.items():
             target = project_dir / path
+            if target.exists() and target.is_file():
+                try:
+                    if target.read_text(encoding="utf-8") == content:
+                        continue
+                except Exception:
+                    # Fall through to rewrite if we cannot read as UTF-8.
+                    pass
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
 

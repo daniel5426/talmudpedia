@@ -1,9 +1,9 @@
 # Tools Overview
 
 Date: 2026-02-03
-Last Updated: 2026-02-14
+Last Updated: 2026-02-15
 
-This document describes the full Tools domain in the app: data model, APIs, execution flow, UI, and tests. It reflects the current architecture after removing built-in instance management and introducing first-class `agent_call`.
+This document describes the full Tools domain in the app: data model, APIs, execution flow, UI, and tests. It reflects the current architecture after removing built-in template/instance behavior from runtime and introducing first-class `agent_call`.
 
 ---
 
@@ -12,7 +12,7 @@ This document describes the full Tools domain in the app: data model, APIs, exec
 Tools are callable capabilities that agents can invoke. The system uses a **hybrid taxonomy**:
 
 ### Primary Buckets (tool_type)
-- `built_in`  - system tools and built-in templates (plus legacy instance rows)
+- `built_in`  - system/global built-ins (`builtin_key` or `is_system`)
 - `mcp`       - tools served from MCP servers
 - `artifact`  - tools backed by code artifacts
 - `custom`    - tenant-defined tools (http/function/rag/agent_call/custom)
@@ -44,8 +44,8 @@ Key fields (non-exhaustive):
 - `published_at`       - publish timestamp
 - `artifact_id`, `artifact_version`
 - `builtin_key`                - built-in identifier (e.g. `retrieval_pipeline`)
-- `builtin_template_id`        - FK to global template row (used by legacy instance rows)
-- `is_builtin_template`        - marks global built-in template rows
+- `builtin_template_id`        - legacy metadata (kept for DB compatibility; not used in runtime logic)
+- `is_builtin_template`        - legacy metadata (kept for DB compatibility; not used in runtime logic)
 - `is_active`, `is_system`
 
 ### Table: `tool_versions`
@@ -59,7 +59,7 @@ Snapshot table created on publish and versioning. Stores:
 
 ### tool_type
 Computed by the Tools API:
-- `built_in` if `is_system == true` OR `is_builtin_template == true` OR `builtin_key` is set
+- `built_in` if `is_system == true` OR `builtin_key` is set
 - `mcp` if `implementation_type == mcp` OR `config_schema.implementation.type == "mcp"`
 - `artifact` if `artifact_id` exists OR `implementation_type == artifact`
 - `custom` otherwise
@@ -75,6 +75,10 @@ Computed by the Tools API:
   - `implementation_type`
   - `tool_type`
   - `skip`, `limit`
+- Notes:
+  - Returns tenant + global tools.
+  - Legacy tenant-scoped built-in clone rows are hidden from standard list output.
+  - `config_schema` is sanitized (sensitive keys like `api_key`/`token` are redacted).
 
 ### Create
 `POST /tools`
@@ -86,12 +90,12 @@ Computed by the Tools API:
   - Only `scope=tenant` is allowed on this endpoint
   - Direct creation with `status=published` is blocked; publish must use `POST /tools/{id}/publish`
   - `rag_retrieval` requires `implementation.pipeline_id` and validates tenant ownership
+  - `rag_retrieval` input/output schemas are normalized so `query` is always present and required
 
 ### Update
 `PUT /tools/{id}`
 - Accepts updates to schema, config, status, implementation type, artifact link
 - Guardrail: direct transition to `published` is blocked; use `POST /tools/{id}/publish`
-- Guardrail: built-in instance rows are not manageable through this endpoint
 
 ### Publish
 `POST /tools/{id}/publish`
@@ -99,7 +103,6 @@ Computed by the Tools API:
 - Sets `published_at` if missing
 - Writes a ToolVersion snapshot
 - `rag_retrieval` validates tenant ownership of configured `implementation.pipeline_id`
-- Built-in instance rows are not manageable through this endpoint
 
 ### Version
 `POST /tools/{id}/version?new_version=X.Y.Z`
@@ -107,11 +110,12 @@ Computed by the Tools API:
 - Writes a ToolVersion snapshot
 - Updates `tool_registry.version`
 
-### Built-in Templates
+### Built-in Catalog (Compatibility Endpoint)
 - `GET /tools/builtins/templates`
 - Rules:
-  - Templates are global (`tenant_id = null`, `is_builtin_template = true`).
-  - Template surface is read-only.
+  - Endpoint name is kept for backward compatibility.
+  - Returns global built-ins (`tenant_id = null`) by `builtin_key`/`is_system`.
+  - No template/instance semantics are required for runtime.
   - Retrieval tools are created in the regular tool flow (`POST /tools`) with `implementation_type=rag_retrieval`.
 
 ---
@@ -169,6 +173,23 @@ Backend-only execution metadata used by the Agent tool loop:
   - `web_search` (provider interface, Serper first)
   - `json_transform`
   - `datetime_utils`
+
+### Web Search Credential Resolution (Canonical)
+`web_search` uses a single credential strategy with clear precedence:
+1. `config_schema.implementation.api_key` (explicit per-tool override)
+2. `config_schema.implementation.credentials_ref` (tool-linked credential)
+3. Tenant Settings credential lookup:
+   - `category = custom`
+   - preferred: `provider_key = web_search`, `provider_variant = serper`
+   - accepted fallback: `provider_key = serper`
+   - credential payload keys: `api_key` (preferred) or `token`; optional `endpoint`
+4. Environment fallback for platform default:
+   - `SERPER_API_KEY`
+
+Recommended production posture:
+- Set `SERPER_API_KEY` once at platform/runtime level for out-of-box tenant behavior.
+- Let tenants override with their own key via Settings credentials.
+- Avoid hardcoding provider secrets directly in tool definitions unless explicitly required.
 
 ### Agent Call Tools
 - `implementation_type: agent_call` executes a synchronous child-agent run.

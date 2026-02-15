@@ -1,3 +1,4 @@
+import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TextDecoder } from "util";
 
@@ -57,6 +58,80 @@ jest.mock("@/lib/react-artifacts/compiler", () => ({
 jest.mock("@/components/ui/code-editor", () => ({
   CodeEditor: (props: Parameters<typeof mockCodeEditor>[0]) => mockCodeEditor(props),
 }));
+
+jest.mock("@/components/ai-elements/conversation", () => ({
+  Conversation: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ConversationContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ConversationScrollButton: () => null,
+}));
+
+jest.mock("@/components/ai-elements/loader", () => ({
+  Loader: () => <span>loading</span>,
+}));
+
+jest.mock("@/components/ai-elements/message", () => ({
+  Message: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  MessageContent: ({ children, className }: { children: React.ReactNode; className?: string }) => (
+    <div className={className}>{children}</div>
+  ),
+  MessageResponse: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
+jest.mock("@/components/ai-elements/tool", () => ({
+  Tool: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ToolHeader: ({ title }: { title?: string }) => <div>{title}</div>,
+  ToolContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ToolOutput: ({ output, errorText }: { output?: unknown; errorText?: string }) => (
+    <pre>
+      {errorText ||
+        (typeof output === "string"
+          ? output
+          : output
+            ? JSON.stringify(output)
+            : "")}
+    </pre>
+  ),
+}));
+
+jest.mock("@/components/ai-elements/prompt-input", () => {
+  const PromptInputTextarea = React.forwardRef(function PromptInputTextarea(
+    props: React.ComponentPropsWithoutRef<"textarea">,
+    ref: React.ForwardedRef<HTMLTextAreaElement>,
+  ) {
+    return <textarea ref={ref} name="message" {...props} />;
+  });
+
+  return {
+    PromptInput: ({
+      children,
+      onSubmit,
+      ...props
+    }: {
+      children: React.ReactNode;
+      onSubmit: (message: { text: string; files: any[] }) => void | Promise<void>;
+    }) => (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const formData = new FormData(event.currentTarget);
+          void onSubmit({ text: String(formData.get("message") || ""), files: [] });
+        }}
+        {...props}
+      >
+        {children}
+      </form>
+    ),
+    PromptInputBody: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+    PromptInputFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+    PromptInputTools: () => <div />,
+    PromptInputSubmit: ({ children, ...props }: React.ComponentPropsWithoutRef<"button">) => (
+      <button type="submit" {...props}>
+        {children || "Submit"}
+      </button>
+    ),
+    PromptInputTextarea,
+  };
+});
 
 const makeFiles = () => ({
   "index.html": "<!doctype html><html><body><div id='root'></div></body></html>",
@@ -118,6 +193,8 @@ const makeState = (files: Record<string, string> = makeFiles()) => ({
 });
 
 describe("AppsBuilderWorkspace", () => {
+  let openSpy: jest.SpyInstance;
+
   const openCodeTab = async () => {
     const codeTab = await screen.findByRole("tab", { name: "Code" });
     fireEvent.mouseDown(codeTab);
@@ -126,6 +203,7 @@ describe("AppsBuilderWorkspace", () => {
   };
 
   beforeEach(() => {
+    openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     (publishedAppsService.getBuilderState as jest.Mock).mockResolvedValue(makeState());
     (publishedAppsService.getBuilderCheckpoints as jest.Mock).mockResolvedValue([
       {
@@ -254,6 +332,7 @@ describe("AppsBuilderWorkspace", () => {
   });
 
   afterEach(() => {
+    openSpy.mockRestore();
     jest.clearAllMocks();
   });
 
@@ -375,19 +454,49 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
-  it("calls revert file endpoint from quick action", async () => {
+  it("opens draft preview when clicking Open Preview", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: /Revert File/i }));
+    await waitFor(() => expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalled());
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockClear();
+    openSpy.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /open preview/i }));
 
     await waitFor(() => {
-      expect(publishedAppsService.revertBuilderFile).toHaveBeenCalledWith(
-        "app-1",
-        expect.objectContaining({
-          from_revision_id: "rev-2",
-        }),
+      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledWith("app-1");
+      expect(window.open).toHaveBeenCalledWith(
+        "https://preview.local/sandbox/session-1/",
+        "_blank",
+        "noopener,noreferrer",
       );
     });
   });
+
+  it("opens published runtime URL when app is published", async () => {
+    const publishedState = makeState();
+    publishedState.app.status = "published";
+    publishedState.app.published_url = "https://apps.example.com/support/";
+    (publishedAppsService.getBuilderState as jest.Mock).mockResolvedValueOnce(publishedState);
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByRole("button", { name: /open app/i });
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockClear();
+    openSpy.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /open app/i }));
+
+    await waitFor(() => {
+      expect(window.open).toHaveBeenCalledWith(
+        "https://apps.example.com/support/",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
+    expect(publishedAppsService.ensureDraftDevSession).not.toHaveBeenCalled();
+  });
+
 });

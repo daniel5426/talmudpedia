@@ -205,7 +205,10 @@ export default function AppsPage() {
   }
 
   function appRuntimeHref(app: PublishedApp): string {
-    return app.published_url || `/published/${app.slug}`;
+    if (app.status === "published" && app.published_url) {
+      return app.published_url;
+    }
+    return `/admin/apps/${app.id}`;
   }
 
   return (
@@ -372,7 +375,7 @@ export default function AppsPage() {
                           }}
                         >
                           <ExternalLink className="mr-2 h-3.5 w-3.5" />
-                          Open App
+                          {app.status === "published" ? "Open App" : "Open Builder"}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem

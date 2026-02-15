@@ -1,6 +1,6 @@
 # Base44-Style Option A Implementation Plan (Vite Static Apps + Shared Backend)
 
-Last Updated: 2026-02-14
+Last Updated: 2026-02-15
 
 ## Summary
 Move Apps Builder to a dual-mode architecture:
@@ -30,6 +30,11 @@ Implemented:
 - Queue wiring for `apps_build` and real `build_published_app_revision_task` execution flow (`npm ci`, `npm run build`, `dist` manifest, object upload).
 - Frontend service contracts for draft-dev session + publish job endpoints.
 - Builder preview switched from in-browser compile/build polling to draft-dev session lifecycle (`ensure/sync/heartbeat`) in apps builder workspace.
+- Draft-dev stability hardening:
+  - local runtime sync now writes files only when content changes (prevents unnecessary Vite restarts from no-op syncs).
+  - runtime service now auto-recovers by re-starting session when sync reports a stale/non-running sandbox.
+  - workspace sync fingerprint excludes revision ID and avoids redundant post-save sync churn.
+  - "Open App" in builder now opens published runtime only for published apps; otherwise it ensures draft-dev and opens preview instead.
 - Published runtime page is static-only and redirect-only (`/public/apps/{slug}/runtime` -> `published_url`).
 - Publish now enqueues async full-build jobs and no longer gates on draft `build_status`.
 - Public source UI endpoints are hard-removed and return `410 UI_SOURCE_MODE_REMOVED`.

@@ -9,7 +9,7 @@ from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.registry import AgentOperatorRegistry, AgentOperatorSpec, AgentStateField, AgentExecutorRegistry
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
 from app.services.model_resolver import ModelResolver
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.agent.cel_engine import evaluate_template
@@ -467,9 +467,15 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             props = input_schema.get("properties", {}) or {}
             required = set(input_schema.get("required", []) or [])
             fields: Dict[str, Any] = {}
-            for prop_name in props.keys():
+            for prop_name, prop_spec in props.items():
                 default = ... if prop_name in required else None
-                fields[prop_name] = (Any, default)
+                description = None
+                if isinstance(prop_spec, dict):
+                    desc_raw = prop_spec.get("description")
+                    if isinstance(desc_raw, str) and desc_raw.strip():
+                        description = desc_raw.strip()
+                field_def = Field(default=default, description=description) if description else default
+                fields[prop_name] = (Any, field_def)
             model_name = tool_name.title().replace("-", "_").replace(" ", "_")
             args_schema = create_model(f"{model_name}Args", **fields)
         else:

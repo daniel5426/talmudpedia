@@ -55,10 +55,9 @@ async def _ensure_builtin_template(
             select(ToolRegistry).where(
                 ToolRegistry.tenant_id == None,
                 ToolRegistry.builtin_key == builtin_key,
-                ToolRegistry.is_builtin_template == True,
             )
         )
-    ).scalar_one_or_none()
+    ).scalars().first()
     if existing is not None:
         return existing
 
@@ -78,7 +77,7 @@ async def _ensure_builtin_template(
         artifact_version=None,
         builtin_key=builtin_key,
         builtin_template_id=None,
-        is_builtin_template=True,
+        is_builtin_template=False,
         is_active=True,
         is_system=True,
     )
@@ -161,8 +160,14 @@ async def test_list_builtin_templates_returns_only_global_templates(client, db_s
     ids = {item["id"] for item in body["tools"]}
     assert str(template.id) in ids
     assert str(instance.id) not in ids
-    assert all(item["is_builtin_template"] is True for item in body["tools"])
+    assert all(item["is_builtin_template"] is False for item in body["tools"])
     assert all(item["tenant_id"] is None for item in body["tools"])
+
+    tools_response = await client.get("/tools", headers=_headers(user, tenant))
+    assert tools_response.status_code == 200
+    listed_ids = {item["id"] for item in tools_response.json()["tools"]}
+    assert str(template.id) in listed_ids
+    assert str(instance.id) not in listed_ids
 
 
 @pytest.mark.asyncio
@@ -203,7 +208,7 @@ async def test_builtin_instance_endpoints_removed_return_404(client, db_session)
 
 
 @pytest.mark.asyncio
-async def test_generic_tool_management_rejects_builtin_instance_rows(client, db_session):
+async def test_generic_tool_management_allows_cleanup_of_legacy_builtin_rows(client, db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     key = f"legacy_instance_{uuid4().hex[:8]}"
     template = await _ensure_builtin_template(
@@ -235,23 +240,17 @@ async def test_generic_tool_management_rejects_builtin_instance_rows(client, db_
 
     update_resp = await client.put(
         f"/tools/{instance.id}",
-        json={"description": "blocked"},
+        json={"description": "updated"},
         headers=_headers(user, tenant),
     )
-    assert update_resp.status_code == 404
-
-    publish_resp = await client.post(
-        f"/tools/{instance.id}/publish",
-        json={},
-        headers=_headers(user, tenant),
-    )
-    assert publish_resp.status_code == 404
+    assert update_resp.status_code == 200
+    assert update_resp.json()["description"] == "updated"
 
     delete_resp = await client.delete(
         f"/tools/{instance.id}",
         headers=_headers(user, tenant),
     )
-    assert delete_resp.status_code == 404
+    assert delete_resp.status_code == 200
 
 
 @pytest.mark.asyncio
