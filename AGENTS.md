@@ -1,6 +1,6 @@
 # Agent Operating Instructions (Talmudpedia)
 
-Last Updated: 2026-02-14
+Last Updated: 2026-02-15
 
 ## Documentation Hygiene (Context-dependent)
 - When asked for a chat summary, unless explicitly requested otherwise, create a markdown file in `backend/documentations/summary/` with a descriptive filename and include a "Last Updated" date.
@@ -47,6 +47,11 @@ Last Updated: 2026-02-14
 ### Frontend Layering (Enforced)
 - Strictly forbid creating local `types.ts` or `api.ts` files within page directories.
 - All API integrations, service logic, and shared types must reside in `frontend-reshet/src/services/` to ensure a single source of truth and avoid type collisions.
+
+## File Size Guardrail (Enforced)
+- Do not let source files grow beyond **800 lines**.
+- If a file approaches or exceeds 800 lines, split it into cohesive modules grouped by responsibility (schemas, services/helpers, routes, etc.).
+- Preserve stable import paths when refactoring large files (for example by keeping a thin composition/compatibility module when needed).
 
 ## Tests Organization (Required when asked to add/expand tests)
 - All new tests must live under the project test roots:

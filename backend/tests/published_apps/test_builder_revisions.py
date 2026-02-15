@@ -592,7 +592,7 @@ async def test_builder_chat_stream_persists_failure_turn(client, db_session, mon
             "inject invalid network import",
         )
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._build_builder_patch_from_prompt", _invalid_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_chat._build_builder_patch_from_prompt", _invalid_patch)
 
     stream_resp = await client.post(
         f"/admin/apps/{app_id}/builder/chat/stream",
@@ -672,7 +672,7 @@ async def test_builder_revision_worker_build_gate_does_not_block_draft_save_path
     async def _unexpected_preflight(_files: dict[str, str]) -> None:
         raise AssertionError("worker preflight should not run for draft save path")
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _unexpected_preflight)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_tools._run_worker_build_preflight", _unexpected_preflight)
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -726,7 +726,7 @@ async def test_builder_chat_stream_worker_build_gate_does_not_block_chat_flow(cl
     async def _unexpected_preflight(_files: dict[str, str]) -> None:
         raise AssertionError("worker preflight should not run for chat stream draft updates")
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _unexpected_preflight)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_tools._run_worker_build_preflight", _unexpected_preflight)
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -806,8 +806,9 @@ async def test_builder_chat_stream_agentic_loop_runs_worker_tools(client, db_ses
             }
         return None
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
-    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _ok_preflight)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_chat._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_agentic._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_tools._run_worker_build_preflight", _ok_preflight)
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -871,8 +872,9 @@ async def test_builder_chat_stream_agentic_loop_surfaces_worker_tool_failure(cli
     async def _failing_preflight(_files: dict[str, str], *, include_dist_manifest: bool = False):
         raise RuntimeError("`npm run build` failed with exit code 1")
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
-    monkeypatch.setattr("app.api.routers.published_apps_admin._run_worker_build_preflight", _failing_preflight)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_chat._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_agentic._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_tools._run_worker_build_preflight", _failing_preflight)
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -941,7 +943,8 @@ async def test_builder_chat_stream_agentic_loop_reads_prompt_mentioned_file(clie
             assumptions=[],
         )
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_chat._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_agentic._generate_builder_patch_with_model", _fake_model_patch)
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -1010,8 +1013,9 @@ async def test_builder_chat_stream_agentic_loop_blocks_on_targeted_test_failure(
             "diagnostics": [{"message": "vitest failure: 1 test failed"}],
         }
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
-    monkeypatch.setattr("app.api.routers.published_apps_admin._builder_tool_run_targeted_tests", _failing_targeted_tests)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_chat._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_agentic._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_agentic._builder_tool_run_targeted_tests", _failing_targeted_tests)
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -1142,9 +1146,10 @@ async def test_builder_chat_stream_command_allowlist_denies_non_allowed(client, 
     async def _fake_apply(*args, **kwargs):
         return None
 
-    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
-    monkeypatch.setattr("app.api.routers.published_apps_admin._snapshot_files_from_sandbox", _fake_snapshot)
-    monkeypatch.setattr("app.api.routers.published_apps_admin._apply_patch_operations_to_sandbox", _fake_apply)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_chat._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_builder_agentic._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_chat._snapshot_files_from_sandbox", _fake_snapshot)
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_chat._apply_patch_operations_to_sandbox", _fake_apply)
     monkeypatch.setattr(
         "app.api.routers.published_apps_admin.PublishedAppDraftDevRuntimeService.ensure_session",
         _fake_ensure_session,

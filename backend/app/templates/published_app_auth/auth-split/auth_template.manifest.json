@@ -1,0 +1,11 @@
+{
+  "key": "auth-split",
+  "name": "Split Hero",
+  "description": "Two-column auth with branded side panel and form side.",
+  "thumbnail": "auth-split",
+  "tags": ["split", "brand", "hero"],
+  "style_tokens": {
+    "layout": "split",
+    "tone": "editorial"
+  }
+}

@@ -72,6 +72,36 @@ async def test_builtin_retrieval_pipeline_executes_runtime(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_builtin_retrieval_pipeline_accepts_input_string_alias(monkeypatch):
+    pipeline_id = str(uuid4())
+    tool = _make_tool(
+        implementation_type="RAG_RETRIEVAL",
+        builtin_key="retrieval_pipeline",
+        config_schema={"implementation": {"type": "rag_retrieval", "pipeline_id": pipeline_id}},
+    )
+
+    async def fake_load_tool(_self, _tool_id):
+        return tool
+
+    async def fake_run_query(self, *, pipeline_id, query, top_k=10, filters=None):
+        return ([{"doc_id": "d1", "query": query, "top_k": top_k, "filters": filters or {}}], None)
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+    monkeypatch.setattr(RetrievalPipelineRuntime, "run_query", fake_run_query)
+
+    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    result = await executor.execute(
+        state={"context": {"input": "where is this text"}},
+        config={"tool_id": str(tool.id)},
+        context={"node_id": "tool-node"},
+    )
+
+    assert result["context"]["pipeline_id"] == pipeline_id
+    assert result["context"]["query"] == "where is this text"
+    assert result["context"]["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_unknown_implementation_type_returns_explicit_error(monkeypatch):
     tool = _make_tool(
         implementation_type="INTERNAL",

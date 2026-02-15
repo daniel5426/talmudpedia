@@ -20,6 +20,11 @@ class PublishedAppStatus(str, enum.Enum):
     archived = "archived"
 
 
+class PublishedAppVisibility(str, enum.Enum):
+    public = "public"
+    private = "private"
+
+
 class PublishedAppRevisionKind(str, enum.Enum):
     draft = "draft"
     published = "published"
@@ -63,6 +68,12 @@ class PublishedAppUserMembershipStatus(str, enum.Enum):
     blocked = "blocked"
 
 
+class PublishedAppCustomDomainStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class PublishedApp(Base):
     __tablename__ = "published_apps"
 
@@ -72,14 +83,22 @@ class PublishedApp(Base):
 
     name = Column(String, nullable=False)
     slug = Column(String, nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    logo_url = Column(String, nullable=True)
 
     status = Column(
         SQLEnum(PublishedAppStatus, values_callable=_enum_values),
         nullable=False,
         default=PublishedAppStatus.draft,
     )
+    visibility = Column(
+        SQLEnum(PublishedAppVisibility, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppVisibility.public,
+    )
     auth_enabled = Column(Boolean, nullable=False, default=True)
     auth_providers = Column(JSONB, nullable=False, default=lambda: ["password"])
+    auth_template_key = Column(String, nullable=False, default="auth-classic")
     published_url = Column(String, nullable=True)
     template_key = Column(String, nullable=False, default="chat-classic")
     current_draft_revision_id = Column(UUID(as_uuid=True), nullable=True, index=True)
@@ -96,6 +115,11 @@ class PublishedApp(Base):
     memberships = relationship("PublishedAppUserMembership", back_populates="published_app", cascade="all, delete-orphan")
     sessions = relationship("PublishedAppSession", back_populates="published_app", cascade="all, delete-orphan")
     revisions = relationship("PublishedAppRevision", back_populates="published_app", cascade="all, delete-orphan")
+    custom_domains = relationship(
+        "PublishedAppCustomDomain",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+    )
     builder_conversations = relationship(
         "PublishedAppBuilderConversationTurn",
         back_populates="published_app",
@@ -137,6 +161,36 @@ class PublishedAppUserMembership(Base):
 
     __table_args__ = (
         UniqueConstraint("published_app_id", "user_id", name="uq_published_app_user_membership"),
+    )
+
+
+class PublishedAppCustomDomain(Base):
+    __tablename__ = "published_app_custom_domains"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    host = Column(String, nullable=False, index=True)
+    status = Column(
+        SQLEnum(PublishedAppCustomDomainStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppCustomDomainStatus.pending,
+    )
+    requested_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="custom_domains")
+    requester = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("host", name="uq_published_app_custom_domains_host"),
+        UniqueConstraint("published_app_id", "host", name="uq_published_app_custom_domains_app_host"),
     )
 
 

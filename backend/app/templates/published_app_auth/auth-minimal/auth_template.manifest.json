@@ -1,0 +1,11 @@
+{
+  "key": "auth-minimal",
+  "name": "Minimal Stack",
+  "description": "Minimal single-column form with lightweight brand text.",
+  "thumbnail": "auth-minimal",
+  "tags": ["minimal", "stack", "clean"],
+  "style_tokens": {
+    "layout": "minimal",
+    "tone": "soft"
+  }
+}

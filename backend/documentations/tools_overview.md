@@ -174,6 +174,15 @@ Backend-only execution metadata used by the Agent tool loop:
   - `json_transform`
   - `datetime_utils`
 
+### Query Input Normalization (Retrieval + Web Search)
+- Runtime accepts query aliases for both `retrieval_pipeline` and `web_search`:
+  - `query`, `q`, `search_query`, `keywords`, `text`, `value`
+- Runtime also accepts scalar payload forms produced by some tool-call shapes:
+  - `input: "<query text>"`
+  - `payload: "<query text>"`
+- For nested-object payloads, `top_k` and `filters` can be read from `input.top_k` / `input.filters` for retrieval/web-search execution.
+- This normalization is enforced in `ToolNodeExecutor` and is intended to avoid false negatives like `retrieval pipeline tool requires a query` when the model emits non-canonical argument shapes.
+
 ### Web Search Credential Resolution (Canonical)
 `web_search` uses a single credential strategy with clear precedence:
 1. `config_schema.implementation.api_key` (explicit per-tool override)

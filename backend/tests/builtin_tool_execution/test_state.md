@@ -10,6 +10,7 @@ Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution g
 
 ## Key scenarios covered
 - `retrieval_pipeline` dispatch executes the retrieval runtime path.
+- `retrieval_pipeline` accepts query passed as scalar `input` payload.
 - Unknown implementation types return explicit execution errors.
 - Production mode blocks draft tools while debug mode allows execution.
 - `web_fetch` happy/error paths.
@@ -20,8 +21,8 @@ Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution g
 
 ## Last run command + result
 - Command: `pytest -q backend/tests/builtin_tool_execution/test_builtin_tool_executor.py`
-- Date/Time: 2026-02-15 21:05 EET
-- Result: pass (9 passed)
+- Date/Time: 2026-02-15 22:09 EET
+- Result: pass (10 passed)
 
 ## Known gaps or follow-ups
 - Add regression coverage for provider-specific malformed chunk payloads across SDK versions.

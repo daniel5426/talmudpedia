@@ -39,6 +39,8 @@ from .published_apps import (
     BuilderConversationTurnStatus,
     PublishedApp,
     PublishedAppBuilderConversationTurn,
+    PublishedAppCustomDomain,
+    PublishedAppCustomDomainStatus,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
     PublishedAppPublishJob,
@@ -48,6 +50,7 @@ from .published_apps import (
     PublishedAppRevisionKind,
     PublishedAppSession,
     PublishedAppStatus,
+    PublishedAppVisibility,
     PublishedAppUserMembership,
     PublishedAppUserMembershipStatus,
 )

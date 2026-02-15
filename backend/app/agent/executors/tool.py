@@ -27,6 +27,37 @@ logger = logging.getLogger(__name__)
 
 
 class ToolNodeExecutor(BaseNodeExecutor):
+    @staticmethod
+    def _coerce_scalar_text(value: Any) -> str | None:
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        return None
+
+    def _extract_query_text(self, input_data: dict[str, Any]) -> str | None:
+        nested_input = input_data.get("input")
+        nested_dict = nested_input if isinstance(nested_input, dict) else {}
+        payload = input_data.get("payload")
+        payload_dict = payload if isinstance(payload, dict) else {}
+
+        query_aliases = ("query", "q", "search_query", "keywords", "text", "value")
+        for alias in query_aliases:
+            for source in (input_data, nested_dict, payload_dict):
+                if not isinstance(source, dict):
+                    continue
+                text = self._coerce_scalar_text(source.get(alias))
+                if text:
+                    return text
+
+        for scalar_candidate in (nested_input, payload):
+            text = self._coerce_scalar_text(scalar_candidate)
+            if text:
+                return text
+
+        return None
+
     def _resolve_execution_mode(self, node_context: dict[str, Any] | None):
         from app.agent.execution.types import ExecutionMode
 
@@ -366,35 +397,31 @@ class ToolNodeExecutor(BaseNodeExecutor):
             raise ValueError("retrieval pipeline tool requires pipeline_id")
 
         nested_input = input_data.get("input") if isinstance(input_data.get("input"), dict) else {}
-        query = (
-            input_data.get("query")
-            or input_data.get("q")
-            or input_data.get("search_query")
-            or input_data.get("keywords")
-            or input_data.get("text")
-            or input_data.get("value")
-            or nested_input.get("query")
-            or nested_input.get("q")
-            or nested_input.get("search_query")
-            or nested_input.get("keywords")
-            or nested_input.get("text")
-            or nested_input.get("value")
-        )
+        query = self._extract_query_text(input_data)
         if not query:
             raise ValueError("retrieval pipeline tool requires a query")
 
-        top_k = int(input_data.get("top_k") or implementation_config.get("top_k") or 10)
-        filters = input_data.get("filters") if isinstance(input_data.get("filters"), dict) else None
+        top_k = int(
+            input_data.get("top_k")
+            or nested_input.get("top_k")
+            or implementation_config.get("top_k")
+            or 10
+        )
+        filters = (
+            input_data.get("filters")
+            if isinstance(input_data.get("filters"), dict)
+            else (nested_input.get("filters") if isinstance(nested_input.get("filters"), dict) else None)
+        )
 
         runtime = RetrievalPipelineRuntime(self.db, self.tenant_id)
         results, _job = await runtime.run_query(
             pipeline_id=UUID(str(pipeline_id_raw)),
-            query=str(query),
+            query=query,
             top_k=top_k,
             filters=filters,
         )
         return {
-            "query": str(query),
+            "query": query,
             "pipeline_id": str(pipeline_id_raw),
             "results": results,
             "count": len(results),
@@ -457,26 +484,17 @@ class ToolNodeExecutor(BaseNodeExecutor):
         implementation_config: dict[str, Any],
     ) -> dict[str, Any]:
         nested_input = input_data.get("input") if isinstance(input_data.get("input"), dict) else {}
-        query = str(
-            input_data.get("query")
-            or input_data.get("q")
-            or input_data.get("search_query")
-            or input_data.get("keywords")
-            or input_data.get("text")
-            or input_data.get("value")
-            or nested_input.get("query")
-            or nested_input.get("q")
-            or nested_input.get("search_query")
-            or nested_input.get("keywords")
-            or nested_input.get("text")
-            or nested_input.get("value")
-            or ""
-        ).strip()
+        query = self._extract_query_text(input_data) or ""
         if not query:
             raise ValueError("web_search requires query (supported aliases: query, q, search_query, keywords, text, value)")
 
         provider_name = str(implementation_config.get("provider") or "serper").strip().lower()
-        top_k = int(input_data.get("top_k") or implementation_config.get("top_k") or 5)
+        top_k = int(
+            input_data.get("top_k")
+            or nested_input.get("top_k")
+            or implementation_config.get("top_k")
+            or 5
+        )
         timeout_s = int(implementation_config.get("timeout_s") or 15)
 
         api_key = implementation_config.get("api_key")

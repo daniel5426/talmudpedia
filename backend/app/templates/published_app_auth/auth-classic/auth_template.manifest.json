@@ -1,0 +1,11 @@
+{
+  "key": "auth-classic",
+  "name": "Classic Card",
+  "description": "Centered auth card with balanced spacing and brand header.",
+  "thumbnail": "auth-classic",
+  "tags": ["classic", "balanced", "card"],
+  "style_tokens": {
+    "layout": "card",
+    "tone": "neutral"
+  }
+}
