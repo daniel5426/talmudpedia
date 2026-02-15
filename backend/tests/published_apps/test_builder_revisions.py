@@ -477,13 +477,15 @@ async def test_builder_chat_stream_returns_rich_event_envelopes(client, db_sessi
     assert events
     assert any(item.get("event") == "status" for item in events)
     assert any(item.get("event") == "token" for item in events)
-    patch_event = next(item for item in events if item.get("event") == "patch_ops")
+    patch_event = next(item for item in events if item.get("event") == "file_changes")
+    checkpoint_event = next(item for item in events if item.get("event") == "checkpoint_created")
     done_event = next(item for item in events if item.get("event") == "done")
 
     assert patch_event["stage"] == "patch_ready"
     assert patch_event["request_id"]
     assert patch_event["data"]["base_revision_id"] == draft_revision_id
     assert isinstance(patch_event["data"]["operations"], list)
+    assert checkpoint_event["data"]["revision_id"]
 
     assert done_event["stage"] == "complete"
     assert done_event["type"] == "done"
@@ -526,7 +528,7 @@ async def test_builder_chat_stream_persists_conversation_turn_for_replay(client,
     )
     assert stream_resp.status_code == 200
     events = _parse_sse_events(stream_resp.text)
-    patch_event = next(item for item in events if item.get("event") == "patch_ops")
+    patch_event = next(item for item in events if item.get("event") == "file_changes")
     request_id = patch_event["request_id"]
 
     persisted = await db_session.scalar(
@@ -543,6 +545,9 @@ async def test_builder_chat_stream_persists_conversation_turn_for_replay(client,
     assert isinstance(persisted.patch_operations, list)
     assert persisted.patch_operations
     assert persisted.failure_code is None
+    assert persisted.result_revision_id is not None
+    checkpoint_type = persisted.checkpoint_type.value if hasattr(persisted.checkpoint_type, "value") else str(persisted.checkpoint_type)
+    assert checkpoint_type == "auto_run"
 
     list_resp = await client.get(f"/admin/apps/{app_id}/builder/conversations?limit=10", headers=headers)
     assert list_resp.status_code == 200
@@ -770,6 +775,7 @@ async def test_builder_chat_stream_agentic_loop_runs_worker_tools(client, db_ses
     monkeypatch.setenv("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "1")
     monkeypatch.setenv("BUILDER_AGENTIC_LOOP_ENABLED", "1")
     monkeypatch.setenv("APPS_BUILDER_WORKER_BUILD_GATE_ENABLED", "1")
+    monkeypatch.setenv("APPS_BUILDER_CHAT_WORKER_PRECHECK_ENABLED", "1")
 
     async def _fake_model_patch(**_: object) -> BuilderPatchGenerationResult:
         return BuilderPatchGenerationResult(
@@ -833,17 +839,12 @@ async def test_builder_chat_stream_agentic_loop_runs_worker_tools(client, db_ses
     )
     assert stream_resp.status_code == 200
     events = _parse_sse_events(stream_resp.text)
-    tool_events = [event for event in events if event.get("event") == "tool"]
+    tool_events = [event for event in events if event.get("event") in {"tool_completed", "tool_failed"}]
 
     build_event = next(item for item in tool_events if item.get("data", {}).get("tool") == "build_project_worker")
     assert build_event["stage"] == "worker_build"
     assert build_event["data"]["status"] == "ok"
     assert build_event["data"]["result"]["status"] == "succeeded"
-
-    bundle_event = next(item for item in tool_events if item.get("data", {}).get("tool") == "prepare_static_bundle")
-    assert bundle_event["stage"] == "bundle"
-    assert bundle_event["data"]["status"] == "ok"
-    assert bundle_event["data"]["result"]["status"] == "ready"
 
 
 @pytest.mark.asyncio
@@ -851,6 +852,7 @@ async def test_builder_chat_stream_agentic_loop_surfaces_worker_tool_failure(cli
     monkeypatch.setenv("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "1")
     monkeypatch.setenv("BUILDER_AGENTIC_LOOP_ENABLED", "1")
     monkeypatch.setenv("APPS_BUILDER_WORKER_BUILD_GATE_ENABLED", "1")
+    monkeypatch.setenv("APPS_BUILDER_CHAT_WORKER_PRECHECK_ENABLED", "1")
 
     async def _fake_model_patch(**_: object) -> BuilderPatchGenerationResult:
         return BuilderPatchGenerationResult(
@@ -914,9 +916,8 @@ async def test_builder_chat_stream_agentic_loop_surfaces_worker_tool_failure(cli
     assert persisted.status == BuilderConversationTurnStatus.failed
     assert persisted.failure_code == "BUILDER_COMPILE_FAILED"
     assert any(
-        item.get("event") == "tool"
+        item.get("event") == "tool_failed"
         and item.get("data", {}).get("tool") == "build_project_worker"
-        and item.get("data", {}).get("status") == "failed"
         for item in (persisted.tool_trace or [])
     )
 
@@ -972,7 +973,7 @@ async def test_builder_chat_stream_agentic_loop_reads_prompt_mentioned_file(clie
     )
     assert stream_resp.status_code == 200
     events = _parse_sse_events(stream_resp.text)
-    tool_events = [event for event in events if event.get("event") == "tool"]
+    tool_events = [event for event in events if event.get("event") in {"tool_completed", "tool_failed"}]
 
     assert any(
         item.get("data", {}).get("tool") == "read_file"
@@ -1054,8 +1055,238 @@ async def test_builder_chat_stream_agentic_loop_blocks_on_targeted_test_failure(
     assert persisted.status == BuilderConversationTurnStatus.failed
     assert persisted.failure_code == "BUILDER_COMPILE_FAILED"
     assert any(
-        item.get("event") == "tool"
+        item.get("event") == "tool_failed"
         and item.get("data", {}).get("tool") == "run_targeted_tests"
-        and item.get("data", {}).get("status") == "failed"
         for item in (persisted.tool_trace or [])
     )
+
+
+@pytest.mark.asyncio
+async def test_builder_checkpoints_endpoint_returns_auto_run_checkpoint(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Checkpoint List App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={"input": "Make the header title bold", "base_revision_id": draft_revision_id},
+    )
+    assert stream_resp.status_code == 200
+
+    checkpoints_resp = await client.get(
+        f"/admin/apps/{app_id}/builder/checkpoints?limit=10",
+        headers=headers,
+    )
+    assert checkpoints_resp.status_code == 200
+    payload = checkpoints_resp.json()
+    assert isinstance(payload, list)
+    assert payload
+    assert payload[0]["checkpoint_type"] == "auto_run"
+    assert payload[0]["revision_id"]
+
+
+@pytest.mark.asyncio
+async def test_builder_chat_stream_command_allowlist_denies_non_allowed(client, db_session, monkeypatch):
+    monkeypatch.setenv("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "1")
+    monkeypatch.setenv("APPS_BUILDER_CHAT_SANDBOX_TOOLS_ENABLED", "1")
+    monkeypatch.setenv("APPS_BUILDER_CHAT_COMMANDS_ENABLED", "1")
+    monkeypatch.setenv("APPS_BUILDER_CHAT_COMMAND_ALLOWLIST", "npm run lint")
+
+    async def _fake_model_patch(**_: object) -> BuilderPatchGenerationResult:
+        return BuilderPatchGenerationResult(
+            operations=[
+                BuilderPatchOp(
+                    op="upsert_file",
+                    path="src/App.tsx",
+                    content="export function App() { return <div>Command Gate</div>; }",
+                )
+            ],
+            summary="updated app copy",
+            rationale="exercise command allowlist gate",
+            assumptions=[],
+        )
+
+    class _FakeSession:
+        sandbox_id = "sandbox-1"
+        status = "running"
+        last_error = None
+
+    async def _fake_ensure_session(*args, **kwargs):
+        return _FakeSession()
+
+    async def _fake_sync_session(*args, **kwargs):
+        return _FakeSession()
+
+    initial_files: dict[str, str] = {}
+
+    async def _fake_snapshot(*args, **kwargs):
+        return dict(initial_files)
+
+    async def _fake_apply(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.routers.published_apps_admin._generate_builder_patch_with_model", _fake_model_patch)
+    monkeypatch.setattr("app.api.routers.published_apps_admin._snapshot_files_from_sandbox", _fake_snapshot)
+    monkeypatch.setattr("app.api.routers.published_apps_admin._apply_patch_operations_to_sandbox", _fake_apply)
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin.PublishedAppDraftDevRuntimeService.ensure_session",
+        _fake_ensure_session,
+    )
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin.PublishedAppDraftDevRuntimeService.sync_session",
+        _fake_sync_session,
+    )
+
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Command Allowlist App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+    initial_files.update(state_resp.json()["current_draft_revision"]["files"])
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={"input": "Update the hero title", "base_revision_id": draft_revision_id},
+    )
+    assert stream_resp.status_code == 422
+    detail = stream_resp.json()["detail"]
+    assert detail["code"] == "BUILDER_COMPILE_FAILED"
+    assert any("allowlisted" in item["message"] or "allowlist" in item["message"] for item in detail["diagnostics"])
+
+
+@pytest.mark.asyncio
+async def test_builder_undo_restores_previous_revision_and_creates_new_revision(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Undo Run App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_before = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_before.status_code == 200
+    base_revision_id = state_before.json()["current_draft_revision"]["id"]
+    base_app_source = state_before.json()["current_draft_revision"]["files"]["src/App.tsx"]
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={"input": "Make the header title bold", "base_revision_id": base_revision_id},
+    )
+    assert stream_resp.status_code == 200
+
+    state_after_run = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_after_run.status_code == 200
+    run_revision_id = state_after_run.json()["current_draft_revision"]["id"]
+    assert run_revision_id != base_revision_id
+
+    undo_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/undo",
+        headers=headers,
+        json={"base_revision_id": run_revision_id},
+    )
+    assert undo_resp.status_code == 200
+    undo_payload = undo_resp.json()
+    assert undo_payload["revision"]["id"] != run_revision_id
+    assert undo_payload["restored_from_revision_id"] == base_revision_id
+
+    state_after_undo = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_after_undo.status_code == 200
+    assert state_after_undo.json()["current_draft_revision"]["id"] == undo_payload["revision"]["id"]
+    assert state_after_undo.json()["current_draft_revision"]["files"]["src/App.tsx"] == base_app_source
+
+
+@pytest.mark.asyncio
+async def test_builder_file_revert_restores_single_file(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Revert File App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_before = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_before.status_code == 200
+    base_revision_id = state_before.json()["current_draft_revision"]["id"]
+    base_app_source = state_before.json()["current_draft_revision"]["files"]["src/App.tsx"]
+
+    stream_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/chat/stream",
+        headers=headers,
+        json={"input": "Make the header title bold", "base_revision_id": base_revision_id},
+    )
+    assert stream_resp.status_code == 200
+
+    state_after_run = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_after_run.status_code == 200
+    run_revision_id = state_after_run.json()["current_draft_revision"]["id"]
+    run_app_source = state_after_run.json()["current_draft_revision"]["files"]["src/App.tsx"]
+    assert run_app_source != base_app_source
+
+    revert_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/revert-file",
+        headers=headers,
+        json={
+            "path": "src/App.tsx",
+            "from_revision_id": base_revision_id,
+            "base_revision_id": run_revision_id,
+        },
+    )
+    assert revert_resp.status_code == 200
+    revert_payload = revert_resp.json()
+    assert revert_payload["reverted_path"] == "src/App.tsx"
+
+    state_after_revert = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_after_revert.status_code == 200
+    assert state_after_revert.json()["current_draft_revision"]["id"] == revert_payload["revision"]["id"]
+    assert state_after_revert.json()["current_draft_revision"]["files"]["src/App.tsx"] == base_app_source

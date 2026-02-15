@@ -163,24 +163,130 @@ export interface BuilderValidationResponse {
   diagnostics: Array<{ path?: string; message: string }>;
 }
 
-export interface BuilderChatEvent {
-  event?: string;
-  type?: string;
-  stage?: string;
-  request_id?: string;
-  diagnostics?: Array<{ path?: string; message: string }>;
-  data?: {
-    content?: string;
-    operations?: BuilderPatchOp[];
+type BuilderChatDiagnostics = Array<{ path?: string; message: string }>;
+
+interface BuilderChatEventBase {
+  event: string;
+  stage: string;
+  request_id: string;
+  diagnostics?: BuilderChatDiagnostics;
+}
+
+export interface BuilderStatusEvent extends BuilderChatEventBase {
+  event: "status";
+  data: { content?: string };
+}
+
+export interface BuilderTokenEvent extends BuilderChatEventBase {
+  event: "token";
+  data: { content?: string };
+}
+
+export interface BuilderToolStartedEvent extends BuilderChatEventBase {
+  event: "tool_started";
+  data: {
+    tool: string;
+    iteration?: number;
+    path?: string;
+    command?: string;
+  };
+}
+
+export interface BuilderToolCompletedEvent extends BuilderChatEventBase {
+  event: "tool_completed";
+  data: {
+    tool: string;
+    iteration?: number;
+    status?: string;
+    result?: Record<string, unknown>;
+    command?: string;
+  };
+}
+
+export interface BuilderToolFailedEvent extends BuilderChatEventBase {
+  event: "tool_failed";
+  data: {
+    tool: string;
+    iteration?: number;
+    status?: string;
+    result?: Record<string, unknown>;
+    command?: string;
+  };
+}
+
+export interface BuilderFileChangesEvent extends BuilderChatEventBase {
+  event: "file_changes";
+  data: {
+    operations: BuilderPatchOp[];
+    changed_paths?: string[];
     base_revision_id?: string;
+    result_revision_id?: string;
     summary?: string;
     rationale?: string;
     assumptions?: string[];
-    tool?: string;
-    status?: string;
-    result?: Record<string, unknown>;
-    iteration?: number;
   };
+}
+
+export interface BuilderCheckpointCreatedEvent extends BuilderChatEventBase {
+  event: "checkpoint_created";
+  data: {
+    revision_id: string;
+    source_revision_id?: string;
+    checkpoint_type?: "auto_run" | "undo" | "file_revert" | string;
+    checkpoint_label?: string;
+  };
+}
+
+export interface BuilderDoneEvent extends BuilderChatEventBase {
+  event: "done";
+  type?: "done";
+}
+
+export interface BuilderErrorEvent extends BuilderChatEventBase {
+  event: "error";
+  data?: { message?: string };
+}
+
+export type BuilderChatEvent =
+  | BuilderStatusEvent
+  | BuilderTokenEvent
+  | BuilderToolStartedEvent
+  | BuilderToolCompletedEvent
+  | BuilderToolFailedEvent
+  | BuilderFileChangesEvent
+  | BuilderCheckpointCreatedEvent
+  | BuilderDoneEvent
+  | BuilderErrorEvent;
+
+export interface BuilderCheckpoint {
+  turn_id: string;
+  request_id: string;
+  revision_id: string;
+  source_revision_id?: string | null;
+  checkpoint_type: "auto_run" | "undo" | "file_revert" | string;
+  checkpoint_label?: string | null;
+  assistant_summary?: string | null;
+  created_at: string;
+}
+
+export interface UndoResponse {
+  revision: PublishedAppRevision;
+  restored_from_revision_id: string;
+  checkpoint_turn_id: string;
+  request_id: string;
+}
+
+export interface RevertFileRequest {
+  path: string;
+  from_revision_id: string;
+  base_revision_id?: string;
+}
+
+export interface RevertFileResponse {
+  revision: PublishedAppRevision;
+  reverted_path: string;
+  from_revision_id: string;
+  request_id: string;
 }
 
 export const publishedAppsService = {
@@ -278,5 +384,17 @@ export const publishedAppsService = {
       },
       body: JSON.stringify(payload),
     });
+  },
+
+  async getBuilderCheckpoints(appId: string, limit = 25): Promise<BuilderCheckpoint[]> {
+    return httpClient.get<BuilderCheckpoint[]>(`/admin/apps/${appId}/builder/checkpoints?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  async undoLastBuilderRun(appId: string, payload: { base_revision_id?: string } = {}): Promise<UndoResponse> {
+    return httpClient.post<UndoResponse>(`/admin/apps/${appId}/builder/undo`, payload);
+  },
+
+  async revertBuilderFile(appId: string, payload: RevertFileRequest): Promise<RevertFileResponse> {
+    return httpClient.post<RevertFileResponse>(`/admin/apps/${appId}/builder/revert-file`, payload);
   },
 };

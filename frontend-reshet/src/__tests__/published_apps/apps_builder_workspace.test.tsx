@@ -32,6 +32,7 @@ const mockCodeEditor = jest.fn(
 jest.mock("@/services", () => ({
   publishedAppsService: {
     getBuilderState: jest.fn(),
+    getBuilderCheckpoints: jest.fn(),
     createRevision: jest.fn(),
     publish: jest.fn(),
     getPublishJobStatus: jest.fn(),
@@ -40,6 +41,8 @@ jest.mock("@/services", () => ({
     heartbeatDraftDevSession: jest.fn(),
     resetTemplate: jest.fn(),
     streamBuilderChat: jest.fn(),
+    undoLastBuilderRun: jest.fn(),
+    revertBuilderFile: jest.fn(),
   },
 }));
 
@@ -124,6 +127,18 @@ describe("AppsBuilderWorkspace", () => {
 
   beforeEach(() => {
     (publishedAppsService.getBuilderState as jest.Mock).mockResolvedValue(makeState());
+    (publishedAppsService.getBuilderCheckpoints as jest.Mock).mockResolvedValue([
+      {
+        turn_id: "turn-1",
+        request_id: "req-1",
+        revision_id: "rev-2",
+        source_revision_id: "rev-1",
+        checkpoint_type: "auto_run",
+        checkpoint_label: "AI run req-1",
+        assistant_summary: "applied update",
+        created_at: new Date().toISOString(),
+      },
+    ]);
     (publishedAppsService.ensureDraftDevSession as jest.Mock).mockResolvedValue({
       session_id: "session-1",
       app_id: "app-1",
@@ -208,7 +223,8 @@ describe("AppsBuilderWorkspace", () => {
           const chunks = [
             'data: {"event":"status","stage":"start","request_id":"req-1","data":{"content":"Builder request accepted"}}\n\n',
             'data: {"event":"token","stage":"assistant_response","request_id":"req-1","data":{"content":"Applying patch"}}\n\n',
-            'data: {"event":"patch_ops","stage":"patch_ready","request_id":"req-1","data":{"base_revision_id":"rev-1","summary":"applied update","operations":[{"op":"upsert_file","path":"src/App.tsx","content":"export function App() { return <div>From Patch</div>; }"}]}}\n\n',
+            'data: {"event":"file_changes","stage":"patch_ready","request_id":"req-1","data":{"base_revision_id":"rev-1","result_revision_id":"rev-2","summary":"applied update","changed_paths":["src/App.tsx"],"operations":[{"op":"upsert_file","path":"src/App.tsx","content":"export function App() { return <div>From Patch</div>; }"}]}}\n\n',
+            'data: {"event":"checkpoint_created","stage":"checkpoint","request_id":"req-1","data":{"revision_id":"rev-2","source_revision_id":"rev-1","checkpoint_type":"auto_run","checkpoint_label":"AI run req-1"}}\n\n',
             'data: {"event":"done","type":"done","stage":"complete","request_id":"req-1"}\n\n',
           ];
           let cursor = 0;
@@ -221,6 +237,18 @@ describe("AppsBuilderWorkspace", () => {
           };
         },
       },
+    });
+    (publishedAppsService.undoLastBuilderRun as jest.Mock).mockResolvedValue({
+      revision: makeState().current_draft_revision,
+      restored_from_revision_id: "rev-1",
+      checkpoint_turn_id: "turn-1",
+      request_id: "undo-1",
+    });
+    (publishedAppsService.revertBuilderFile as jest.Mock).mockResolvedValue({
+      revision: makeState().current_draft_revision,
+      reverted_path: "src/App.tsx",
+      from_revision_id: "rev-1",
+      request_id: "revert-1",
     });
     jest.spyOn(window, "confirm").mockReturnValue(true);
   });
@@ -298,9 +326,9 @@ describe("AppsBuilderWorkspace", () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    await screen.findByRole("combobox");
+    await screen.findAllByRole("combobox");
 
-    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(screen.getAllByRole("combobox")[0]);
     fireEvent.click(screen.getByText("Neon Console"));
 
     await waitFor(() => {
@@ -309,12 +337,13 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
-  it("applies chat patch operations and persists a new revision", async () => {
+  it("streams builder run and renders timeline cards", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Refactor the header and align spacing with the hero...");
 
-    fireEvent.change(screen.getByPlaceholderText("Make the header more bold..."), {
+    fireEvent.change(screen.getByPlaceholderText("Refactor the header and align spacing with the hero..."), {
       target: { value: "Make it bold" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -327,13 +356,36 @@ describe("AppsBuilderWorkspace", () => {
     });
 
     await waitFor(() => {
-      expect(publishedAppsService.createRevision).toHaveBeenCalledWith(
+      expect(screen.getByText(/Files changed/i)).toBeInTheDocument();
+      expect(screen.getByText(/Checkpoint created/i)).toBeInTheDocument();
+    });
+  });
+
+  it("calls undo endpoint from quick action", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /Undo Last Run/i }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.undoLastBuilderRun).toHaveBeenCalledWith(
+        "app-1",
+        expect.objectContaining({ base_revision_id: "rev-1" }),
+      );
+    });
+  });
+
+  it("calls revert file endpoint from quick action", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /Revert File/i }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.revertBuilderFile).toHaveBeenCalledWith(
         "app-1",
         expect.objectContaining({
-          base_revision_id: "rev-1",
-          operations: [
-            expect.objectContaining({ op: "upsert_file", path: "src/App.tsx" }),
-          ],
+          from_revision_id: "rev-2",
         }),
       );
     });

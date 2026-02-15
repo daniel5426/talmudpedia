@@ -35,6 +35,7 @@ from .orchestration import (
     OrchestrationGroupMember,
 )
 from .published_apps import (
+    BuilderCheckpointType,
     BuilderConversationTurnStatus,
     PublishedApp,
     PublishedAppBuilderConversationTurn,

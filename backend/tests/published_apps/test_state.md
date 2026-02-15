@@ -40,12 +40,19 @@ Last Updated: 2026-02-14
 - `POST /admin/apps/{app_id}/builder/revisions/{revision_id}/build/retry`
 - Build enqueue failures (or disabled automation) mark revision `build_status=failed` with actionable `build_error` instead of leaving draft revisions indefinitely pending.
 - Builder chat stream emits richer envelopes with `stage` and `request_id`.
+- Builder chat stream now emits typed timeline events (`tool_started`, `tool_completed`, `tool_failed`, `file_changes`, `checkpoint_created`, `done`).
 - Builder chat stream persists conversation turns for replay/audit, including success and failure metadata.
+- Builder chat stream now auto-persists successful runs into new draft revisions and stores `result_revision_id`, checkpoint type/label, and tool summary metadata.
 - Agentic loop (`BUILDER_AGENTIC_LOOP_ENABLED=1`) now emits worker tool stages (`build_project_worker`, `prepare_static_bundle`) in trace events when model-backed generation is enabled.
 - Agentic loop surfaces worker build failures in persisted conversation tool traces with `build_project_worker` failure status.
 - Agentic loop now parses prompt `@file` mentions and emits `read_file` tool events for the mentioned files during inspect stage.
 - Agentic loop now blocks patch generation success when targeted tests fail (`run_targeted_tests` tool status `failed`) and persists failure tool traces for replay.
 - Builder conversation replay endpoint (`GET /admin/apps/{app_id}/builder/conversations`) returns persisted turns newest-first.
+- Builder checkpoint/rollback APIs are covered:
+- `GET /admin/apps/{app_id}/builder/checkpoints`
+- `POST /admin/apps/{app_id}/builder/undo`
+- `POST /admin/apps/{app_id}/builder/revert-file`
+- Builder chat sandbox command allowlist gate blocks non-allowlisted command execution and returns compile-style diagnostics.
 - Publish endpoint returns async job metadata and publish jobs move through `queued/running/succeeded/failed`.
 - Publish no longer gates on draft revision `build_status`; deterministic checks happen in publish worker full-build path.
 - Worker-build preflight gate does not block draft save/chat flows in draft mode.
@@ -87,6 +94,9 @@ Last Updated: 2026-02-14
 - Command: `pytest -q backend/tests/published_apps`
 - Date: 2026-02-14 18:10 UTC
 - Result: PASS (34 passed)
+- Command: `pytest -q backend/tests/published_apps/test_builder_revisions.py`
+- Date: 2026-02-14 20:42 UTC
+- Result: PASS (21 passed)
 
 ## Known gaps or follow-ups
 - Add negative tests for cross-app token replay attempts.

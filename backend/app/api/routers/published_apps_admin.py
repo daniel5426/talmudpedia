@@ -24,6 +24,7 @@ from app.core.security import create_published_app_preview_token
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.db.postgres.models.identity import OrgMembership, OrgRole, User
 from app.db.postgres.models.published_apps import (
+    BuilderCheckpointType,
     BuilderConversationTurnStatus,
     PublishedApp,
     PublishedAppBuilderConversationTurn,
@@ -114,6 +115,9 @@ BUILDER_CONTEXT_MAX_FILES = int(os.getenv("BUILDER_CONTEXT_MAX_FILES", "14"))
 BUILDER_CONTEXT_MAX_FILE_BYTES = int(os.getenv("BUILDER_CONTEXT_MAX_FILE_BYTES", str(24 * 1024)))
 BUILDER_AGENT_MAX_ITERATIONS = int(os.getenv("BUILDER_AGENT_MAX_ITERATIONS", "3"))
 BUILDER_AGENT_MAX_SEARCH_RESULTS = int(os.getenv("BUILDER_AGENT_MAX_SEARCH_RESULTS", "8"))
+BUILDER_CHAT_COMMAND_TIMEOUT_SECONDS = int(os.getenv("APPS_BUILDER_CHAT_COMMAND_TIMEOUT_SECONDS", "180"))
+BUILDER_CHAT_MAX_COMMAND_OUTPUT_BYTES = int(os.getenv("APPS_BUILDER_CHAT_MAX_COMMAND_OUTPUT_BYTES", "12000"))
+BUILDER_CHECKPOINT_LIST_LIMIT = int(os.getenv("APPS_BUILDER_CHECKPOINT_LIST_LIMIT", "50"))
 IMPORT_RE = re.compile(r'^\s*(?:import|export)\s+(?:[^"\']*?\s+from\s+)?["\']([^"\']+)["\']', re.MULTILINE)
 BUILDER_FILE_MENTION_RE = re.compile(r"@([A-Za-z0-9._/\-]+)")
 BUILDER_LOCKFILE_NAMES = {"package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
@@ -288,6 +292,7 @@ class BuilderConversationTurnResponse(BaseModel):
     id: str
     published_app_id: str
     revision_id: Optional[str] = None
+    result_revision_id: Optional[str] = None
     request_id: str
     status: str
     user_prompt: str
@@ -296,10 +301,48 @@ class BuilderConversationTurnResponse(BaseModel):
     assistant_assumptions: List[str] = Field(default_factory=list)
     patch_operations: List[Dict[str, Any]] = Field(default_factory=list)
     tool_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    tool_summary: Dict[str, Any] = Field(default_factory=dict)
     diagnostics: List[Dict[str, str]] = Field(default_factory=list)
     failure_code: Optional[str] = None
+    checkpoint_type: Optional[str] = None
+    checkpoint_label: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
+
+
+class BuilderCheckpointResponse(BaseModel):
+    turn_id: str
+    request_id: str
+    revision_id: str
+    source_revision_id: Optional[str] = None
+    checkpoint_type: str
+    checkpoint_label: Optional[str] = None
+    assistant_summary: Optional[str] = None
+    created_at: datetime
+
+
+class BuilderUndoRequest(BaseModel):
+    base_revision_id: Optional[UUID] = None
+
+
+class BuilderUndoResponse(BaseModel):
+    revision: PublishedAppRevisionResponse
+    restored_from_revision_id: str
+    checkpoint_turn_id: str
+    request_id: str
+
+
+class BuilderRevertFileRequest(BaseModel):
+    path: str
+    from_revision_id: UUID
+    base_revision_id: Optional[UUID] = None
+
+
+class BuilderRevertFileResponse(BaseModel):
+    revision: PublishedAppRevisionResponse
+    reverted_path: str
+    from_revision_id: str
+    request_id: str
 
 
 class BuilderModelPatchPlan(BaseModel):
@@ -756,6 +799,47 @@ def _builder_targeted_tests_enabled() -> bool:
     return _env_flag("APPS_BUILDER_TARGETED_TESTS_ENABLED", False)
 
 
+def _builder_chat_sandbox_tools_enabled() -> bool:
+    return _env_flag("APPS_BUILDER_CHAT_SANDBOX_TOOLS_ENABLED", False)
+
+
+def _builder_chat_commands_enabled() -> bool:
+    return _env_flag("APPS_BUILDER_CHAT_COMMANDS_ENABLED", False)
+
+
+def _builder_chat_worker_precheck_enabled() -> bool:
+    return _env_flag("APPS_BUILDER_CHAT_WORKER_PRECHECK_ENABLED", False)
+
+
+def _builder_chat_command_allowlist() -> List[List[str]]:
+    raw = (os.getenv("APPS_BUILDER_CHAT_COMMAND_ALLOWLIST") or "").strip()
+    defaults = [
+        ["npm", "run", "build"],
+        ["npm", "run", "lint"],
+        ["npm", "run", "typecheck"],
+        ["npm", "run", "test", "--", "--run", "--passWithNoTests"],
+    ]
+    if not raw:
+        return defaults
+    commands: List[List[str]] = []
+    for item in raw.split(";"):
+        tokens = [token for token in item.strip().split(" ") if token]
+        if tokens:
+            commands.append(tokens)
+    return commands or defaults
+
+
+def _is_allowed_sandbox_command(command: List[str], *, allowlist: List[List[str]]) -> bool:
+    if not command:
+        return False
+    # Reject obvious shell metacharacter payloads. Command is tokenized and executed without shell.
+    forbidden = {"|", "&&", "||", ";", "$(", "`", ">", "<"}
+    for token in command:
+        if any(mark in token for mark in forbidden):
+            return False
+    return any(command == allowed for allowed in allowlist)
+
+
 def _new_builder_request_id() -> str:
     return uuid4().hex
 
@@ -1173,6 +1257,7 @@ def _builder_conversation_to_response(turn: PublishedAppBuilderConversationTurn)
         id=str(turn.id),
         published_app_id=str(turn.published_app_id),
         revision_id=str(turn.revision_id) if turn.revision_id else None,
+        result_revision_id=str(turn.result_revision_id) if turn.result_revision_id else None,
         request_id=turn.request_id,
         status=turn.status.value if hasattr(turn.status, "value") else str(turn.status),
         user_prompt=turn.user_prompt,
@@ -1181,9 +1266,55 @@ def _builder_conversation_to_response(turn: PublishedAppBuilderConversationTurn)
         assistant_assumptions=list(turn.assistant_assumptions or []),
         patch_operations=list(turn.patch_operations or []),
         tool_trace=list(turn.tool_trace or []),
+        tool_summary=dict(turn.tool_summary or {}),
         diagnostics=list(turn.diagnostics or []),
         failure_code=turn.failure_code,
+        checkpoint_type=turn.checkpoint_type.value if hasattr(turn.checkpoint_type, "value") else str(turn.checkpoint_type),
+        checkpoint_label=turn.checkpoint_label,
         created_by=str(turn.created_by) if turn.created_by else None,
+        created_at=turn.created_at,
+    )
+
+
+def _build_tool_summary(trace_events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    summary = {
+        "total": 0,
+        "failed": 0,
+        "completed": 0,
+        "tools": [],
+    }
+    tools_seen: List[str] = []
+    for event in trace_events:
+        if not isinstance(event, dict):
+            continue
+        event_name = str(event.get("event") or "")
+        if event_name not in {"tool_started", "tool_completed", "tool_failed"}:
+            continue
+        summary["total"] += 1
+        data = event.get("data")
+        if isinstance(data, dict):
+            tool_name = str(data.get("tool") or "").strip()
+            if tool_name and tool_name not in tools_seen:
+                tools_seen.append(tool_name)
+        if event_name == "tool_failed":
+            summary["failed"] += 1
+        if event_name == "tool_completed":
+            summary["completed"] += 1
+    summary["tools"] = tools_seen
+    return summary
+
+
+def _builder_checkpoint_to_response(turn: PublishedAppBuilderConversationTurn) -> BuilderCheckpointResponse:
+    if turn.result_revision_id is None:
+        raise ValueError("Checkpoint turn is missing result revision")
+    return BuilderCheckpointResponse(
+        turn_id=str(turn.id),
+        request_id=turn.request_id,
+        revision_id=str(turn.result_revision_id),
+        source_revision_id=None,
+        checkpoint_type=turn.checkpoint_type.value if hasattr(turn.checkpoint_type, "value") else str(turn.checkpoint_type),
+        checkpoint_label=turn.checkpoint_label,
+        assistant_summary=turn.assistant_summary,
         created_at=turn.created_at,
     )
 
@@ -1201,10 +1332,15 @@ async def _persist_builder_conversation_turn(
     trace_events: Optional[List[Dict[str, Any]]] = None,
     diagnostics: Optional[List[Dict[str, str]]] = None,
     failure_code: Optional[str] = None,
+    result_revision_id: Optional[UUID] = None,
+    checkpoint_type: BuilderCheckpointType = BuilderCheckpointType.auto_run,
+    checkpoint_label: Optional[str] = None,
 ) -> None:
+    trace = list(trace_events or [])
     turn = PublishedAppBuilderConversationTurn(
         published_app_id=app_id,
         revision_id=revision_id,
+        result_revision_id=result_revision_id,
         request_id=request_id,
         status=status,
         user_prompt=user_prompt,
@@ -1212,9 +1348,12 @@ async def _persist_builder_conversation_turn(
         assistant_rationale=generation_result.rationale if generation_result else None,
         assistant_assumptions=list(generation_result.assumptions) if generation_result else [],
         patch_operations=_serialize_patch_ops(generation_result.operations) if generation_result else [],
-        tool_trace=list(trace_events or []),
+        tool_trace=trace,
+        tool_summary=_build_tool_summary(trace),
         diagnostics=list(diagnostics or []),
         failure_code=failure_code,
+        checkpoint_type=checkpoint_type,
+        checkpoint_label=checkpoint_label,
         created_by=actor_id,
     )
     db.add(turn)
@@ -1714,13 +1853,184 @@ def _builder_tool_prepare_static_bundle(worker_build_result: Dict[str, Any]) -> 
     }
 
 
+def _collect_changed_paths(operations: List[BuilderPatchOp]) -> List[str]:
+    changed: List[str] = []
+    for op in operations:
+        if op.path:
+            changed.append(op.path)
+        if op.from_path:
+            changed.append(op.from_path)
+        if op.to_path:
+            changed.append(op.to_path)
+    deduped: List[str] = []
+    for path in changed:
+        if path and path not in deduped:
+            deduped.append(path)
+    return deduped
+
+
+async def _apply_patch_operations_to_sandbox(
+    runtime_service: PublishedAppDraftDevRuntimeService,
+    *,
+    sandbox_id: str,
+    operations: List[BuilderPatchOp],
+) -> None:
+    for op in operations:
+        if op.op == "upsert_file" and op.path:
+            await runtime_service.client.write_file(
+                sandbox_id=sandbox_id,
+                path=op.path,
+                content=op.content or "",
+            )
+        elif op.op == "delete_file" and op.path:
+            await runtime_service.client.delete_file(
+                sandbox_id=sandbox_id,
+                path=op.path,
+            )
+        elif op.op == "rename_file" and op.from_path and op.to_path:
+            await runtime_service.client.rename_file(
+                sandbox_id=sandbox_id,
+                from_path=op.from_path,
+                to_path=op.to_path,
+            )
+
+
+async def _snapshot_files_from_sandbox(
+    runtime_service: PublishedAppDraftDevRuntimeService,
+    *,
+    sandbox_id: str,
+) -> Dict[str, str]:
+    payload = await runtime_service.client.snapshot_files(sandbox_id=sandbox_id)
+    files = payload.get("files")
+    if not isinstance(files, dict):
+        raise RuntimeError("Sandbox snapshot did not return a files map")
+    normalized: Dict[str, str] = {}
+    for path, content in files.items():
+        if isinstance(path, str):
+            normalized[path] = content if isinstance(content, str) else str(content)
+    return normalized
+
+
+async def _run_allowlisted_sandbox_command(
+    runtime_service: PublishedAppDraftDevRuntimeService,
+    *,
+    sandbox_id: str,
+    command: List[str],
+) -> Dict[str, Any]:
+    allowlist = _builder_chat_command_allowlist()
+    if not _is_allowed_sandbox_command(command, allowlist=allowlist):
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": f"Sandbox command is not allowed: {' '.join(command)}",
+            "diagnostics": [{"message": "Command not allowlisted"}],
+        }
+    result = await runtime_service.client.run_command(
+        sandbox_id=sandbox_id,
+        command=command,
+        timeout_seconds=BUILDER_CHAT_COMMAND_TIMEOUT_SECONDS,
+        max_output_bytes=BUILDER_CHAT_MAX_COMMAND_OUTPUT_BYTES,
+    )
+    code = int(result.get("code") or 0)
+    if code != 0:
+        message = str(result.get("stderr") or result.get("stdout") or "").strip()
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": message or f"Command failed with exit code {code}",
+            "diagnostics": [{"message": message or f"Command failed with exit code {code}"}],
+            "command": command,
+            "code": code,
+            "stdout": result.get("stdout"),
+            "stderr": result.get("stderr"),
+        }
+    return {
+        "ok": True,
+        "status": "passed",
+        "message": "command passed",
+        "command": command,
+        "code": code,
+        "stdout": result.get("stdout"),
+        "stderr": result.get("stderr"),
+    }
+
+
+async def _create_draft_revision_from_files(
+    db: AsyncSession,
+    *,
+    app: PublishedApp,
+    current: PublishedAppRevision,
+    actor_id: Optional[UUID],
+    files: Dict[str, str],
+    entry_file: str,
+) -> PublishedAppRevision:
+    _validate_builder_project_or_raise(files, entry_file)
+    revision = PublishedAppRevision(
+        published_app_id=app.id,
+        kind=PublishedAppRevisionKind.draft,
+        template_key=app.template_key,
+        entry_file=entry_file,
+        files=files,
+        build_status=PublishedAppRevisionBuildStatus.queued,
+        build_seq=_next_build_seq(current),
+        build_error=None,
+        build_started_at=None,
+        build_finished_at=None,
+        dist_storage_prefix=None,
+        dist_manifest=None,
+        template_runtime="vite_static",
+        compiled_bundle=None,
+        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+        source_revision_id=current.id,
+        created_by=actor_id,
+    )
+    db.add(revision)
+    await db.flush()
+    app.current_draft_revision_id = revision.id
+    return revision
+
+
 async def _run_builder_agentic_loop(
     *,
     user_prompt: str,
     files: Dict[str, str],
     entry_file: str,
     request_id: str,
-) -> tuple[BuilderPatchGenerationResult, List[Dict[str, Any]]]:
+    runtime_service: Optional[PublishedAppDraftDevRuntimeService] = None,
+    sandbox_id: Optional[str] = None,
+) -> tuple[BuilderPatchGenerationResult, List[Dict[str, Any]], Dict[str, str], str]:
+    def tool_started(stage: str, tool: str, iteration: int, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        payload_data: Dict[str, Any] = {"tool": tool, "iteration": iteration}
+        if isinstance(data, dict):
+            payload_data.update(data)
+        return _stream_event_payload(
+            event="tool_started",
+            stage=stage,
+            request_id=request_id,
+            data=payload_data,
+        )
+
+    def tool_finished(
+        *,
+        stage: str,
+        tool: str,
+        iteration: int,
+        ok: bool,
+        result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return _stream_event_payload(
+            event="tool_completed" if ok else "tool_failed",
+            stage=stage,
+            request_id=request_id,
+            data={
+                "tool": tool,
+                "iteration": iteration,
+                "status": "ok" if ok else "failed",
+                "result": result,
+            },
+            diagnostics=result.get("diagnostics") if not ok else None,
+        )
+
     trace_events: List[Dict[str, Any]] = []
     repair_feedback: List[str] = []
     recent_paths: List[str] = []
@@ -1730,19 +2040,9 @@ async def _run_builder_agentic_loop(
     focus_paths = _extract_prompt_focus_paths(working_files, user_prompt, max_paths=4)
 
     for iteration in range(1, BUILDER_AGENT_MAX_ITERATIONS + 1):
-        trace_events.append(
-            _stream_event_payload(
-                event="tool",
-                stage="inspect",
-                request_id=request_id,
-                data={
-                    "tool": "list_files",
-                    "status": "ok",
-                    "iteration": iteration,
-                    "result": _builder_tool_list_files(working_files),
-                },
-            )
-        )
+        trace_events.append(tool_started("inspect", "list_files", iteration))
+        list_result = _builder_tool_list_files(working_files)
+        trace_events.append(tool_finished(stage="inspect", tool="list_files", iteration=iteration, ok=True, result=list_result))
         inspect_paths: List[str] = []
         for path in focus_paths:
             if path in working_files and path not in inspect_paths:
@@ -1752,32 +2052,12 @@ async def _run_builder_agentic_loop(
             if recent_candidate in working_files and recent_candidate not in inspect_paths:
                 inspect_paths.append(recent_candidate)
         for inspect_path in inspect_paths[:3]:
-            trace_events.append(
-                _stream_event_payload(
-                    event="tool",
-                    stage="inspect",
-                    request_id=request_id,
-                    data={
-                        "tool": "read_file",
-                        "status": "ok",
-                        "iteration": iteration,
-                        "result": _builder_tool_read_file(working_files, inspect_path),
-                    },
-                )
-            )
-        trace_events.append(
-            _stream_event_payload(
-                event="tool",
-                stage="inspect",
-                request_id=request_id,
-                data={
-                    "tool": "search_code",
-                    "status": "ok",
-                    "iteration": iteration,
-                    "result": _builder_tool_search_code(working_files, user_prompt),
-                },
-            )
-        )
+            trace_events.append(tool_started("inspect", "read_file", iteration, {"path": inspect_path}))
+            read_result = _builder_tool_read_file(working_files, inspect_path)
+            trace_events.append(tool_finished(stage="inspect", tool="read_file", iteration=iteration, ok=True, result=read_result))
+        trace_events.append(tool_started("inspect", "search_code", iteration))
+        search_result = _builder_tool_search_code(working_files, user_prompt)
+        trace_events.append(tool_finished(stage="inspect", tool="search_code", iteration=iteration, ok=True, result=search_result))
 
         model_recent_paths: List[str] = []
         for path in focus_paths + recent_paths:
@@ -1798,18 +2078,14 @@ async def _run_builder_agentic_loop(
             working_entry,
             result.operations,
         )
+        trace_events.append(tool_started("patch_dry_run", "apply_patch_dry_run", iteration))
         trace_events.append(
-            _stream_event_payload(
-                event="tool",
+            tool_finished(
                 stage="patch_dry_run",
-                request_id=request_id,
-                data={
-                    "tool": "apply_patch_dry_run",
-                    "status": "ok" if dry_run_result.get("ok") else "failed",
-                    "iteration": iteration,
-                    "result": dry_run_result,
-                },
-                diagnostics=dry_run_result.get("diagnostics") if not dry_run_result.get("ok") else None,
+                tool="apply_patch_dry_run",
+                iteration=iteration,
+                ok=bool(dry_run_result.get("ok")),
+                result=dry_run_result,
             )
         )
         if not dry_run_result.get("ok"):
@@ -1834,20 +2110,53 @@ async def _run_builder_agentic_loop(
         ]
         recent_paths = [path for path in recent_paths if path][:8]
         focus_paths = _extract_prompt_focus_paths(working_files, user_prompt, max_paths=4)
+        if runtime_service is not None and sandbox_id:
+            try:
+                trace_events.append(tool_started("edit", "apply_sandbox_patch", iteration))
+                await _apply_patch_operations_to_sandbox(
+                    runtime_service,
+                    sandbox_id=sandbox_id,
+                    operations=result.operations,
+                )
+                trace_events.append(
+                    tool_finished(
+                        stage="edit",
+                        tool="apply_sandbox_patch",
+                        iteration=iteration,
+                        ok=True,
+                        result={
+                            "status": "applied",
+                            "changed_paths": _collect_changed_paths(result.operations),
+                        },
+                    )
+                )
+            except Exception as exc:
+                failed = {
+                    "status": "failed",
+                    "message": str(exc),
+                    "diagnostics": [{"message": str(exc)}],
+                }
+                trace_events.append(
+                    tool_finished(
+                        stage="edit",
+                        tool="apply_sandbox_patch",
+                        iteration=iteration,
+                        ok=False,
+                        result=failed,
+                    )
+                )
+                repair_feedback.append(str(exc))
+                continue
 
         compile_result = _builder_tool_compile_project(working_files, working_entry)
+        trace_events.append(tool_started("compile", "compile_project", iteration))
         trace_events.append(
-            _stream_event_payload(
-                event="tool",
+            tool_finished(
                 stage="compile",
-                request_id=request_id,
-                data={
-                    "tool": "compile_project",
-                    "status": "ok" if compile_result.get("ok") else "failed",
-                    "iteration": iteration,
-                    "result": compile_result,
-                },
-                diagnostics=compile_result.get("diagnostics") if not compile_result.get("ok") else None,
+                tool="compile_project",
+                iteration=iteration,
+                ok=bool(compile_result.get("ok")),
+                result=compile_result,
             )
         )
         if not compile_result.get("ok"):
@@ -1855,61 +2164,54 @@ async def _run_builder_agentic_loop(
             continue
 
         test_result = await _builder_tool_run_targeted_tests(working_files, recent_paths)
+        trace_events.append(tool_started("test", "run_targeted_tests", iteration))
         trace_events.append(
-            _stream_event_payload(
-                event="tool",
+            tool_finished(
                 stage="test",
-                request_id=request_id,
-                data={
-                    "tool": "run_targeted_tests",
-                    "status": "ok" if test_result.get("ok") else "failed",
-                    "iteration": iteration,
-                    "result": test_result,
-                },
-                diagnostics=test_result.get("diagnostics") if not test_result.get("ok") else None,
+                tool="run_targeted_tests",
+                iteration=iteration,
+                ok=bool(test_result.get("ok")),
+                result=test_result,
             )
         )
         if not test_result.get("ok"):
             repair_feedback.append(str(test_result.get("message") or "targeted tests failed"))
             continue
 
-        worker_build_result = await _builder_tool_build_project_worker(working_files)
-        trace_events.append(
-            _stream_event_payload(
-                event="tool",
-                stage="worker_build",
-                request_id=request_id,
-                data={
-                    "tool": "build_project_worker",
-                    "status": "ok" if worker_build_result.get("ok") else "failed",
-                    "iteration": iteration,
-                    "result": worker_build_result,
-                },
-                diagnostics=worker_build_result.get("diagnostics") if not worker_build_result.get("ok") else None,
+        if _builder_chat_commands_enabled() and runtime_service is not None and sandbox_id:
+            trace_events.append(tool_started("command", "run_command", iteration, {"command": "npm run build"}))
+            build_command_result = await _run_allowlisted_sandbox_command(
+                runtime_service,
+                sandbox_id=sandbox_id,
+                command=["npm", "run", "build"],
             )
-        )
-        if not worker_build_result.get("ok"):
-            repair_feedback.append(str(worker_build_result.get("message") or "worker build failed"))
-            continue
-
-        bundle_result = _builder_tool_prepare_static_bundle(worker_build_result)
-        trace_events.append(
-            _stream_event_payload(
-                event="tool",
-                stage="bundle",
-                request_id=request_id,
-                data={
-                    "tool": "prepare_static_bundle",
-                    "status": "ok" if bundle_result.get("ok") else "failed",
-                    "iteration": iteration,
-                    "result": bundle_result,
-                },
-                diagnostics=bundle_result.get("diagnostics") if not bundle_result.get("ok") else None,
+            trace_events.append(
+                tool_finished(
+                    stage="command",
+                    tool="run_command",
+                    iteration=iteration,
+                    ok=bool(build_command_result.get("ok")),
+                    result=build_command_result,
+                )
             )
-        )
-        if not bundle_result.get("ok"):
-            repair_feedback.append(str(bundle_result.get("message") or "bundle preparation failed"))
-            continue
+            if not build_command_result.get("ok"):
+                repair_feedback.append(str(build_command_result.get("message") or "sandbox build failed"))
+                continue
+        elif _builder_chat_worker_precheck_enabled():
+            worker_build_result = await _builder_tool_build_project_worker(working_files)
+            trace_events.append(tool_started("worker_build", "build_project_worker", iteration))
+            trace_events.append(
+                tool_finished(
+                    stage="worker_build",
+                    tool="build_project_worker",
+                    iteration=iteration,
+                    ok=bool(worker_build_result.get("ok")),
+                    result=worker_build_result,
+                )
+            )
+            if not worker_build_result.get("ok"):
+                repair_feedback.append(str(worker_build_result.get("message") or "worker build failed"))
+                continue
 
         return (
             BuilderPatchGenerationResult(
@@ -1919,6 +2221,8 @@ async def _run_builder_agentic_loop(
                 assumptions=result.assumptions,
             ),
             trace_events,
+            working_files,
+            working_entry,
         )
 
     exc = _builder_compile_error(
@@ -2782,6 +3086,215 @@ async def list_builder_conversations(
     return [_builder_conversation_to_response(turn) for turn in result.scalars().all()]
 
 
+@router.get("/{app_id}/builder/checkpoints", response_model=List[BuilderCheckpointResponse])
+async def list_builder_checkpoints(
+    app_id: UUID,
+    request: Request,
+    limit: int = Query(default=25, ge=1, le=100),
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    fetch_limit = min(max(1, limit), BUILDER_CHECKPOINT_LIST_LIMIT)
+    result = await db.execute(
+        select(PublishedAppBuilderConversationTurn)
+        .where(PublishedAppBuilderConversationTurn.published_app_id == app.id)
+        .where(PublishedAppBuilderConversationTurn.status == BuilderConversationTurnStatus.succeeded)
+        .where(PublishedAppBuilderConversationTurn.result_revision_id.is_not(None))
+        .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
+        .limit(fetch_limit)
+    )
+    turns = result.scalars().all()
+    checkpoints: List[BuilderCheckpointResponse] = []
+    for turn in turns:
+        if turn.result_revision_id:
+            checkpoints.append(_builder_checkpoint_to_response(turn))
+    return checkpoints
+
+
+@router.post("/{app_id}/builder/undo", response_model=BuilderUndoResponse)
+async def undo_builder_last_run(
+    app_id: UUID,
+    payload: BuilderUndoRequest,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    actor = ctx.get("user")
+    actor_id = actor.id if actor else None
+    current = await _ensure_current_draft_revision(db, app, actor_id)
+    if payload.base_revision_id and str(payload.base_revision_id) != str(current.id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "REVISION_CONFLICT",
+                "latest_revision_id": str(current.id),
+                "latest_updated_at": current.created_at.isoformat(),
+                "message": "Draft revision is stale",
+            },
+        )
+
+    turn_result = await db.execute(
+        select(PublishedAppBuilderConversationTurn)
+        .where(PublishedAppBuilderConversationTurn.published_app_id == app.id)
+        .where(PublishedAppBuilderConversationTurn.status == BuilderConversationTurnStatus.succeeded)
+        .where(PublishedAppBuilderConversationTurn.checkpoint_type == BuilderCheckpointType.auto_run)
+        .where(PublishedAppBuilderConversationTurn.result_revision_id.is_not(None))
+        .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
+        .limit(1)
+    )
+    checkpoint_turn = turn_result.scalar_one_or_none()
+    if checkpoint_turn is None or checkpoint_turn.result_revision_id is None:
+        raise HTTPException(status_code=404, detail="No automatic checkpoint found to undo")
+
+    checkpoint_revision = await _get_revision_for_app(db, app.id, checkpoint_turn.result_revision_id)
+    if checkpoint_revision.source_revision_id is None:
+        raise HTTPException(status_code=409, detail="Checkpoint has no source revision to restore")
+    restore_revision = await _get_revision_for_app(db, app.id, checkpoint_revision.source_revision_id)
+
+    restored_files = dict(restore_revision.files or {})
+    restored_entry = restore_revision.entry_file
+    new_revision = await _create_draft_revision_from_files(
+        db,
+        app=app,
+        current=current,
+        actor_id=actor_id,
+        files=restored_files,
+        entry_file=restored_entry,
+    )
+
+    if actor and _builder_chat_sandbox_tools_enabled():
+        runtime_service = PublishedAppDraftDevRuntimeService(db)
+        try:
+            await runtime_service.sync_session(
+                app=app,
+                revision=new_revision,
+                user_id=actor.id,
+                files=restored_files,
+                entry_file=restored_entry,
+            )
+        except PublishedAppDraftDevRuntimeDisabled:
+            pass
+
+    request_id = _new_builder_request_id()
+    await _persist_builder_conversation_turn(
+        db,
+        app_id=app.id,
+        revision_id=current.id,
+        result_revision_id=new_revision.id,
+        actor_id=actor_id,
+        request_id=request_id,
+        user_prompt="Undo last run",
+        status=BuilderConversationTurnStatus.succeeded,
+        trace_events=[],
+        checkpoint_type=BuilderCheckpointType.undo,
+        checkpoint_label=f"Undo to {restore_revision.id}",
+    )
+    await db.commit()
+    await db.refresh(new_revision)
+    return BuilderUndoResponse(
+        revision=_revision_to_response(new_revision),
+        restored_from_revision_id=str(restore_revision.id),
+        checkpoint_turn_id=str(checkpoint_turn.id),
+        request_id=request_id,
+    )
+
+
+@router.post("/{app_id}/builder/revert-file", response_model=BuilderRevertFileResponse)
+async def revert_builder_file(
+    app_id: UUID,
+    payload: BuilderRevertFileRequest,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    actor = ctx.get("user")
+    actor_id = actor.id if actor else None
+    current = await _ensure_current_draft_revision(db, app, actor_id)
+    if payload.base_revision_id and str(payload.base_revision_id) != str(current.id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "REVISION_CONFLICT",
+                "latest_revision_id": str(current.id),
+                "latest_updated_at": current.created_at.isoformat(),
+                "message": "Draft revision is stale",
+            },
+        )
+
+    normalized_path = _normalize_builder_path(payload.path)
+    _assert_builder_path_allowed(normalized_path, field="path")
+    from_revision = await _get_revision_for_app(db, app.id, payload.from_revision_id)
+
+    next_files = dict(current.files or {})
+    if normalized_path in (from_revision.files or {}):
+        next_files[normalized_path] = str((from_revision.files or {})[normalized_path])
+    else:
+        next_files.pop(normalized_path, None)
+
+    next_entry = current.entry_file
+    if normalized_path == current.entry_file and normalized_path not in next_files:
+        raise HTTPException(status_code=409, detail="Cannot remove the current entry file")
+
+    new_revision = await _create_draft_revision_from_files(
+        db,
+        app=app,
+        current=current,
+        actor_id=actor_id,
+        files=next_files,
+        entry_file=next_entry,
+    )
+
+    if actor and _builder_chat_sandbox_tools_enabled():
+        runtime_service = PublishedAppDraftDevRuntimeService(db)
+        try:
+            await runtime_service.sync_session(
+                app=app,
+                revision=new_revision,
+                user_id=actor.id,
+                files=next_files,
+                entry_file=next_entry,
+            )
+        except PublishedAppDraftDevRuntimeDisabled:
+            pass
+
+    request_id = _new_builder_request_id()
+    await _persist_builder_conversation_turn(
+        db,
+        app_id=app.id,
+        revision_id=current.id,
+        result_revision_id=new_revision.id,
+        actor_id=actor_id,
+        request_id=request_id,
+        user_prompt=f"Revert file: {normalized_path}",
+        status=BuilderConversationTurnStatus.succeeded,
+        trace_events=[],
+        checkpoint_type=BuilderCheckpointType.file_revert,
+        checkpoint_label=f"Revert {normalized_path}",
+    )
+    await db.commit()
+    await db.refresh(new_revision)
+    return BuilderRevertFileResponse(
+        revision=_revision_to_response(new_revision),
+        reverted_path=normalized_path,
+        from_revision_id=str(from_revision.id),
+        request_id=request_id,
+    )
+
+
 @router.post("/{app_id}/builder/chat/stream")
 async def builder_chat_stream(
     app_id: UUID,
@@ -2795,7 +3308,8 @@ async def builder_chat_stream(
     _assert_can_manage_apps(ctx)
 
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    actor_id = ctx["user"].id if ctx["user"] else None
+    actor = ctx.get("user")
+    actor_id = actor.id if actor else None
     draft = await _ensure_current_draft_revision(db, app, actor_id)
 
     if payload.base_revision_id and str(payload.base_revision_id) != str(draft.id):
@@ -2818,29 +3332,104 @@ async def builder_chat_stream(
     trace_events: List[Dict[str, Any]] = []
     generation_result: Optional[BuilderPatchGenerationResult] = None
     patch_ops_payload: List[Dict[str, Any]] = []
+    runtime_service: Optional[PublishedAppDraftDevRuntimeService] = None
+    sandbox_id: Optional[str] = None
+    final_files = dict(existing_files)
+    final_entry = draft.entry_file
+    saved_revision: Optional[PublishedAppRevision] = None
     try:
-        if _builder_model_patch_generation_enabled():
-            if _builder_agentic_loop_enabled():
-                generation_result, trace_events = await _run_builder_agentic_loop(
-                    user_prompt=user_prompt,
+        if actor is not None and _builder_chat_sandbox_tools_enabled():
+            runtime_service = PublishedAppDraftDevRuntimeService(db)
+            try:
+                session = await runtime_service.ensure_session(
+                    app=app,
+                    revision=draft,
+                    user_id=actor.id,
                     files=existing_files,
                     entry_file=draft.entry_file,
+                )
+            except PublishedAppDraftDevRuntimeDisabled as exc:
+                raise HTTPException(status_code=409, detail=str(exc))
+            sandbox_id = session.sandbox_id
+            if session.status == PublishedAppDraftDevSessionStatus.error:
+                raise HTTPException(status_code=409, detail=session.last_error or "Draft dev sandbox failed to start")
+            if not sandbox_id:
+                raise HTTPException(status_code=409, detail="Draft dev sandbox id is missing")
+            final_files = await _snapshot_files_from_sandbox(runtime_service, sandbox_id=sandbox_id)
+
+        if _builder_model_patch_generation_enabled():
+            if _builder_agentic_loop_enabled():
+                generation_result, trace_events, final_files, final_entry = await _run_builder_agentic_loop(
+                    user_prompt=user_prompt,
+                    files=final_files,
+                    entry_file=draft.entry_file,
                     request_id=request_id,
+                    runtime_service=runtime_service,
+                    sandbox_id=sandbox_id,
                 )
             else:
                 generation_result = await _generate_builder_patch_with_model(
                     user_prompt=user_prompt,
-                    files=existing_files,
+                    files=final_files,
                     entry_file=draft.entry_file,
                 )
         else:
-            patch_ops, patch_summary = _build_builder_patch_from_prompt(user_prompt, existing_files)
+            patch_ops, patch_summary = _build_builder_patch_from_prompt(user_prompt, final_files)
             generation_result = BuilderPatchGenerationResult(
                 operations=[BuilderPatchOp(**op) for op in patch_ops],
                 summary=patch_summary,
             )
         patch_ops_payload = _serialize_patch_ops(generation_result.operations)
-        _apply_patch_operations(existing_files, draft.entry_file, generation_result.operations)
+        final_files, final_entry = _apply_patch_operations(final_files, final_entry, generation_result.operations)
+        if runtime_service is not None and sandbox_id:
+            await _apply_patch_operations_to_sandbox(
+                runtime_service,
+                sandbox_id=sandbox_id,
+                operations=generation_result.operations,
+            )
+            if _builder_chat_commands_enabled():
+                command_result = await _run_allowlisted_sandbox_command(
+                    runtime_service,
+                    sandbox_id=sandbox_id,
+                    command=["npm", "run", "build"],
+                )
+                trace_events.append(
+                    _stream_event_payload(
+                        event="tool_completed" if command_result.get("ok") else "tool_failed",
+                        stage="command",
+                        request_id=request_id,
+                        data={
+                            "tool": "run_command",
+                            "command": "npm run build",
+                            "status": "ok" if command_result.get("ok") else "failed",
+                            "result": command_result,
+                        },
+                        diagnostics=command_result.get("diagnostics") if not command_result.get("ok") else None,
+                    )
+                )
+                if not command_result.get("ok"):
+                    raise _builder_compile_error(
+                        "Sandbox command failed",
+                        diagnostics=command_result.get("diagnostics") or [{"message": str(command_result.get("message") or "sandbox command failed")}],
+                    )
+            final_files = await _snapshot_files_from_sandbox(runtime_service, sandbox_id=sandbox_id)
+
+        saved_revision = await _create_draft_revision_from_files(
+            db,
+            app=app,
+            current=draft,
+            actor_id=actor_id,
+            files=final_files,
+            entry_file=final_entry,
+        )
+        if runtime_service is not None and sandbox_id and actor is not None:
+            await runtime_service.sync_session(
+                app=app,
+                revision=saved_revision,
+                user_id=actor.id,
+                files=final_files,
+                entry_file=final_entry,
+            )
     except HTTPException as exc:
         loop_trace_events = getattr(exc, "builder_trace_events", None)
         if isinstance(loop_trace_events, list) and loop_trace_events:
@@ -2882,14 +3471,19 @@ async def builder_chat_stream(
         db,
         app_id=app.id,
         revision_id=draft.id,
+        result_revision_id=saved_revision.id if saved_revision else None,
         actor_id=actor_id,
         request_id=request_id,
         user_prompt=user_prompt,
         status=BuilderConversationTurnStatus.succeeded,
         generation_result=generation_result,
         trace_events=trace_events,
+        checkpoint_type=BuilderCheckpointType.auto_run,
+        checkpoint_label=f"AI run {request_id[:8]}",
     )
     await db.commit()
+    if saved_revision is not None:
+        await db.refresh(saved_revision)
 
     async def event_generator():
         yield ": " + (" " * 2048) + "\n\n"
@@ -2899,8 +3493,8 @@ async def builder_chat_stream(
                 stage="start",
                 request_id=request_id,
                 data={"content": "Builder request accepted"},
+                )
             )
-        )
         for trace_event in trace_events:
             yield _stream_event_sse(trace_event)
 
@@ -2916,18 +3510,34 @@ async def builder_chat_stream(
             )
         yield _stream_event_sse(
             _stream_event_payload(
-                event="patch_ops",
+                event="file_changes",
                 stage="patch_ready",
                 request_id=request_id,
                 data={
+                    "changed_paths": _collect_changed_paths(generation_result.operations),
                     "operations": patch_ops_payload,
                     "base_revision_id": str(draft.id),
+                    "result_revision_id": str(saved_revision.id) if saved_revision else None,
                     "summary": generation_result.summary,
                     "rationale": generation_result.rationale,
                     "assumptions": generation_result.assumptions,
                 },
             )
         )
+        if saved_revision is not None:
+            yield _stream_event_sse(
+                _stream_event_payload(
+                    event="checkpoint_created",
+                    stage="checkpoint",
+                    request_id=request_id,
+                    data={
+                        "revision_id": str(saved_revision.id),
+                        "source_revision_id": str(saved_revision.source_revision_id) if saved_revision.source_revision_id else None,
+                        "checkpoint_type": "auto_run",
+                        "checkpoint_label": f"AI run {request_id[:8]}",
+                    },
+                )
+            )
         yield _stream_event_sse(
             _stream_event_payload(
                 event="done",

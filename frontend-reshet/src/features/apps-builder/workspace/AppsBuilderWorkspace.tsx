@@ -2,7 +2,21 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ExternalLink, Loader2, Rocket, Save, Sparkles } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  ExternalLink,
+  FileCog,
+  History,
+  Loader2,
+  Rocket,
+  RotateCcw,
+  Save,
+  Sparkles,
+  Terminal,
+  Wrench,
+} from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +34,7 @@ import { useSidebar } from "@/components/ui/sidebar";
 import { publishedAppsService } from "@/services";
 import type {
   BuilderChatEvent,
+  BuilderCheckpoint,
   BuilderPatchOp,
   BuilderStateResponse,
   DraftDevSessionResponse,
@@ -27,7 +42,6 @@ import type {
   PublishedAppRevision,
   RevisionConflictResponse,
 } from "@/services";
-import { applyBuilderPatchOperations } from "@/features/apps-builder/state/useBuilderDraft";
 import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { VirtualFileExplorer } from "@/features/apps-builder/editor/VirtualFileExplorer";
@@ -51,10 +65,24 @@ type WorkspaceProps = {
   appId: string;
 };
 
+type TimelineTone = "default" | "success" | "error";
+
+type TimelineItem = {
+  id: string;
+  title: string;
+  description?: string;
+  tone?: TimelineTone;
+  raw?: Record<string, unknown> | string;
+};
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+function timelineId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
@@ -73,8 +101,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [isUndoing, setIsUndoing] = useState(false);
+  const [isRevertingFile, setIsRevertingFile] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  const [chatLog, setChatLog] = useState<string[]>([]);
+  const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  const [checkpoints, setCheckpoints] = useState<BuilderCheckpoint[]>([]);
+  const [revertRevisionId, setRevertRevisionId] = useState<string>("latest");
   const [error, setError] = useState<string | null>(null);
   const syncFingerprintRef = useRef<string>("");
 
@@ -83,6 +116,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [setOpen]);
 
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
+
+  const pushTimeline = useCallback((item: Omit<TimelineItem, "id">) => {
+    setTimeline((prev) => [...prev, { ...item, id: timelineId("timeline") }]);
+  }, []);
 
   const applyDraftDevSession = useCallback((session?: DraftDevSessionResponse | null) => {
     setDraftDevSessionId(session?.session_id || null);
@@ -98,6 +135,15 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setSelectedFile(Object.keys(nextFiles).sort()[0] || null);
     setCurrentRevisionId(revision?.id || null);
   }, []);
+
+  const loadCheckpoints = useCallback(async () => {
+    try {
+      const rows = await publishedAppsService.getBuilderCheckpoints(appId, 25);
+      setCheckpoints(rows);
+    } catch {
+      // Keep UI responsive if checkpoint list fails.
+    }
+  }, [appId]);
 
   const loadState = useCallback(async () => {
     setIsLoading(true);
@@ -116,7 +162,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
   useEffect(() => {
     loadState();
-  }, [loadState]);
+    loadCheckpoints();
+  }, [loadState, loadCheckpoints]);
 
   const ensureDraftDevSession = useCallback(async () => {
     const session = await publishedAppsService.ensureDraftDevSession(appId);
@@ -228,9 +275,15 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           },
         };
       });
+      pushTimeline({
+        title: "Manual draft saved",
+        description: `Revision ${revision.id.slice(0, 8)} created.`,
+        tone: "success",
+      });
       if (activeTab === "preview") {
         await ensureDraftDevSession();
       }
+      await loadCheckpoints();
     } catch (err: any) {
       const detail = err?.message || "Failed to save draft";
       try {
@@ -247,7 +300,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState]);
+  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadCheckpoints, loadState, pushTimeline]);
 
   const publish = useCallback(async () => {
     setIsPublishing(true);
@@ -279,13 +332,18 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
       await loadState();
       setPublishStatus("succeeded");
+      pushTimeline({
+        title: "Publish succeeded",
+        description: "Static app revision is now live.",
+        tone: "success",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to publish app");
       setPublishStatus("failed");
     } finally {
       setIsPublishing(false);
     }
-  }, [appId, currentRevisionId, entryFile, files, loadState]);
+  }, [appId, currentRevisionId, entryFile, files, loadState, pushTimeline]);
 
   const resetTemplate = useCallback(
     async (templateKey: string) => {
@@ -307,19 +365,27 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           };
         });
         hydrateFromRevision(revision);
+        pushTimeline({
+          title: "Template reset",
+          description: `Draft replaced with ${templateKey}.`,
+          tone: "default",
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to switch template");
       }
     },
-    [appId, hydrateFromRevision],
+    [appId, hydrateFromRevision, pushTimeline],
   );
 
   const sendBuilderChat = useCallback(async () => {
     const input = chatInput.trim();
     if (!input) return;
 
+    setIsSending(true);
+    setError(null);
     setChatInput("");
-    setChatLog((prev) => [...prev, `You: ${input}`]);
+    pushTimeline({ title: "User request", description: input });
+
     try {
       const response = await publishedAppsService.streamBuilderChat(appId, {
         input,
@@ -333,12 +399,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       const decoder = new TextDecoder();
       let buffer = "";
       let assistantText = "";
-      let pendingOps: BuilderPatchOp[] = [];
-      let opsBaseRevision = currentRevisionId;
-      let patchSummary = "";
-      let patchRationale = "";
+      let latestSummary = "";
       let streamRequestId = "";
-      const traceLines: string[] = [];
+      let latestResultRevisionId = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -349,81 +412,245 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           const raw = buffer.slice(0, splitIndex).trim();
           buffer = buffer.slice(splitIndex + 2);
           const parsed = parseSse(raw);
-          if (parsed?.request_id && !streamRequestId) {
+          if (!parsed) {
+            splitIndex = buffer.indexOf("\n\n");
+            continue;
+          }
+          if (parsed.request_id && !streamRequestId) {
             streamRequestId = parsed.request_id;
           }
-          if (parsed?.event === "token" && parsed?.data?.content) {
+
+          if (parsed.event === "token" && parsed.data?.content) {
             assistantText += String(parsed.data.content);
           }
-          if (parsed?.event === "status" && parsed?.data?.content) {
-            traceLines.push(`Status: ${String(parsed.data.content)}`);
+
+          if (parsed.event === "status") {
+            pushTimeline({
+              title: "Run status",
+              description: String(parsed.data?.content || "Builder run started"),
+            });
           }
-          if (parsed?.event === "tool" && parsed?.data?.tool) {
-            const toolName = String(parsed.data.tool);
-            const status = String(parsed.data.status || "ok");
-            const iteration = parsed.data.iteration ? ` (iter ${parsed.data.iteration})` : "";
-            traceLines.push(`Tool${iteration} ${toolName}: ${status}`);
+
+          if (parsed.event === "tool_started") {
+            pushTimeline({
+              title: `Tool started: ${parsed.data?.tool || "unknown"}`,
+              description: parsed.data?.iteration ? `Iteration ${parsed.data.iteration}` : undefined,
+            });
           }
-          if (parsed?.event === "patch_ops" && Array.isArray(parsed?.data?.operations)) {
-            pendingOps = parsed.data.operations as BuilderPatchOp[];
-            opsBaseRevision = parsed?.data?.base_revision_id || opsBaseRevision;
-            patchSummary = String(parsed?.data?.summary || "");
-            patchRationale = String(parsed?.data?.rationale || "");
+
+          if (parsed.event === "tool_completed") {
+            const result = parsed.data?.result || {};
+            pushTimeline({
+              title: `Tool completed: ${parsed.data?.tool || "unknown"}`,
+              description: String((result as Record<string, unknown>).message || "ok"),
+              tone: "success",
+              raw: result,
+            });
           }
-          if (Array.isArray(parsed?.diagnostics) && parsed?.diagnostics.length > 0) {
-            const firstDiagnostic = parsed.diagnostics[0];
-            if (firstDiagnostic?.message) {
-              traceLines.push(`Diagnostic: ${firstDiagnostic.message}`);
+
+          if (parsed.event === "tool_failed") {
+            const result = parsed.data?.result || {};
+            pushTimeline({
+              title: `Tool failed: ${parsed.data?.tool || "unknown"}`,
+              description: String((result as Record<string, unknown>).message || "failed"),
+              tone: "error",
+              raw: result,
+            });
+          }
+
+          if (parsed.event === "file_changes") {
+            latestSummary = String(parsed.data?.summary || latestSummary || "Applied code changes");
+            latestResultRevisionId = String(parsed.data?.result_revision_id || latestResultRevisionId || "");
+            const changedPaths = Array.isArray(parsed.data?.changed_paths)
+              ? parsed.data?.changed_paths?.join(", ")
+              : "";
+            pushTimeline({
+              title: "Files changed",
+              description: changedPaths || "Code updated",
+              raw: {
+                operations: parsed.data?.operations as BuilderPatchOp[] | undefined,
+                summary: parsed.data?.summary,
+                rationale: parsed.data?.rationale,
+              },
+            });
+          }
+
+          if (parsed.event === "checkpoint_created") {
+            const revisionId = String(parsed.data?.revision_id || "");
+            if (revisionId) {
+              setCurrentRevisionId(revisionId);
             }
+            pushTimeline({
+              title: "Checkpoint created",
+              description: `${parsed.data?.checkpoint_label || "Automatic checkpoint"}${revisionId ? ` (${revisionId.slice(0, 8)})` : ""}`,
+              tone: "success",
+              raw: parsed.data,
+            });
           }
+
+          if (parsed.event === "error") {
+            pushTimeline({
+              title: "Run error",
+              description: String(parsed.data?.message || "Builder run failed"),
+              tone: "error",
+              raw: parsed.data,
+            });
+          }
+
+          if (Array.isArray(parsed.diagnostics) && parsed.diagnostics.length > 0) {
+            pushTimeline({
+              title: "Diagnostic",
+              description: String(parsed.diagnostics[0]?.message || "diagnostic"),
+              tone: "error",
+              raw: { diagnostics: parsed.diagnostics },
+            });
+          }
+
           splitIndex = buffer.indexOf("\n\n");
         }
       }
 
-      if (traceLines.length > 0) {
-        setChatLog((prev) => [
-          ...prev,
-          ...traceLines.map((line) => `Builder Trace${streamRequestId ? ` (${streamRequestId.slice(0, 8)})` : ""}: ${line}`),
-        ]);
-      }
-      if (assistantText.trim() || patchSummary) {
-        const responseText = assistantText.trim() || patchSummary;
-        const rationaleText = patchRationale ? ` (${patchRationale})` : "";
-        setChatLog((prev) => [...prev, `Builder: ${responseText}${rationaleText}`]);
+      const finalAssistantText = assistantText.trim() || latestSummary;
+      if (finalAssistantText) {
+        pushTimeline({
+          title: "Assistant",
+          description: finalAssistantText,
+          tone: "default",
+        });
       }
 
-      if (pendingOps.length > 0) {
-        const nextDraft = applyBuilderPatchOperations(files, entryFile, pendingOps);
-        setFiles(nextDraft.files);
-        setEntryFile(nextDraft.entryFile);
-        if (!nextDraft.files[selectedFile || ""]) {
-          setSelectedFile(Object.keys(nextDraft.files).sort()[0] || null);
-        }
-
-        const saved = await publishedAppsService.createRevision(appId, {
-          base_revision_id: opsBaseRevision || undefined,
-          operations: pendingOps,
+      await loadState();
+      await loadCheckpoints();
+      if (activeTab === "preview") {
+        await ensureDraftDevSession();
+      }
+      if (latestResultRevisionId) {
+        setCurrentRevisionId(latestResultRevisionId);
+      }
+      if (streamRequestId) {
+        pushTimeline({
+          title: "Run complete",
+          description: `Request ${streamRequestId.slice(0, 8)} finished`,
+          tone: "success",
         });
-        setCurrentRevisionId(saved.id);
-        setState((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            current_draft_revision: saved,
-            app: {
-              ...prev.app,
-              current_draft_revision_id: saved.id,
-            },
-          };
-        });
-        if (activeTab === "preview") {
-          await ensureDraftDevSession();
-        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to apply builder patch");
+      setError(err instanceof Error ? err.message : "Failed to run builder agent");
+    } finally {
+      setIsSending(false);
     }
-  }, [activeTab, appId, chatInput, currentRevisionId, ensureDraftDevSession, entryFile, files, selectedFile]);
+  }, [
+    activeTab,
+    appId,
+    chatInput,
+    currentRevisionId,
+    ensureDraftDevSession,
+    loadCheckpoints,
+    loadState,
+    pushTimeline,
+  ]);
+
+  const undoLastRun = useCallback(async () => {
+    if (!currentRevisionId) {
+      setError("No draft revision to undo");
+      return;
+    }
+    setIsUndoing(true);
+    setError(null);
+    try {
+      const response = await publishedAppsService.undoLastBuilderRun(appId, {
+        base_revision_id: currentRevisionId,
+      });
+      const revision = response.revision;
+      hydrateFromRevision(revision);
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          current_draft_revision: revision,
+          app: {
+            ...prev.app,
+            current_draft_revision_id: revision.id,
+          },
+        };
+      });
+      pushTimeline({
+        title: "Undo completed",
+        description: `Restored from revision ${response.restored_from_revision_id.slice(0, 8)}.`,
+        tone: "success",
+      });
+      await loadCheckpoints();
+      if (activeTab === "preview") {
+        await ensureDraftDevSession();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to undo last run");
+    } finally {
+      setIsUndoing(false);
+    }
+  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, hydrateFromRevision, loadCheckpoints, pushTimeline]);
+
+  const revertSelectedFile = useCallback(async () => {
+    const targetPath = selectedFile;
+    if (!targetPath) {
+      setError("Select a file first");
+      return;
+    }
+    const fromRevisionId =
+      revertRevisionId === "latest"
+        ? checkpoints[0]?.revision_id
+        : revertRevisionId;
+    if (!fromRevisionId) {
+      setError("No checkpoint revision available for file revert");
+      return;
+    }
+    setIsRevertingFile(true);
+    setError(null);
+    try {
+      const response = await publishedAppsService.revertBuilderFile(appId, {
+        path: targetPath,
+        from_revision_id: fromRevisionId,
+        base_revision_id: currentRevisionId || undefined,
+      });
+      const revision = response.revision;
+      hydrateFromRevision(revision);
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          current_draft_revision: revision,
+          app: {
+            ...prev.app,
+            current_draft_revision_id: revision.id,
+          },
+        };
+      });
+      pushTimeline({
+        title: "File reverted",
+        description: `${response.reverted_path} restored from ${response.from_revision_id.slice(0, 8)}.`,
+        tone: "success",
+      });
+      await loadCheckpoints();
+      if (activeTab === "preview") {
+        await ensureDraftDevSession();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to revert selected file");
+    } finally {
+      setIsRevertingFile(false);
+    }
+  }, [
+    activeTab,
+    appId,
+    checkpoints,
+    currentRevisionId,
+    ensureDraftDevSession,
+    hydrateFromRevision,
+    loadCheckpoints,
+    pushTimeline,
+    revertRevisionId,
+    selectedFile,
+  ]);
 
   const createFile = (path: string) => {
     const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
@@ -574,30 +801,102 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             )}
           </main>
 
-          <aside className="flex h-full w-[360px] shrink-0 flex-col border-l border-border/60 bg-muted/10">
-            <div className="border-b border-border/60 px-3 py-2">
-              <div className="flex items-center gap-2 text-sm font-medium">
+          <aside className="flex h-full w-[430px] shrink-0 flex-col border-l border-border/60 bg-gradient-to-b from-muted/20 via-background to-background">
+            <div className="border-b border-border/60 px-3 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold">
                 <Sparkles className="h-4 w-4" />
-                Builder Chat
+                ChatBuilder Agent
+              </div>
+              <div className="mt-2 grid grid-cols-1 gap-2">
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={undoLastRun} disabled={isUndoing || !currentRevisionId} className="flex-1">
+                    {isUndoing ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-2 h-3.5 w-3.5" />}
+                    Undo Last Run
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={revertSelectedFile}
+                    disabled={isRevertingFile || !selectedFile || checkpoints.length === 0}
+                    className="flex-1"
+                  >
+                    {isRevertingFile ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <FileCog className="mr-2 h-3.5 w-3.5" />}
+                    Revert File
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <History className="h-3.5 w-3.5 text-muted-foreground" />
+                  <Select value={revertRevisionId} onValueChange={setRevertRevisionId}>
+                    <SelectTrigger className="h-8">
+                      <SelectValue placeholder="Choose checkpoint for file revert" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="latest">Latest checkpoint</SelectItem>
+                      {checkpoints.map((cp) => (
+                        <SelectItem key={cp.turn_id} value={cp.revision_id}>
+                          {(cp.checkpoint_label || cp.assistant_summary || cp.revision_id).slice(0, 56)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-auto px-3 py-2">
-              {chatLog.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Describe a UI change and the builder will generate file patch operations.</p>
+
+            <div className="min-h-0 flex-1 space-y-2 overflow-auto px-3 py-3">
+              {timeline.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Ask for a code change to start a live run. You will see tool steps, edits, and checkpoint creation here.
+                </p>
               ) : (
-                chatLog.map((line, idx) => (
-                  <div key={`${idx}-${line.slice(0, 12)}`} className="rounded-md border border-border/50 bg-background p-2 text-xs">
-                    {line}
+                timeline.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`rounded-xl border p-2 text-xs ${
+                      item.tone === "error"
+                        ? "border-destructive/40 bg-destructive/5"
+                        : item.tone === "success"
+                          ? "border-emerald-500/30 bg-emerald-500/5"
+                          : "border-border/50 bg-background"
+                    }`}
+                  >
+                    <div className="mb-1 flex items-center gap-1.5 font-medium">
+                      {item.tone === "error" ? (
+                        <AlertCircle className="h-3.5 w-3.5" />
+                      ) : item.tone === "success" ? (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      ) : item.title.toLowerCase().includes("tool") ? (
+                        <Wrench className="h-3.5 w-3.5" />
+                      ) : item.title.toLowerCase().includes("assistant") ? (
+                        <Terminal className="h-3.5 w-3.5" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                      <span>{item.title}</span>
+                    </div>
+                    {item.description ? <p className="text-[11px] text-muted-foreground">{item.description}</p> : null}
+                    {item.raw ? (
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-[10px] text-muted-foreground">raw</summary>
+                        <pre className="mt-1 max-h-36 overflow-auto rounded-md bg-muted/40 p-2 text-[10px] leading-tight">
+                          {typeof item.raw === "string" ? item.raw : JSON.stringify(item.raw, null, 2)}
+                        </pre>
+                      </details>
+                    ) : null}
                   </div>
                 ))
               )}
             </div>
+
             <div className="border-t border-border/60 p-3">
+              <div className="mb-1 text-[10px] text-muted-foreground">
+                {selectedFile ? `Selected file: ${selectedFile}` : "No file selected"}
+              </div>
               <div className="flex gap-2">
                 <Input
                   value={chatInput}
                   onChange={(event) => setChatInput(event.target.value)}
-                  placeholder="Make the header more bold..."
+                  placeholder="Refactor the header and align spacing with the hero..."
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
@@ -605,7 +904,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     }
                   }}
                 />
-                <Button size="sm" onClick={sendBuilderChat}>Send</Button>
+                <Button size="sm" onClick={sendBuilderChat} disabled={isSending || !chatInput.trim()}>
+                  {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Send"}
+                </Button>
               </div>
             </div>
           </aside>

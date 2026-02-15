@@ -156,8 +156,174 @@ class LocalDraftDevRuntimeManager:
             await self._stop_session_locked(sandbox_id)
             return {"status": "stopped", "sandbox_id": sandbox_id}
 
+    async def list_files(self, *, sandbox_id: str, limit: int = 500) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            files = self._collect_project_files(state.project_dir)
+            return {
+                "sandbox_id": sandbox_id,
+                "count": len(files),
+                "paths": files[:max(1, int(limit))],
+            }
+
+    async def read_file(self, *, sandbox_id: str, path: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            normalized = self._normalize_runtime_path(path)
+            target = state.project_dir / normalized
+            if not target.exists() or not target.is_file():
+                raise LocalDraftDevRuntimeError(f"File not found: {normalized}")
+            content = target.read_text(encoding="utf-8")
+            return {"sandbox_id": sandbox_id, "path": normalized, "content": content}
+
+    async def search_code(self, *, sandbox_id: str, query: str, max_results: int = 30) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            needle = (query or "").strip().lower()
+            if not needle:
+                return {"sandbox_id": sandbox_id, "query": query, "matches": []}
+            matches: list[dict[str, object]] = []
+            for rel_path in self._collect_project_files(state.project_dir):
+                source = (state.project_dir / rel_path).read_text(encoding="utf-8", errors="replace")
+                for line_no, line in enumerate(source.splitlines(), start=1):
+                    if needle in line.lower():
+                        matches.append({"path": rel_path, "line": line_no, "preview": line[:220]})
+                        if len(matches) >= max(1, int(max_results)):
+                            return {"sandbox_id": sandbox_id, "query": query, "matches": matches}
+            return {"sandbox_id": sandbox_id, "query": query, "matches": matches}
+
+    async def write_file(self, *, sandbox_id: str, path: str, content: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            normalized = self._normalize_runtime_path(path)
+            target = state.project_dir / normalized
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content if isinstance(content, str) else str(content), encoding="utf-8")
+            return {"sandbox_id": sandbox_id, "path": normalized, "status": "written"}
+
+    async def delete_file(self, *, sandbox_id: str, path: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            normalized = self._normalize_runtime_path(path)
+            target = state.project_dir / normalized
+            if target.exists() and target.is_file():
+                target.unlink(missing_ok=True)
+                self._prune_empty_dirs(target.parent, state.project_dir)
+            return {"sandbox_id": sandbox_id, "path": normalized, "status": "deleted"}
+
+    async def rename_file(self, *, sandbox_id: str, from_path: str, to_path: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            src = self._normalize_runtime_path(from_path)
+            dst = self._normalize_runtime_path(to_path)
+            source = state.project_dir / src
+            target = state.project_dir / dst
+            if not source.exists() or not source.is_file():
+                raise LocalDraftDevRuntimeError(f"Source file not found: {src}")
+            if target.exists() and target != source:
+                raise LocalDraftDevRuntimeError(f"Target already exists: {dst}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(target)
+            self._prune_empty_dirs(source.parent, state.project_dir)
+            return {"sandbox_id": sandbox_id, "from_path": src, "to_path": dst, "status": "renamed"}
+
+    async def snapshot_files(self, *, sandbox_id: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            files: Dict[str, str] = {}
+            for rel_path in self._collect_project_files(state.project_dir):
+                files[rel_path] = (state.project_dir / rel_path).read_text(encoding="utf-8", errors="replace")
+            return {"sandbox_id": sandbox_id, "files": files, "file_count": len(files)}
+
+    async def run_command(
+        self,
+        *,
+        sandbox_id: str,
+        command: list[str],
+        timeout_seconds: int = 180,
+        max_output_bytes: int = 12000,
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            if not command:
+                raise LocalDraftDevRuntimeError("Command is required")
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=str(state.project_dir),
+                env=dict(os.environ),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=float(timeout_seconds))
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.communicate()
+                raise LocalDraftDevRuntimeError(
+                    f"Command timed out after {timeout_seconds}s: {' '.join(command)}"
+                )
+            out_text = (stdout or b"").decode("utf-8", errors="replace")
+            err_text = (stderr or b"").decode("utf-8", errors="replace")
+            if len(out_text) > max_output_bytes:
+                out_text = out_text[:max_output_bytes] + "... [truncated]"
+            if len(err_text) > max_output_bytes:
+                err_text = err_text[:max_output_bytes] + "... [truncated]"
+            return {
+                "sandbox_id": sandbox_id,
+                "command": command,
+                "code": int(process.returncode or 0),
+                "stdout": out_text,
+                "stderr": err_text,
+            }
+
     def _preview_url(self, port: int, draft_dev_token: str) -> str:
         return f"http://{self._host}:{port}/?draft_dev_token={draft_dev_token}"
+
+    def _normalize_runtime_path(self, raw_path: str) -> str:
+        cleaned = (raw_path or "").replace("\\", "/").strip().lstrip("/")
+        if not cleaned:
+            raise LocalDraftDevRuntimeError("File path is required")
+        parts: list[str] = []
+        for part in cleaned.split("/"):
+            if not part or part == ".":
+                continue
+            if part == "..":
+                raise LocalDraftDevRuntimeError("Path traversal is not allowed")
+            parts.append(part)
+        normalized = "/".join(parts)
+        if not normalized:
+            raise LocalDraftDevRuntimeError("File path is required")
+        if normalized.startswith("node_modules/") or normalized in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+            raise LocalDraftDevRuntimeError(f"Path is not editable: {normalized}")
+        return normalized
+
+    def _collect_project_files(self, project_dir: Path) -> list[str]:
+        paths: list[str] = []
+        for existing in sorted(project_dir.rglob("*")):
+            if not existing.is_file():
+                continue
+            relative = existing.relative_to(project_dir).as_posix()
+            if relative.startswith("node_modules/") or relative == "node_modules":
+                continue
+            if relative in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+                continue
+            paths.append(relative)
+        return paths
+
+    def _require_running_session_locked(self, sandbox_id: str) -> _SessionProcess:
+        state = self._state.get(sandbox_id)
+        if state is None or state.process.poll() is not None:
+            raise LocalDraftDevRuntimeError("Draft dev sandbox is not running")
+        return state
+
+    def _prune_empty_dirs(self, start_dir: Path, root_dir: Path) -> None:
+        current = start_dir
+        while current != root_dir and current.exists():
+            try:
+                current.rmdir()
+            except OSError:
+                break
+            current = current.parent
 
     async def _stop_session_locked(self, sandbox_id: str) -> None:
         state = self._state.pop(sandbox_id, None)
@@ -296,4 +462,3 @@ def get_local_draft_dev_runtime_manager() -> LocalDraftDevRuntimeManager:
     if _LOCAL_RUNTIME_MANAGER is None:
         _LOCAL_RUNTIME_MANAGER = LocalDraftDevRuntimeManager()
     return _LOCAL_RUNTIME_MANAGER
-

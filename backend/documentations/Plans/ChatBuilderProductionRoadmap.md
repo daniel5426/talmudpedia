@@ -1,9 +1,15 @@
 # ChatBuilder Production Roadmap (Lovable/Base44 Parity Target)
 
-Last Updated: 2026-02-12
+Last Updated: 2026-02-14
 
 ## Goal
 Upgrade the Apps Builder `Builder Chat` from a v1 patch-demo flow into a production-grade AI coding assistant with reliability, autonomy, and UX quality comparable to Lovable/Base44 class products, aligned with the platform move to full backend-built Vite projects deployed as static assets.
+
+## Runtime Source of Truth (2026-02-14)
+- This roadmap now follows the runtime contracts in `Base44_Vite_Static_Apps_ImplementationPlan.md`.
+- Draft/chat iteration runs against live draft-dev sandbox sessions for speed and visibility.
+- Deterministic publish remains enforced by async clean publish builds.
+- Any older language in this document implying worker-build gating for every draft/chat save path is superseded by the Base44 plan.
 
 ## Scope
 - In scope: `builder/chat/stream`, patch generation/apply/validation flow, builder chat UX, revision reliability, coding-agent tool loop, safety/policy, observability, quality gates, and integration with backend worker build/deploy flows for Vite projects.

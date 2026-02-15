@@ -52,6 +52,12 @@ class BuilderConversationTurnStatus(str, enum.Enum):
     failed = "failed"
 
 
+class BuilderCheckpointType(str, enum.Enum):
+    auto_run = "auto_run"
+    undo = "undo"
+    file_revert = "file_revert"
+
+
 class PublishedAppUserMembershipStatus(str, enum.Enum):
     active = "active"
     blocked = "blocked"
@@ -200,7 +206,11 @@ class PublishedAppRevision(Base):
 
     published_app = relationship("PublishedApp", back_populates="revisions")
     creator = relationship("User")
-    builder_conversations = relationship("PublishedAppBuilderConversationTurn", back_populates="revision")
+    builder_conversations = relationship(
+        "PublishedAppBuilderConversationTurn",
+        back_populates="revision",
+        foreign_keys="PublishedAppBuilderConversationTurn.revision_id",
+    )
 
 
 class PublishedAppBuilderConversationTurn(Base):
@@ -219,6 +229,12 @@ class PublishedAppBuilderConversationTurn(Base):
         nullable=True,
         index=True,
     )
+    result_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     request_id = Column(String(64), nullable=False, index=True)
     status = Column(
         SQLEnum(BuilderConversationTurnStatus, values_callable=_enum_values),
@@ -231,13 +247,25 @@ class PublishedAppBuilderConversationTurn(Base):
     assistant_assumptions = Column(JSONB, nullable=False, default=list)
     patch_operations = Column(JSONB, nullable=False, default=list)
     tool_trace = Column(JSONB, nullable=False, default=list)
+    tool_summary = Column(JSONB, nullable=False, default=dict)
     diagnostics = Column(JSONB, nullable=False, default=list)
     failure_code = Column(String, nullable=True)
+    checkpoint_type = Column(
+        SQLEnum(BuilderCheckpointType, values_callable=_enum_values),
+        nullable=False,
+        default=BuilderCheckpointType.auto_run,
+    )
+    checkpoint_label = Column(String, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     published_app = relationship("PublishedApp", back_populates="builder_conversations")
-    revision = relationship("PublishedAppRevision", back_populates="builder_conversations")
+    revision = relationship(
+        "PublishedAppRevision",
+        back_populates="builder_conversations",
+        foreign_keys=[revision_id],
+    )
+    result_revision = relationship("PublishedAppRevision", foreign_keys=[result_revision_id])
     creator = relationship("User")
 
     __table_args__ = (

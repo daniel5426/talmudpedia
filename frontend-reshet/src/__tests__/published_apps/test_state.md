@@ -22,6 +22,8 @@ Frontend coverage for:
 - Apps admin page loads existing apps and submits create payload.
 - Apps admin create modal supports template selection and builder-route redirect on create.
 - Builder workspace renders tabs, persists draft revision saves, confirms template overwrite, and applies streamed patch ops to revision save.
+- Builder workspace renders execution-style agent timeline cards from typed stream events (`status`, `tool_started`, `tool_completed`, `tool_failed`, `file_changes`, `checkpoint_created`).
+- Builder workspace supports quick actions for `Undo Last Run` and `Revert File`.
 - Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
 - Builder code tab auto-expands ancestor folders when the selected file is nested.
 - Builder code tab maps `index.html` to Monaco `html` language and sets builder-only validation decoration suppression.
@@ -38,6 +40,9 @@ Frontend coverage for:
 - Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
 - Date: 2026-02-14 18:12 UTC
 - Result: PASS (4 suites, 9 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-14 20:42 UTC
+- Result: PASS (1 suite, 8 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for app detail publish/unpublish actions.
