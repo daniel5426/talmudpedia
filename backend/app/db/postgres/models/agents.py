@@ -126,6 +126,11 @@ class AgentRun(Base):
     workload_principal_id = Column(UUID(as_uuid=True), ForeignKey("workload_principals.id", ondelete="SET NULL"), nullable=True, index=True)
     delegation_grant_id = Column(UUID(as_uuid=True), ForeignKey("delegation_grants.id", ondelete="SET NULL"), nullable=True, index=True)
     initiator_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    surface = Column(String, nullable=True, index=True)
+    published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
+    base_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
+    result_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
+    checkpoint_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Orchestration lineage and idempotency
     root_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -144,6 +149,10 @@ class AgentRun(Base):
     agent = relationship("Agent", back_populates="runs")
     user = relationship("User", foreign_keys=[user_id])
     initiator_user = relationship("User", foreign_keys=[initiator_user_id])
+    published_app = relationship("PublishedApp", foreign_keys=[published_app_id])
+    base_revision = relationship("PublishedAppRevision", foreign_keys=[base_revision_id])
+    result_revision = relationship("PublishedAppRevision", foreign_keys=[result_revision_id])
+    checkpoint_revision = relationship("PublishedAppRevision", foreign_keys=[checkpoint_revision_id])
     root_run = relationship("AgentRun", remote_side=[id], foreign_keys=[root_run_id], post_update=True)
     parent_run = relationship("AgentRun", remote_side=[id], foreign_keys=[parent_run_id], backref="child_runs")
     orchestration_group = relationship("OrchestrationGroup", foreign_keys=[orchestration_group_id])

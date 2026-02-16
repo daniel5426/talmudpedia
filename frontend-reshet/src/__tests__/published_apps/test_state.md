@@ -5,7 +5,7 @@ Last Updated: 2026-02-16
 ## Scope
 Frontend coverage for:
 - Admin Apps management page behavior.
-- Builder workspace behavior (`Preview | Config`, template reset confirm, builder patch apply/save).
+- Builder workspace behavior (`Preview | Config`, template reset confirm, draft save/publish).
 - Builder draft-dev preview behavior (session ensure/sync/heartbeat + sandbox iframe URL usage).
 - Async publish-job flow from workspace publish action.
 - Published runtime redirect behavior.
@@ -27,8 +27,9 @@ Frontend coverage for:
 - Overview section save path is covered for branding/visibility/auth template payloads.
 - Users section list/block action flow is covered.
 - Domains section list/create request flow is covered.
-- Builder workspace renders execution-style agent timeline cards from typed stream events (`status`, `tool_started`, `tool_completed`, `tool_failed`, `file_changes`, `checkpoint_created`).
-- Builder workspace supports quick actions for `Undo Last Run` and `Revert File`.
+- Builder workspace renders execution-style agent timeline cards from coding-agent SSE events (`run.accepted`, `assistant.delta`, `tool.*`, `revision.created`, `checkpoint.created`, `run.completed`).
+- Builder workspace creates coding-agent runs through `/coding-agent/runs`, then streams via `/coding-agent/runs/{run_id}/stream`.
+- Builder workspace quick action restores latest coding-agent checkpoint via `/coding-agent/checkpoints` and `/coding-agent/checkpoints/{checkpoint_id}/restore`.
 - Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
 - Builder code tab auto-expands ancestor folders when the selected file is nested.
 - Builder code tab maps `index.html` to Monaco `html` language and sets builder-only validation decoration suppression.
@@ -63,6 +64,12 @@ Frontend coverage for:
 - Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
 - Date: 2026-02-16 19:26 EET
 - Result: PASS (1 suite, 14 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 20:04 UTC
+- Result: PASS (1 suite, 16 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
+- Date: 2026-02-16 20:04 UTC
+- Result: PASS (5 suites, 21 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for app detail publish/unpublish actions.

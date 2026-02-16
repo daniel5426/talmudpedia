@@ -8,7 +8,6 @@ from typing import Dict, Any, Optional, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from langgraph.checkpoint.memory import MemorySaver
 
 from app.db.postgres.models.agents import Agent, AgentRun, AgentTrace, RunStatus
 from app.agent.graph.compiler import AgentCompiler
@@ -16,14 +15,12 @@ from app.agent.graph.schema import AgentGraph
 from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
+from app.agent.execution.durable_checkpointer import DurableMemorySaver
 
 logger = logging.getLogger(__name__)
 
 class AgentExecutorService:
-    # Use a persistent checkpointer if possible. 
-    # For now, we use a class-level MemorySaver to support cross-request state in memory.
-    # In production, this would be a PostgresCheckpointSaver.
-    _checkpointer = MemorySaver()
+    _checkpointer = DurableMemorySaver()
 
     def __init__(self, db: Optional[AsyncSession] = None):
         self.db = db

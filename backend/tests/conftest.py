@@ -15,8 +15,6 @@ from sqlalchemy.pool import StaticPool
 USE_REAL_DB = os.getenv("TEST_USE_REAL_DB") == "1"
 sqlite3.register_adapter(UUID, lambda value: str(value))
 os.environ.setdefault("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", "0")
-os.environ.setdefault("BUILDER_MODEL_PATCH_GENERATION_ENABLED", "0")
-os.environ.setdefault("BUILDER_AGENTIC_LOOP_ENABLED", "0")
 os.environ.setdefault("APPS_PUBLISH_JOB_EAGER", "1")
 os.environ.setdefault("APPS_PUBLISH_MOCK_MODE", "1")
 

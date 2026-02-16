@@ -26,7 +26,7 @@ from .published_apps_admin_access import (
     _validate_agent,
 )
 from .published_apps_admin_builder_core import _enqueue_publish_job, _publish_full_build_enabled
-from .published_apps_admin_builder_patch import (
+from .published_apps_admin_files import (
     _assert_builder_path_allowed,
     _coerce_files_payload,
     _normalize_builder_path,

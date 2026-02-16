@@ -47,9 +47,8 @@ import {
 import { useSidebar } from "@/components/ui/sidebar";
 import { publishedAppsService, publishedRuntimeService } from "@/services";
 import type {
-  BuilderChatEvent,
-  BuilderPatchOp,
   BuilderStateResponse,
+  CodingAgentStreamEvent,
   DraftDevSessionResponse,
   DraftDevSessionStatus,
   PublishedAppAuthTemplate,
@@ -64,11 +63,11 @@ import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
 
-const parseSse = (raw: string): BuilderChatEvent | null => {
+const parseSse = (raw: string): CodingAgentStreamEvent | null => {
   const dataLine = raw.split("\n").find((line) => line.startsWith("data: "));
   if (!dataLine) return null;
   try {
-    return JSON.parse(dataLine.slice(6)) as BuilderChatEvent;
+    return JSON.parse(dataLine.slice(6)) as CodingAgentStreamEvent;
   } catch {
     return null;
   }
@@ -625,10 +624,33 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     pushTimeline({ title: "User request", description: input });
 
     try {
-      const response = await publishedAppsService.streamBuilderChat(appId, {
+      const run = await publishedAppsService.createCodingAgentRun(appId, {
         input,
         base_revision_id: currentRevisionId || undefined,
       });
+
+      pushTimeline({
+        title: "Run accepted",
+        description: `Run ${run.run_id.slice(0, 8)} queued`,
+      });
+
+      const response = await publishedAppsService.streamCodingAgentRun(appId, run.run_id);
+      if (!response.ok) {
+        let message = `Failed to stream coding-agent run (${response.status})`;
+        try {
+          const payload = await response.json();
+          const detail = payload?.detail;
+          if (typeof detail === "string") {
+            message = detail;
+          } else if (detail && typeof detail === "object") {
+            message = JSON.stringify(detail);
+          }
+        } catch {
+          // Keep fallback message.
+        }
+        throw new Error(message);
+      }
+
       const reader = response.body?.getReader();
       if (!reader) {
         throw new Error("Streaming reader unavailable");
@@ -638,8 +660,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       let buffer = "";
       let assistantText = "";
       let latestSummary = "";
-      let streamRequestId = "";
       let latestResultRevisionId = "";
+      let streamRunId = run.run_id;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -654,84 +676,105 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             splitIndex = buffer.indexOf("\n\n");
             continue;
           }
-          if (parsed.request_id && !streamRequestId) {
-            streamRequestId = parsed.request_id;
+
+          const payload = (parsed.payload || {}) as Record<string, unknown>;
+          if (parsed.run_id) {
+            streamRunId = parsed.run_id;
           }
 
-          if (parsed.event === "token" && parsed.data?.content) {
-            assistantText += String(parsed.data.content);
+          if (parsed.event === "assistant.delta" && payload.content) {
+            assistantText += String(payload.content);
           }
 
-          if (parsed.event === "status") {
+          if (parsed.event === "run.accepted") {
             pushTimeline({
               title: "Run status",
-              description: String(parsed.data?.content || "Builder run started"),
+              description: String(payload.status || "Coding-agent run started"),
             });
           }
 
-          if (parsed.event === "tool_started") {
+          if (parsed.event === "plan.updated") {
+            latestSummary = String(payload.summary || latestSummary || "");
             pushTimeline({
-              title: `Tool started: ${parsed.data?.tool || "unknown"}`,
-              description: parsed.data?.iteration ? `Iteration ${parsed.data.iteration}` : undefined,
+              title: "Plan updated",
+              description: String(payload.summary || payload.node || "Planning next step"),
             });
           }
 
-          if (parsed.event === "tool_completed") {
-            const result = parsed.data?.result || {};
+          if (parsed.event === "tool.started") {
             pushTimeline({
-              title: `Tool completed: ${parsed.data?.tool || "unknown"}`,
-              description: String((result as Record<string, unknown>).message || "ok"),
+              title: `Tool started: ${String(payload.tool || "unknown")}`,
+              description: String(payload.span_id || ""),
+            });
+          }
+
+          if (parsed.event === "tool.completed") {
+            const result = payload.output;
+            pushTimeline({
+              title: `Tool completed: ${String(payload.tool || "unknown")}`,
+              description:
+                typeof result === "object" && result && "message" in result
+                  ? String((result as Record<string, unknown>).message || "ok")
+                  : "ok",
               tone: "success",
-              raw: result,
+              raw: (result as Record<string, unknown>) || {},
             });
           }
 
-          if (parsed.event === "tool_failed") {
-            const result = parsed.data?.result || {};
+          if (parsed.event === "tool.failed") {
+            const result = payload.output;
             pushTimeline({
-              title: `Tool failed: ${parsed.data?.tool || "unknown"}`,
-              description: String((result as Record<string, unknown>).message || "failed"),
+              title: `Tool failed: ${String(payload.tool || "unknown")}`,
+              description:
+                typeof result === "object" && result && "message" in result
+                  ? String((result as Record<string, unknown>).message || "failed")
+                  : "failed",
               tone: "error",
-              raw: result,
+              raw: (result as Record<string, unknown>) || {},
             });
           }
 
-          if (parsed.event === "file_changes") {
-            latestSummary = String(parsed.data?.summary || latestSummary || "Applied code changes");
-            latestResultRevisionId = String(parsed.data?.result_revision_id || latestResultRevisionId || "");
-            const changedPaths = Array.isArray(parsed.data?.changed_paths)
-              ? parsed.data?.changed_paths?.join(", ")
-              : "";
+          if (parsed.event === "revision.created") {
+            const revisionId = String(payload.revision_id || "");
+            latestResultRevisionId = revisionId || latestResultRevisionId;
+            if (revisionId) {
+              setCurrentRevisionId(revisionId);
+            }
             pushTimeline({
-              title: "Files changed",
-              description: changedPaths || "Code updated",
-              raw: {
-                operations: parsed.data?.operations as BuilderPatchOp[] | undefined,
-                summary: parsed.data?.summary,
-                rationale: parsed.data?.rationale,
-              },
+              title: "Revision created",
+              description: revisionId
+                ? `Revision ${revisionId.slice(0, 8)} (${String(payload.file_count || 0)} files)`
+                : "Draft revision created",
+              tone: "success",
+              raw: payload,
             });
           }
 
-          if (parsed.event === "checkpoint_created") {
-            const revisionId = String(parsed.data?.revision_id || "");
+          if (parsed.event === "checkpoint.created") {
+            const revisionId = String(payload.revision_id || "");
+            const checkpointId = String(payload.checkpoint_id || "");
             if (revisionId) {
               setCurrentRevisionId(revisionId);
             }
             pushTimeline({
               title: "Checkpoint created",
-              description: `${parsed.data?.checkpoint_label || "Automatic checkpoint"}${revisionId ? ` (${revisionId.slice(0, 8)})` : ""}`,
+              description: checkpointId
+                ? `Checkpoint ${checkpointId.slice(0, 8)}${revisionId ? ` (rev ${revisionId.slice(0, 8)})` : ""}`
+                : "Checkpoint created",
               tone: "success",
-              raw: parsed.data,
+              raw: payload,
             });
           }
 
-          if (parsed.event === "error") {
+          if (parsed.event === "run.failed") {
+            const failureMessage = String(
+              parsed.diagnostics?.[0]?.message || payload.error || "Coding-agent run failed",
+            );
             pushTimeline({
               title: "Run error",
-              description: String(parsed.data?.message || "Builder run failed"),
+              description: failureMessage,
               tone: "error",
-              raw: parsed.data,
+              raw: payload,
             });
           }
 
@@ -764,15 +807,15 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       if (latestResultRevisionId) {
         setCurrentRevisionId(latestResultRevisionId);
       }
-      if (streamRequestId) {
+      if (streamRunId) {
         pushTimeline({
           title: "Run complete",
-          description: `Request ${streamRequestId.slice(0, 8)} finished`,
+          description: `Run ${streamRunId.slice(0, 8)} finished`,
           tone: "success",
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to run builder agent");
+      setError(err instanceof Error ? err.message : "Failed to run coding agent");
     } finally {
       setIsSending(false);
     }
@@ -785,16 +828,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     pushTimeline,
   ]);
 
-  const undoLastRun = useCallback(async () => {
-    if (!currentRevisionId) {
-      setError("No draft revision to undo");
-      return;
-    }
+  const restoreLatestCheckpoint = useCallback(async () => {
     setIsUndoing(true);
     setError(null);
     try {
-      const response = await publishedAppsService.undoLastBuilderRun(appId, {
-        base_revision_id: currentRevisionId,
+      const checkpoints = await publishedAppsService.listCodingAgentCheckpoints(appId, 1);
+      const latest = checkpoints[0];
+      if (!latest) {
+        throw new Error("No coding-agent checkpoints found");
+      }
+      const response = await publishedAppsService.restoreCodingAgentCheckpoint(appId, latest.checkpoint_id, {
+        run_id: latest.run_id || undefined,
       });
       const revision = response.revision;
       hydrateFromRevision(revision);
@@ -810,19 +854,19 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         };
       });
       pushTimeline({
-        title: "Undo completed",
-        description: `Restored from revision ${response.restored_from_revision_id.slice(0, 8)}.`,
+        title: "Checkpoint restored",
+        description: `Restored checkpoint ${response.checkpoint_id.slice(0, 8)} to revision ${revision.id.slice(0, 8)}.`,
         tone: "success",
       });
       if (activeTab === "preview") {
         await ensureDraftDevSession();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to undo last run");
+      setError(err instanceof Error ? err.message : "Failed to restore latest checkpoint");
     } finally {
       setIsUndoing(false);
     }
-  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, hydrateFromRevision, pushTimeline]);
+  }, [activeTab, appId, ensureDraftDevSession, hydrateFromRevision, pushTimeline]);
 
   const openApp = useCallback(async () => {
     setError(null);
@@ -1257,12 +1301,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
               <div className="flex items-center justify-between border-b border-border/60 px-3 py-3">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <Sparkles className="h-4 w-4" />
-                  ChatBuilder Agent
+                  Coding Agent
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button size="sm" variant="outline" onClick={undoLastRun} disabled={isUndoing || !currentRevisionId}>
+                  <Button size="sm" variant="outline" onClick={restoreLatestCheckpoint} disabled={isUndoing}>
                     {isUndoing ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-2 h-3.5 w-3.5" />}
-                    Undo Last Run
+                    Restore Last Checkpoint
                   </Button>
                   <Button
                     variant="ghost"
@@ -1326,7 +1370,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                       <Message from="assistant" className="max-w-full">
                         <MessageContent className="flex items-center gap-2 text-xs text-muted-foreground">
                           <Loader size={14} />
-                          <span>Running builder agent...</span>
+                          <span>Running coding agent...</span>
                         </MessageContent>
                       </Message>
                     ) : null}

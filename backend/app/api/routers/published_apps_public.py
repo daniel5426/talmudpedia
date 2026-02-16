@@ -2,6 +2,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
@@ -163,6 +164,13 @@ async def _get_published_ui_revision(db: AsyncSession, app: PublishedApp) -> Pub
     return revision
 
 
+def _is_probable_asset_path(path: str) -> bool:
+    normalized = (path or "").strip().strip("/")
+    if not normalized:
+        return False
+    return bool(PurePosixPath(normalized).suffix)
+
+
 async def _get_preview_revision_for_principal(
     *,
     db: AsyncSession,
@@ -291,6 +299,69 @@ async def get_published_runtime(
         published_url=published_url,
         asset_base_url=published_url,
         api_base_path="/api/py",
+    )
+
+
+@router.get("/{app_slug}/assets/{asset_path:path}")
+async def get_published_asset(
+    app_slug: str,
+    asset_path: str,
+    db: AsyncSession = Depends(get_db),
+):
+    app = await _assert_published(db, app_slug)
+    revision = await _get_published_ui_revision(db, app)
+
+    dist_prefix = (revision.dist_storage_prefix or "").strip()
+    if not dist_prefix:
+        raise HTTPException(status_code=404, detail="Published assets are unavailable for this app")
+
+    entry_html = "index.html"
+    manifest = revision.dist_manifest or {}
+    if isinstance(manifest, dict):
+        manifest_entry = manifest.get("entry_html")
+        if isinstance(manifest_entry, str) and manifest_entry.strip():
+            entry_html = manifest_entry.lstrip("/")
+
+    normalized_asset_path = (asset_path or "").strip().lstrip("/") or "index.html"
+    if normalized_asset_path == "index.html":
+        normalized_asset_path = entry_html
+
+    try:
+        storage = PublishedAppBundleStorage.from_env()
+        payload, content_type = storage.read_asset_bytes(
+            dist_storage_prefix=dist_prefix,
+            asset_path=normalized_asset_path,
+        )
+    except PublishedAppBundleAssetNotFound:
+        # Client-side app routes should resolve to index.html when the requested
+        # path is not a concrete static asset.
+        if _is_probable_asset_path(normalized_asset_path):
+            raise HTTPException(status_code=404, detail="Published asset not found")
+        try:
+            storage = PublishedAppBundleStorage.from_env()
+            payload, content_type = storage.read_asset_bytes(
+                dist_storage_prefix=dist_prefix,
+                asset_path=entry_html,
+            )
+        except PublishedAppBundleAssetNotFound:
+            raise HTTPException(status_code=404, detail="Published runtime entry is missing")
+        except PublishedAppBundleStorageNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except PublishedAppBundleStorageError as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to load published runtime entry: {exc}")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    except PublishedAppBundleStorageNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except PublishedAppBundleStorageError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load published asset: {exc}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=60"},
     )
 
 

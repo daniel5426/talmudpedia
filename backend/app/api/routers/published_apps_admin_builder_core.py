@@ -67,29 +67,8 @@ def _env_flag(name: str, default: bool = False) -> bool:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
-
-def _builder_model_patch_generation_enabled() -> bool:
-    return _env_flag("BUILDER_MODEL_PATCH_GENERATION_ENABLED", False)
-
-
-def _builder_agentic_loop_enabled() -> bool:
-    return _env_flag("BUILDER_AGENTIC_LOOP_ENABLED", False)
-
-
 def _builder_targeted_tests_enabled() -> bool:
     return _env_flag("APPS_BUILDER_TARGETED_TESTS_ENABLED", False)
-
-
-def _builder_chat_sandbox_tools_enabled() -> bool:
-    return _env_flag("APPS_BUILDER_CHAT_SANDBOX_TOOLS_ENABLED", False)
-
-
-def _builder_chat_commands_enabled() -> bool:
-    return _env_flag("APPS_BUILDER_CHAT_COMMANDS_ENABLED", False)
-
-
-def _builder_chat_worker_precheck_enabled() -> bool:
-    return _env_flag("APPS_BUILDER_CHAT_WORKER_PRECHECK_ENABLED", False)
 
 
 def _builder_chat_command_allowlist() -> List[List[str]]:
@@ -473,7 +452,7 @@ def _truncate_for_context(content: str, *, max_bytes: int = BUILDER_CONTEXT_MAX_
 
 
 def _collect_local_imports(path: str, files: Dict[str, str]) -> List[str]:
-    from .published_apps_admin_builder_patch import _resolve_local_project_import
+    from .published_apps_admin_files import _resolve_local_project_import
 
     source = files.get(path, "")
     neighbors: List[str] = []
@@ -549,7 +528,7 @@ def _select_builder_context_paths(
 
 
 def _extract_prompt_focus_paths(files: Dict[str, str], user_prompt: str, *, max_paths: int = 6) -> List[str]:
-    from .published_apps_admin_builder_patch import _normalize_builder_path
+    from .published_apps_admin_files import _normalize_builder_path
 
     focus_paths: List[str] = []
     candidates: List[str] = []

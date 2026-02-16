@@ -31,7 +31,7 @@ from .published_apps_admin_builder_core import (
     _summarize_dist_manifest,
     _truncate_for_context,
 )
-from .published_apps_admin_builder_patch import _apply_patch_operations, _validate_builder_project_or_raise
+from .published_apps_admin_files import _apply_patch_operations, _validate_builder_project_or_raise
 from .published_apps_admin_shared import (
     BUILDER_AGENT_MAX_SEARCH_RESULTS,
     BUILDER_CONTEXT_MAX_FILES,

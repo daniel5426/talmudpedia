@@ -10,8 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_principal, require_scopes
 from app.core.security import create_published_app_preview_token
 from app.db.postgres.models.published_apps import (
-    BuilderCheckpointType,
-    BuilderConversationTurnStatus,
     PublishedAppBuilderConversationTurn,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
@@ -20,10 +18,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionKind,
 )
 from app.db.postgres.session import get_db
-from app.services.published_app_draft_dev_runtime import (
-    PublishedAppDraftDevRuntimeDisabled,
-    PublishedAppDraftDevRuntimeService,
-)
+from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 
 from .published_apps_admin_access import (
@@ -37,31 +32,20 @@ from .published_apps_admin_access import (
 )
 from .published_apps_admin_builder_core import (
     _builder_conversation_to_response,
-    _builder_chat_sandbox_tools_enabled,
-    _builder_checkpoint_to_response,
     _mark_revision_build_enqueue_failed,
     _next_build_seq,
-    _persist_builder_conversation_turn,
     _enqueue_revision_build,
-    _new_builder_request_id,
 )
-from .published_apps_admin_builder_patch import (
+from .published_apps_admin_files import (
     _apply_patch_operations,
     _assert_builder_path_allowed,
     _coerce_files_payload,
     _normalize_builder_path,
     _validate_builder_project_or_raise,
 )
-from .published_apps_admin_builder_tools import _create_draft_revision_from_files
 from .published_apps_admin_shared import (
-    BUILDER_CHECKPOINT_LIST_LIMIT,
-    BuilderCheckpointResponse,
     BuilderConversationTurnResponse,
-    BuilderRevertFileRequest,
-    BuilderRevertFileResponse,
     BuilderStateResponse,
-    BuilderUndoRequest,
-    BuilderUndoResponse,
     BuilderValidationResponse,
     CreateBuilderRevisionRequest,
     DraftDevSessionResponse,
@@ -553,212 +537,3 @@ async def list_builder_conversations(
         .limit(limit)
     )
     return [_builder_conversation_to_response(turn) for turn in result.scalars().all()]
-
-
-@router.get("/{app_id}/builder/checkpoints", response_model=List[BuilderCheckpointResponse])
-async def list_builder_checkpoints(
-    app_id: UUID,
-    request: Request,
-    limit: int = Query(default=25, ge=1, le=100),
-    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
-    principal: Dict[str, Any] = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    fetch_limit = min(max(1, limit), BUILDER_CHECKPOINT_LIST_LIMIT)
-    result = await db.execute(
-        select(PublishedAppBuilderConversationTurn)
-        .where(PublishedAppBuilderConversationTurn.published_app_id == app.id)
-        .where(PublishedAppBuilderConversationTurn.status == BuilderConversationTurnStatus.succeeded)
-        .where(PublishedAppBuilderConversationTurn.result_revision_id.is_not(None))
-        .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
-        .limit(fetch_limit)
-    )
-    turns = result.scalars().all()
-    checkpoints: List[BuilderCheckpointResponse] = []
-    for turn in turns:
-        if turn.result_revision_id:
-            checkpoints.append(_builder_checkpoint_to_response(turn))
-    return checkpoints
-
-
-@router.post("/{app_id}/builder/undo", response_model=BuilderUndoResponse)
-async def undo_builder_last_run(
-    app_id: UUID,
-    payload: BuilderUndoRequest,
-    request: Request,
-    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
-    principal: Dict[str, Any] = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    actor = ctx.get("user")
-    actor_id = actor.id if actor else None
-    current = await _ensure_current_draft_revision(db, app, actor_id)
-    if payload.base_revision_id and str(payload.base_revision_id) != str(current.id):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "REVISION_CONFLICT",
-                "latest_revision_id": str(current.id),
-                "latest_updated_at": current.created_at.isoformat(),
-                "message": "Draft revision is stale",
-            },
-        )
-
-    turn_result = await db.execute(
-        select(PublishedAppBuilderConversationTurn)
-        .where(PublishedAppBuilderConversationTurn.published_app_id == app.id)
-        .where(PublishedAppBuilderConversationTurn.status == BuilderConversationTurnStatus.succeeded)
-        .where(PublishedAppBuilderConversationTurn.checkpoint_type == BuilderCheckpointType.auto_run)
-        .where(PublishedAppBuilderConversationTurn.result_revision_id.is_not(None))
-        .order_by(PublishedAppBuilderConversationTurn.created_at.desc())
-        .limit(1)
-    )
-    checkpoint_turn = turn_result.scalar_one_or_none()
-    if checkpoint_turn is None or checkpoint_turn.result_revision_id is None:
-        raise HTTPException(status_code=404, detail="No automatic checkpoint found to undo")
-
-    checkpoint_revision = await _get_revision_for_app(db, app.id, checkpoint_turn.result_revision_id)
-    if checkpoint_revision.source_revision_id is None:
-        raise HTTPException(status_code=409, detail="Checkpoint has no source revision to restore")
-    restore_revision = await _get_revision_for_app(db, app.id, checkpoint_revision.source_revision_id)
-
-    restored_files = dict(restore_revision.files or {})
-    restored_entry = restore_revision.entry_file
-    new_revision = await _create_draft_revision_from_files(
-        db,
-        app=app,
-        current=current,
-        actor_id=actor_id,
-        files=restored_files,
-        entry_file=restored_entry,
-    )
-
-    if actor and _builder_chat_sandbox_tools_enabled():
-        runtime_service = PublishedAppDraftDevRuntimeService(db)
-        try:
-            await runtime_service.sync_session(
-                app=app,
-                revision=new_revision,
-                user_id=actor.id,
-                files=restored_files,
-                entry_file=restored_entry,
-            )
-        except PublishedAppDraftDevRuntimeDisabled:
-            pass
-
-    request_id = _new_builder_request_id()
-    await _persist_builder_conversation_turn(
-        db,
-        app_id=app.id,
-        revision_id=current.id,
-        result_revision_id=new_revision.id,
-        actor_id=actor_id,
-        request_id=request_id,
-        user_prompt="Undo last run",
-        status=BuilderConversationTurnStatus.succeeded,
-        trace_events=[],
-        checkpoint_type=BuilderCheckpointType.undo,
-        checkpoint_label=f"Undo to {restore_revision.id}",
-    )
-    await db.commit()
-    await db.refresh(new_revision)
-    return BuilderUndoResponse(
-        revision=_revision_to_response(new_revision),
-        restored_from_revision_id=str(restore_revision.id),
-        checkpoint_turn_id=str(checkpoint_turn.id),
-        request_id=request_id,
-    )
-
-
-@router.post("/{app_id}/builder/revert-file", response_model=BuilderRevertFileResponse)
-async def revert_builder_file(
-    app_id: UUID,
-    payload: BuilderRevertFileRequest,
-    request: Request,
-    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
-    principal: Dict[str, Any] = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    actor = ctx.get("user")
-    actor_id = actor.id if actor else None
-    current = await _ensure_current_draft_revision(db, app, actor_id)
-    if payload.base_revision_id and str(payload.base_revision_id) != str(current.id):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "REVISION_CONFLICT",
-                "latest_revision_id": str(current.id),
-                "latest_updated_at": current.created_at.isoformat(),
-                "message": "Draft revision is stale",
-            },
-        )
-
-    normalized_path = _normalize_builder_path(payload.path)
-    _assert_builder_path_allowed(normalized_path, field="path")
-    from_revision = await _get_revision_for_app(db, app.id, payload.from_revision_id)
-
-    next_files = dict(current.files or {})
-    if normalized_path in (from_revision.files or {}):
-        next_files[normalized_path] = str((from_revision.files or {})[normalized_path])
-    else:
-        next_files.pop(normalized_path, None)
-
-    next_entry = current.entry_file
-    if normalized_path == current.entry_file and normalized_path not in next_files:
-        raise HTTPException(status_code=409, detail="Cannot remove the current entry file")
-
-    new_revision = await _create_draft_revision_from_files(
-        db,
-        app=app,
-        current=current,
-        actor_id=actor_id,
-        files=next_files,
-        entry_file=next_entry,
-    )
-
-    if actor and _builder_chat_sandbox_tools_enabled():
-        runtime_service = PublishedAppDraftDevRuntimeService(db)
-        try:
-            await runtime_service.sync_session(
-                app=app,
-                revision=new_revision,
-                user_id=actor.id,
-                files=next_files,
-                entry_file=next_entry,
-            )
-        except PublishedAppDraftDevRuntimeDisabled:
-            pass
-
-    request_id = _new_builder_request_id()
-    await _persist_builder_conversation_turn(
-        db,
-        app_id=app.id,
-        revision_id=current.id,
-        result_revision_id=new_revision.id,
-        actor_id=actor_id,
-        request_id=request_id,
-        user_prompt=f"Revert file: {normalized_path}",
-        status=BuilderConversationTurnStatus.succeeded,
-        trace_events=[],
-        checkpoint_type=BuilderCheckpointType.file_revert,
-        checkpoint_label=f"Revert {normalized_path}",
-    )
-    await db.commit()
-    await db.refresh(new_revision)
-    return BuilderRevertFileResponse(
-        revision=_revision_to_response(new_revision),
-        reverted_path=normalized_path,
-        from_revision_id=str(from_revision.id),
-        request_id=request_id,
-    )

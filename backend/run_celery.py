@@ -11,4 +11,5 @@ load_dotenv(Path(__file__).parent / ".env")
 from app.workers.celery_app import celery_app
 
 if __name__ == "__main__":
-    celery_app.start()
+    # Forward only user-provided Celery args; avoid passing script name as a command.
+    celery_app.start(argv=sys.argv[1:])

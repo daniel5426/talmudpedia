@@ -49,6 +49,7 @@ export default function PipelinesPage() {
   const [isRunDialogOpen, setIsRunDialogOpen] = useState(false)
   const [runningJobs, setRunningJobs] = useState<Record<string, { jobId: string; status: string; progress?: number }>>({})
   const [runningCompileId, setRunningCompileId] = useState<string | null>(null)
+  const [duplicatingPipelineId, setDuplicatingPipelineId] = useState<string | null>(null)
 
   const [isCreating, setIsCreating] = useState(false)
 
@@ -113,6 +114,46 @@ export default function PipelinesPage() {
       alert("Failed to compile pipeline")
     } finally {
       setRunningCompileId(null)
+    }
+  }
+
+  const generateDuplicatePipelineName = (sourceName: string) => {
+    const existingNames = new Set(pipelines.map((p) => p.name.toLowerCase()))
+    const baseName = `${sourceName} Copy`
+    if (!existingNames.has(baseName.toLowerCase())) {
+      return baseName
+    }
+    let suffix = 2
+    while (existingNames.has(`${baseName} ${suffix}`.toLowerCase())) {
+      suffix += 1
+    }
+    return `${baseName} ${suffix}`
+  }
+
+  const handleDuplicatePipeline = async (pipeline: VisualPipeline) => {
+    if (!currentTenant?.slug) return
+    setDuplicatingPipelineId(pipeline.id)
+    try {
+      const fullPipeline = await ragAdminService.getVisualPipeline(pipeline.id, currentTenant.slug)
+      const duplicateName = generateDuplicatePipelineName(fullPipeline.name)
+      const result = await ragAdminService.createVisualPipeline(
+        {
+          name: duplicateName,
+          description: fullPipeline.description,
+          pipeline_type: fullPipeline.pipeline_type,
+          nodes: structuredClone(fullPipeline.nodes || []),
+          edges: structuredClone(fullPipeline.edges || []),
+          org_unit_id: fullPipeline.org_unit_id,
+        },
+        currentTenant.slug
+      )
+      fetchData()
+      router.push(`/admin/pipelines/${result.id}`)
+    } catch (error) {
+      console.error("Failed to duplicate pipeline", error)
+      alert("Failed to duplicate pipeline")
+    } finally {
+      setDuplicatingPipelineId(null)
     }
   }
 
@@ -288,8 +329,10 @@ export default function PipelinesPage() {
                 onViewHistory={handleViewHistory}
                 canDelete={canDelete("pipeline")}
                 onRun={handleRunPipeline}
+                onDuplicate={handleDuplicatePipeline}
                 runningJobs={runningJobs}
                 runningCompileId={runningCompileId}
+                duplicatingPipelineId={duplicatingPipelineId}
               />
             </Card>
           </div>

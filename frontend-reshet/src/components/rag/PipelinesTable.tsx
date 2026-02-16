@@ -15,13 +15,21 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   Edit,
-  ExternalLink,
   History,
   Trash2,
   CheckCircle2,
   Play,
   Loader2,
+  MoreHorizontal,
+  Copy,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
@@ -37,10 +45,12 @@ interface PipelinesTableProps {
   onDelete?: (id: string) => void
   onViewHistory?: (pipeline: VisualPipeline) => void
   onRun?: (pipeline: VisualPipeline) => void
+  onDuplicate?: (pipeline: VisualPipeline) => void
   canDelete?: boolean
   showDescription?: boolean
   runningJobs?: Record<string, RunningJobStatus>
   runningCompileId?: string | null
+  duplicatingPipelineId?: string | null
 }
 
 export function PipelinesTable({
@@ -48,10 +58,12 @@ export function PipelinesTable({
   onDelete,
   onViewHistory,
   onRun,
+  onDuplicate,
   canDelete = true,
   showDescription = true,
   runningJobs,
   runningCompileId,
+  duplicatingPipelineId,
 }: PipelinesTableProps) {
   const { direction } = useDirection()
   const isRTL = direction === "rtl"
@@ -81,6 +93,7 @@ export function PipelinesTable({
         {pipelines.map((pipeline) => {
           const runningJob = runningJobs?.[pipeline.id]
           const isCompiling = runningCompileId === pipeline.id
+          const isDuplicating = duplicatingPipelineId === pipeline.id
           const pipelineHref = runningJob?.jobId
             ? `/admin/pipelines/${pipeline.id}?jobId=${runningJob.jobId}`
             : `/admin/pipelines/${pipeline.id}`
@@ -144,43 +157,53 @@ export function PipelinesTable({
                 {new Date(pipeline.updated_at).toLocaleDateString()}
               </TableCell>
               <TableCell className={isRTL ? "text-left" : "text-right"}>
-                <div className={cn("flex gap-1", isRTL ? "justify-start" : "justify-end")}>
-                  {onRun && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title={isCompiling ? "Preparing Run" : "Run Pipeline"}
-                      onClick={() => onRun(pipeline)}
-                      disabled={isCompiling}
-                    >
-                      {isCompiling ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Play className="h-4 w-4" />
+                <div className={cn("flex", isRTL ? "justify-start" : "justify-end")}>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" title="Pipeline Actions">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align={isRTL ? "start" : "end"} className="w-44">
+                      {onRun && (
+                        <DropdownMenuItem
+                          onClick={() => onRun(pipeline)}
+                          disabled={isCompiling}
+                        >
+                          {isCompiling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                          <span>{isCompiling ? "Preparing Run..." : "Run Pipeline"}</span>
+                        </DropdownMenuItem>
                       )}
-                    </Button>
-                  )}
-                  {onViewHistory && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="View Execution History"
-                      onClick={() => onViewHistory(pipeline)}
-                    >
-                      <History className="h-4 w-4" />
-                    </Button>
-                  )}
-                  {onDelete && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => onDelete(pipeline.id)}
-                      disabled={!canDelete}
-                      title="Delete Pipeline"
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  )}
+                      {onViewHistory && (
+                        <DropdownMenuItem onClick={() => onViewHistory(pipeline)}>
+                          <History className="h-4 w-4" />
+                          <span>View History</span>
+                        </DropdownMenuItem>
+                      )}
+                      {onDuplicate && (
+                        <DropdownMenuItem
+                          onClick={() => onDuplicate(pipeline)}
+                          disabled={isDuplicating}
+                        >
+                          {isDuplicating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                          <span>{isDuplicating ? "Duplicating..." : "Duplicate"}</span>
+                        </DropdownMenuItem>
+                      )}
+                      {onDelete && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => onDelete(pipeline.id)}
+                            disabled={!canDelete}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span>Delete Pipeline</span>
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </TableCell>
             </TableRow>

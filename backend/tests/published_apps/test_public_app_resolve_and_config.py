@@ -4,7 +4,13 @@ from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 from ._helpers import admin_headers, seed_admin_tenant_and_agent, seed_published_app, start_publish_and_wait
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision, PublishedAppVisibility
+from app.db.postgres.models.published_apps import (
+    PublishedApp,
+    PublishedAppRevision,
+    PublishedAppRevisionKind,
+    PublishedAppVisibility,
+)
+from app.services.published_app_bundle_storage import PublishedAppBundleAssetNotFound
 
 
 @pytest.mark.asyncio
@@ -286,3 +292,95 @@ async def test_preview_asset_html_rewrites_relative_assets_with_preview_token(cl
     text = resp.text
     assert f"./assets/main.css?preview_token={preview_token}" in text
     assert f"./assets/main.js?preview_token={preview_token}" in text
+
+
+@pytest.mark.asyncio
+async def test_published_asset_proxy_streams_dist_asset(client, db_session, monkeypatch):
+    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        user.id,
+        slug="published-asset-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    revision = PublishedAppRevision(
+        published_app_id=app.id,
+        kind=PublishedAppRevisionKind.published,
+        template_key="chat-classic",
+        template_runtime="vite_static",
+        files={"src/main.tsx": "export default {};"},
+        dist_storage_prefix="apps/t/a/revisions/published/dist",
+        dist_manifest={"entry_html": "index.html"},
+        created_by=user.id,
+    )
+    db_session.add(revision)
+    await db_session.flush()
+    app.current_published_revision_id = revision.id
+    await db_session.commit()
+
+    class _Storage:
+        def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str):
+            assert dist_storage_prefix == "apps/t/a/revisions/published/dist"
+            assert asset_path == "assets/main.js"
+            return b"console.log('published-ok');", "application/javascript"
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_public.PublishedAppBundleStorage.from_env",
+        staticmethod(lambda: _Storage()),
+    )
+
+    resp = await client.get(f"/public/apps/{app.slug}/assets/assets/main.js")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/javascript")
+    assert "console.log('published-ok');" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_published_asset_proxy_falls_back_to_index_for_spa_routes(client, db_session, monkeypatch):
+    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        user.id,
+        slug="published-spa-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    revision = PublishedAppRevision(
+        published_app_id=app.id,
+        kind=PublishedAppRevisionKind.published,
+        template_key="chat-classic",
+        template_runtime="vite_static",
+        files={"src/main.tsx": "export default {};"},
+        dist_storage_prefix="apps/t/a/revisions/published-spa/dist",
+        dist_manifest={"entry_html": "index.html"},
+        created_by=user.id,
+    )
+    db_session.add(revision)
+    await db_session.flush()
+    app.current_published_revision_id = revision.id
+    await db_session.commit()
+
+    class _Storage:
+        def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str):
+            assert dist_storage_prefix == "apps/t/a/revisions/published-spa/dist"
+            if asset_path == "nested/client-route":
+                raise PublishedAppBundleAssetNotFound("missing")
+            assert asset_path == "index.html"
+            return b"<html><body>Published SPA</body></html>", "text/html"
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_public.PublishedAppBundleStorage.from_env",
+        staticmethod(lambda: _Storage()),
+    )
+
+    resp = await client.get(f"/public/apps/{app.slug}/assets/nested/client-route")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "Published SPA" in resp.text

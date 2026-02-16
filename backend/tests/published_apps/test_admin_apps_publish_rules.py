@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy import select
 from uuid import UUID
 
+from app.api.routers.published_apps_admin_shared import _build_published_url
 from app.db.postgres.models.agents import AgentStatus
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision, PublishedAppRevisionBuildStatus
 from ._helpers import admin_headers, seed_admin_tenant_and_agent, start_publish_and_wait
@@ -58,11 +59,12 @@ async def test_publish_unpublish_and_runtime_preview(client, db_session):
     assert app_resp.status_code == 200
     app_payload = app_resp.json()
     assert app_payload["status"] == "published"
-    assert app_payload["published_url"] == "https://runtime-app.apps.localhost"
+    expected_url = _build_published_url("runtime-app")
+    assert app_payload["published_url"] == expected_url
 
     preview_resp = await client.get(f"/admin/apps/{app_id}/runtime-preview", headers=headers)
     assert preview_resp.status_code == 200
-    assert preview_resp.json()["runtime_url"] == "https://runtime-app.apps.localhost"
+    assert preview_resp.json()["runtime_url"] == expected_url
 
     unpublish_resp = await client.post(f"/admin/apps/{app_id}/unpublish", headers=headers)
     assert unpublish_resp.status_code == 200

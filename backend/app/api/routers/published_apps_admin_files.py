@@ -1,8 +1,6 @@
 import json
-import re
-from datetime import datetime, timezone
 from pathlib import PurePosixPath
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
 
@@ -21,6 +19,7 @@ from .published_apps_admin_shared import (
     BuilderPatchOp,
     IMPORT_RE,
 )
+
 
 def _normalize_builder_path(path: str) -> str:
     raw = (path or "").replace("\\", "/").strip()
@@ -133,7 +132,8 @@ def _validate_builder_project_or_raise(files: Dict[str, str], entry_file: str) -
         )
 
     code_files = [
-        path for path in files.keys()
+        path
+        for path in files.keys()
         if PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}
     ]
     for path in code_files:
@@ -225,90 +225,3 @@ def _apply_patch_operations(
         raise _builder_policy_error("entry_file must exist in files", field="entry_file")
     _validate_builder_project_or_raise(next_files, next_entry)
     return next_files, next_entry
-
-
-def _sanitize_prompt_text(text: str, limit: int = 120) -> str:
-    collapsed = " ".join(text.strip().split())
-    if not collapsed:
-        return ""
-    return collapsed[:limit]
-
-
-def _build_builder_patch_from_prompt(
-    user_prompt: str,
-    files: Dict[str, str],
-) -> tuple[List[Dict[str, str]], str]:
-    prompt = _sanitize_prompt_text(user_prompt, 140)
-    prompt_lower = prompt.lower()
-    patch_ops: List[Dict[str, str]] = []
-    applied: List[str] = []
-
-    app_source = files.get("src/App.tsx")
-    if app_source is not None:
-        updated_app = app_source
-
-        if "Start a conversation." in updated_app:
-            next_copy = f"Start a conversation. ({prompt})"
-            next_app = updated_app.replace("Start a conversation.", next_copy, 1)
-            if next_app != updated_app:
-                updated_app = next_app
-                applied.append("updated empty-state copy")
-
-        if ("title" in prompt_lower or "rename" in prompt_lower or "name" in prompt_lower) and "const title = useMemo(() =>" in updated_app:
-            title_text = prompt[:48].replace("\"", "'")
-            next_app = re.sub(
-                r'const title = useMemo\(\(\) => ".*?", \[\]\);',
-                f'const title = useMemo(() => "{title_text}", []);',
-                updated_app,
-                count=1,
-            )
-            if next_app != updated_app:
-                updated_app = next_app
-                applied.append("updated app title")
-
-        if "bold" in prompt_lower and "fontWeight: 700" not in updated_app:
-            next_app = updated_app.replace(
-                "fontSize: 16, fontFamily: theme.fontDisplay",
-                "fontSize: 16, fontFamily: theme.fontDisplay, fontWeight: 700",
-                1,
-            )
-            if next_app != updated_app:
-                updated_app = next_app
-                applied.append("made header title bold")
-
-        if updated_app != app_source:
-            patch_ops.append({"op": "upsert_file", "path": "src/App.tsx", "content": updated_app})
-
-    theme_source = files.get("src/theme.ts")
-    if theme_source is not None:
-        color_map = {
-            "blue": "#2563eb",
-            "green": "#16a34a",
-            "red": "#dc2626",
-            "orange": "#ea580c",
-            "teal": "#0f766e",
-            "purple": "#7c3aed",
-        }
-        selected_color = next((hex_value for name, hex_value in color_map.items() if name in prompt_lower), None)
-        if selected_color:
-            next_theme = re.sub(
-                r'accent:\s*".*?"',
-                f'accent: "{selected_color}"',
-                theme_source,
-                count=1,
-            )
-            if next_theme != theme_source:
-                patch_ops.append({"op": "upsert_file", "path": "src/theme.ts", "content": next_theme})
-                applied.append(f"set accent color to {selected_color}")
-
-    if not patch_ops and app_source is not None:
-        timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        fallback_text = f"Start a conversation. ({prompt} · {timestamp})"
-        next_app = app_source.replace("Start a conversation.", fallback_text, 1)
-        if next_app == app_source:
-            next_app = app_source.rstrip() + f"\n// Builder note: {prompt} ({timestamp})\n"
-        patch_ops.append({"op": "upsert_file", "path": "src/App.tsx", "content": next_app})
-        applied.append("applied fallback draft edit")
-
-    summary = ", ".join(dict.fromkeys(applied)) if applied else "prepared a draft update"
-    return patch_ops, summary

@@ -40,7 +40,7 @@ jest.mock("@/services", () => ({
     listDomains: jest.fn(),
     createDomain: jest.fn(),
     deleteDomain: jest.fn(),
-    getBuilderCheckpoints: jest.fn(),
+    listCodingAgentCheckpoints: jest.fn(),
     createRevision: jest.fn(),
     createRevisionPreviewToken: jest.fn(),
     publish: jest.fn(),
@@ -49,9 +49,9 @@ jest.mock("@/services", () => ({
     syncDraftDevSession: jest.fn(),
     heartbeatDraftDevSession: jest.fn(),
     resetTemplate: jest.fn(),
-    streamBuilderChat: jest.fn(),
-    undoLastBuilderRun: jest.fn(),
-    revertBuilderFile: jest.fn(),
+    createCodingAgentRun: jest.fn(),
+    streamCodingAgentRun: jest.fn(),
+    restoreCodingAgentCheckpoint: jest.fn(),
   },
   publishedRuntimeService: {
     getPreviewRuntime: jest.fn(),
@@ -263,15 +263,12 @@ describe("AppsBuilderWorkspace", () => {
       updated_at: new Date().toISOString(),
     });
     (publishedAppsService.deleteDomain as jest.Mock).mockResolvedValue({ status: "deleted", id: "domain-1" });
-    (publishedAppsService.getBuilderCheckpoints as jest.Mock).mockResolvedValue([
+    (publishedAppsService.listCodingAgentCheckpoints as jest.Mock).mockResolvedValue([
       {
-        turn_id: "turn-1",
-        request_id: "req-1",
+        checkpoint_id: "rev-2",
+        run_id: "run-1",
+        app_id: "app-1",
         revision_id: "rev-2",
-        source_revision_id: "rev-1",
-        checkpoint_type: "auto_run",
-        checkpoint_label: "AI run req-1",
-        assistant_summary: "applied update",
         created_at: new Date().toISOString(),
       },
     ]);
@@ -357,15 +354,28 @@ describe("AppsBuilderWorkspace", () => {
       source_revision_id: "rev-1",
       created_at: new Date().toISOString(),
     });
-    (publishedAppsService.streamBuilderChat as jest.Mock).mockResolvedValue({
+    (publishedAppsService.createCodingAgentRun as jest.Mock).mockResolvedValue({
+      run_id: "run-1",
+      status: "queued",
+      surface: "published_app_coding_agent",
+      published_app_id: "app-1",
+      base_revision_id: "rev-1",
+      result_revision_id: null,
+      checkpoint_revision_id: null,
+      error: null,
+      created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
+    });
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValue({
       body: {
         getReader: () => {
           const chunks = [
-            'data: {"event":"status","stage":"start","request_id":"req-1","data":{"content":"Builder request accepted"}}\n\n',
-            'data: {"event":"token","stage":"assistant_response","request_id":"req-1","data":{"content":"Applying patch"}}\n\n',
-            'data: {"event":"file_changes","stage":"patch_ready","request_id":"req-1","data":{"base_revision_id":"rev-1","result_revision_id":"rev-2","summary":"applied update","changed_paths":["src/App.tsx"],"operations":[{"op":"upsert_file","path":"src/App.tsx","content":"export function App() { return <div>From Patch</div>; }"}]}}\n\n',
-            'data: {"event":"checkpoint_created","stage":"checkpoint","request_id":"req-1","data":{"revision_id":"rev-2","source_revision_id":"rev-1","checkpoint_type":"auto_run","checkpoint_label":"AI run req-1"}}\n\n',
-            'data: {"event":"done","type":"done","stage":"complete","request_id":"req-1"}\n\n',
+            'data: {"event":"run.accepted","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"run","payload":{"status":"queued"},"diagnostics":[]}\n\n',
+            'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"assistant","payload":{"content":"Applying patch"},"diagnostics":[]}\n\n',
+            'data: {"event":"revision.created","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:02Z","stage":"revision","payload":{"revision_id":"rev-2","file_count":4},"diagnostics":[]}\n\n',
+            'data: {"event":"checkpoint.created","run_id":"run-1","app_id":"app-1","seq":4,"ts":"2026-02-16T19:00:03Z","stage":"checkpoint","payload":{"checkpoint_id":"rev-2","revision_id":"rev-2"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":5,"ts":"2026-02-16T19:00:04Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
           ];
           let cursor = 0;
           return {
@@ -377,18 +387,14 @@ describe("AppsBuilderWorkspace", () => {
           };
         },
       },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
     });
-    (publishedAppsService.undoLastBuilderRun as jest.Mock).mockResolvedValue({
+    (publishedAppsService.restoreCodingAgentCheckpoint as jest.Mock).mockResolvedValue({
+      checkpoint_id: "rev-2",
       revision: makeState().current_draft_revision,
-      restored_from_revision_id: "rev-1",
-      checkpoint_turn_id: "turn-1",
-      request_id: "undo-1",
-    });
-    (publishedAppsService.revertBuilderFile as jest.Mock).mockResolvedValue({
-      revision: makeState().current_draft_revision,
-      reverted_path: "src/App.tsx",
-      from_revision_id: "rev-1",
-      request_id: "revert-1",
+      run_id: "run-1",
     });
     (publishedRuntimeService.getPreviewRuntime as jest.Mock).mockResolvedValue({
       app_id: "app-1",
@@ -669,28 +675,31 @@ describe("AppsBuilderWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(publishedAppsService.streamBuilderChat).toHaveBeenCalledWith(
+      expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledWith(
         "app-1",
         expect.objectContaining({ input: "Make it bold", base_revision_id: "rev-1" }),
       );
+      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/Files changed/i)).toBeInTheDocument();
+      expect(screen.getByText(/Revision created/i)).toBeInTheDocument();
       expect(screen.getByText(/Checkpoint created/i)).toBeInTheDocument();
     });
   });
 
-  it("calls undo endpoint from quick action", async () => {
+  it("restores the latest coding-agent checkpoint from quick action", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: /Undo Last Run/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Restore Last Checkpoint/i }));
 
     await waitFor(() => {
-      expect(publishedAppsService.undoLastBuilderRun).toHaveBeenCalledWith(
+      expect(publishedAppsService.listCodingAgentCheckpoints).toHaveBeenCalledWith("app-1", 1);
+      expect(publishedAppsService.restoreCodingAgentCheckpoint).toHaveBeenCalledWith(
         "app-1",
-        expect.objectContaining({ base_revision_id: "rev-1" }),
+        "rev-2",
+        { run_id: "run-1" },
       );
     });
   });

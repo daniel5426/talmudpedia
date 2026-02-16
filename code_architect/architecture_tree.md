@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-02-15
+Last Updated: 2026-02-16
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -55,6 +55,7 @@ backend/app/agent/graph/node_factory.py
 
 backend/app/agent/execution/
 backend/app/agent/execution/service.py
+backend/app/agent/execution/durable_checkpointer.py
 backend/app/agent/execution/adapter.py
 backend/app/agent/execution/field_resolver.py
 backend/app/agent/execution/emitter.py
@@ -111,6 +112,9 @@ backend/app/services/published_app_bundle_storage.py
 backend/app/services/published_app_draft_dev_runtime.py
 backend/app/services/published_app_draft_dev_local_runtime.py
 backend/app/services/published_app_draft_dev_runtime_client.py
+backend/app/services/published_app_coding_agent_tools.py
+backend/app/services/published_app_coding_agent_profile.py
+backend/app/services/published_app_coding_agent_runtime.py
 backend/app/services/published_app_templates.py
 backend/app/services/published_app_auth_templates.py
 backend/app/services/apps_builder_dependency_policy.py
