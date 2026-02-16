@@ -125,6 +125,32 @@ async def get_builder_state(
     )
 
 
+@router.post("/{app_id}/builder/revisions/{revision_id}/preview-token")
+async def create_revision_preview_token(
+    app_id: UUID,
+    revision_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    revision = await _get_revision_for_app(db, app.id, revision_id)
+    actor = ctx.get("user")
+    if actor is None:
+        raise HTTPException(status_code=403, detail="Preview token issuance requires a user principal")
+    token = create_published_app_preview_token(
+        subject=str(actor.id),
+        tenant_id=str(app.tenant_id),
+        app_id=str(app.id),
+        revision_id=str(revision.id),
+        scopes=["apps.preview"],
+    )
+    return {"revision_id": str(revision.id), "preview_token": token}
+
+
 @router.post("/{app_id}/builder/revisions", response_model=PublishedAppRevisionResponse)
 async def create_builder_revision(
     app_id: UUID,

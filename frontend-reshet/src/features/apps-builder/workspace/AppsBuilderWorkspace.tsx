@@ -6,10 +6,12 @@ import {
   ArrowLeft,
   ExternalLink,
   Loader2,
+  PanelRightClose,
   Rocket,
   RotateCcw,
   Save,
   Sparkles,
+  X,
 } from "lucide-react";
 
 import {
@@ -31,6 +33,9 @@ import { Tool, ToolContent, ToolHeader, ToolOutput } from "@/components/ai-eleme
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -40,19 +45,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSidebar } from "@/components/ui/sidebar";
-import { publishedAppsService } from "@/services";
+import { publishedAppsService, publishedRuntimeService } from "@/services";
 import type {
   BuilderChatEvent,
   BuilderPatchOp,
   BuilderStateResponse,
   DraftDevSessionResponse,
   DraftDevSessionStatus,
+  PublishedAppAuthTemplate,
+  PublishedAppDomain,
   PublishedAppRevision,
+  PublishedAppUser,
   RevisionConflictResponse,
 } from "@/services";
+import { cn } from "@/lib/utils";
 import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
-import { VirtualFileExplorer } from "@/features/apps-builder/editor/VirtualFileExplorer";
+import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
+import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
 
 const parseSse = (raw: string): BuilderChatEvent | null => {
   const dataLine = raw.split("\n").find((line) => line.startsWith("data: "));
@@ -72,6 +82,8 @@ const PUBLISH_POLL_TIMEOUT_MS = 15 * 60_000;
 type WorkspaceProps = {
   appId: string;
 };
+
+type ConfigSection = "overview" | "users" | "domains" | "code";
 
 type TimelineTone = "default" | "success" | "error";
 
@@ -102,6 +114,13 @@ function timelineId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, string>): string {
+  return JSON.stringify({
+    entry,
+    files: nextFiles,
+  });
+}
+
 function isUserTimelineItem(item: TimelineItem): boolean {
   return item.title === "User request";
 }
@@ -127,7 +146,10 @@ function toTimelineToolOutput(item: TimelineItem): Record<string, unknown> | str
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const { setOpen } = useSidebar();
   const [state, setState] = useState<BuilderStateResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"preview" | "code">("preview");
+  const [activeTab, setActiveTab] = useState<"preview" | "config">("preview");
+  const [configSection, setConfigSection] = useState<ConfigSection>("overview");
+  const [lastNonCodeConfigSection, setLastNonCodeConfigSection] = useState<Exclude<ConfigSection, "code">>("overview");
+  const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
   const [files, setFiles] = useState<Record<string, string>>({});
   const [entryFile, setEntryFile] = useState("src/main.tsx");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -139,6 +161,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingOverview, setIsSavingOverview] = useState(false);
+  const [authTemplates, setAuthTemplates] = useState<PublishedAppAuthTemplate[]>([]);
+  const [users, setUsers] = useState<PublishedAppUser[]>([]);
+  const [domains, setDomains] = useState<PublishedAppDomain[]>([]);
+  const [isUsersLoading, setIsUsersLoading] = useState(false);
+  const [isDomainsLoading, setIsDomainsLoading] = useState(false);
+  const [isAddingDomain, setIsAddingDomain] = useState(false);
+  const [domainHostInput, setDomainHostInput] = useState("");
+  const [domainNotesInput, setDomainNotesInput] = useState("");
+  const [pendingUserUpdateId, setPendingUserUpdateId] = useState<string | null>(null);
+  const [pendingDomainDeleteId, setPendingDomainDeleteId] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -146,12 +179,25 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const syncFingerprintRef = useRef<string>("");
+  const draftDevSnapshotRef = useRef<{
+    sessionId: string | null;
+    status: DraftDevSessionStatus | null;
+    previewUrl: string | null;
+  }>({
+    sessionId: null,
+    status: null,
+    previewUrl: null,
+  });
 
   useEffect(() => {
     setOpen(false);
   }, [setOpen]);
 
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
+  const platformDomain = useMemo(
+    () => `${state?.app.slug || "app"}.${process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost"}`,
+    [state?.app.slug],
+  );
 
   const pushTimeline = useCallback((item: Omit<TimelineItem, "id">) => {
     setTimeline((prev) => [...prev, { ...item, id: timelineId("timeline") }]);
@@ -166,18 +212,24 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
   const hydrateFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
     const nextFiles = revision?.files || {};
+    const nextEntry = revision?.entry_file || "src/main.tsx";
     setFiles(nextFiles);
-    setEntryFile(revision?.entry_file || "src/main.tsx");
+    setEntryFile(nextEntry);
     setSelectedFile(Object.keys(nextFiles).sort()[0] || null);
     setCurrentRevisionId(revision?.id || null);
+    syncFingerprintRef.current = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
   }, []);
 
   const loadState = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await publishedAppsService.getBuilderState(appId);
+      const [response, authTemplateList] = await Promise.all([
+        publishedAppsService.getBuilderState(appId),
+        publishedAppsService.listAuthTemplates(),
+      ]);
       setState(response);
+      setAuthTemplates(authTemplateList);
       hydrateFromRevision(response.current_draft_revision);
       applyDraftDevSession(response.draft_dev);
     } catch (err) {
@@ -190,6 +242,19 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   useEffect(() => {
     loadState();
   }, [loadState]);
+
+  const updateLocalApp = useCallback((patch: Record<string, unknown>) => {
+    setState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        app: {
+          ...prev.app,
+          ...patch,
+        },
+      };
+    });
+  }, []);
 
   const ensureDraftDevSession = useCallback(async () => {
     const session = await publishedAppsService.ensureDraftDevSession(appId);
@@ -221,9 +286,25 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [appId, applyDraftDevSession, currentRevisionId, entryFile, files]);
 
   useEffect(() => {
+    draftDevSnapshotRef.current = {
+      sessionId: draftDevSessionId,
+      status: draftDevStatus,
+      previewUrl: previewAssetUrl,
+    };
+  }, [draftDevSessionId, draftDevStatus, previewAssetUrl]);
+
+  useEffect(() => {
     if (activeTab !== "preview" || !currentRevisionId) {
       return;
     }
+    const snapshot = draftDevSnapshotRef.current;
+    const hasReusableSession =
+      snapshot.status === "running" && Boolean(snapshot.sessionId) && Boolean(snapshot.previewUrl);
+    if (hasReusableSession || snapshot.status === "starting") {
+      return;
+    }
+    setDraftDevError(null);
+    setDraftDevStatus("starting");
     ensureDraftDevSession().catch((err) => {
       setDraftDevError(err instanceof Error ? err.message : "Failed to start draft preview");
       setDraftDevStatus("error");
@@ -236,10 +317,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       syncFingerprintRef.current = "";
       return;
     }
-    const fingerprint = JSON.stringify({
-      entry: entryFile,
-      files,
-    });
+    if (!draftDevSessionId || draftDevStatus !== "running") {
+      return;
+    }
+    const fingerprint = buildDraftDevSyncFingerprint(entryFile, files);
     if (syncFingerprintRef.current === fingerprint) {
       return;
     }
@@ -256,7 +337,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [activeTab, currentRevisionId, entryFile, files, syncDraftDevSession]);
+  }, [activeTab, currentRevisionId, draftDevSessionId, draftDevStatus, entryFile, files, syncDraftDevSession]);
 
   useEffect(() => {
     if (activeTab !== "preview" || !draftDevSessionId) {
@@ -276,6 +357,127 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       window.clearInterval(interval);
     };
   }, [activeTab, appId, applyDraftDevSession, draftDevSessionId]);
+
+  const loadUsers = useCallback(async () => {
+    setIsUsersLoading(true);
+    try {
+      const items = await publishedAppsService.listUsers(appId);
+      setUsers(items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load app users");
+    } finally {
+      setIsUsersLoading(false);
+    }
+  }, [appId]);
+
+  const loadDomains = useCallback(async () => {
+    setIsDomainsLoading(true);
+    try {
+      const items = await publishedAppsService.listDomains(appId);
+      setDomains(items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load app domains");
+    } finally {
+      setIsDomainsLoading(false);
+    }
+  }, [appId]);
+
+  useEffect(() => {
+    if (activeTab !== "config") return;
+    if (configSection === "users") {
+      void loadUsers();
+      return;
+    }
+    if (configSection === "domains") {
+      void loadDomains();
+    }
+  }, [activeTab, configSection, loadDomains, loadUsers]);
+
+  const saveOverview = useCallback(async () => {
+    if (!state) return;
+    setIsSavingOverview(true);
+    setError(null);
+    try {
+      const app = state.app;
+      const updated = await publishedAppsService.update(appId, {
+        name: app.name,
+        description: app.description || "",
+        logo_url: app.logo_url || "",
+        visibility: app.visibility,
+        auth_enabled: app.auth_enabled,
+        auth_providers: app.auth_providers,
+        auth_template_key: app.auth_template_key,
+      });
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          app: {
+            ...prev.app,
+            ...updated,
+          },
+        };
+      });
+      pushTimeline({
+        title: "Overview saved",
+        description: "App settings updated.",
+        tone: "success",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save app settings");
+    } finally {
+      setIsSavingOverview(false);
+    }
+  }, [appId, pushTimeline, state]);
+
+  const toggleUserBlocked = useCallback(async (user: PublishedAppUser) => {
+    setPendingUserUpdateId(user.user_id);
+    setError(null);
+    try {
+      const nextStatus = user.membership_status === "blocked" ? "active" : "blocked";
+      const updated = await publishedAppsService.updateUser(appId, user.user_id, {
+        membership_status: nextStatus,
+      });
+      setUsers((prev) => prev.map((item) => (item.user_id === updated.user_id ? updated : item)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update user membership");
+    } finally {
+      setPendingUserUpdateId(null);
+    }
+  }, [appId]);
+
+  const addDomain = useCallback(async () => {
+    const host = domainHostInput.trim();
+    if (!host) return;
+    setIsAddingDomain(true);
+    setError(null);
+    try {
+      const created = await publishedAppsService.createDomain(appId, {
+        host,
+        notes: domainNotesInput.trim() || undefined,
+      });
+      setDomains((prev) => [created, ...prev]);
+      setDomainHostInput("");
+      setDomainNotesInput("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to request custom domain");
+    } finally {
+      setIsAddingDomain(false);
+    }
+  }, [appId, domainHostInput, domainNotesInput]);
+
+  const removeDomain = useCallback(async (domainId: string) => {
+    setPendingDomainDeleteId(domainId);
+    setError(null);
+    try {
+      await publishedAppsService.deleteDomain(appId, domainId);
+      setDomains((prev) => prev.filter((item) => item.id !== domainId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove custom domain");
+    } finally {
+      setPendingDomainDeleteId(null);
+    }
+  }, [appId]);
 
   const saveDraft = useCallback(async () => {
     if (!currentRevisionId && Object.keys(files).length === 0) return;
@@ -341,8 +543,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         entry_file: entryFile,
       });
 
+      setPublishStatus(job.status);
       const startedAt = Date.now();
       let status = job.status;
+      if (status === "failed") {
+        const diagnostic = job.diagnostics?.[0];
+        const message = (diagnostic?.message as string | undefined) || job.error || "Publish failed";
+        throw new Error(message);
+      }
       while (status === "queued" || status === "running") {
         if (Date.now() - startedAt > PUBLISH_POLL_TIMEOUT_MS) {
           throw new Error("Publish timed out while waiting for build completion");
@@ -356,6 +564,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           const message = (diagnostic?.message as string | undefined) || current.error || "Publish failed";
           throw new Error(message);
         }
+      }
+      if (status !== "succeeded") {
+        throw new Error("Publish ended in an unexpected state");
       }
 
       await loadState();
@@ -615,9 +826,50 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
   const openApp = useCallback(async () => {
     setError(null);
-    if (state?.app.status === "published" && state.app.published_url) {
-      window.open(state.app.published_url, "_blank", "noopener,noreferrer");
-      return;
+    if (state?.app.status === "published") {
+      const publishedUrl = state.app.published_url || null;
+      const localBaseDomain = (process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost").toLowerCase();
+      const shouldUsePublishedPreviewProxy = (() => {
+        if (!publishedUrl) return false;
+        try {
+          const parsed = new URL(publishedUrl);
+          return parsed.hostname.toLowerCase().endsWith(`.${localBaseDomain}`);
+        } catch {
+          return false;
+        }
+      })();
+
+      if (
+        shouldUsePublishedPreviewProxy &&
+        state.app.current_published_revision_id
+      ) {
+        setIsOpeningApp(true);
+        try {
+          const tokenResponse = await publishedAppsService.createRevisionPreviewToken(
+            appId,
+            state.app.current_published_revision_id,
+          );
+          const runtime = await publishedRuntimeService.getPreviewRuntime(
+            state.app.current_published_revision_id,
+            tokenResponse.preview_token,
+          );
+          if (!runtime.preview_url) {
+            throw new Error("Published preview URL is unavailable");
+          }
+          window.open(runtime.preview_url, "_blank", "noopener,noreferrer");
+          return;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to open app");
+          return;
+        } finally {
+          setIsOpeningApp(false);
+        }
+      }
+
+      if (publishedUrl) {
+        window.open(publishedUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
     }
 
     setIsOpeningApp(true);
@@ -640,15 +892,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsOpeningApp(false);
     }
-  }, [appId, applyDraftDevSession, state?.app.published_url, state?.app.status]);
-
-  const createFile = (path: string) => {
-    const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
-    if (!normalized) return;
-    if (files[normalized] !== undefined) return;
-    setFiles((prev) => ({ ...prev, [normalized]: "" }));
-    setSelectedFile(normalized);
-  };
+  }, [
+    appId,
+    applyDraftDevSession,
+    state?.app.current_published_revision_id,
+    state?.app.published_url,
+    state?.app.status,
+  ]);
 
   const deleteFile = (path: string) => {
     setFiles((prev) => {
@@ -661,6 +911,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       setSelectedFile(rest[0] || null);
     }
   };
+
+  const handleConfigSectionChange = useCallback((section: ConfigSection) => {
+    setConfigSection(section);
+    if (section !== "code") {
+      setLastNonCodeConfigSection(section);
+    }
+  }, []);
+
+  const handleBackFromCode = useCallback(() => {
+    setConfigSection(lastNonCodeConfigSection);
+  }, [lastNonCodeConfigSection]);
 
   if (isLoading) {
     return (
@@ -678,23 +939,25 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   return (
     <Tabs
       value={activeTab}
-      onValueChange={(value) => setActiveTab(value as "preview" | "code")}
+      onValueChange={(value) => setActiveTab(value as "preview" | "config")}
       className="flex h-screen w-full overflow-hidden gap-0 bg-background"
     >
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-border/60 px-4">
           <div className="flex min-w-0 items-center gap-2">
-            <Button size="sm" variant="ghost" asChild>
-              <Link href="/admin/apps">
-                <ArrowLeft className="mr-1 h-3.5 w-3.5" />
-                Back
-              </Link>
-            </Button>
+            <Link
+              href="/admin/apps"
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Apps
+            </Link>
             <div className="text-sm font-semibold">{state.app.name}</div>
             <Badge variant="outline" className="font-mono text-[10px]">
               /{state.app.slug}
             </Badge>
             <Badge variant={state.app.status === "published" ? "default" : "secondary"}>{state.app.status}</Badge>
+            <Badge variant="outline">{state.app.visibility}</Badge>
             {draftDevStatus && (
               <Badge
                 variant={
@@ -726,7 +989,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           <div className="justify-self-center">
             <TabsList>
               <TabsTrigger value="preview">Preview</TabsTrigger>
-              <TabsTrigger value="code">Code</TabsTrigger>
+              <TabsTrigger value="config">Config</TabsTrigger>
             </TabsList>
           </div>
 
@@ -774,123 +1037,358 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                   devError={draftDevError}
                 />
               ) : (
-                <VirtualFileExplorer
-                  files={files}
-                  selectedFile={selectedFile}
-                  onSelectFile={setSelectedFile}
-                  onUpdateFile={(path, content) => setFiles((prev) => ({ ...prev, [path]: content }))}
-                  onDeleteFile={deleteFile}
-                  onCreateFile={createFile}
-                />
+                <div className="flex h-full min-h-0">
+                  <ConfigSidebar
+                    configSection={configSection}
+                    onChangeSection={handleConfigSectionChange}
+                    onBackFromCode={handleBackFromCode}
+                    files={files}
+                    selectedFile={selectedFile}
+                    onSelectFile={setSelectedFile}
+                    onDeleteFile={deleteFile}
+                  />
+
+                  <section className={cn("min-w-0 flex-1", configSection === "code" ? "overflow-hidden" : "overflow-auto")}>
+                    {configSection === "overview" && (
+                      <div className="mx-auto max-w-3xl space-y-4 p-4">
+                        <h3 className="text-lg font-semibold">Overview</h3>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>App Name</Label>
+                            <Input
+                              value={state.app.name}
+                              onChange={(event) => updateLocalApp({ name: event.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>App Logo URL</Label>
+                            <Input
+                              value={state.app.logo_url || ""}
+                              onChange={(event) => updateLocalApp({ logo_url: event.target.value })}
+                              placeholder="https://..."
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>Description</Label>
+                            <textarea
+                              className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                              value={state.app.description || ""}
+                              onChange={(event) => updateLocalApp({ description: event.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Visibility</Label>
+                            <Select
+                              value={state.app.visibility}
+                              onValueChange={(value) => updateLocalApp({ visibility: value })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Visibility" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="public">Public</SelectItem>
+                                <SelectItem value="private">Private</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Auth Template</Label>
+                            <Select
+                              value={state.app.auth_template_key}
+                              onValueChange={(value) => updateLocalApp({ auth_template_key: value })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Auth template" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {authTemplates.map((item) => (
+                                  <SelectItem key={item.key} value={item.key}>
+                                    {item.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div className="rounded-md border border-border/60 p-3">
+                          <label className="flex items-center justify-between gap-3">
+                            <span className="text-sm">Require login for public app</span>
+                            <Checkbox
+                              checked={state.app.auth_enabled}
+                              onCheckedChange={(checked) => updateLocalApp({ auth_enabled: checked === true })}
+                            />
+                          </label>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <label className="flex items-center justify-between rounded border border-border/60 px-3 py-2 text-sm">
+                              Password provider
+                              <Checkbox
+                                checked={(state.app.auth_providers || []).includes("password")}
+                                onCheckedChange={(checked) => {
+                                  const current = new Set(state.app.auth_providers || []);
+                                  if (checked) current.add("password");
+                                  else current.delete("password");
+                                  updateLocalApp({ auth_providers: Array.from(current) });
+                                }}
+                              />
+                            </label>
+                            <label className="flex items-center justify-between rounded border border-border/60 px-3 py-2 text-sm">
+                              Google provider
+                              <Checkbox
+                                checked={(state.app.auth_providers || []).includes("google")}
+                                onCheckedChange={(checked) => {
+                                  const current = new Set(state.app.auth_providers || []);
+                                  if (checked) current.add("google");
+                                  else current.delete("google");
+                                  updateLocalApp({ auth_providers: Array.from(current) });
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        <Button onClick={saveOverview} disabled={isSavingOverview}>
+                          {isSavingOverview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                          Save Overview
+                        </Button>
+                      </div>
+                    )}
+
+                    {configSection === "users" && (
+                      <div className="space-y-3 p-4">
+                        <h3 className="text-lg font-semibold">Users</h3>
+                        {isUsersLoading ? <div className="text-sm text-muted-foreground">Loading users...</div> : null}
+                        <div className="space-y-2">
+                          {users.map((user) => (
+                            <div key={user.user_id} className="flex items-center justify-between rounded-md border border-border/60 p-3">
+                              <div>
+                                <div className="text-sm font-medium">{user.full_name || user.email}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {user.email} · sessions:{user.active_sessions} · status:{user.membership_status}
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant={user.membership_status === "blocked" ? "default" : "outline"}
+                                onClick={() => toggleUserBlocked(user)}
+                                disabled={pendingUserUpdateId === user.user_id}
+                              >
+                                {pendingUserUpdateId === user.user_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                                {user.membership_status === "blocked" ? "Unblock" : "Block"}
+                              </Button>
+                            </div>
+                          ))}
+                          {!isUsersLoading && users.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No app users yet.</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+
+                    {configSection === "domains" && (
+                      <div className="space-y-3 p-4">
+                        <h3 className="text-lg font-semibold">Domains</h3>
+                        <div className="rounded-md border border-border/60 p-3 text-sm">
+                          Platform Domain
+                          <div className="font-mono text-xs text-muted-foreground">{platformDomain}</div>
+                        </div>
+                        <div className="rounded-md border border-border/60 p-3">
+                          <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+                            <Input
+                              value={domainHostInput}
+                              onChange={(event) => setDomainHostInput(event.target.value)}
+                              placeholder="app.example.com"
+                            />
+                            <Input
+                              value={domainNotesInput}
+                              onChange={(event) => setDomainNotesInput(event.target.value)}
+                              placeholder="Notes (optional)"
+                            />
+                            <Button onClick={addDomain} disabled={isAddingDomain || !domainHostInput.trim()}>
+                              {isAddingDomain ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add Domain"}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {isDomainsLoading ? <div className="text-sm text-muted-foreground">Loading domains...</div> : null}
+                        <div className="space-y-2">
+                          {domains.map((domain) => (
+                            <div key={domain.id} className="flex items-center justify-between rounded-md border border-border/60 p-3">
+                              <div>
+                                <div className="text-sm font-medium">{domain.host}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  status:{domain.status}{domain.notes ? ` · ${domain.notes}` : ""}
+                                </div>
+                              </div>
+                              {domain.status === "pending" ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => removeDomain(domain.id)}
+                                  disabled={pendingDomainDeleteId === domain.id}
+                                >
+                                  {pendingDomainDeleteId === domain.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Remove"}
+                                </Button>
+                              ) : null}
+                            </div>
+                          ))}
+                          {!isDomainsLoading && domains.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No custom domains requested.</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+
+                    {configSection === "code" && (
+                      <CodeEditorPanel
+                        files={files}
+                        selectedFile={selectedFile}
+                        onUpdateFile={(path, content) => setFiles((prev) => ({ ...prev, [path]: content }))}
+                      />
+                    )}
+                  </section>
+                </div>
               )}
             </div>
-            {error && (
-              <Alert variant="destructive" className="mt-3">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
           </main>
 
-          <aside className="flex h-full w-[430px] shrink-0 flex-col border-l border-border/60 bg-gradient-to-b from-muted/20 via-background to-background">
-            <div className="border-b border-border/60 px-3 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Sparkles className="h-4 w-4" />
-                ChatBuilder Agent
-              </div>
-              <div className="mt-2 grid grid-cols-1 gap-2">
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={undoLastRun} disabled={isUndoing || !currentRevisionId} className="flex-1">
+          {isAgentPanelOpen ? (
+            <aside className="flex h-full w-[430px] shrink-0 flex-col border-l border-border/60 bg-gradient-to-b from-muted/20 via-background to-background">
+              <div className="flex items-center justify-between border-b border-border/60 px-3 py-3">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Sparkles className="h-4 w-4" />
+                  ChatBuilder Agent
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="outline" onClick={undoLastRun} disabled={isUndoing || !currentRevisionId}>
                     {isUndoing ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-2 h-3.5 w-3.5" />}
                     Undo Last Run
                   </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setIsAgentPanelOpen(false)}
+                    aria-label="Close agent panel"
+                  >
+                    <PanelRightClose className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
-            </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden px-3 py-3">
-              <Conversation className="h-full rounded-xl border border-border/50 bg-background/80">
-                <ConversationContent className="gap-3 p-3">
-                  {timeline.length === 0 ? (
-                    <Message from="assistant" className="max-w-full">
-                      <MessageContent>
-                        <MessageResponse>
-                          Ask for a code change to start a live run. You will see tool steps, edits, and checkpoint creation here.
-                        </MessageResponse>
-                      </MessageContent>
-                    </Message>
-                  ) : (
-                    timeline.map((item) => {
-                      if (isUserTimelineItem(item)) {
+              <div className="min-h-0 flex-1 overflow-hidden px-3 py-3">
+                <Conversation className="h-full rounded-xl border border-border/50 bg-background/80">
+                  <ConversationContent className="gap-3 p-3">
+                    {timeline.length === 0 ? (
+                      <Message from="assistant" className="max-w-full">
+                        <MessageContent>
+                          <MessageResponse>
+                            Ask for a code change to start a live run. You will see tool steps, edits, and checkpoint creation here.
+                          </MessageResponse>
+                        </MessageContent>
+                      </Message>
+                    ) : (
+                      timeline.map((item) => {
+                        if (isUserTimelineItem(item)) {
+                          return (
+                            <Message key={item.id} from="user" className="max-w-full">
+                              <MessageContent>
+                                <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
+                              </MessageContent>
+                            </Message>
+                          );
+                        }
+
                         return (
-                          <Message key={item.id} from="user" className="max-w-full">
+                          <Message key={item.id} from="assistant" className="max-w-full">
                             <MessageContent>
-                              <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
+                              <Tool defaultOpen={item.tone === "error"} className="mb-0 w-full">
+                                <ToolHeader
+                                  title={item.title}
+                                  type={toTimelineToolType(item.title)}
+                                  state={toTimelineToolState(item)}
+                                />
+                                {(item.raw !== undefined || item.description) && (
+                                  <ToolContent>
+                                    <ToolOutput
+                                      output={toTimelineToolOutput(item)}
+                                      errorText={item.tone === "error" ? item.description : undefined}
+                                    />
+                                  </ToolContent>
+                                )}
+                              </Tool>
                             </MessageContent>
                           </Message>
                         );
-                      }
+                      })
+                    )}
+                    {isSending ? (
+                      <Message from="assistant" className="max-w-full">
+                        <MessageContent className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader size={14} />
+                          <span>Running builder agent...</span>
+                        </MessageContent>
+                      </Message>
+                    ) : null}
+                  </ConversationContent>
+                  <ConversationScrollButton />
+                </Conversation>
+              </div>
 
-                      return (
-                        <Message key={item.id} from="assistant" className="max-w-full">
-                          <MessageContent>
-                            <Tool defaultOpen={item.tone === "error"} className="mb-0 w-full">
-                              <ToolHeader
-                                title={item.title}
-                                type={toTimelineToolType(item.title)}
-                                state={toTimelineToolState(item)}
-                              />
-                              {(item.raw !== undefined || item.description) && (
-                                <ToolContent>
-                                  <ToolOutput
-                                    output={toTimelineToolOutput(item)}
-                                    errorText={item.tone === "error" ? item.description : undefined}
-                                  />
-                                </ToolContent>
-                              )}
-                            </Tool>
-                          </MessageContent>
-                        </Message>
-                      );
-                    })
-                  )}
-                  {isSending ? (
-                    <Message from="assistant" className="max-w-full">
-                      <MessageContent className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader size={14} />
-                        <span>Running builder agent...</span>
-                      </MessageContent>
-                    </Message>
-                  ) : null}
-                </ConversationContent>
-                <ConversationScrollButton />
-              </Conversation>
-            </div>
-
-            <div className="border-t border-border/60 p-3">
-              <PromptInput
-                onSubmit={async (message) => {
-                  await sendBuilderChat(message.text);
-                }}
-                className="rounded-lg border border-border/60 bg-background"
+              <div className="border-t border-border/60 p-3">
+                <PromptInput
+                  onSubmit={async (message) => {
+                    await sendBuilderChat(message.text);
+                  }}
+                  className="rounded-lg border border-border/60 bg-background"
+                >
+                  <PromptInputBody>
+                    <PromptInputTextarea
+                      placeholder="Refactor the header and align spacing with the hero..."
+                      disabled={isSending}
+                      className="min-h-12 max-h-40"
+                    />
+                  </PromptInputBody>
+                  <PromptInputFooter className="pb-2">
+                    <PromptInputTools />
+                    <PromptInputSubmit size="sm" disabled={isSending} aria-label="Send">
+                      {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Send"}
+                    </PromptInputSubmit>
+                  </PromptInputFooter>
+                </PromptInput>
+              </div>
+            </aside>
+          ) : (
+            <div className="flex h-full w-10 shrink-0 flex-col items-center border-l border-border/60 bg-muted/20 pt-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setIsAgentPanelOpen(true)}
+                aria-label="Open agent panel"
               >
-                <PromptInputBody>
-                  <PromptInputTextarea
-                    placeholder="Refactor the header and align spacing with the hero..."
-                    disabled={isSending}
-                    className="min-h-12 max-h-40"
-                  />
-                </PromptInputBody>
-                <PromptInputFooter className="pb-2">
-                  <PromptInputTools />
-                  <PromptInputSubmit size="sm" disabled={isSending} aria-label="Send">
-                    {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Send"}
-                  </PromptInputSubmit>
-                </PromptInputFooter>
-              </PromptInput>
+                <Sparkles className="h-4 w-4" />
+              </Button>
             </div>
-          </aside>
+          )}
         </div>
       </div>
+
+      {error ? (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50 w-full max-w-md px-4 sm:px-0">
+          <Alert variant="destructive" className="pointer-events-auto pr-10 shadow-lg">
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="absolute right-2 top-2 rounded-sm p-1 text-destructive-foreground/80 transition-colors hover:text-destructive-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="Dismiss error"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
     </Tabs>
   );
 }

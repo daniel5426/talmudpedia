@@ -97,6 +97,7 @@ class RetrievalPipelineRuntime:
             executable_pipeline_id=executable.id,
             status=PipelineJobStatus.QUEUED,
             input_params={
+                "text": query,
                 "query": query,
                 "top_k": int(top_k or 10),
                 "filters": filters or {},

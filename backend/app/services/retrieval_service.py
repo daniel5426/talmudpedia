@@ -63,6 +63,13 @@ class RetrievalService:
 
         credentials_service = CredentialsService(self._db, store.tenant_id)
         return await credentials_service.resolve_backend_config(base_config, store.credentials_ref)
+
+    @staticmethod
+    def _resolve_namespace(store: KnowledgeStore, namespace: Optional[str]) -> Optional[str]:
+        if namespace is not None:
+            return namespace
+        config = store.backend_config or {}
+        return config.get("namespace")
     
     async def _embed_query(self, query: str, embedding_model_id: str, tenant_id: UUID) -> List[float]:
         """Embed a query string using the store's configured embedding model."""
@@ -109,18 +116,19 @@ class RetrievalService:
         
         # 4. Determine retrieval policy
         policy = policy_override or store.retrieval_policy
+        effective_namespace = self._resolve_namespace(store, namespace)
         
         # 5. Execute search based on policy
         if policy == RetrievalPolicy.SEMANTIC_ONLY:
-            results = await self._semantic_search(adapter, query_vector, top_k, filters, namespace)
+            results = await self._semantic_search(adapter, query_vector, top_k, filters, effective_namespace)
         elif policy == RetrievalPolicy.HYBRID:
-            results = await self._hybrid_search(adapter, query, query_vector, top_k, filters, namespace)
+            results = await self._hybrid_search(adapter, query, query_vector, top_k, filters, effective_namespace)
         elif policy == RetrievalPolicy.KEYWORD_ONLY:
-            results = await self._keyword_search(adapter, query, top_k, filters, namespace)
+            results = await self._keyword_search(adapter, query, top_k, filters, effective_namespace)
         elif policy == RetrievalPolicy.RECENCY_BOOSTED:
-            results = await self._recency_boosted_search(adapter, query_vector, top_k, filters, namespace)
+            results = await self._recency_boosted_search(adapter, query_vector, top_k, filters, effective_namespace)
         else:
-            results = await self._semantic_search(adapter, query_vector, top_k, filters, namespace)
+            results = await self._semantic_search(adapter, query_vector, top_k, filters, effective_namespace)
         
         # 6. Transform to RetrievalResults
         return [

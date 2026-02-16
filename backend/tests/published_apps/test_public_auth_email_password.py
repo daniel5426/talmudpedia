@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import func, select
 
-from app.db.postgres.models.published_apps import PublishedAppUserMembership
+from app.db.postgres.models.published_apps import PublishedAppUserMembership, PublishedAppUserMembershipStatus
 from ._helpers import seed_admin_tenant_and_agent, seed_published_app
 
 
@@ -77,3 +77,41 @@ async def test_public_signup_rejects_short_password(client, db_session):
     )
     assert resp.status_code == 400
     assert "at least 6" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_public_login_rejects_blocked_membership_without_reactivation(client, db_session):
+    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        user.id,
+        slug="blocked-member-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    signup_resp = await client.post(
+        f"/public/apps/{app.slug}/auth/signup",
+        json={"email": "blocked@example.com", "password": "secret123"},
+    )
+    assert signup_resp.status_code == 200
+
+    membership = await db_session.scalar(
+        select(PublishedAppUserMembership).where(PublishedAppUserMembership.published_app_id == app.id)
+    )
+    assert membership is not None
+    membership.status = PublishedAppUserMembershipStatus.blocked
+    await db_session.commit()
+
+    login_resp = await client.post(
+        f"/public/apps/{app.slug}/auth/login",
+        json={"email": "blocked@example.com", "password": "secret123"},
+    )
+    assert login_resp.status_code == 400
+    assert "blocked" in login_resp.json()["detail"].lower()
+
+    refreshed = await db_session.get(PublishedAppUserMembership, membership.id)
+    assert refreshed is not None
+    assert refreshed.status == PublishedAppUserMembershipStatus.blocked

@@ -12,6 +12,7 @@ jest.mock("@/services", () => ({
   publishedAppsService: {
     list: jest.fn(),
     listTemplates: jest.fn(),
+    listAuthTemplates: jest.fn(),
     create: jest.fn(),
     remove: jest.fn(),
   },
@@ -39,8 +40,11 @@ describe("Apps admin page", () => {
         name: "Support",
         slug: "support",
         status: "draft",
+        visibility: "public",
         auth_enabled: true,
         auth_providers: ["password"],
+        auth_template_key: "auth-classic",
+        template_key: "chat-classic",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
@@ -80,6 +84,24 @@ describe("Apps admin page", () => {
         style_tokens: {},
       },
     ]);
+    (publishedAppsService.listAuthTemplates as jest.Mock).mockResolvedValue([
+      {
+        key: "auth-classic",
+        name: "Classic Auth",
+        description: "Classic auth layout",
+        thumbnail: "classic",
+        tags: ["default"],
+        style_tokens: {},
+      },
+      {
+        key: "auth-split",
+        name: "Split Auth",
+        description: "Split auth layout",
+        thumbnail: "split",
+        tags: ["split"],
+        style_tokens: {},
+      },
+    ]);
     (publishedAppsService.create as jest.Mock).mockResolvedValue({
       id: "app-new",
       tenant_id: "tenant-1",
@@ -87,7 +109,9 @@ describe("Apps admin page", () => {
       name: "New App",
       slug: "new-app",
       status: "draft",
+      visibility: "public",
       template_key: "chat-neon",
+      auth_template_key: "auth-classic",
       auth_enabled: true,
       auth_providers: ["password"],
       created_at: new Date().toISOString(),
@@ -115,6 +139,7 @@ describe("Apps admin page", () => {
         expect.objectContaining({
           name: "New App",
           template_key: "chat-neon",
+          auth_template_key: "auth-classic",
           agent_id: "agent-1",
         })
       );

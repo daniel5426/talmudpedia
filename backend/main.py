@@ -20,6 +20,8 @@ from vector_store import VectorStore
 
 logger = logging.getLogger("backend.startup")
 _INFRA_BOOTSTRAPPED = False
+_LOCAL_PGVECTOR_STARTED_BY_APP = False
+_LOCAL_PGVECTOR_CONTAINER_NAME = ""
 
 
 def _is_truthy(raw: str) -> bool:
@@ -80,6 +82,133 @@ def _try_start_brew_service(service_name: str, host: str, port: int) -> bool:
     else:
         logger.warning("Service %s is still unavailable on %s:%s", service_name, host, port)
     return ready
+
+
+def _docker_available() -> bool:
+    return shutil.which("docker") is not None
+
+
+def _run_docker_command(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["docker", *args],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _ensure_local_pgvector_if_needed() -> None:
+    """
+    Ensure a local PGVector database is available for dev mode.
+
+    Behavior:
+    - If PGVECTOR_CONNECTION_STRING is already set, do nothing.
+    - Otherwise, start/reuse a local Docker pgvector container and set
+      PGVECTOR_CONNECTION_STRING for the current process.
+    """
+    global _LOCAL_PGVECTOR_STARTED_BY_APP, _LOCAL_PGVECTOR_CONTAINER_NAME
+
+    if (os.getenv("PGVECTOR_CONNECTION_STRING") or "").strip():
+        return
+    if not _is_truthy(os.getenv("LOCAL_PGVECTOR_AUTO_BOOTSTRAP", "1")):
+        return
+    if not _docker_available():
+        logger.warning(
+            "PGVECTOR_CONNECTION_STRING is unset and docker is unavailable; "
+            "local pgvector auto-bootstrap is skipped"
+        )
+        return
+
+    image = (os.getenv("LOCAL_PGVECTOR_IMAGE") or "pgvector/pgvector:pg17").strip()
+    container_name = (os.getenv("LOCAL_PGVECTOR_CONTAINER_NAME") or "talmudpedia-pgvector-dev").strip()
+    host = (os.getenv("LOCAL_PGVECTOR_HOST") or "127.0.0.1").strip()
+    port = int((os.getenv("LOCAL_PGVECTOR_PORT") or "65432").strip())
+    user = (os.getenv("LOCAL_PGVECTOR_USER") or "postgres").strip()
+    password = (os.getenv("LOCAL_PGVECTOR_PASSWORD") or "postgres").strip()
+    db_name = (os.getenv("LOCAL_PGVECTOR_DB") or "talmudpedia").strip()
+    startup_timeout_seconds = float((os.getenv("LOCAL_PGVECTOR_STARTUP_TIMEOUT_SECONDS") or "20").strip())
+
+    _LOCAL_PGVECTOR_CONTAINER_NAME = container_name
+
+    inspect = _run_docker_command(
+        ["ps", "-a", "--filter", f"name=^/{container_name}$", "--format", "{{.Names}}\t{{.Status}}"]
+    )
+    container_exists = container_name in (inspect.stdout or "")
+    container_running = "Up " in (inspect.stdout or "")
+
+    if not container_exists:
+        run_result = _run_docker_command(
+            [
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "-e",
+                f"POSTGRES_USER={user}",
+                "-e",
+                f"POSTGRES_PASSWORD={password}",
+                "-e",
+                f"POSTGRES_DB={db_name}",
+                "-p",
+                f"{port}:5432",
+                image,
+            ]
+        )
+        if run_result.returncode != 0:
+            logger.warning(
+                "Failed to start local pgvector container `%s`: %s",
+                container_name,
+                (run_result.stderr or run_result.stdout).strip(),
+            )
+            return
+        _LOCAL_PGVECTOR_STARTED_BY_APP = True
+    elif not container_running:
+        start_result = _run_docker_command(["start", container_name])
+        if start_result.returncode != 0:
+            logger.warning(
+                "Failed to start existing pgvector container `%s`: %s",
+                container_name,
+                (start_result.stderr or start_result.stdout).strip(),
+            )
+            return
+        _LOCAL_PGVECTOR_STARTED_BY_APP = True
+
+    if not _wait_for_port(host, port, timeout_seconds=startup_timeout_seconds):
+        logger.warning(
+            "Local pgvector container `%s` did not become reachable on %s:%s",
+            container_name,
+            host,
+            port,
+        )
+        return
+
+    os.environ["PGVECTOR_CONNECTION_STRING"] = f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+    logger.info(
+        "Local pgvector ready at %s:%s (container=%s)",
+        host,
+        port,
+        container_name,
+    )
+
+
+def _stop_local_pgvector_if_needed() -> None:
+    if not _LOCAL_PGVECTOR_STARTED_BY_APP:
+        return
+    if not _docker_available():
+        return
+    if not _LOCAL_PGVECTOR_CONTAINER_NAME:
+        return
+
+    stop_result = _run_docker_command(["stop", _LOCAL_PGVECTOR_CONTAINER_NAME])
+    if stop_result.returncode == 0:
+        logger.info("Stopped local pgvector container `%s`", _LOCAL_PGVECTOR_CONTAINER_NAME)
+    else:
+        logger.warning(
+            "Failed to stop local pgvector container `%s`: %s",
+            _LOCAL_PGVECTOR_CONTAINER_NAME,
+            (stop_result.stderr or stop_result.stdout).strip(),
+        )
 
 
 def _is_local_host(host: str) -> bool:
@@ -262,6 +391,7 @@ def _bootstrap_local_infra_once() -> None:
     logger.info("Running local infra bootstrap checks")
     _try_start_brew_service("postgresql@17", "127.0.0.1", 5432)
     _try_start_brew_service("redis", "127.0.0.1", 6379)
+    _ensure_local_pgvector_if_needed()
     _ensure_local_moto_server_if_needed()
     _ensure_local_bundle_bucket_if_needed()
     _ensure_celery_worker_if_needed()
@@ -335,6 +465,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         # Cleanup failures should not block shutdown.
         pass
+
+    _stop_local_pgvector_if_needed()
 
     await MongoDatabase.close()
 

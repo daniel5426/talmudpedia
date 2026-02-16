@@ -757,6 +757,28 @@ class QueryInputExecutor(OperatorExecutor):
         # If input is just a string, wrap it in a QUERY object
         if isinstance(query_data, str):
             query_data = {"text": query_data}
+        elif isinstance(query_data, dict):
+            normalized = dict(query_data)
+            nested_input = normalized.get("input") if isinstance(normalized.get("input"), dict) else {}
+
+            # Backward compatibility for tool payloads that use `query` instead of `text`.
+            if not isinstance(normalized.get("text"), str) or not normalized.get("text", "").strip():
+                candidate_text = normalized.get("query")
+                if (not isinstance(candidate_text, str) or not candidate_text.strip()) and nested_input:
+                    candidate_text = nested_input.get("text") or nested_input.get("query")
+                if isinstance(candidate_text, str) and candidate_text.strip():
+                    normalized["text"] = candidate_text.strip()
+
+            # Lift common nested fields when present.
+            if not isinstance(normalized.get("filters"), dict) and isinstance(nested_input.get("filters"), dict):
+                normalized["filters"] = nested_input["filters"]
+            if normalized.get("top_k") is None and nested_input.get("top_k") is not None:
+                normalized["top_k"] = nested_input.get("top_k")
+
+            query_data = normalized
+
+        if not isinstance(query_data, dict) or not isinstance(query_data.get("text"), str) or not query_data["text"].strip():
+            raise ValueError("Query input requires `text` (or `query`) to run retrieval")
         
         return OperatorOutput(
             data=query_data,
@@ -973,25 +995,40 @@ class KnowledgeStoreSinkExecutor(OperatorExecutor):
             documents = [documents]
         
         vectors = []
+        skipped_empty_vectors = 0
         for doc in documents:
             if isinstance(doc, dict):
+                values = doc.get("values", [])
+                if not values:
+                    skipped_empty_vectors += 1
+                    continue
                 doc_id = str(doc.get("id")) if doc.get("id") else str(uuid.uuid4())
                 vectors.append(VectorRecord(
                     id=doc_id,
-                    values=doc.get("values", []),
+                    values=values,
                     text=doc.get("text", ""),
                     metadata=doc.get("metadata", {})
                 ))
+
+        if not vectors:
+            raise ValueError(
+                f"No valid vectors to upsert (received={len(documents)}, skipped_empty_vectors={skipped_empty_vectors})"
+            )
         
         # Upsert in batches
         batch_size = config_dict.get("batch_size", 100)
-        namespace = config_dict.get("namespace", "default")
+        namespace = config_dict.get("namespace") or (store.backend_config or {}).get("namespace") or "default"
         total_upserted = 0
         
         for i in range(0, len(vectors), batch_size):
             batch = vectors[i:i + batch_size]
             count = await adapter.upsert(batch, namespace)
             total_upserted += count
+
+        if total_upserted == 0:
+            raise RuntimeError(
+                f"Vector upsert completed with 0 records (backend={store.backend.value}, namespace={namespace})"
+            )
         
         # Update store metrics
         store.chunk_count = (store.chunk_count or 0) + total_upserted
@@ -1001,7 +1038,16 @@ class KnowledgeStoreSinkExecutor(OperatorExecutor):
             data={
                 "upsert_count": total_upserted,
                 "knowledge_store_id": str(store.id),
-                "knowledge_store_name": store.name
+                "knowledge_store_name": store.name,
+                "debug": {
+                    "backend": store.backend.value,
+                    "index_name": backend_config.get("index_name"),
+                    "collection_name": backend_config.get("collection_name"),
+                    "namespace": namespace,
+                    "input_documents": len(documents),
+                    "attempted_vectors": len(vectors),
+                    "skipped_empty_vectors": skipped_empty_vectors,
+                },
             },
             metadata=input_data.metadata,
             operator_id=self.operator_id,
@@ -1019,9 +1065,26 @@ class VectorSearchExecutor(OperatorExecutor):
         context: ExecutionContext
     ) -> OperatorOutput:
         from app.rag.factory import VectorStoreConfig
+
+        def _parse_top_k(raw_value: Any) -> int:
+            if raw_value is None:
+                return 10
+            if isinstance(raw_value, str) and not raw_value.strip():
+                return 10
+            value = int(raw_value)
+            return max(1, value)
+
+        def _parse_similarity_threshold(raw_value: Any) -> Optional[float]:
+            if raw_value is None:
+                return None
+            if isinstance(raw_value, str) and not raw_value.strip():
+                return None
+            value = float(raw_value)
+            return max(0.0, min(1.0, value))
         
         config_dict = {**context.config}
         knowledge_store_id = config_dict.get("knowledge_store_id")
+        store = None
         
         # Prefer Knowledge Store if provided (matches registry contract)
         if knowledge_store_id:
@@ -1043,6 +1106,7 @@ class VectorSearchExecutor(OperatorExecutor):
             )
             adapter = create_adapter(store.backend, backend_config)
             vector_store = adapter
+            effective_namespace = config_dict.get("namespace") or (store.backend_config or {}).get("namespace")
         else:
             index_name = config_dict.get("index_name")
             if not index_name:
@@ -1053,37 +1117,79 @@ class VectorSearchExecutor(OperatorExecutor):
                 **{k: v for k, v in config_dict.items() if k not in ["index_name", "provider"]}
             )
             vector_store = RAGFactory.create_vector_store(vs_config)
+            effective_namespace = config_dict.get("namespace")
         
         query_val = input_data.data
         vector = None
         filters = {}
+        query_text: Optional[str] = None
+        runtime_top_k = None
         
         if isinstance(query_val, dict):
             vector = query_val.get("values")
             filters = query_val.get("filters", {})
+            query_text = query_val.get("text") or query_val.get("query")
+            runtime_top_k = query_val.get("top_k")
+        elif (
+            isinstance(query_val, list)
+            and query_val
+            and isinstance(query_val[0], dict)
+            and "values" in query_val[0]
+        ):
+            # Supports embedder output shape: [{"text": "...", "values": [...]}]
+            vector = query_val[0].get("values")
+            filters = query_val[0].get("filters", {}) if isinstance(query_val[0].get("filters"), dict) else {}
+            query_text = query_val[0].get("text") or query_val[0].get("query")
+            runtime_top_k = query_val[0].get("top_k")
         else:
             # Assume it's just the vector if it's a list
             vector = query_val
             
+        if (
+            (not vector)
+            and knowledge_store_id
+            and store is not None
+            and isinstance(query_text, str)
+            and query_text.strip()
+        ):
+            # Fallback for query-first payloads: embed on-demand using store's embedding model.
+            from app.services.model_resolver import ModelResolver
+
+            resolver = ModelResolver(db, store.tenant_id)
+            embedder = await resolver.resolve_embedding(store.embedding_model_id)
+            embed_results = await embedder.embed_batch([query_text.strip()])
+            if embed_results and embed_results[0].values:
+                vector = embed_results[0].values
+
         if not vector:
-            raise ValueError("No query vector found for search")
+            raise ValueError(
+                "No query vector found for search. Provide `values`, or pass query `text`/`query` with a valid embedding model."
+            )
+
+        top_k_source = runtime_top_k if runtime_top_k is not None else config_dict.get("top_k", 10)
+        top_k = _parse_top_k(top_k_source)
+        similarity_threshold = _parse_similarity_threshold(config_dict.get("similarity_threshold"))
             
         if knowledge_store_id:
             results = await vector_store.query(
                 vector=vector,
-                top_k=config_dict.get("top_k", 10),
+                top_k=top_k,
                 filters=filters,
-                namespace=config_dict.get("namespace")
+                namespace=effective_namespace
             )
+            if similarity_threshold is not None:
+                results = [r for r in results if r.score >= similarity_threshold]
             output_data = [r.model_dump() for r in results]
         else:
             results = await vector_store.search(
                 index_name=index_name,
                 query_vector=vector,
-                top_k=config_dict.get("top_k", 10),
+                top_k=top_k,
                 filter=filters,
-                namespace=config_dict.get("namespace")
+                namespace=effective_namespace
             )
+            if similarity_threshold is not None:
+                results = [r for r in results if r.score >= similarity_threshold]
             output_data = [r.model_dump() for r in results]
         
         return OperatorOutput(

@@ -1,6 +1,7 @@
 import { httpClient } from "./http";
 
 export type PublishedAppStatus = "draft" | "published" | "paused" | "archived";
+export type PublishedAppVisibility = "public" | "private";
 export type PublishedAppAuthProvider = "password" | "google";
 export type PublishedAppRevisionKind = "draft" | "published";
 
@@ -9,10 +10,14 @@ export interface PublishedApp {
   tenant_id: string;
   agent_id: string;
   name: string;
+  description?: string | null;
+  logo_url?: string | null;
   slug: string;
   status: PublishedAppStatus;
+  visibility: PublishedAppVisibility;
   auth_enabled: boolean;
   auth_providers: PublishedAppAuthProvider[];
+  auth_template_key: string;
   template_key: string;
   current_draft_revision_id?: string | null;
   current_published_revision_id?: string | null;
@@ -31,6 +36,37 @@ export interface PublishedAppTemplate {
   tags: string[];
   entry_file: string;
   style_tokens: Record<string, string>;
+}
+
+export interface PublishedAppAuthTemplate {
+  key: string;
+  name: string;
+  description: string;
+  thumbnail: string;
+  tags: string[];
+  style_tokens: Record<string, string>;
+}
+
+export interface PublishedAppUser {
+  user_id: string;
+  email: string;
+  full_name?: string | null;
+  avatar?: string | null;
+  membership_status: "active" | "blocked";
+  last_login_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  active_sessions: number;
+}
+
+export interface PublishedAppDomain {
+  id: string;
+  host: string;
+  status: "pending" | "approved" | "rejected";
+  notes?: string | null;
+  requested_by?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PublishedAppRevision {
@@ -109,6 +145,11 @@ export interface DraftDevSyncRequest {
   revision_id?: string;
 }
 
+export interface RevisionPreviewTokenResponse {
+  revision_id: string;
+  preview_token: string;
+}
+
 export interface PublishRequest {
   base_revision_id?: string;
   files?: Record<string, string>;
@@ -133,20 +174,37 @@ export interface PublishJobStatusResponse extends PublishJobResponse {}
 
 export interface CreatePublishedAppRequest {
   name: string;
+  description?: string;
+  logo_url?: string;
   slug?: string;
   agent_id: string;
   template_key: string;
+  visibility?: PublishedAppVisibility;
   auth_enabled?: boolean;
   auth_providers?: PublishedAppAuthProvider[];
+  auth_template_key?: string;
 }
 
 export interface UpdatePublishedAppRequest {
   name?: string;
+  description?: string | null;
+  logo_url?: string | null;
   slug?: string;
   agent_id?: string;
+  visibility?: PublishedAppVisibility;
   auth_enabled?: boolean;
   auth_providers?: PublishedAppAuthProvider[];
+  auth_template_key?: string;
   status?: PublishedAppStatus;
+}
+
+export interface UpdatePublishedAppUserRequest {
+  membership_status: "active" | "blocked";
+}
+
+export interface CreatePublishedAppDomainRequest {
+  host: string;
+  notes?: string;
 }
 
 export interface CreateBuilderRevisionRequest {
@@ -298,6 +356,10 @@ export const publishedAppsService = {
     return httpClient.get<PublishedAppTemplate[]>("/admin/apps/templates");
   },
 
+  async listAuthTemplates(): Promise<PublishedAppAuthTemplate[]> {
+    return httpClient.get<PublishedAppAuthTemplate[]>("/admin/apps/auth/templates");
+  },
+
   async get(appId: string): Promise<PublishedApp> {
     return httpClient.get<PublishedApp>(`/admin/apps/${appId}`);
   },
@@ -316,6 +378,26 @@ export const publishedAppsService = {
 
   async remove(appId: string): Promise<{ status: string; id: string }> {
     return httpClient.delete<{ status: string; id: string }>(`/admin/apps/${appId}`);
+  },
+
+  async listUsers(appId: string): Promise<PublishedAppUser[]> {
+    return httpClient.get<PublishedAppUser[]>(`/admin/apps/${appId}/users`);
+  },
+
+  async updateUser(appId: string, userId: string, payload: UpdatePublishedAppUserRequest): Promise<PublishedAppUser> {
+    return httpClient.patch<PublishedAppUser>(`/admin/apps/${appId}/users/${userId}`, payload);
+  },
+
+  async listDomains(appId: string): Promise<PublishedAppDomain[]> {
+    return httpClient.get<PublishedAppDomain[]>(`/admin/apps/${appId}/domains`);
+  },
+
+  async createDomain(appId: string, payload: CreatePublishedAppDomainRequest): Promise<PublishedAppDomain> {
+    return httpClient.post<PublishedAppDomain>(`/admin/apps/${appId}/domains`, payload);
+  },
+
+  async deleteDomain(appId: string, domainId: string): Promise<{ status: string; id: string }> {
+    return httpClient.delete<{ status: string; id: string }>(`/admin/apps/${appId}/domains/${domainId}`);
   },
 
   async publish(appId: string, payload: PublishRequest = {}): Promise<PublishJobResponse> {
@@ -360,6 +442,13 @@ export const publishedAppsService = {
 
   async getRevisionBuildStatus(appId: string, revisionId: string): Promise<RevisionBuildStatusResponse> {
     return httpClient.get<RevisionBuildStatusResponse>(`/admin/apps/${appId}/builder/revisions/${revisionId}/build`);
+  },
+
+  async createRevisionPreviewToken(appId: string, revisionId: string): Promise<RevisionPreviewTokenResponse> {
+    return httpClient.post<RevisionPreviewTokenResponse>(
+      `/admin/apps/${appId}/builder/revisions/${revisionId}/preview-token`,
+      {},
+    );
   },
 
   async retryRevisionBuild(appId: string, revisionId: string): Promise<RevisionBuildStatusResponse> {

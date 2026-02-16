@@ -21,6 +21,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
     const { currentTenant } = useTenant()
     const [inputData, setInputData] = useState<Record<string, Record<string, unknown>>>({})
     const [schema, setSchema] = useState<ExecutablePipelineInputSchema | null>(null)
+    const [showAdvanced, setShowAdvanced] = useState(false)
     const [schemaError, setSchemaError] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
     const [loadingSchema, setLoadingSchema] = useState(false)
@@ -30,6 +31,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
         if (!open || !execId) {
             setSchema(null)
             setSchemaError(null)
+            setShowAdvanced(false)
             return
         }
         const loadSchema = async () => {
@@ -47,6 +49,12 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
         }
         loadSchema()
     }, [open, compileResult?.executable_pipeline_id, currentTenant?.slug])
+
+    const hasAdvancedFields = (schema?.steps || []).some((step) =>
+        (step.fields || []).some((field) =>
+            field.operator_id === "query_input" && (field.name === "schema" || field.name === "filters")
+        )
+    )
 
     const handleRun = async () => {
         try {
@@ -88,16 +96,35 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
                             values={inputData}
                             onChange={setInputData}
                             onUploadFile={(file) => ragAdminService.uploadPipelineInput(file, currentTenant?.slug).then(res => res.path)}
+                            showAdvanced={showAdvanced}
                             disabled={loading}
                         />
                     )}
                 </div>
 
                 <DialogFooter>
-                    <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                    <Button onClick={handleRun} disabled={loading}>
-                        {loading ? "Running..." : "Run Pipeline"}
-                    </Button>
+                    <div className="flex w-full items-center justify-between">
+                        <div>
+                            {hasAdvancedFields && (
+                                <Button
+                                    type="button"
+                                    variant="link"
+                                    size="sm"
+                                    className="h-auto p-0 text-xs text-muted-foreground"
+                                    onClick={() => setShowAdvanced((prev) => !prev)}
+                                    disabled={loading}
+                                >
+                                    {showAdvanced ? "Hide Advanced" : "Show Advanced"}
+                                </Button>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                            <Button onClick={handleRun} disabled={loading}>
+                                {loading ? "Running..." : "Run Pipeline"}
+                            </Button>
+                        </div>
+                    </div>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

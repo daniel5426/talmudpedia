@@ -140,3 +140,92 @@ async def test_publish_failure_keeps_current_published_revision(client, db_sessi
     refreshed_app = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
     assert refreshed_app is not None
     assert str(refreshed_app.current_published_revision_id) == published_revision_id
+
+
+@pytest.mark.asyncio
+async def test_revision_preview_token_matches_requested_revision(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Preview Token App",
+            "slug": "preview-token-app",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    _, publish_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
+    assert publish_status["status"] == "succeeded"
+    published_revision_id = publish_status["published_revision_id"]
+    assert published_revision_id
+
+    app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
+    assert app_row is not None
+    assert app_row.current_draft_revision_id is not None
+
+    token_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/revisions/{published_revision_id}/preview-token",
+        headers=headers,
+        json={},
+    )
+    assert token_resp.status_code == 200
+    preview_token = token_resp.json()["preview_token"]
+    assert preview_token
+
+    runtime_ok = await client.get(
+        f"/public/apps/preview/revisions/{published_revision_id}/runtime?preview_token={preview_token}"
+    )
+    assert runtime_ok.status_code == 200
+    assert runtime_ok.json()["revision_id"] == published_revision_id
+
+    runtime_wrong_revision = await client.get(
+        f"/public/apps/preview/revisions/{app_row.current_draft_revision_id}/runtime?preview_token={preview_token}"
+    )
+    assert runtime_wrong_revision.status_code == 403
+    assert runtime_wrong_revision.json()["detail"] == "Preview token does not match requested revision"
+
+
+@pytest.mark.asyncio
+async def test_publish_fails_fast_when_publish_worker_is_not_ready(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Publish Worker Guard App",
+            "slug": "publish-worker-guard-app",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    monkeypatch.setenv("APPS_PUBLISH_JOB_EAGER", "0")
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_builder_core._verify_publish_worker_ready",
+        lambda: "Celery workers are running but publish task is missing",
+    )
+
+    publish_resp = await client.post(
+        f"/admin/apps/{app_id}/publish",
+        headers=headers,
+        json={},
+    )
+    assert publish_resp.status_code == 200
+    payload = publish_resp.json()
+    assert payload["status"] == "failed"
+    assert payload["error"] == "Celery workers are running but publish task is missing"
+    assert payload["diagnostics"][0]["message"] == "Celery workers are running but publish task is missing"

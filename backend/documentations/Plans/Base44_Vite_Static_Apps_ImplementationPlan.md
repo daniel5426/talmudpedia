@@ -7,6 +7,14 @@ Move Apps Builder to a dual-mode architecture:
 - Draft Dev Mode: persistent per-user+app Vite dev sandbox with HMR for instant preview.
 - Publish Build Mode: async full clean worker build (`npm install` + `npm run build`) on publish, then upload immutable artifacts for runtime serving.
 
+## Addendum: Config IA + Auth Templates (2026-02-15)
+Implemented overlay decisions that apply to this architecture plan:
+- Builder IA is now `Preview | Config` (not `Preview | Code`).
+- Config sections are `Overview | Users | Domains | Code`.
+- Overview manages branding (`logo_url`, `name`, `description`), visibility (`public|private`), auth settings, and auth template selection.
+- Runtime auth pages render by `auth_template_key` and inject branding fields.
+- Custom domains are now supported as request-tracking records (`pending` workflow only) in this phase.
+
 ## Contradiction Resolution (2026-02-14)
 This plan previously stated that publish promotes existing draft artifacts without rebuilding. That is now superseded.
 - Draft mode is non-deterministic and optimized for speed (sandbox dev server, incremental sync, no dist upload, no per-keystroke revisions).
@@ -382,7 +390,7 @@ Status:
 - Update `/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/Apps.md`.
 - Update `/Users/danielbenassaya/Code/personal/talmudpedia/code_architect/architecture_tree.md` for new template/worker/storage modules and directories.
 - Update relevant test-state files in `backend/tests/published_apps/` and frontend published-app test state.
-- Ensure every edited `.md` includes `Last Updated: 2026-02-14`.
+- Ensure every edited `.md` includes `Last Updated: 2026-02-15`.
 
 ## Documentation contradiction alert
 - Current compile-policy section in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/Plans/AppsBuilderV1Plan.md` (React-only import allowlist) conflicts with this approved Option A architecture (full Vite project + curated semi-open deps). This must be explicitly replaced, not appended.

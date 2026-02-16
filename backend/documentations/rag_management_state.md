@@ -1,4 +1,5 @@
 # RAG Management Current State
+Last Updated: 2026-02-16
 
 ## Overview
 The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pipeline orchestration engine designed to manage the full lifecycle of data ingestion, transformation, and storage for semantic search. It has evolved from a simple linear flow to a highly customizable, contract-driven architecture.
@@ -56,10 +57,33 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 
 ### 7. Knowledge Store Abstraction (NEW)
 - **Implementation Independence**: Decouples domain logic from physical vector databases. Agents and Pipelines interact with logical "Knowledge Stores."
-- **Unified Sink Operator**: Replaced vendor-specific storage nodes with a single `knowledge_store_sink` that resolves backend configuration (dimension, index name, namespace) from the selected store.
+- **Unified Sink Operator**: Replaced vendor-specific storage nodes with a single `knowledge_store_sink` that resolves backend configuration (dimension, index/collection binding) from the selected store. Namespace is runtime-configurable per node and now falls back to store config when omitted.
 - **Centralized Retrieval Service**: The `RetrievalService` provides a clean query interface, handling embedding generation, vector search, and reranking policies (Semantic, Hybrid, Keyword) based on the store's definition.
 - **Metadata-Aware Metrics**: Tracking `document_count` and `chunk_count` per store, updated automatically during ingestion.
 - **Immutable Logic, Flexible Backend**: The embedding model and chunking strategy are locked at store creation, but properties like `retrieval_policy` can be tuned without re-ingesting data.
+- **Credential Enforcement**: Pinecone knowledge stores require tenant-scoped vector store credentials; runtime no longer relies on env-var fallback for tenant-bound Pinecone access.
+
+### 7.1 Knowledge Store Segment (Current Behavior)
+- **Supported Backends**: `PGVECTOR` (default), `PINECONE`, and `QDRANT`.
+- **Creation Defaults**: If `backend_config` is omitted, the system auto-generates `index_name` as `ks_<safe_store_name>_<tenant_prefix>` and sets `namespace` to `default`.
+- **Provider Mapping**:
+  - Pinecone uses `backend_config.index_name` and optional namespace.
+  - PGVector uses `collection_name` from `backend_config.collection_name` or falls back to `backend_config.index_name`.
+  - Qdrant uses `collection_name` from `backend_config.collection_name` or falls back to `backend_config.index_name`.
+- **Credential Rules**:
+  - Pinecone requires a tenant credential in category `vector_store` with provider key `pinecone`.
+  - Qdrant credentials, when supplied, must be category `vector_store` with provider key `qdrant`.
+  - Pinecone runtime initialization does not use env fallback for tenant-bound access; missing API key fails fast.
+- **Namespace Resolution**:
+  - Runtime namespace from node input has highest priority.
+  - If omitted, namespace falls back to `knowledge_store.backend_config.namespace`.
+  - If neither is set, provider defaults apply.
+- **Pipeline Sink Runtime**:
+  - `knowledge_store_sink` updates store metrics (`document_count`, `chunk_count`) after upsert.
+  - `upsert_count: 0` with successful steps usually means no chunks reached the sink (empty chunk output), not necessarily a provider failure.
+- **Current PGVector Limitation**:
+  - If PGVector cannot initialize the collection/table for the resolved name, sink execution fails with `Failed to initialize pgvector collection '<name>'`.
+  - Common causes are pgvector extension/schema readiness or collection init returning false before first upsert.
 
 ### 8. Data Integrity & Cascading Lifecycle (NEW)
 - **Robust Constraint Management**: Implemented `ondelete="CASCADE"` for ownership-based relations (e.g., Tenant deletion wipes associated RAG resources).
@@ -112,4 +136,3 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 3. **JSON Schema Editor**: Integrate a structured JSON editor for custom operator `config_schema` definitions.
 4. **Real-time Metrics**: Visualizing execution time and token usage per operator node in the live tracking view.
 5. **Collection Partitioning**: Support for dynamic namespace creation within Knowledge Stores for multi-subject isolation.
-

@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 from ._helpers import admin_headers, seed_admin_tenant_and_agent, seed_published_app, start_publish_and_wait
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision, PublishedAppVisibility
 
 
 @pytest.mark.asyncio
@@ -18,6 +18,9 @@ async def test_public_resolve_and_config(client, db_session):
         slug="resolver-app",
         auth_enabled=True,
         auth_providers=["password", "google"],
+        description="Resolver app description",
+        logo_url="https://cdn.example.com/resolver.png",
+        auth_template_key="auth-split",
     )
 
     resolve_resp = await client.get("/public/apps/resolve?host=resolver-app.apps.localhost")
@@ -28,14 +31,54 @@ async def test_public_resolve_and_config(client, db_session):
     assert config_resp.status_code == 200
     payload = config_resp.json()
     assert payload["id"] == str(app.id)
+    assert payload["description"] == "Resolver app description"
+    assert payload["logo_url"] == "https://cdn.example.com/resolver.png"
+    assert payload["visibility"] == "public"
     assert payload["auth_enabled"] is True
     assert "google" in payload["auth_providers"]
+    assert payload["auth_template_key"] == "auth-split"
 
 
 @pytest.mark.asyncio
 async def test_public_resolve_rejects_unknown_host(client):
     resp = await client.get("/public/apps/resolve?host=example.com")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_private_published_app_is_hidden_from_public_endpoints(client, db_session):
+    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        user.id,
+        slug="private-resolver-app",
+        visibility=PublishedAppVisibility.private,
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    resolve_resp = await client.get("/public/apps/resolve?host=private-resolver-app.apps.localhost")
+    assert resolve_resp.status_code == 404
+
+    config_resp = await client.get(f"/public/apps/{app.slug}/config")
+    assert config_resp.status_code == 404
+
+    runtime_resp = await client.get(f"/public/apps/{app.slug}/runtime")
+    assert runtime_resp.status_code == 404
+
+    signup_resp = await client.post(
+        f"/public/apps/{app.slug}/auth/signup",
+        json={"email": "private-user@example.com", "password": "secret123"},
+    )
+    assert signup_resp.status_code == 404
+
+    chat_resp = await client.post(
+        f"/public/apps/{app.slug}/chat/stream",
+        json={"input": "hello", "messages": []},
+    )
+    assert chat_resp.status_code == 404
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TextDecoder } from "util";
 
 import { AppsBuilderWorkspace } from "@/features/apps-builder/workspace/AppsBuilderWorkspace";
-import { publishedAppsService } from "@/services";
+import { publishedAppsService, publishedRuntimeService } from "@/services";
 
 const setOpenMock = jest.fn();
 const mockCodeEditor = jest.fn(
@@ -33,8 +33,16 @@ const mockCodeEditor = jest.fn(
 jest.mock("@/services", () => ({
   publishedAppsService: {
     getBuilderState: jest.fn(),
+    listAuthTemplates: jest.fn(),
+    update: jest.fn(),
+    listUsers: jest.fn(),
+    updateUser: jest.fn(),
+    listDomains: jest.fn(),
+    createDomain: jest.fn(),
+    deleteDomain: jest.fn(),
     getBuilderCheckpoints: jest.fn(),
     createRevision: jest.fn(),
+    createRevisionPreviewToken: jest.fn(),
     publish: jest.fn(),
     getPublishJobStatus: jest.fn(),
     ensureDraftDevSession: jest.fn(),
@@ -44,6 +52,9 @@ jest.mock("@/services", () => ({
     streamBuilderChat: jest.fn(),
     undoLastBuilderRun: jest.fn(),
     revertBuilderFile: jest.fn(),
+  },
+  publishedRuntimeService: {
+    getPreviewRuntime: jest.fn(),
   },
 }));
 
@@ -148,8 +159,12 @@ const makeState = (files: Record<string, string> = makeFiles()) => ({
     name: "Builder App",
     slug: "builder-app",
     status: "draft",
+    description: "Builder app description",
+    logo_url: null,
+    visibility: "public",
     auth_enabled: true,
     auth_providers: ["password"],
+    auth_template_key: "auth-classic",
     template_key: "chat-classic",
     current_draft_revision_id: "rev-1",
     current_published_revision_id: null,
@@ -195,16 +210,59 @@ const makeState = (files: Record<string, string> = makeFiles()) => ({
 describe("AppsBuilderWorkspace", () => {
   let openSpy: jest.SpyInstance;
 
-  const openCodeTab = async () => {
-    const codeTab = await screen.findByRole("tab", { name: "Code" });
-    fireEvent.mouseDown(codeTab);
-    fireEvent.click(codeTab);
-    await waitFor(() => expect(codeTab).toHaveAttribute("data-state", "active"));
+  const openConfigTab = async () => {
+    const configTab = await screen.findByRole("tab", { name: "Config" });
+    fireEvent.mouseDown(configTab);
+    fireEvent.click(configTab);
+    await screen.findByRole("button", { name: /^overview$/i });
+  };
+
+  const openCodeSection = async () => {
+    await openConfigTab();
+    fireEvent.click(screen.getByRole("button", { name: /^code$/i }));
+    await screen.findByLabelText("Code Editor");
   };
 
   beforeEach(() => {
     openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     (publishedAppsService.getBuilderState as jest.Mock).mockResolvedValue(makeState());
+    (publishedAppsService.listAuthTemplates as jest.Mock).mockResolvedValue([
+      {
+        key: "auth-classic",
+        name: "Classic Auth",
+        description: "Classic auth layout",
+        thumbnail: "classic",
+        tags: ["default"],
+        style_tokens: {},
+      },
+      {
+        key: "auth-split",
+        name: "Split Auth",
+        description: "Split auth layout",
+        thumbnail: "split",
+        tags: ["split"],
+        style_tokens: {},
+      },
+    ]);
+    (publishedAppsService.update as jest.Mock).mockResolvedValue(makeState().app);
+    (publishedAppsService.listUsers as jest.Mock).mockResolvedValue([]);
+    (publishedAppsService.updateUser as jest.Mock).mockResolvedValue({
+      user_id: "user-1",
+      email: "user@example.com",
+      membership_status: "blocked",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      active_sessions: 0,
+    });
+    (publishedAppsService.listDomains as jest.Mock).mockResolvedValue([]);
+    (publishedAppsService.createDomain as jest.Mock).mockResolvedValue({
+      id: "domain-1",
+      host: "app.example.com",
+      status: "pending",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    (publishedAppsService.deleteDomain as jest.Mock).mockResolvedValue({ status: "deleted", id: "domain-1" });
     (publishedAppsService.getBuilderCheckpoints as jest.Mock).mockResolvedValue([
       {
         turn_id: "turn-1",
@@ -265,6 +323,10 @@ describe("AppsBuilderWorkspace", () => {
       },
       source_revision_id: "rev-1",
       created_at: new Date().toISOString(),
+    });
+    (publishedAppsService.createRevisionPreviewToken as jest.Mock).mockResolvedValue({
+      revision_id: "rev-3",
+      preview_token: "published-preview-token",
     });
     (publishedAppsService.publish as jest.Mock).mockResolvedValue({
       job_id: "job-1",
@@ -328,6 +390,16 @@ describe("AppsBuilderWorkspace", () => {
       from_revision_id: "rev-1",
       request_id: "revert-1",
     });
+    (publishedRuntimeService.getPreviewRuntime as jest.Mock).mockResolvedValue({
+      app_id: "app-1",
+      slug: "builder-app",
+      revision_id: "rev-3",
+      runtime_mode: "vite_static",
+      preview_url:
+        "http://127.0.0.1:8000/api/py/public/apps/preview/revisions/rev-3/assets/index.html?preview_token=published-preview-token",
+      asset_base_url: "http://127.0.0.1:8000/api/py/public/apps/preview/revisions/rev-3/assets/",
+      api_base_path: "/api/py",
+    });
     jest.spyOn(window, "confirm").mockReturnValue(true);
   });
 
@@ -341,7 +413,7 @@ describe("AppsBuilderWorkspace", () => {
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalledWith("app-1"));
     await screen.findByRole("tab", { name: "Preview" });
-    expect(screen.getByRole("tab", { name: "Code" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Config" })).toBeInTheDocument();
     expect(setOpenMock).toHaveBeenCalledWith(false);
 
     fireEvent.click(screen.getByRole("button", { name: /save draft/i }));
@@ -357,10 +429,89 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
+  it("does not sync draft preview while ensure is still starting", async () => {
+    let resolveEnsure: (value: unknown) => void = () => {};
+    const pendingEnsure = new Promise((resolve) => {
+      resolveEnsure = resolve;
+    });
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockReturnValueOnce(pendingEnsure);
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalledWith("app-1"));
+    await waitFor(() => expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledWith("app-1"));
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(publishedAppsService.syncDraftDevSession).not.toHaveBeenCalled();
+
+    resolveEnsure({
+      session_id: "session-1",
+      app_id: "app-1",
+      revision_id: "rev-1",
+      status: "running",
+      preview_url: "https://preview.local/sandbox/session-1/",
+      idle_timeout_seconds: 180,
+      last_activity_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 180_000).toISOString(),
+      last_error: null,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTitle("App Preview")).toHaveAttribute(
+        "src",
+        "https://preview.local/sandbox/session-1/",
+      );
+    });
+  });
+
+  it("reuses running draft preview session when switching tabs", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalledWith("app-1"));
+    await waitFor(() => expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledWith("app-1"));
+    await waitFor(() =>
+      expect(screen.getByTitle("App Preview")).toHaveAttribute("src", "https://preview.local/sandbox/session-1/"),
+    );
+
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockClear();
+
+    await openConfigTab();
+    const previewTab = screen.getByRole("tab", { name: "Preview" });
+    fireEvent.mouseDown(previewTab);
+    fireEvent.click(previewTab);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(publishedAppsService.ensureDraftDevSession).not.toHaveBeenCalled();
+    expect(screen.queryByText("Starting draft preview...")).not.toBeInTheDocument();
+  });
+
+  it("surfaces an immediate publish-job failure without polling", async () => {
+    (publishedAppsService.publish as jest.Mock).mockResolvedValueOnce({
+      job_id: "job-failed",
+      app_id: "app-1",
+      status: "failed",
+      error: "Celery workers are running but publish task is missing",
+      diagnostics: [{ message: "Celery workers are running but publish task is missing" }],
+      created_at: new Date().toISOString(),
+      started_at: null,
+      finished_at: new Date().toISOString(),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalledWith("app-1"));
+    fireEvent.click(await screen.findByRole("button", { name: /publish/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Celery workers are running but publish task is missing")).toBeInTheDocument();
+    });
+    expect(publishedAppsService.getPublishJobStatus).not.toHaveBeenCalled();
+  });
+
   it("renders a hierarchical file tree and supports folder collapse/expand", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
-    await openCodeTab();
+    await openCodeSection();
     await waitFor(() => expect(screen.getByRole("button", { name: "src" })).toBeInTheDocument());
 
     expect(screen.queryByRole("button", { name: "src/components/Button.tsx" })).not.toBeInTheDocument();
@@ -385,7 +536,7 @@ describe("AppsBuilderWorkspace", () => {
 
     render(<AppsBuilderWorkspace appId="app-1" />);
 
-    await openCodeTab();
+    await openCodeSection();
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Button.tsx" })).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "components" })).toBeInTheDocument();
@@ -394,11 +545,101 @@ describe("AppsBuilderWorkspace", () => {
   it("uses html language mode and suppresses validation decorations in builder editor", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
-    await openCodeTab();
+    await openCodeSection();
 
     const editor = await screen.findByLabelText("Code Editor");
     expect(editor).toHaveAttribute("data-language", "html");
     expect(editor).toHaveAttribute("data-suppress-validation", "true");
+  });
+
+  it("saves overview settings from config section", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await openConfigTab();
+    await screen.findByRole("heading", { name: "Overview" });
+
+    fireEvent.change(screen.getByDisplayValue("Builder App"), { target: { value: "Builder App Updated" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save Overview/i }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.update).toHaveBeenCalledWith(
+        "app-1",
+        expect.objectContaining({
+          name: "Builder App Updated",
+          visibility: "public",
+          auth_template_key: "auth-classic",
+        }),
+      );
+    });
+  });
+
+  it("loads users section and blocks a user", async () => {
+    (publishedAppsService.listUsers as jest.Mock).mockResolvedValueOnce([
+      {
+        user_id: "user-1",
+        email: "user@example.com",
+        full_name: "User One",
+        membership_status: "active",
+        active_sessions: 1,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    (publishedAppsService.updateUser as jest.Mock).mockResolvedValueOnce({
+      user_id: "user-1",
+      email: "user@example.com",
+      full_name: "User One",
+      membership_status: "blocked",
+      active_sessions: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await openConfigTab();
+    fireEvent.click(screen.getByRole("button", { name: /^users$/i }));
+
+    await waitFor(() => expect(publishedAppsService.listUsers).toHaveBeenCalledWith("app-1"));
+    await screen.findByText(/user@example.com/i);
+    fireEvent.click(screen.getByRole("button", { name: /Block/i }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.updateUser).toHaveBeenCalledWith(
+        "app-1",
+        "user-1",
+        { membership_status: "blocked" },
+      );
+    });
+  });
+
+  it("loads domains section and creates a custom domain request", async () => {
+    (publishedAppsService.listDomains as jest.Mock).mockResolvedValueOnce([]);
+    (publishedAppsService.createDomain as jest.Mock).mockResolvedValueOnce({
+      id: "domain-1",
+      host: "app.example.com",
+      status: "pending",
+      notes: "Support domain",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await openConfigTab();
+    fireEvent.click(screen.getByRole("button", { name: /^domains$/i }));
+
+    await waitFor(() => expect(publishedAppsService.listDomains).toHaveBeenCalledWith("app-1"));
+    fireEvent.change(screen.getByPlaceholderText("app.example.com"), { target: { value: "app.example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("Notes (optional)"), { target: { value: "Support domain" } });
+    fireEvent.click(screen.getByRole("button", { name: /Add Domain/i }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.createDomain).toHaveBeenCalledWith(
+        "app-1",
+        { host: "app.example.com", notes: "Support domain" },
+      );
+    });
   });
 
   it("switches template with destructive confirmation", async () => {
@@ -444,7 +685,7 @@ describe("AppsBuilderWorkspace", () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: /Undo Last Run/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Undo Last Run/i }));
 
     await waitFor(() => {
       expect(publishedAppsService.undoLastBuilderRun).toHaveBeenCalledWith(
@@ -497,6 +738,34 @@ describe("AppsBuilderWorkspace", () => {
       );
     });
     expect(publishedAppsService.ensureDraftDevSession).not.toHaveBeenCalled();
+    expect(publishedRuntimeService.getPreviewRuntime).not.toHaveBeenCalled();
+  });
+
+  it("opens published revision via preview runtime proxy for local apps domains", async () => {
+    const publishedState = makeState();
+    publishedState.app.status = "published";
+    publishedState.app.published_url = "https://support-app.apps.localhost";
+    publishedState.app.current_published_revision_id = "rev-3";
+    publishedState.preview_token = "preview-token";
+    (publishedAppsService.getBuilderState as jest.Mock).mockResolvedValueOnce(publishedState);
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByRole("button", { name: /open app/i });
+    openSpy.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /open app/i }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.createRevisionPreviewToken).toHaveBeenCalledWith("app-1", "rev-3");
+      expect(publishedRuntimeService.getPreviewRuntime).toHaveBeenCalledWith("rev-3", "published-preview-token");
+      expect(window.open).toHaveBeenCalledWith(
+        "http://127.0.0.1:8000/api/py/public/apps/preview/revisions/rev-3/assets/index.html?preview_token=published-preview-token",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
   });
 
 });

@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -34,7 +33,6 @@ import {
   Loader2,
   Pencil,
   Plus,
-  Settings,
   ShieldCheck,
   Sliders,
   Trash2,
@@ -78,6 +76,12 @@ const NAV_ITEMS: Array<{ key: SettingsSection; label: string; icon: typeof User 
   { key: "security", label: "Security", icon: ShieldCheck },
 ]
 
+const VECTOR_STORE_PROVIDERS = [
+  { key: "pinecone", label: "Pinecone" },
+  { key: "qdrant", label: "Qdrant" },
+  { key: "pgvector", label: "PGVector" },
+] as const
+
 /* ───────────────────────────── Credential Dialog ───────────────────── */
 
 function CredentialFormDialog({
@@ -98,41 +102,42 @@ function CredentialFormDialog({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [providerKey, setProviderKey] = useState(credential?.provider_key || "")
-  const [providerVariant, setProviderVariant] = useState(credential?.provider_variant || "")
-  const [displayName, setDisplayName] = useState(credential?.display_name || "")
-  const [credentialsText, setCredentialsText] = useState("{}")
+  const [apiKey, setApiKey] = useState("")
   const [isEnabled, setIsEnabled] = useState(credential?.is_enabled ?? true)
+  const isVectorStoreCategory = category === "vector_store"
 
   useEffect(() => {
     if (open) {
-      setProviderKey(credential?.provider_key || "")
-      setProviderVariant(credential?.provider_variant || "")
-      setDisplayName(credential?.display_name || "")
-      setCredentialsText("{}")
+      setProviderKey(credential?.provider_key || (isVectorStoreCategory ? "pinecone" : ""))
+      setApiKey("")
       setIsEnabled(credential?.is_enabled ?? true)
       setError(null)
     }
-  }, [open, credential])
+  }, [open, credential, isVectorStoreCategory])
 
   const handleSave = async () => {
     setLoading(true)
     setError(null)
-    let parsedCredentials: Record<string, unknown> = {}
-    try {
-      parsedCredentials = credentialsText.trim() ? JSON.parse(credentialsText) : {}
-    } catch {
-      setError("Credentials must be valid JSON.")
+    const key = apiKey.trim()
+    if (!key) {
+      setError("API key is required.")
       setLoading(false)
       return
     }
+    const parsedCredentials: Record<string, unknown> = { api_key: key }
 
     try {
+      const effectiveDisplayName =
+        providerKey.trim()
+        || VECTOR_STORE_PROVIDERS.find((provider) => provider.key === providerKey)?.label
+        || "credential"
+
       if (mode === "create") {
         await credentialsService.createCredential({
           category,
           provider_key: providerKey,
-          provider_variant: providerVariant || null,
-          display_name: displayName,
+          provider_variant: null,
+          display_name: effectiveDisplayName,
           credentials: parsedCredentials,
           is_enabled: isEnabled,
         })
@@ -140,8 +145,8 @@ function CredentialFormDialog({
         await credentialsService.updateCredential(credential.id, {
           category,
           provider_key: providerKey,
-          provider_variant: providerVariant || null,
-          display_name: displayName,
+          provider_variant: null,
+          display_name: effectiveDisplayName,
           credentials: parsedCredentials,
           is_enabled: isEnabled,
         })
@@ -182,24 +187,35 @@ function CredentialFormDialog({
         <div className="space-y-4 py-2">
           <div className="space-y-2">
             <Label className="text-xs font-medium text-muted-foreground">Provider Key</Label>
-            <Input value={providerKey} onChange={(e) => setProviderKey(e.target.value)} className="h-9" />
+            {isVectorStoreCategory ? (
+              <Select value={providerKey || "pinecone"} onValueChange={setProviderKey}>
+                <SelectTrigger className="h-9 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VECTOR_STORE_PROVIDERS.map((provider) => (
+                    <SelectItem key={provider.key} value={provider.key}>
+                      {provider.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input value={providerKey} onChange={(e) => setProviderKey(e.target.value)} className="h-9" />
+            )}
           </div>
           <div className="space-y-2">
-            <Label className="text-xs font-medium text-muted-foreground">Provider Variant (optional)</Label>
-            <Input value={providerVariant} onChange={(e) => setProviderVariant(e.target.value)} className="h-9" />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs font-medium text-muted-foreground">Display Name</Label>
-            <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-9" />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs font-medium text-muted-foreground">Credentials (JSON)</Label>
-            <Textarea
-              value={credentialsText}
-              onChange={(e) => setCredentialsText(e.target.value)}
-              className="font-mono text-xs"
-              rows={5}
+            <Label className="text-xs font-medium text-muted-foreground">API Key</Label>
+            <Input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={mode === "edit" ? "Enter new key to rotate" : "Enter API key"}
+              className="h-9 font-mono text-sm"
             />
+            <p className="text-xs text-muted-foreground/70">
+              Stored values are write-only and are not shown after save.
+            </p>
           </div>
           <label className="flex items-center gap-3 cursor-pointer">
             <Checkbox checked={isEnabled} onCheckedChange={(v) => setIsEnabled(v === true)} />
@@ -209,7 +225,7 @@ function CredentialFormDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={loading || !providerKey || !displayName}>
+          <Button onClick={handleSave} disabled={loading || !providerKey || !apiKey.trim()}>
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
             Save
           </Button>
@@ -683,10 +699,10 @@ export default function SettingsPage() {
                 ) : (
                   <div className="divide-y divide-border/30">
                     {items.map((cred) => (
-                      <div key={cred.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
+                        <div key={cred.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium truncate">{cred.display_name}</span>
+                            <span className="text-sm font-medium truncate font-mono">{cred.provider_key}</span>
                             <span className="flex items-center gap-1 shrink-0">
                               <span className={cn("h-1.5 w-1.5 rounded-full", cred.is_enabled ? "bg-emerald-500" : "bg-zinc-400")} />
                               <span className="text-xs text-muted-foreground/60">
@@ -696,12 +712,6 @@ export default function SettingsPage() {
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className="text-xs text-muted-foreground/50 font-mono">{cred.provider_key}</span>
-                            {cred.provider_variant && (
-                              <>
-                                <span className="text-muted-foreground/30">·</span>
-                                <span className="text-xs text-muted-foreground/50 font-mono">{cred.provider_variant}</span>
-                              </>
-                            )}
                             {cred.credential_keys.length > 0 && (
                               <>
                                 <span className="text-muted-foreground/30">·</span>

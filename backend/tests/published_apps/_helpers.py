@@ -11,7 +11,7 @@ from app.db.postgres.models.identity import (
     Tenant,
     User,
 )
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppStatus
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppStatus, PublishedAppVisibility
 
 
 async def seed_admin_tenant_and_agent(db_session):
@@ -95,14 +95,31 @@ async def start_publish_and_wait(
     return job_payload, status_payload
 
 
-async def seed_published_app(db_session, tenant_id, agent_id, created_by, *, slug: str, auth_enabled: bool = True, auth_providers=None):
+async def seed_published_app(
+    db_session,
+    tenant_id,
+    agent_id,
+    created_by,
+    *,
+    slug: str,
+    auth_enabled: bool = True,
+    auth_providers=None,
+    visibility: PublishedAppVisibility = PublishedAppVisibility.public,
+    description: str | None = None,
+    logo_url: str | None = None,
+    auth_template_key: str = "auth-classic",
+):
     app = PublishedApp(
         tenant_id=tenant_id,
         agent_id=agent_id,
         name=f"App {slug}",
         slug=slug,
+        description=description,
+        logo_url=logo_url,
+        visibility=visibility,
         auth_enabled=auth_enabled,
         auth_providers=auth_providers or ["password"],
+        auth_template_key=auth_template_key,
         status=PublishedAppStatus.published,
         created_by=created_by,
         published_url=f"https://{slug}.apps.localhost",

@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-02-14
+Last Updated: 2026-02-16
 
 ## Scope of the feature
 - Admin control plane CRUD and publish lifecycle for tenant published apps.
@@ -20,7 +20,13 @@ Last Updated: 2026-02-14
 
 ## Key scenarios covered
 - Tenant admin can create/list/update/delete apps.
+- App create/update/list/get payloads include branding/template/visibility fields (`description`, `logo_url`, `visibility`, `auth_template_key`).
+- Auth template catalog endpoint is covered (`GET /admin/apps/auth/templates`).
 - Create accepts `template_key`, auto-generates slug, and seeds initial draft revision.
+- Users admin endpoints are covered (`GET /admin/apps/{app_id}/users`, `PATCH /admin/apps/{app_id}/users/{user_id}`) including block/unblock.
+- Block action revokes active app sessions and blocked membership cannot login until unblocked.
+- Domains admin endpoints are covered (`GET/POST/DELETE /admin/apps/{app_id}/domains...`) with pending-request workflow.
+- Public visibility gate is covered on resolve/config/runtime/auth/chat endpoints for `visibility=private`.
 - Only published agents can be attached/published.
 - Publish and unpublish lifecycle updates URL/status.
 - Builder state returns app/templates/current draft/current published revision snapshot info.
@@ -55,6 +61,8 @@ Last Updated: 2026-02-14
 - Builder chat sandbox command allowlist gate blocks non-allowlisted command execution and returns compile-style diagnostics.
 - Publish endpoint returns async job metadata and publish jobs move through `queued/running/succeeded/failed`.
 - Publish no longer gates on draft revision `build_status`; deterministic checks happen in publish worker full-build path.
+- Publish fails fast with actionable diagnostics when publish workers are missing/outdated (missing registered publish task or missing `apps_build` queue subscription).
+- Admin revision preview-token endpoint mints revision-scoped preview tokens that are accepted only for the requested revision.
 - Worker-build preflight gate does not block draft save/chat flows in draft mode.
 - Publish failures keep the previous `current_published_revision_id` unchanged.
 - Draft-dev session APIs support ensure/sync/heartbeat/read/stop lifecycle per `(app_id, user_id)`.
@@ -97,6 +105,15 @@ Last Updated: 2026-02-14
 - Command: `pytest -q backend/tests/published_apps/test_builder_revisions.py`
 - Date: 2026-02-14 20:42 UTC
 - Result: PASS (21 passed)
+- Command: `cd backend && pytest -q tests/published_apps`
+- Date: 2026-02-15 20:34 UTC
+- Result: PASS (43 passed)
+- Command: `cd backend && pytest -q tests/published_apps/test_admin_apps_publish_rules.py`
+- Date: 2026-02-16 18:56 EET
+- Result: PASS (5 passed)
+- Command: `cd backend && pytest -q tests/published_apps/test_admin_apps_publish_rules.py`
+- Date: 2026-02-16 19:26 EET
+- Result: PASS (6 passed)
 
 ## Known gaps or follow-ups
 - Add negative tests for cross-app token replay attempts.

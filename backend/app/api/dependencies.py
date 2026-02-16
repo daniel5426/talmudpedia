@@ -6,10 +6,15 @@ from pydantic import BaseModel
 from .routers.auth import get_current_user
 from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgMembership
 from app.db.postgres.models.security import ApprovalDecision, ApprovalStatus
-from app.db.postgres.models.published_apps import PublishedAppSession, PublishedApp
+from app.db.postgres.models.published_apps import (
+    PublishedApp,
+    PublishedAppSession,
+    PublishedAppUserMembership,
+    PublishedAppUserMembershipStatus,
+)
 from app.db.postgres.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from uuid import UUID
 import jwt
 from app.core.security import SECRET_KEY, ALGORITHM
@@ -283,6 +288,20 @@ async def get_optional_published_app_principal(
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
 
+    membership_result = await db.execute(
+        select(PublishedAppUserMembership).where(
+            and_(
+                PublishedAppUserMembership.published_app_id == app_id,
+                PublishedAppUserMembership.user_id == user_id,
+            )
+        ).limit(1)
+    )
+    membership = membership_result.scalar_one_or_none()
+    if membership is None:
+        raise HTTPException(status_code=401, detail="Published app membership not found")
+    if membership.status == PublishedAppUserMembershipStatus.blocked:
+        raise HTTPException(status_code=403, detail="Published app membership is blocked")
+
     return {
         "type": "published_app_user",
         "tenant_id": str(app.tenant_id),
@@ -292,6 +311,7 @@ async def get_optional_published_app_principal(
         "user_id": str(user.id),
         "user": user,
         "provider": payload.get("provider", "password"),
+        "membership_status": membership.status.value if hasattr(membership.status, "value") else str(membership.status),
         "scopes": payload.get("scope", []),
         "auth_token": token,
     }

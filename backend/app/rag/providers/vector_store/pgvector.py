@@ -45,6 +45,11 @@ class PgvectorVectorStore(VectorStoreProvider):
     
     def _table_name(self, index_name: str) -> str:
         return f"{self._table_prefix}_{index_name}".replace("-", "_")
+
+    @staticmethod
+    def _to_pgvector_literal(values: List[float]) -> str:
+        # asyncpg doesn't auto-encode Python lists for pgvector; pass a vector literal.
+        return "[" + ",".join(str(float(v)) for v in values) + "]"
     
     async def create_index(
         self,
@@ -168,18 +173,19 @@ class PgvectorVectorStore(VectorStoreProvider):
             
             async with pool.acquire() as conn:
                 for doc in documents:
+                    vector_literal = self._to_pgvector_literal(doc.values)
                     await conn.execute(f"""
                         INSERT INTO {table} (id, embedding, metadata, namespace)
-                        VALUES ($1, $2, $3, $4)
+                        VALUES ($1, $2::vector, $3::jsonb, $4)
                         ON CONFLICT (id) DO UPDATE SET
                             embedding = EXCLUDED.embedding,
                             metadata = EXCLUDED.metadata,
                             namespace = EXCLUDED.namespace
-                    """, doc.id, doc.values, json.dumps(doc.metadata), ns)
+                    """, doc.id, vector_literal, json.dumps(doc.metadata), ns)
             
             return len(documents)
-        except Exception:
-            return 0
+        except Exception as e:
+            raise RuntimeError(f"PGVector upsert failed for collection '{index_name}': {e}") from e
     
     async def delete(
         self,
@@ -222,7 +228,7 @@ class PgvectorVectorStore(VectorStoreProvider):
                 FROM {table}
                 WHERE 1=1
             """
-            params = [query_vector]
+            params = [self._to_pgvector_literal(query_vector)]
             param_idx = 2
             
             if namespace:
@@ -254,5 +260,5 @@ class PgvectorVectorStore(VectorStoreProvider):
                 )
                 for row in rows
             ]
-        except Exception:
-            return []
+        except Exception as e:
+            raise RuntimeError(f"PGVector search failed for collection '{index_name}': {e}") from e

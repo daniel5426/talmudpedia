@@ -7,10 +7,14 @@ export interface PublishedRuntimeConfig {
   tenant_id: string;
   agent_id: string;
   name: string;
+  description?: string | null;
+  logo_url?: string | null;
   slug: string;
   status: "draft" | "published" | "paused" | "archived";
+  visibility?: "public" | "private";
   auth_enabled: boolean;
   auth_providers: PublishedRuntimeAuthProvider[];
+  auth_template_key?: string;
   published_url?: string | null;
   has_custom_ui?: boolean;
   published_revision_id?: string | null;

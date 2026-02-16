@@ -22,9 +22,18 @@ class PineconeVectorStore(VectorStoreProvider):
         api_key: str = None,
         environment: str = None,
         cloud: str = "aws",
-        region: str = "us-east-1"
+        region: str = "us-east-1",
+        allow_env_fallback: bool = True,
     ):
-        self._api_key = api_key or os.getenv("PINECONE_API_KEY")
+        if api_key:
+            self._api_key = api_key
+        elif allow_env_fallback:
+            self._api_key = os.getenv("PINECONE_API_KEY")
+        else:
+            self._api_key = None
+
+        if not self._api_key:
+            raise ValueError("Missing Pinecone API key")
         self._environment = environment
         self._cloud = cloud
         self._region = region

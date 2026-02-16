@@ -78,8 +78,14 @@ class PineconeAdapter(VectorBackendAdapter):
         
         self._index_name = config.get("index_name")
         self._api_key = config.get("api_key")
-        
-        self._store = PineconeVectorStore(api_key=self._api_key)
+        if not self._index_name:
+            raise ValueError("Missing Pinecone index_name in knowledge store backend configuration")
+        if not self._api_key:
+            raise ValueError(
+                "Missing Pinecone API key. Configure a tenant vector_store credential and bind it to the knowledge store."
+            )
+
+        self._store = PineconeVectorStore(api_key=self._api_key, allow_env_fallback=False)
     
     @property
     def backend_name(self) -> str:
@@ -147,6 +153,17 @@ class PgVectorAdapter(VectorBackendAdapter):
         return "pgvector"
     
     async def upsert(self, vectors: List[VectorRecord], namespace: Optional[str] = None) -> int:
+        if not vectors:
+            return 0
+
+        # Ensure the backing pgvector table/index exists before first upsert.
+        dimension = next((len(v.values) for v in vectors if isinstance(v.values, list) and v.values), 0)
+        if dimension <= 0:
+            raise ValueError("No valid embedding vectors were provided for PGVector upsert")
+        created = await self._store.create_index(self._collection_name, dimension)
+        if not created:
+            raise ValueError(f"Failed to initialize pgvector collection '{self._collection_name}'")
+
         docs = [
             VectorDocument(
                 id=v.id,
@@ -164,15 +181,11 @@ class PgVectorAdapter(VectorBackendAdapter):
         filters: Optional[Dict[str, Any]] = None,
         namespace: Optional[str] = None
     ) -> List[SearchResult]:
-        # Add namespace to filter if provided
-        if namespace:
-            filters = filters or {}
-            filters["namespace"] = namespace
-        
         results = await self._store.search(
             self._collection_name,
             vector,
             top_k,
+            namespace=namespace,
             filter=filters
         )
         return [

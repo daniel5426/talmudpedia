@@ -73,5 +73,10 @@ class CredentialsService:
         if not credential.is_enabled:
             raise ValueError(f"Credentials disabled: {credentials_ref}")
 
-        merged.update(credential.credentials or {})
+        # Keep routing/binding fields controlled by the knowledge store itself.
+        protected_keys = {"index_name", "collection_name", "namespace"}
+        for key, value in (credential.credentials or {}).items():
+            if key in protected_keys and key in merged:
+                continue
+            merged[key] = value
         return merged

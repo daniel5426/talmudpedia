@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-02-14
+Last Updated: 2026-02-15
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -112,6 +112,7 @@ backend/app/services/published_app_draft_dev_runtime.py
 backend/app/services/published_app_draft_dev_local_runtime.py
 backend/app/services/published_app_draft_dev_runtime_client.py
 backend/app/services/published_app_templates.py
+backend/app/services/published_app_auth_templates.py
 backend/app/services/apps_builder_dependency_policy.py
 backend/app/services/library/
 backend/app/services/stt/

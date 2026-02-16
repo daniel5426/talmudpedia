@@ -100,12 +100,6 @@ const data = {
       ],
     },
     {
-      title: "Settings",
-      url: "/admin/settings",
-      icon: Settings,
-      items: [],
-    },
-    {
       title: "RAG Management",
       url: "/admin/rag",
       icon: Database,
@@ -158,6 +152,12 @@ const data = {
       title: "Apps",
       url: "/admin/apps",
       icon: Globe,
+      items: [],
+    },
+    {
+      title: "Settings",
+      url: "/admin/settings",
+      icon: Settings,
       items: [],
     },
   ]

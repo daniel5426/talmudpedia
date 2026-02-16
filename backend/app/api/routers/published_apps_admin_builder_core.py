@@ -197,6 +197,58 @@ def _publish_job_eager_enabled() -> bool:
     return _env_flag("APPS_PUBLISH_JOB_EAGER", False)
 
 
+def _normalize_registered_task_name(raw: Any) -> str:
+    token = str(raw or "").strip()
+    if not token:
+        return ""
+    return token.split(" ", 1)[0]
+
+
+def _verify_publish_worker_ready() -> Optional[str]:
+    from app.workers.celery_app import celery_app
+
+    inspect_timeout = float(os.getenv("APPS_PUBLISH_WORKER_INSPECT_TIMEOUT_SECONDS", "1.5"))
+    inspect = celery_app.control.inspect(timeout=inspect_timeout)
+    try:
+        registered = inspect.registered() or {}
+    except Exception as exc:
+        logger.warning("Failed to inspect Celery registered tasks", extra={"error": str(exc)})
+        return f"Failed to inspect Celery workers for publish capability: {exc}"
+
+    if not isinstance(registered, dict) or not registered:
+        return "No Celery worker responded to publish capability check. Ensure workers are running."
+
+    task_name = "app.workers.tasks.publish_published_app_task"
+    has_publish_task = False
+    for tasks in registered.values():
+        task_list = tasks if isinstance(tasks, list) else []
+        if any(_normalize_registered_task_name(item) == task_name for item in task_list):
+            has_publish_task = True
+            break
+    if not has_publish_task:
+        return (
+            f"Celery workers are running but `{task_name}` is not registered. "
+            "Restart workers with the latest backend code."
+        )
+
+    try:
+        active_queues = inspect.active_queues() or {}
+    except Exception as exc:
+        logger.warning("Failed to inspect Celery active queues", extra={"error": str(exc)})
+        return f"Failed to inspect Celery worker queues for publish capability: {exc}"
+
+    has_apps_build_queue = False
+    if isinstance(active_queues, dict):
+        for queue_items in active_queues.values():
+            queue_list = queue_items if isinstance(queue_items, list) else []
+            if any(isinstance(item, dict) and item.get("name") == "apps_build" for item in queue_list):
+                has_apps_build_queue = True
+                break
+    if not has_apps_build_queue:
+        return "Celery workers are running but none are subscribed to `apps_build` queue."
+    return None
+
+
 def _mark_revision_build_enqueue_failed(
     *,
     revision: PublishedAppRevision,
@@ -279,6 +331,10 @@ def _enqueue_publish_job(
             )
             return f"Failed to run publish task eagerly: {exc}"
         return None
+
+    worker_ready_error = _verify_publish_worker_ready()
+    if worker_ready_error:
+        return worker_ready_error
 
     try:
         publish_published_app_task.delay(

@@ -339,6 +339,44 @@ export default function PipelineEditorPage() {
         }
     }
 
+    const ensureExecutableForRun = useCallback(async (): Promise<CompileResult | null> => {
+        if (compileResult?.executable_pipeline_id) {
+            return compileResult
+        }
+        if (!pipeline) {
+            return null
+        }
+        try {
+            const versionsRes = await ragAdminService.listPipelineVersions(pipeline.id, currentTenant?.slug)
+            const versions = versionsRes.versions || []
+            const latest = versions.find((v) => v.is_valid) || versions[0]
+            if (!latest) {
+                return null
+            }
+            const resolved: CompileResult = {
+                success: true,
+                executable_pipeline_id: latest.id,
+                version: latest.version,
+                errors: [],
+                warnings: [],
+            }
+            setCompileResult(resolved)
+            return resolved
+        } catch (error) {
+            console.error("Failed to resolve latest compiled pipeline version", error)
+            return null
+        }
+    }, [compileResult, pipeline, currentTenant?.slug])
+
+    const handleOpenRunDialog = useCallback(async () => {
+        const resolved = await ensureExecutableForRun()
+        if (!resolved?.executable_pipeline_id) {
+            alert("No compiled version found. Please compile the pipeline first.")
+            return
+        }
+        setIsRunDialogOpen(true)
+    }, [ensureExecutableForRun])
+
     if (loading) {
         return (
             <div className="flex flex-col h-full w-full">
@@ -456,7 +494,7 @@ export default function PipelineEditorPage() {
                         }
                     }}
                     onCompile={handleCompile}
-                    onRun={() => setIsRunDialogOpen(true)}
+                    onRun={handleOpenRunDialog}
                     isSaving={saving}
                     isCompiling={compiling}
                     executionSteps={executionSteps}
@@ -524,7 +562,7 @@ export default function PipelineEditorPage() {
                     )}
 
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsRunDialogOpen(true)}>Run Pipeline</Button>
+                        <Button variant="outline" onClick={handleOpenRunDialog}>Run Pipeline</Button>
                         <Button onClick={() => setShowCompileDialog(false)}>Close</Button>
                     </DialogFooter>
                 </DialogContent>

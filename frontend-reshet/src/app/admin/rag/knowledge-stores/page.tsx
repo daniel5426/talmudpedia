@@ -7,6 +7,8 @@ import {
     knowledgeStoresService,
     KnowledgeStore,
     CreateKnowledgeStoreRequest,
+    credentialsService,
+    IntegrationCredential,
     modelsService,
     LogicalModel,
 } from "@/services"
@@ -63,10 +65,12 @@ import {
 
 function CreateKnowledgeStoreDialog({
     onCreated,
-    embeddingModels
+    embeddingModels,
+    vectorStoreCredentials,
 }: {
     onCreated: () => void
     embeddingModels: LogicalModel[]
+    vectorStoreCredentials: IntegrationCredential[]
 }) {
     const { currentTenant } = useTenant()
     const { direction } = useDirection()
@@ -78,9 +82,19 @@ function CreateKnowledgeStoreDialog({
     const [description, setDescription] = useState("")
     const [embeddingModelId, setEmbeddingModelId] = useState("")
     const [backend, setBackend] = useState<"pgvector" | "pinecone" | "qdrant">("pgvector")
+    const [credentialsRef, setCredentialsRef] = useState<string>("none")
     const [retrievalPolicy, setRetrievalPolicy] = useState<"semantic_only" | "hybrid">("semantic_only")
     const [chunkSize, setChunkSize] = useState(512)
     const [chunkOverlap, setChunkOverlap] = useState(50)
+
+    const compatibleCredentials = vectorStoreCredentials.filter((cred) => {
+        if (!cred.is_enabled) return false
+        const provider = (cred.provider_key || "").trim().toLowerCase()
+        if (backend === "pinecone") return provider === "pinecone"
+        if (backend === "qdrant") return provider === "qdrant"
+        return provider === "pgvector" || provider === "postgres" || provider === "postgresql"
+    })
+    const credentialRequired = backend === "pinecone" || backend === "qdrant"
 
     const handleCreate = async () => {
         if (!name || !embeddingModelId) return
@@ -91,6 +105,7 @@ function CreateKnowledgeStoreDialog({
                 description: description || undefined,
                 embedding_model_id: embeddingModelId,
                 backend,
+                credentials_ref: credentialsRef !== "none" ? credentialsRef : undefined,
                 retrieval_policy: retrievalPolicy,
                 chunking_strategy: {
                     strategy: "recursive",
@@ -114,10 +129,28 @@ function CreateKnowledgeStoreDialog({
         setDescription("")
         setEmbeddingModelId("")
         setBackend("pgvector")
+        setCredentialsRef("none")
         setRetrievalPolicy("semantic_only")
         setChunkSize(512)
         setChunkOverlap(50)
     }
+
+    useEffect(() => {
+        if (credentialRequired) {
+            if (compatibleCredentials.length === 1) {
+                setCredentialsRef(compatibleCredentials[0].id)
+                return
+            }
+            if (credentialsRef !== "none" && compatibleCredentials.some((cred) => cred.id === credentialsRef)) {
+                return
+            }
+            setCredentialsRef("none")
+            return
+        }
+        if (credentialsRef !== "none" && !compatibleCredentials.some((cred) => cred.id === credentialsRef)) {
+            setCredentialsRef("none")
+        }
+    }, [backend, credentialRequired, compatibleCredentials, credentialsRef])
 
     return (
         <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) resetForm() }}>
@@ -208,6 +241,33 @@ function CreateKnowledgeStoreDialog({
                         The embedding model is immutable after creation.
                     </p>
 
+                    <div className="space-y-2">
+                        <Label className={isRTL ? "text-right block" : "text-left block"}>
+                            Vector Store Credential{credentialRequired ? " *" : " (optional)"}
+                        </Label>
+                        <Select
+                            value={credentialsRef}
+                            onValueChange={setCredentialsRef}
+                        >
+                            <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Select credential" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="none">None</SelectItem>
+                                {compatibleCredentials.map((cred) => (
+                                    <SelectItem key={cred.id} value={cred.id}>
+                                        {cred.display_name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        {credentialRequired && compatibleCredentials.length === 0 && (
+                            <p className="text-xs text-destructive">
+                                No enabled {backend} credential found. Add one in Settings - Integrations - Vector Stores.
+                            </p>
+                        )}
+                    </div>
+
                     {/* Row: Retrieval Policy + Chunking Settings */}
                     <div className="grid grid-cols-3 gap-4">
                         <div className="space-y-2">
@@ -256,7 +316,10 @@ function CreateKnowledgeStoreDialog({
                     <Button variant="outline" onClick={() => setOpen(false)}>
                         Cancel
                     </Button>
-                    <Button onClick={handleCreate} disabled={!name || !embeddingModelId || loading}>
+                    <Button
+                        onClick={handleCreate}
+                        disabled={!name || !embeddingModelId || loading || (credentialRequired && credentialsRef === "none")}
+                    >
                         {loading ? "Creating..." : "Create Store"}
                     </Button>
                 </DialogFooter>
@@ -463,6 +526,7 @@ export default function KnowledgeStoresPage() {
     const isRTL = direction === "rtl"
 
     const [stores, setStores] = useState<KnowledgeStore[]>([])
+    const [vectorStoreCredentials, setVectorStoreCredentials] = useState<IntegrationCredential[]>([])
     const [embeddingModels, setEmbeddingModels] = useState<LogicalModel[]>([])
     const [loading, setLoading] = useState(true)
     const [searchQuery, setSearchQuery] = useState("")
@@ -473,12 +537,14 @@ export default function KnowledgeStoresPage() {
         if (!currentTenant?.slug) return
         setLoading(true)
         try {
-            const [storesData, modelsData] = await Promise.all([
+            const [storesData, modelsData, credentialsData] = await Promise.all([
                 knowledgeStoresService.list(currentTenant.slug),
                 modelsService.listModels("embedding"),
+                credentialsService.listCredentials("vector_store"),
             ])
             setStores(storesData)
             setEmbeddingModels(modelsData.models)
+            setVectorStoreCredentials(credentialsData)
         } catch (error) {
             console.error("Failed to fetch knowledge stores", error)
         } finally {
@@ -545,7 +611,11 @@ export default function KnowledgeStoresPage() {
                         <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
                         Refresh
                     </Button>
-                    <CreateKnowledgeStoreDialog onCreated={fetchData} embeddingModels={embeddingModels} />
+                    <CreateKnowledgeStoreDialog
+                        onCreated={fetchData}
+                        embeddingModels={embeddingModels}
+                        vectorStoreCredentials={vectorStoreCredentials}
+                    />
                 </div>
             </header>
 
@@ -613,7 +683,11 @@ export default function KnowledgeStoresPage() {
                                 <p className="text-muted-foreground mb-4 max-w-sm mx-auto">
                                     Create your first knowledge store to start organizing your vectorized documents.
                                 </p>
-                                <CreateKnowledgeStoreDialog onCreated={fetchData} embeddingModels={embeddingModels} />
+                                <CreateKnowledgeStoreDialog
+                                    onCreated={fetchData}
+                                    embeddingModels={embeddingModels}
+                                    vectorStoreCredentials={vectorStoreCredentials}
+                                />
                             </div>
                         ) : (
                             <>

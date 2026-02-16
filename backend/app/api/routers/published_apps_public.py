@@ -21,7 +21,12 @@ from app.api.dependencies import (
     get_optional_published_app_principal,
 )
 from app.db.postgres.models.chat import Chat, Message, MessageRole
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision, PublishedAppStatus
+from app.db.postgres.models.published_apps import (
+    PublishedApp,
+    PublishedAppRevision,
+    PublishedAppStatus,
+    PublishedAppVisibility,
+)
 from app.db.postgres.session import get_db
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
@@ -43,10 +48,14 @@ class PublicAppConfigResponse(BaseModel):
     tenant_id: str
     agent_id: str
     name: str
+    description: Optional[str] = None
+    logo_url: Optional[str] = None
     slug: str
     status: str
+    visibility: str
     auth_enabled: bool
     auth_providers: List[str]
+    auth_template_key: str = "auth-classic"
     published_url: Optional[str] = None
     has_custom_ui: bool = False
     published_revision_id: Optional[str] = None
@@ -100,15 +109,25 @@ def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
         tenant_id=str(app.tenant_id),
         agent_id=str(app.agent_id),
         name=app.name,
+        description=app.description,
+        logo_url=app.logo_url,
         slug=app.slug,
         status=app.status.value if hasattr(app.status, "value") else str(app.status),
+        visibility=app.visibility.value if hasattr(app.visibility, "value") else str(app.visibility or "public"),
         auth_enabled=bool(app.auth_enabled),
         auth_providers=list(app.auth_providers or []),
+        auth_template_key=(app.auth_template_key or "auth-classic"),
         published_url=app.published_url,
         has_custom_ui=bool(app.current_published_revision_id),
         published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
         ui_runtime_mode="custom_bundle" if app.current_published_revision_id else "legacy_template",
     )
+
+
+def _assert_public_visibility(app: PublishedApp) -> None:
+    visibility_value = app.visibility.value if hasattr(app.visibility, "value") else str(app.visibility or "public")
+    if visibility_value == PublishedAppVisibility.private.value:
+        raise HTTPException(status_code=404, detail="Published app is unavailable")
 
 
 async def _get_app_by_slug(db: AsyncSession, app_slug: str) -> PublishedApp:
@@ -123,6 +142,7 @@ async def _assert_published(db: AsyncSession, app_slug: str) -> PublishedApp:
     app = await _get_app_by_slug(db, app_slug)
     if app.status != PublishedAppStatus.published:
         raise HTTPException(status_code=404, detail="Published app is unavailable")
+    _assert_public_visibility(app)
     return app
 
 
@@ -250,6 +270,8 @@ async def get_app_config(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_app_by_slug(db, app_slug)
+    if app.status == PublishedAppStatus.published:
+        _assert_public_visibility(app)
     return _to_public_config(app)
 
 

@@ -74,6 +74,9 @@ class PublishedAppAuthService:
             await self.db.flush()
             return membership
 
+        if membership.status == PublishedAppUserMembershipStatus.blocked:
+            raise PublishedAppAuthError("User is blocked for this app")
+
         membership.status = PublishedAppUserMembershipStatus.active
         membership.last_login_at = datetime.now(timezone.utc)
         await self.db.flush()

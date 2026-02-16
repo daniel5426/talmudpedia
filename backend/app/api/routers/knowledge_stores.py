@@ -19,6 +19,8 @@ from app.db.postgres.models import (
     KnowledgeStoreStatus, 
     StorageBackend, 
     RetrievalPolicy,
+    IntegrationCredential,
+    IntegrationCredentialCategory,
     Tenant,
     User
 )
@@ -108,6 +110,36 @@ async def get_tenant_from_slug(db: AsyncSession, slug: str) -> Optional[Tenant]:
     return result.scalar_one_or_none()
 
 
+async def validate_vector_store_credential(
+    db: AsyncSession,
+    tenant_id: UUID,
+    backend: StorageBackend,
+    credentials_ref: Optional[UUID],
+) -> Optional[UUID]:
+    if not credentials_ref:
+        if backend == StorageBackend.PINECONE:
+            raise HTTPException(
+                status_code=422,
+                detail="Pinecone knowledge stores require a tenant vector_store credential.",
+            )
+        return None
+
+    cred = await db.get(IntegrationCredential, credentials_ref)
+    if not cred or cred.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    if cred.category != IntegrationCredentialCategory.VECTOR_STORE:
+        raise HTTPException(status_code=422, detail="Credential must be in category 'vector_store'")
+    if not cred.is_enabled:
+        raise HTTPException(status_code=422, detail="Credential is disabled")
+
+    provider_key = (cred.provider_key or "").strip().lower()
+    if backend == StorageBackend.PINECONE and provider_key != "pinecone":
+        raise HTTPException(status_code=422, detail="Pinecone stores require a Pinecone credential")
+    if backend == StorageBackend.QDRANT and provider_key != "qdrant":
+        raise HTTPException(status_code=422, detail="Qdrant stores require a Qdrant credential")
+    return cred.id
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -155,6 +187,13 @@ async def create_knowledge_store(
     tenant = await get_tenant_from_slug(db, tenant_slug)
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+
+    validated_credential_ref = await validate_vector_store_credential(
+        db=db,
+        tenant_id=tenant.id,
+        backend=request.backend,
+        credentials_ref=request.credentials_ref,
+    )
     
     # Build chunking strategy
     chunking = request.chunking_strategy.model_dump() if request.chunking_strategy else {
@@ -182,7 +221,7 @@ async def create_knowledge_store(
         retrieval_policy=request.retrieval_policy,
         backend=request.backend,
         backend_config=backend_config,
-        credentials_ref=request.credentials_ref,
+        credentials_ref=validated_credential_ref,
         status=KnowledgeStoreStatus.ACTIVE,
         created_by=current_user.id
     )
@@ -242,7 +281,13 @@ async def update_knowledge_store(
     if request.retrieval_policy is not None:
         store.retrieval_policy = request.retrieval_policy
     if request.credentials_ref is not None:
-        store.credentials_ref = request.credentials_ref
+        validated_credential_ref = await validate_vector_store_credential(
+            db=db,
+            tenant_id=store.tenant_id,
+            backend=store.backend,
+            credentials_ref=request.credentials_ref,
+        )
+        store.credentials_ref = validated_credential_ref
     
     await db.commit()
     await db.refresh(store)

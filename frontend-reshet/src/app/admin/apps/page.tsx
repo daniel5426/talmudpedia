@@ -37,7 +37,13 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchableResourceInput } from "@/components/shared/SearchableResourceInput";
 import { agentService, publishedAppsService } from "@/services";
-import type { Agent, PublishedApp, PublishedAppAuthProvider, PublishedAppTemplate } from "@/services";
+import type {
+  Agent,
+  PublishedApp,
+  PublishedAppAuthProvider,
+  PublishedAppAuthTemplate,
+  PublishedAppTemplate,
+} from "@/services";
 
 const DEFAULT_PROVIDERS: PublishedAppAuthProvider[] = ["password"];
 
@@ -86,6 +92,7 @@ export default function AppsPage() {
   const router = useRouter();
   const [apps, setApps] = useState<PublishedApp[]>([]);
   const [templates, setTemplates] = useState<PublishedAppTemplate[]>([]);
+  const [authTemplates, setAuthTemplates] = useState<PublishedAppAuthTemplate[]>([]);
   const [publishedAgents, setPublishedAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -96,6 +103,7 @@ export default function AppsPage() {
   const [name, setName] = useState("");
   const [agentId, setAgentId] = useState("");
   const [templateKey, setTemplateKey] = useState("");
+  const [authTemplateKey, setAuthTemplateKey] = useState("");
   const [authEnabled, setAuthEnabled] = useState(true);
   const [providerPassword, setProviderPassword] = useState(true);
   const [providerGoogle, setProviderGoogle] = useState(false);
@@ -120,22 +128,27 @@ export default function AppsPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [appsResponse, agentsResponse, templatesResponse] = await Promise.all([
+      const [appsResponse, agentsResponse, templatesResponse, authTemplatesResponse] = await Promise.all([
         publishedAppsService.list(),
         agentService.listAgents({ limit: 500 }),
         publishedAppsService.listTemplates(),
+        publishedAppsService.listAuthTemplates(),
       ]);
       const publishedOnly = (agentsResponse.agents || []).filter(
         (agent) => String(agent.status).toLowerCase() === "published"
       );
       setApps(appsResponse);
       setTemplates(templatesResponse);
+      setAuthTemplates(authTemplatesResponse);
       setPublishedAgents(publishedOnly);
       if (!agentId && publishedOnly.length > 0) {
         setAgentId(publishedOnly[0].id);
       }
       if (!templateKey && templatesResponse.length > 0) {
         setTemplateKey(templatesResponse[0].key);
+      }
+      if (!authTemplateKey && authTemplatesResponse.length > 0) {
+        setAuthTemplateKey(authTemplatesResponse[0].key);
       }
     } catch (err) {
       console.error(err);
@@ -153,6 +166,7 @@ export default function AppsPage() {
   function resetCreateForm() {
     setName("");
     setTemplateKey((prev) => prev || templates[0]?.key || "");
+    setAuthTemplateKey((prev) => prev || authTemplates[0]?.key || "auth-classic");
     setProviderPassword(true);
     setProviderGoogle(false);
     setError(null);
@@ -160,8 +174,8 @@ export default function AppsPage() {
 
   async function handleCreate() {
     const nextName = name.trim();
-    if (!nextName || !agentId || !templateKey) {
-      setError("Name, template, and published agent are required");
+    if (!nextName || !agentId || !templateKey || !authTemplateKey) {
+      setError("Name, template, auth template, and published agent are required");
       return;
     }
 
@@ -180,6 +194,7 @@ export default function AppsPage() {
         name: nextName,
         agent_id: agentId,
         template_key: templateKey,
+        auth_template_key: authTemplateKey,
         auth_enabled: authEnabled,
         auth_providers: providers,
       });
@@ -472,27 +487,53 @@ export default function AppsPage() {
               )}
             </div>
 
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-muted-foreground">
-                Frontend Template
-              </Label>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {templates.map((template) => {
-                  const active = template.key === templateKey;
-                  return (
-                    <button
-                      key={template.key}
-                      type="button"
-                      onClick={() => setTemplateKey(template.key)}
-                      className={`rounded-lg border p-3 text-left transition-colors ${
-                        active ? "border-primary bg-primary/5" : "border-border/70 hover:border-border"
-                      }`}
-                    >
-                      <div className="mb-1.5 text-sm font-semibold">{template.name}</div>
-                      <div className="text-xs text-muted-foreground">{template.description}</div>
-                    </button>
-                  );
-                })}
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Frontend Template
+                </Label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {templates.map((template) => {
+                    const active = template.key === templateKey;
+                    return (
+                      <button
+                        key={template.key}
+                        type="button"
+                        onClick={() => setTemplateKey(template.key)}
+                        className={`rounded-lg border p-3 text-left transition-colors ${
+                          active ? "border-primary bg-primary/5" : "border-border/70 hover:border-border"
+                        }`}
+                      >
+                        <div className="mb-1.5 text-sm font-semibold">{template.name}</div>
+                        <div className="text-xs text-muted-foreground">{template.description}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Auth Template
+                </Label>
+                <div className="grid grid-cols-1 gap-2">
+                  {authTemplates.map((template) => {
+                    const active = template.key === authTemplateKey;
+                    return (
+                      <button
+                        key={template.key}
+                        type="button"
+                        onClick={() => setAuthTemplateKey(template.key)}
+                        className={`rounded-lg border p-2.5 text-left transition-colors ${
+                          active ? "border-primary bg-primary/5" : "border-border/70 hover:border-border"
+                        }`}
+                      >
+                        <div className="text-sm font-semibold">{template.name}</div>
+                        <div className="text-xs text-muted-foreground">{template.description}</div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -507,7 +548,7 @@ export default function AppsPage() {
             </Button>
             <Button
               onClick={handleCreate}
-              disabled={isCreating || isLoading || publishedAgents.length === 0 || !templateKey}
+              disabled={isCreating || isLoading || publishedAgents.length === 0 || !templateKey || !authTemplateKey}
             >
               {isCreating && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
               Create App
