@@ -226,6 +226,42 @@ class PublishedAppDraftDevRuntimeClient:
             raise PublishedAppDraftDevRuntimeClientError("Sandbox file reads require embedded runtime or remote controller")
         return await self._request("POST", f"/sessions/{sandbox_id}/files/read", json={"path": path})
 
+    async def read_file_range(
+        self,
+        *,
+        sandbox_id: str,
+        path: str,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        context_before: int = 0,
+        context_after: int = 0,
+        max_bytes: int = 12000,
+        with_line_numbers: bool = False,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "path": path,
+            "context_before": int(context_before or 0),
+            "context_after": int(context_after or 0),
+            "max_bytes": int(max_bytes or 12000),
+            "with_line_numbers": bool(with_line_numbers),
+        }
+        if start_line is not None:
+            payload["start_line"] = int(start_line)
+        if end_line is not None:
+            payload["end_line"] = int(end_line)
+
+        if not self.is_remote_enabled:
+            if self._config.embedded_local_enabled:
+                manager = get_local_draft_dev_runtime_manager()
+                try:
+                    return await manager.read_file_range(sandbox_id=sandbox_id, **payload)
+                except LocalDraftDevRuntimeError as exc:
+                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+            raise PublishedAppDraftDevRuntimeClientError(
+                "Sandbox file range reads require embedded runtime or remote controller"
+            )
+        return await self._request("POST", f"/sessions/{sandbox_id}/files/read-range", json=payload)
+
     async def search_code(self, *, sandbox_id: str, query: str, max_results: int = 30) -> Dict[str, Any]:
         if not self.is_remote_enabled:
             if self._config.embedded_local_enabled:
@@ -240,6 +276,61 @@ class PublishedAppDraftDevRuntimeClient:
             f"/sessions/{sandbox_id}/files/search",
             json={"query": query, "max_results": int(max_results)},
         )
+
+    async def workspace_index(
+        self,
+        *,
+        sandbox_id: str,
+        limit: int = 500,
+        query: str | None = None,
+        max_symbols_per_file: int = 16,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "limit": int(limit),
+            "query": query,
+            "max_symbols_per_file": int(max_symbols_per_file),
+        }
+        if not self.is_remote_enabled:
+            if self._config.embedded_local_enabled:
+                manager = get_local_draft_dev_runtime_manager()
+                try:
+                    return await manager.workspace_index(sandbox_id=sandbox_id, **payload)
+                except LocalDraftDevRuntimeError as exc:
+                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+            raise PublishedAppDraftDevRuntimeClientError(
+                "Sandbox workspace index requires embedded runtime or remote controller"
+            )
+        return await self._request("POST", f"/sessions/{sandbox_id}/files/workspace-index", json=payload)
+
+    async def apply_patch(
+        self,
+        *,
+        sandbox_id: str,
+        patch: str,
+        options: dict[str, Any] | None = None,
+        preconditions: dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "patch": patch,
+            "options": options or {},
+            "preconditions": preconditions or {},
+        }
+        if not self.is_remote_enabled:
+            if self._config.embedded_local_enabled:
+                manager = get_local_draft_dev_runtime_manager()
+                try:
+                    return await manager.apply_patch(
+                        sandbox_id=sandbox_id,
+                        patch=patch,
+                        options=options or {},
+                        preconditions=preconditions or {},
+                    )
+                except LocalDraftDevRuntimeError as exc:
+                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+            raise PublishedAppDraftDevRuntimeClientError(
+                "Sandbox patch apply requires embedded runtime or remote controller"
+            )
+        return await self._request("POST", f"/sessions/{sandbox_id}/files/apply-patch", json=payload)
 
     async def write_file(self, *, sandbox_id: str, path: str, content: str) -> Dict[str, Any]:
         if not self.is_remote_enabled:
@@ -323,6 +414,12 @@ class PublishedAppDraftDevRuntimeClient:
                 "max_output_bytes": int(max_output_bytes),
             },
         )
+
+    async def resolve_local_workspace_path(self, *, sandbox_id: str) -> str | None:
+        if self.is_remote_enabled or not self._config.embedded_local_enabled:
+            return None
+        manager = get_local_draft_dev_runtime_manager()
+        return await manager.resolve_project_dir(sandbox_id=sandbox_id)
 
     async def _request(self, method: str, path: str, *, json: Dict[str, Any]) -> Dict[str, Any]:
         if not self._config.controller_url:

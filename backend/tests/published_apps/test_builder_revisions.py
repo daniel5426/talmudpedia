@@ -334,6 +334,95 @@ async def test_builder_validate_accepts_vite_root_lock_and_test_config_files(cli
 
 
 @pytest.mark.asyncio
+async def test_builder_validate_accepts_non_src_public_project_paths(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Broader Paths App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    validate_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/validate",
+        headers=headers,
+        json={
+            "base_revision_id": draft_revision_id,
+            "operations": [
+                {
+                    "op": "upsert_file",
+                    "path": "tests/smoke.spec.ts",
+                    "content": "export const smoke = true;\n",
+                },
+                {
+                    "op": "upsert_file",
+                    "path": "scripts/helpers.ts",
+                    "content": "export const helper = () => 'ok';\n",
+                },
+            ],
+        },
+    )
+    assert validate_resp.status_code == 200
+    payload = validate_resp.json()
+    assert payload["ok"] is True
+    assert payload["file_count"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_builder_revision_rejects_blocked_generated_paths(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Blocked Paths App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    revision_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/revisions",
+        headers=headers,
+        json={
+            "base_revision_id": draft_revision_id,
+            "operations": [
+                {
+                    "op": "upsert_file",
+                    "path": "node_modules/pkg/index.js",
+                    "content": "module.exports = {};",
+                }
+            ],
+        },
+    )
+    assert revision_resp.status_code == 400
+    detail = revision_resp.json()["detail"]
+    assert detail["code"] == "BUILDER_PATCH_POLICY_VIOLATION"
+    assert "blocked by policy" in detail["message"]
+
+
+@pytest.mark.asyncio
 async def test_builder_revision_rejects_oversized_payload(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))

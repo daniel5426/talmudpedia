@@ -72,8 +72,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (isAppsBuilderRoute) {
     return (
-      <SidebarProvider className="h-full" dir={direction}>
-        <div className="flex h-full w-full min-w-0 overflow-hidden bg-background">
+      <SidebarProvider className="h-dvh min-h-0" dir={direction}>
+        <div className="flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-background">
           {children}
         </div>
       </SidebarProvider>

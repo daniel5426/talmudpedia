@@ -1,9 +1,15 @@
 # ChatBuilder Production Completion Implementation Tracker
 
-Last Updated: 2026-02-14
+Last Updated: 2026-02-17
 
 ## Goal
 Implement the ChatBuilder production completion plan for Base44-grade live coding UX with sandbox-backed edits, automatic checkpoints, and undo/revert controls.
+
+## Status Note (Superseded Runtime Contract)
+- This tracker is now historical for the legacy ChatBuilder `/builder/*` chat contract.
+- Current production-facing builder coding flow is the `/coding-agent/*` contract tracked in:
+  - `backend/documentations/Plans/CodingAgentRuntimeRefactorImplementationTracker.md`
+- Legacy endpoints referenced below were removed during coding-agent cutover.
 
 ## Source Plan
 - `backend/documentations/Plans/ChatBuilderProductionRoadmap.md`
@@ -48,6 +54,20 @@ Implement the ChatBuilder production completion plan for Base44-grade live codin
 - 2026-02-14: Phase 8 completed.
   - Ran `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand` -> PASS (8 passed).
   - Updated documentation and test-state files for the new stream/event/checkpoint/undo/revert contracts.
+- 2026-02-17: post-cutover hardening updates (coding-agent era).
+  - Added one-time automatic retry for builder chat run creation on `REVISION_CONFLICT`:
+    - frontend now refreshes state and retries `/coding-agent/runs` with `latest_revision_id`.
+    - file: `frontend-reshet/src/features/apps-builder/workspace/AppsBuilderWorkspace.tsx`
+  - Relaxed builder file-write path policy from strict `src/` + `public/` allowlist to broader project writes with blocked generated/system directories:
+    - blocked prefixes include `node_modules/`, `.git/`, `.next/`, `dist/`, `build/`, `coverage/`, `__pycache__/`.
+    - files:
+      - `backend/app/api/routers/published_apps_admin_shared.py`
+      - `backend/app/api/routers/published_apps_admin_files.py`
+  - Added backend regression coverage for broader path allowance + blocked generated paths:
+    - file: `backend/tests/published_apps/test_builder_revisions.py`
+    - command: `PYTHONPATH=backend pytest -q backend/tests/published_apps/test_builder_revisions.py`
+    - result: PASS (`9 passed`)
 
 ## Notes
 - Runtime truth follows `Base44_Vite_Static_Apps_ImplementationPlan.md`: draft mode is fast/live sandbox; publish mode is deterministic full build.
+- For active runtime behavior and endpoint contracts, prefer the coding-agent tracker above.

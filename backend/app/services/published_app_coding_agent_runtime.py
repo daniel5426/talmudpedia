@@ -2,17 +2,20 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import logging
+import os
 from hashlib import sha256
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.service import AgentExecutorService
-from app.agent.execution.types import ExecutionEvent, ExecutionMode
+from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import AgentRun, RunStatus
+from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSessionStatus,
@@ -20,32 +23,206 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
 )
-from app.services.published_app_coding_agent_profile import ensure_coding_agent_profile
+from app.services.published_app_coding_agent_profile import ensure_coding_agent_profile, resolve_coding_agent_chat_model_id
+from app.services.published_app_coding_agent_engines.base import EngineRunContext, PublishedAppCodingAgentEngine
+from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
+from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
+from app.services.opencode_server_client import OpenCodeServerClient
 from app.api.routers.published_apps_admin_files import _validate_builder_project_or_raise
+
+logger = logging.getLogger(__name__)
+
+CODING_AGENT_ENGINE_NATIVE = "native"
+CODING_AGENT_ENGINE_OPENCODE = "opencode"
 
 
 class PublishedAppCodingAgentRuntimeService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.executor = AgentExecutorService(db=db)
+        self._opencode_client = OpenCodeServerClient.from_env()
+        self._native_engine = NativePublishedAppCodingAgentEngine(executor=self.executor)
+        self._opencode_engine = OpenCodePublishedAppCodingAgentEngine(
+            db=self.db,
+            client=self._opencode_client,
+        )
 
     @staticmethod
     def serialize_run(run: AgentRun) -> dict[str, Any]:
+        execution_engine = str(run.execution_engine or CODING_AGENT_ENGINE_NATIVE).strip().lower() or CODING_AGENT_ENGINE_NATIVE
         return {
             "run_id": str(run.id),
             "status": run.status.value if hasattr(run.status, "value") else str(run.status),
+            "execution_engine": execution_engine,
             "surface": run.surface,
             "published_app_id": str(run.published_app_id) if run.published_app_id else None,
             "base_revision_id": str(run.base_revision_id) if run.base_revision_id else None,
             "result_revision_id": str(run.result_revision_id) if run.result_revision_id else None,
             "checkpoint_revision_id": str(run.checkpoint_revision_id) if run.checkpoint_revision_id else None,
+            "requested_model_id": str(run.requested_model_id) if run.requested_model_id else None,
+            "resolved_model_id": str(run.resolved_model_id) if run.resolved_model_id else None,
             "error": run.error_message,
             "created_at": run.created_at,
             "started_at": run.started_at,
             "completed_at": run.completed_at,
         }
+
+    @staticmethod
+    def _model_unavailable_error(message: str) -> HTTPException:
+        return HTTPException(
+            status_code=400,
+            detail={
+                "code": "CODING_AGENT_MODEL_UNAVAILABLE",
+                "field": "model_id",
+                "message": message,
+            },
+        )
+
+    @staticmethod
+    def _engine_unavailable_error(message: str) -> HTTPException:
+        return HTTPException(
+            status_code=400,
+            detail={
+                "code": "CODING_AGENT_ENGINE_UNAVAILABLE",
+                "field": "engine",
+                "message": message,
+            },
+        )
+
+    @staticmethod
+    def _engine_unsupported_runtime_error(message: str) -> HTTPException:
+        return HTTPException(
+            status_code=400,
+            detail={
+                "code": "CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME",
+                "field": "engine",
+                "message": message,
+            },
+        )
+
+    @staticmethod
+    def _compact_messages_for_budget(messages: list[dict[str, str]], max_chars: int) -> list[dict[str, str]]:
+        if max_chars < 512:
+            max_chars = 512
+        if not messages:
+            return messages
+
+        total_chars = sum(len(str(item.get("content") or "")) for item in messages)
+        if total_chars <= max_chars:
+            return messages
+
+        preserved: list[dict[str, str]] = []
+        remaining_budget = max_chars
+        for message in reversed(messages):
+            content = str(message.get("content") or "")
+            cost = len(content)
+            if not preserved:
+                preserved.append(message)
+                remaining_budget -= cost
+                continue
+            if cost <= remaining_budget:
+                preserved.append(message)
+                remaining_budget -= cost
+        compacted = list(reversed(preserved))
+        dropped_count = max(0, len(messages) - len(compacted))
+        if dropped_count > 0:
+            compacted.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": f"Context compacted: {dropped_count} earlier message(s) omitted to stay within budget.",
+                },
+            )
+        return compacted
+
+    async def _resolve_run_model_ids(
+        self,
+        *,
+        tenant_id: UUID,
+        requested_model_id: UUID | None,
+    ) -> tuple[UUID | None, UUID]:
+        if requested_model_id is None:
+            try:
+                resolved = await resolve_coding_agent_chat_model_id(self.db, tenant_id)
+            except Exception as exc:
+                raise self._model_unavailable_error("No active chat model is available for this tenant.") from exc
+            return None, UUID(str(resolved))
+
+        model = (
+            await self.db.execute(
+                select(ModelRegistry).where(
+                    and_(
+                        ModelRegistry.id == requested_model_id,
+                        ModelRegistry.is_active == True,
+                        ModelRegistry.capability_type == ModelCapabilityType.CHAT,
+                        or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id.is_(None)),
+                    )
+                )
+            )
+        ).scalar_one_or_none()
+        if model is None:
+            raise self._model_unavailable_error("Selected model is unavailable for this tenant.")
+        return requested_model_id, model.id
+
+    @staticmethod
+    def _normalize_execution_engine(value: str | None) -> str:
+        engine = str(value or CODING_AGENT_ENGINE_NATIVE).strip().lower()
+        if engine == CODING_AGENT_ENGINE_OPENCODE:
+            return CODING_AGENT_ENGINE_OPENCODE
+        return CODING_AGENT_ENGINE_NATIVE
+
+    async def _resolve_opencode_runtime_context(
+        self,
+        *,
+        app: PublishedApp,
+        base_revision: PublishedAppRevision,
+        actor_id: UUID | None,
+    ) -> dict[str, str]:
+        if actor_id is None:
+            raise self._engine_unsupported_runtime_error("OpenCode engine requires a user-scoped draft sandbox session.")
+
+        try:
+            await self._opencode_client.ensure_healthy()
+        except Exception as exc:
+            raise self._engine_unavailable_error(f"OpenCode engine is unavailable: {exc}") from exc
+
+        runtime_service = PublishedAppDraftDevRuntimeService(self.db)
+        try:
+            session = await runtime_service.ensure_active_session(
+                app=app,
+                revision=base_revision,
+                user_id=actor_id,
+            )
+        except PublishedAppDraftDevRuntimeDisabled as exc:
+            raise self._engine_unsupported_runtime_error(
+                "OpenCode engine requires embedded local draft runtime mode in this backend process."
+            ) from exc
+        except Exception as exc:
+            raise self._engine_unsupported_runtime_error(f"Failed to resolve draft runtime session: {exc}") from exc
+
+        if session.status == PublishedAppDraftDevSessionStatus.error or not session.sandbox_id:
+            raise self._engine_unsupported_runtime_error(
+                "OpenCode engine requires an active draft sandbox session with a resolvable workspace path."
+            )
+
+        workspace_path = await runtime_service.client.resolve_local_workspace_path(sandbox_id=session.sandbox_id)
+        if not workspace_path:
+            raise self._engine_unsupported_runtime_error(
+                "OpenCode engine is unsupported for this runtime because sandbox workspace path is not locally resolvable."
+            )
+
+        return {
+            "opencode_sandbox_id": str(session.sandbox_id),
+            "opencode_workspace_path": str(workspace_path),
+        }
+
+    def _resolve_engine_for_run(self, run: AgentRun) -> PublishedAppCodingAgentEngine:
+        engine = self._normalize_execution_engine(str(run.execution_engine or CODING_AGENT_ENGINE_NATIVE))
+        if engine == CODING_AGENT_ENGINE_OPENCODE:
+            return self._opencode_engine
+        return self._native_engine
 
     async def create_run(
         self,
@@ -54,18 +231,54 @@ class PublishedAppCodingAgentRuntimeService:
         base_revision: PublishedAppRevision,
         actor_id: UUID | None,
         user_prompt: str,
+        messages: list[dict[str, str]] | None = None,
         requested_scopes: list[str] | None = None,
+        requested_model_id: UUID | None = None,
+        execution_engine: str = CODING_AGENT_ENGINE_NATIVE,
     ) -> AgentRun:
+        requested_model_id, resolved_model_id = await self._resolve_run_model_ids(
+            tenant_id=app.tenant_id,
+            requested_model_id=requested_model_id,
+        )
+        normalized_engine = self._normalize_execution_engine(execution_engine)
+        opencode_context: dict[str, str] = {}
+        if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
+            opencode_context = await self._resolve_opencode_runtime_context(
+                app=app,
+                base_revision=base_revision,
+                actor_id=actor_id,
+            )
         profile = await ensure_coding_agent_profile(self.db, app.tenant_id)
+
+        normalized_messages: list[dict[str, str]] = []
+        for message in messages or []:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "").strip().lower()
+            content = str(message.get("content") or "").strip()
+            if role not in {"user", "assistant", "system"}:
+                continue
+            if not content:
+                continue
+            normalized_messages.append({"role": role, "content": content})
+        if not normalized_messages:
+            normalized_messages = [{"role": "user", "content": user_prompt}]
+        elif normalized_messages[-1]["role"] != "user" or normalized_messages[-1]["content"] != user_prompt:
+            normalized_messages.append({"role": "user", "content": user_prompt})
+        message_budget_chars = int(os.getenv("APPS_CODING_AGENT_MESSAGE_BUDGET_CHARS", "28000"))
+        normalized_messages = self._compact_messages_for_budget(normalized_messages, message_budget_chars)
 
         input_params = {
             "input": user_prompt,
-            "messages": [{"role": "user", "content": user_prompt}],
+            "messages": normalized_messages,
             "context": {
                 "surface": CODING_AGENT_SURFACE,
                 "app_id": str(app.id),
                 "base_revision_id": str(base_revision.id),
                 "entry_file": base_revision.entry_file,
+                "resolved_model_id": str(resolved_model_id),
+                "execution_engine": normalized_engine,
+                **opencode_context,
             },
         }
 
@@ -87,8 +300,12 @@ class PublishedAppCodingAgentRuntimeService:
         run.base_revision_id = base_revision.id
         run.result_revision_id = None
         run.checkpoint_revision_id = None
+        run.requested_model_id = requested_model_id
+        run.resolved_model_id = resolved_model_id
+        run.execution_engine = normalized_engine
+        run.engine_run_ref = None
 
-        if actor_id:
+        if actor_id and normalized_engine == CODING_AGENT_ENGINE_NATIVE:
             runtime_service = PublishedAppDraftDevRuntimeService(self.db)
             try:
                 await runtime_service.ensure_session(
@@ -100,6 +317,14 @@ class PublishedAppCodingAgentRuntimeService:
                 )
             except PublishedAppDraftDevRuntimeDisabled:
                 pass
+            except Exception as exc:
+                # Session prewarm is best-effort. Run creation should still succeed even
+                # when the local draft runtime cannot be initialized in this environment.
+                logger.warning(
+                    "Coding-agent create_run proceeding without prewarmed draft session for app %s: %s",
+                    app.id,
+                    exc,
+                )
 
         await self.db.commit()
         await self.db.refresh(run)
@@ -138,7 +363,23 @@ class PublishedAppCodingAgentRuntimeService:
         status = run.status.value if hasattr(run.status, "value") else str(run.status)
         if status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
             return run
-        run.status = RunStatus.cancelled
+        engine = self._resolve_engine_for_run(run)
+        if self._normalize_execution_engine(str(run.execution_engine)) == CODING_AGENT_ENGINE_OPENCODE:
+            try:
+                cancel_result = await engine.cancel(run)
+            except Exception as exc:
+                cancel_result = None
+                logger.exception("OpenCode cancellation failed for run %s: %s", run.id, exc)
+            if cancel_result and cancel_result.confirmed:
+                run.status = RunStatus.cancelled
+                run.error_message = None
+            else:
+                diagnostics = (cancel_result.diagnostics if cancel_result else None) or []
+                message = str(diagnostics[0].get("message") or "OpenCode cancellation could not be confirmed")
+                run.status = RunStatus.failed
+                run.error_message = message
+        else:
+            run.status = RunStatus.cancelled
         run.completed_at = datetime.now(timezone.utc)
         await self.db.commit()
         await self.db.refresh(run)
@@ -274,12 +515,10 @@ class PublishedAppCodingAgentRuntimeService:
 
         runtime_service = PublishedAppDraftDevRuntimeService(self.db)
         try:
-            session = await runtime_service.ensure_session(
+            session = await runtime_service.ensure_active_session(
                 app=app,
                 revision=current,
                 user_id=actor_id,
-                files=dict(current.files or {}),
-                entry_file=current.entry_file,
             )
         except PublishedAppDraftDevRuntimeDisabled:
             return None
@@ -329,77 +568,72 @@ class PublishedAppCodingAgentRuntimeService:
         }
         return data
 
-    def _map_execution_event(self, event: ExecutionEvent) -> tuple[str, str, dict[str, Any], list[dict[str, Any]] | None] | None:
-        if event.event == "token":
-            return (
-                "assistant.delta",
-                "assistant",
-                {"content": (event.data or {}).get("content", "")},
-                None,
-            )
+    @staticmethod
+    def _coerce_assistant_text(value: Any) -> str | None:
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    text = item.strip()
+                    if text:
+                        parts.append(text)
+                    continue
+                if isinstance(item, dict):
+                    nested = PublishedAppCodingAgentRuntimeService._coerce_assistant_text(item)
+                    if nested:
+                        parts.append(nested)
+            joined = " ".join(parts).strip()
+            return joined or None
+        if isinstance(value, dict):
+            for key in ("content", "message", "text", "summary"):
+                candidate = value.get(key)
+                text = PublishedAppCodingAgentRuntimeService._coerce_assistant_text(candidate)
+                if text:
+                    return text
+        return None
 
-        if event.event == "on_tool_start":
-            data = event.data if isinstance(event.data, dict) else {}
-            return (
-                "tool.started",
-                "tool",
-                {
-                    "tool": event.name,
-                    "span_id": event.span_id,
-                    "input": data.get("input"),
-                },
-                None,
-            )
+    def _extract_assistant_text_from_output(self, output_result: Any) -> str | None:
+        if not isinstance(output_result, dict):
+            return None
 
-        if event.event == "on_tool_end":
-            data = event.data if isinstance(event.data, dict) else {}
-            output = data.get("output")
-            if isinstance(output, dict) and output.get("error"):
-                return (
-                    "tool.failed",
-                    "tool",
-                    {
-                        "tool": event.name,
-                        "span_id": event.span_id,
-                        "output": output,
-                    },
-                    [{"message": str(output.get("error"))}],
-                )
-            return (
-                "tool.completed",
-                "tool",
-                {
-                    "tool": event.name,
-                    "span_id": event.span_id,
-                    "output": output,
-                },
-                None,
-            )
+        state = output_result.get("state")
+        if isinstance(state, dict):
+            text = self._coerce_assistant_text(state.get("last_agent_output"))
+            if text:
+                return text
 
-        if event.event == "node_start":
-            return (
-                "plan.updated",
-                "plan",
-                {
-                    "node": event.name,
-                    "span_id": event.span_id,
-                    "state": event.data,
-                },
-                None,
-            )
+        text = self._coerce_assistant_text(output_result.get("last_agent_output"))
+        if text:
+            return text
 
-        if event.event == "error":
-            message = str((event.data or {}).get("error") or "runtime error")
-            return (
-                "run.failed",
-                "run",
-                {
-                    "error": message,
-                },
-                [{"message": message}],
-            )
+        messages = output_result.get("messages")
+        if isinstance(messages, list):
+            for message in reversed(messages):
+                if not isinstance(message, dict):
+                    continue
+                role = str(message.get("role") or message.get("type") or "").strip().lower()
+                if role not in {"assistant", "ai"}:
+                    continue
+                text = self._coerce_assistant_text(message.get("content"))
+                if text:
+                    return text
 
         return None
+
+    def _fallback_assistant_text(self, run: AgentRun) -> str:
+        input_params = run.input_params if isinstance(run.input_params, dict) else {}
+        prompt = str(input_params.get("input") or "").strip().lower()
+        if prompt in {"hi", "hello", "hey", "yo", "shalom"}:
+            return "Hi. I can edit app code, run checks, and explain changes. What would you like to change?"
+        if "what can you do" in prompt or prompt == "help" or "how can you help" in prompt:
+            return (
+                "I can inspect and edit files, run targeted checks/tests, and create or restore checkpoints. "
+                "Tell me what you want to build or fix."
+            )
+        return "I can help with code changes, debugging, and verification in this app workspace. Tell me your goal."
 
     async def stream_run_events(
         self,
@@ -408,7 +642,13 @@ class PublishedAppCodingAgentRuntimeService:
         run: AgentRun,
         resume_payload: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
+        run_id = run.id
+        persistent_run = await self.db.get(AgentRun, run_id)
+        if persistent_run is not None:
+            run = persistent_run
+
         seq = 1
+        assistant_delta_emitted = False
 
         def emit(
             event: str,
@@ -442,6 +682,8 @@ class PublishedAppCodingAgentRuntimeService:
         terminal_status = run.status.value if hasattr(run.status, "value") else str(run.status)
         if terminal_status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
             if terminal_status == RunStatus.completed.value:
+                assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
+                yield emit("assistant.delta", "assistant", {"content": assistant_text})
                 yield emit("run.completed", "run", self.serialize_run(run))
             else:
                 yield emit(
@@ -453,22 +695,25 @@ class PublishedAppCodingAgentRuntimeService:
             return
 
         try:
-            if run.status == RunStatus.paused and resume_payload is not None:
-                await self.executor.resume_run(run.id, resume_payload, background=False)
-
-            async for raw in self.executor.run_and_stream(
-                run.id,
-                self.db,
-                resume_payload,
-                mode=ExecutionMode.DEBUG,
+            engine = self._resolve_engine_for_run(run)
+            async for raw_event in engine.stream(
+                EngineRunContext(
+                    app=app,
+                    run=run,
+                    resume_payload=resume_payload,
+                )
             ):
-                mapped = self._map_execution_event(raw)
-                if mapped is None:
-                    continue
-                mapped_event, stage, payload, diagnostics = mapped
+                mapped_event = raw_event.event
+                stage = raw_event.stage
+                payload = raw_event.payload
+                diagnostics = raw_event.diagnostics
+                if mapped_event == "assistant.delta":
+                    content = str((payload or {}).get("content") or "").strip()
+                    if content:
+                        assistant_delta_emitted = True
                 yield emit(mapped_event, stage, payload, diagnostics)
 
-            await self.db.refresh(run)
+            run = await self.db.get(AgentRun, run_id) or run
             status = run.status.value if hasattr(run.status, "value") else str(run.status)
             if status == RunStatus.completed.value:
                 revision = await self.auto_apply_and_checkpoint(run)
@@ -490,6 +735,9 @@ class PublishedAppCodingAgentRuntimeService:
                             "revision_id": str(revision.id),
                         },
                     )
+                if not assistant_delta_emitted:
+                    assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
+                    yield emit("assistant.delta", "assistant", {"content": assistant_text})
                 yield emit("run.completed", "run", self.serialize_run(run))
                 return
 
@@ -513,10 +761,13 @@ class PublishedAppCodingAgentRuntimeService:
                 [{"message": run.error_message or "run failed"}],
             )
         except Exception as exc:
-            run.status = RunStatus.failed
-            run.error_message = str(exc)
-            run.completed_at = datetime.now(timezone.utc)
-            await self.db.commit()
+            failed_run = await self.db.get(AgentRun, run_id)
+            if failed_run is not None:
+                failed_run.status = RunStatus.failed
+                failed_run.error_message = str(exc)
+                failed_run.completed_at = datetime.now(timezone.utc)
+                await self.db.commit()
+                run = failed_run
             yield emit(
                 "run.failed",
                 "run",

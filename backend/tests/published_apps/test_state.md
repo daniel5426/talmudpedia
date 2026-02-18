@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-02-16
+Last Updated: 2026-02-17
 
 ## Scope of the feature
 - Admin control plane CRUD and publish lifecycle for tenant published apps.
@@ -30,10 +30,11 @@ Last Updated: 2026-02-16
 - Publish and unpublish lifecycle updates URL/status.
 - Builder state returns app/templates/current draft/current published revision snapshot info.
 - Revision writes enforce optimistic concurrency with `REVISION_CONFLICT` 409 contract.
-- Builder revision writes enforce patch policy guardrails (path normalization, root/extension restrictions, operation and size limits).
+- Builder revision writes enforce patch policy guardrails (path normalization, blocked generated/system directories, extension restrictions, operation and size limits).
 - Builder revision writes reject invalid rename operations and oversized payloads.
 - Builder revision and validate endpoints enforce Vite project/dependency policies and compile diagnostics.
 - Builder validate accepts Vite root lock/config/test files (`pnpm-lock.yaml`, `yarn.lock`, `vite.config.*`, `vitest.config.*`, lint/test config files).
+- Builder validate accepts non-`src`/`public` project paths (for example `tests/` and `scripts/`) while still blocking generated/system paths (for example `node_modules/`).
 - Template reset overwrites draft from selected template baseline and includes `chat-grid` shell assets.
 - Builder revision build lifecycle endpoints expose build state and retry sequence bumps:
 - `GET /admin/apps/{app_id}/builder/revisions/{revision_id}/build`
@@ -60,6 +61,9 @@ Last Updated: 2026-02-16
 - Command: `PYTHONPATH=backend pytest -q backend/tests/published_apps/test_builder_revisions.py`
 - Date: 2026-02-16 19:58 UTC
 - Result: PASS (7 passed)
+- Command: `PYTHONPATH=backend pytest -q backend/tests/published_apps/test_builder_revisions.py`
+- Date: 2026-02-17 14:10 UTC
+- Result: PASS (9 passed)
 - Command: `cd backend && pytest -q tests/published_apps/test_admin_apps_publish_rules.py`
 - Date: 2026-02-16 19:26 EET
 - Result: PASS (6 passed)

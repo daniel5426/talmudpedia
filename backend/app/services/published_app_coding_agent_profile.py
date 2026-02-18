@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from typing import Any
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,12 +15,32 @@ CODING_AGENT_PROFILE_NAME = "Published App Coding Agent"
 
 
 def _build_coding_agent_graph(model_id: str, tool_ids: list[str]) -> dict:
+    max_tool_iterations = int(os.getenv("APPS_CODING_AGENT_MAX_TOOL_ITERATIONS", "30") or 30)
+    if max_tool_iterations < 1:
+        max_tool_iterations = 1
+    tool_timeout_s = int(os.getenv("APPS_CODING_AGENT_TOOL_TIMEOUT_SECONDS", "120") or 120)
+    if tool_timeout_s < 15:
+        tool_timeout_s = 15
+
     instructions = (
         "You are the coding runtime for a published app draft workspace. "
         "Use the available tools to inspect files, edit code, validate with tests/build checks, "
         "and create checkpoints for safe restore points. "
+        "Start by inspecting the workspace with tools before asking follow-up questions. "
+        "Use patch-first editing: prefer `coding_agent_apply_patch` for every code change. "
+        "Use `coding_agent_read_file_range` and `coding_agent_workspace_index` to avoid full-file reads unless necessary. "
+        "For straightforward requests (for example color/style text changes), apply an initial patch proactively. "
+        "Ask clarification only when the target is genuinely ambiguous after search/read steps. "
         "Only modify files through tools, keep edits within project policy constraints, "
-        "and summarize completed changes and verification results."
+        "When calling file tools, always provide explicit path keys: `path` for reads/deletes and "
+        "`from_path` + `to_path` for rename, and `patch` for patch application. "
+        "`coding_agent_write_file` is deprecated and may be disabled; do not rely on it. "
+        "Do not claim that changes are complete unless an apply_patch/rename/delete tool call succeeded. "
+        "If a tool fails, explain the failure clearly instead of pretending the edit was applied. "
+        "When patch apply fails, use returned refresh windows to re-read only the relevant line ranges before retrying. "
+        "and summarize completed changes and verification results. "
+        "Always respond with natural-language text to every user message. "
+        "If the user sends a greeting or general question, answer directly and briefly."
     )
     return {
         "nodes": [
@@ -35,8 +58,8 @@ def _build_coding_agent_graph(model_id: str, tool_ids: list[str]) -> dict:
                     "output_format": "text",
                     "tools": tool_ids,
                     "tool_execution_mode": "sequential",
-                    "max_tool_iterations": 24,
-                    "tool_timeout_s": 360,
+                    "max_tool_iterations": max_tool_iterations,
+                    "tool_timeout_s": tool_timeout_s,
                 },
             },
             {
@@ -88,13 +111,35 @@ async def _resolve_default_chat_model_id(db: AsyncSession, tenant_id) -> str:
     return str(model.id)
 
 
+async def resolve_coding_agent_chat_model_id(db: AsyncSession, tenant_id) -> str:
+    return await _resolve_default_chat_model_id(db, tenant_id)
+
+
+def _extract_profile_model_id(graph_definition: dict[str, Any] | None) -> str | None:
+    if not isinstance(graph_definition, dict):
+        return None
+    nodes = graph_definition.get("nodes")
+    if not isinstance(nodes, list):
+        return None
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if str(node.get("type") or "").strip().lower() != "agent":
+            continue
+        config = node.get("config")
+        if not isinstance(config, dict):
+            continue
+        model_id = str(config.get("model_id") or "").strip()
+        if model_id:
+            return model_id
+    return None
+
+
 async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
     # Import side-effect ensures function tools are registered in registry.
     import app.services.published_app_coding_agent_tools  # noqa: F401
 
     tool_ids = await ensure_coding_agent_tools(db)
-    model_id = await _resolve_default_chat_model_id(db, tenant_id)
-    graph_definition = _build_coding_agent_graph(model_id, tool_ids)
 
     result = await db.execute(
         select(Agent).where(
@@ -105,6 +150,8 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
     agent = result.scalar_one_or_none()
 
     if agent is None:
+        model_id = await resolve_coding_agent_chat_model_id(db, tenant_id)
+        graph_definition = _build_coding_agent_graph(model_id, tool_ids)
         agent = Agent(
             tenant_id=tenant_id,
             name=CODING_AGENT_PROFILE_NAME,
@@ -120,6 +167,11 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
         db.add(agent)
         await db.flush()
         return agent
+
+    model_id = _extract_profile_model_id(agent.graph_definition)
+    if not model_id:
+        model_id = await resolve_coding_agent_chat_model_id(db, tenant_id)
+    graph_definition = _build_coding_agent_graph(model_id, tool_ids)
 
     agent.name = CODING_AGENT_PROFILE_NAME
     agent.description = "System coding-agent profile for published app runtime editing."

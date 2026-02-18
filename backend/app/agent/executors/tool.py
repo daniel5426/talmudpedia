@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 from types import SimpleNamespace
@@ -20,6 +21,11 @@ from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
 from app.services.credentials_service import CredentialsService
 from app.services.mcp_client import call_mcp_tool
+from app.services.published_app_coding_agent_tools import (
+    normalize_coding_agent_tool_payload,
+    normalize_coding_agent_tool_exception,
+    validate_coding_agent_required_fields,
+)
 from app.services.tool_function_registry import get_tool_function, run_tool_function
 from app.services.web_search import create_web_search_provider
 
@@ -358,8 +364,75 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if not fn:
             raise RuntimeError(f"Function tool '{function_name}' is not registered")
 
-        payload = input_data.get("args") if isinstance(input_data.get("args"), dict) else input_data
-        result = await run_tool_function(fn, payload)
+        def _parse_json_object(raw: Any) -> dict[str, Any] | None:
+            if not isinstance(raw, str):
+                return None
+            text = raw.strip()
+            if not text:
+                return None
+            candidates: list[str] = [text]
+
+            fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
+            if fenced:
+                candidates.append(fenced.group(1).strip())
+
+            first = text.find("{")
+            last = text.rfind("}")
+            if first != -1 and last > first:
+                candidates.append(text[first : last + 1].strip())
+
+            trimmed = text.strip().rstrip(",")
+            if not trimmed.startswith("{") and ":" in trimmed:
+                candidates.append("{" + trimmed.strip("{} \t\r\n,") + "}")
+
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                try:
+                    parsed = json.loads(candidate)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, str):
+                    inner = parsed.strip()
+                    if inner and inner != candidate:
+                        try:
+                            parsed = json.loads(inner)
+                        except Exception:
+                            parsed = None
+                if isinstance(parsed, dict):
+                    return parsed
+            return None
+
+        payload = dict(input_data or {})
+        merged_payload = dict(payload)
+        for wrapper_key in ("args", "input", "parameters", "payload", "data", "arguments", "value"):
+            wrapper_payload = merged_payload.get(wrapper_key)
+            if isinstance(wrapper_payload, str):
+                parsed_wrapper_payload = _parse_json_object(wrapper_payload)
+                if isinstance(parsed_wrapper_payload, dict):
+                    wrapper_payload = parsed_wrapper_payload
+                    merged_payload[wrapper_key] = parsed_wrapper_payload
+            if isinstance(wrapper_payload, dict):
+                for key, value in wrapper_payload.items():
+                    merged_payload[key] = value
+        payload = merged_payload
+        if function_name.startswith("coding_agent_"):
+            payload = normalize_coding_agent_tool_payload(function_name, payload)
+            missing_fields = validate_coding_agent_required_fields(function_name, payload)
+            if missing_fields:
+                missing_fields.sort()
+                return {
+                    "error": f"Missing required fields: {', '.join(missing_fields)}",
+                    "code": "TOOL_INPUT_VALIDATION_FAILED",
+                    "fields": missing_fields,
+                    "received_keys": sorted(str(key) for key in payload.keys()),
+                }
+        try:
+            result = await run_tool_function(function_name, fn, payload)
+        except Exception as exc:
+            if function_name.startswith("coding_agent_"):
+                return normalize_coding_agent_tool_exception(exc)
+            raise
         if isinstance(result, dict):
             return result
         return {"result": result}

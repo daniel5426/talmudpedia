@@ -28,6 +28,37 @@ class AgentExecutorService:
         # but _execute will create its own local compiler.
         self.compiler = AgentCompiler(db=db) if db else None
 
+    @staticmethod
+    def _apply_run_scoped_model_override(
+        graph_definition: dict[str, Any],
+        resolved_model_id: str | None,
+    ) -> dict[str, Any]:
+        if not resolved_model_id:
+            return graph_definition
+
+        nodes = graph_definition.get("nodes")
+        if not isinstance(nodes, list):
+            return graph_definition
+
+        patched_nodes: list[Any] = []
+        for raw_node in nodes:
+            if not isinstance(raw_node, dict):
+                patched_nodes.append(raw_node)
+                continue
+            node = dict(raw_node)
+            node_type = str(node.get("type") or "").strip().lower()
+            config = node.get("config")
+            if node_type in {"agent", "llm", "llm_call", "classify"} and isinstance(config, dict):
+                config = dict(config)
+                if "model_id" in config:
+                    config["model_id"] = resolved_model_id
+                node["config"] = config
+            patched_nodes.append(node)
+
+        patched = dict(graph_definition)
+        patched["nodes"] = patched_nodes
+        return patched
+
     async def start_run(
         self, 
         agent_id: UUID, 
@@ -236,6 +267,8 @@ class AgentExecutorService:
             runtime_context["orchestration_group_id"] = str(run.orchestration_group_id)
         if run.tenant_id:
             runtime_context["tenant_id"] = str(run.tenant_id)
+        if run.resolved_model_id:
+            runtime_context["resolved_model_id"] = str(run.resolved_model_id)
         runtime_context["orchestration_surface"] = "option_a_graphspec_v2"
         if isinstance(run_input_params, dict):
             run_input_params = dict(run_input_params)
@@ -262,7 +295,14 @@ class AgentExecutorService:
 
         # 2. Compile Graph to GraphIR
         compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
-        graph_def = AgentGraph(**agent.graph_definition)
+        resolved_model_id = str(run.resolved_model_id) if run.resolved_model_id else None
+        if not resolved_model_id:
+            candidate = runtime_context.get("resolved_model_id")
+            if candidate:
+                resolved_model_id = str(candidate)
+        graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
+        graph_payload = self._apply_run_scoped_model_override(graph_payload, resolved_model_id)
+        graph_def = AgentGraph(**graph_payload)
         compile_input_params = run_input_params
         if resume_payload and isinstance(resume_payload, dict):
             if "approval" in resume_payload:

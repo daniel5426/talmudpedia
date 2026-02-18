@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, Request
@@ -26,6 +26,9 @@ from .published_apps_admin_shared import PublishedAppRevisionResponse, _revision
 class CodingAgentCreateRunRequest(BaseModel):
     input: str
     base_revision_id: Optional[UUID] = None
+    messages: Optional[List[Dict[str, str]]] = None
+    model_id: Optional[UUID] = None
+    engine: Literal["native", "opencode"] = "native"
 
 
 class CodingAgentResumeRunRequest(BaseModel):
@@ -39,11 +42,14 @@ class CodingAgentRestoreCheckpointRequest(BaseModel):
 class CodingAgentRunResponse(BaseModel):
     run_id: str
     status: str
+    execution_engine: Literal["native", "opencode"]
     surface: Optional[str] = None
     published_app_id: Optional[str] = None
     base_revision_id: Optional[str] = None
     result_revision_id: Optional[str] = None
     checkpoint_revision_id: Optional[str] = None
+    requested_model_id: Optional[str] = None
+    resolved_model_id: Optional[str] = None
     error: Optional[str] = None
     created_at: datetime
     started_at: Optional[datetime] = None
@@ -69,7 +75,7 @@ def _run_to_response(service: PublishedAppCodingAgentRuntimeService, run) -> Cod
 
 
 def _sse(payload: Dict[str, Any]) -> str:
-    return f"data: {json.dumps(payload, default=str)}\\n\\n"
+    return f"data: {json.dumps(payload, default=str)}\n\n"
 
 
 @router.post("/{app_id}/coding-agent/runs", response_model=CodingAgentRunResponse)
@@ -105,11 +111,26 @@ async def create_coding_agent_run(
         raise HTTPException(status_code=400, detail="input is required")
 
     service = PublishedAppCodingAgentRuntimeService(db)
+    run_messages: list[dict[str, str]] = []
+    for raw_message in payload.messages or []:
+        if not isinstance(raw_message, dict):
+            continue
+        role = str(raw_message.get("role") or "").strip().lower()
+        content = str(raw_message.get("content") or "").strip()
+        if role not in {"user", "assistant", "system"}:
+            continue
+        if not content:
+            continue
+        run_messages.append({"role": role, "content": content})
+
     run = await service.create_run(
         app=app,
         base_revision=draft,
         actor_id=actor_id,
         user_prompt=user_prompt,
+        messages=run_messages or None,
+        requested_model_id=payload.model_id,
+        execution_engine=payload.engine,
     )
     return _run_to_response(service, run)
 
@@ -167,7 +188,7 @@ async def stream_coding_agent_run(
     run = await service.get_run_for_app(app_id=app.id, run_id=run_id)
 
     async def event_generator():
-        yield ": " + (" " * 2048) + "\\n\\n"
+        yield ": " + (" " * 2048) + "\n\n"
         async for payload in service.stream_run_events(app=app, run=run):
             yield _sse(payload)
 

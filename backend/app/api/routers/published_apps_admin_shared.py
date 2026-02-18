@@ -69,7 +69,18 @@ logger = logging.getLogger(__name__)
 
 APP_SLUG_PATTERN = re.compile(r"^[a-z0-9-]{3,64}$")
 DOMAIN_HOST_PATTERN = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
-BUILDER_ALLOWED_DIR_ROOTS = ("src/", "public/")
+# Path policy: allow editing project files across the workspace, while
+# explicitly blocking unsafe/generated/system directories.
+BUILDER_ALLOWED_DIR_ROOTS = ()
+BUILDER_BLOCKED_DIR_PREFIXES = (
+    "node_modules/",
+    ".git/",
+    ".next/",
+    "dist/",
+    "build/",
+    "coverage/",
+    "__pycache__/",
+)
 BUILDER_ALLOWED_ROOT_FILES = {
     "index.html",
     "package.json",

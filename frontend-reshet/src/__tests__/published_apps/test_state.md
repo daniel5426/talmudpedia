@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-16
+Last Updated: 2026-02-18
 
 ## Scope
 Frontend coverage for:
@@ -27,9 +27,23 @@ Frontend coverage for:
 - Overview section save path is covered for branding/visibility/auth template payloads.
 - Users section list/block action flow is covered.
 - Domains section list/create request flow is covered.
-- Builder workspace renders execution-style agent timeline cards from coding-agent SSE events (`run.accepted`, `assistant.delta`, `tool.*`, `revision.created`, `checkpoint.created`, `run.completed`).
+- Builder workspace renders assistant chat replies from coding-agent SSE while suppressing lifecycle/status noise cards (`run.accepted`, `run.completed`, `revision.created`, `checkpoint.created`).
+- Builder workspace keeps the editor/workspace mounted during post-run state refresh (no full-page loading fallback after each reply).
+- Builder workspace renders tool calls as dedicated rows (no raw JSON payload blocks), with running shimmer state and persisted completed/failed visual states.
+- Builder workspace coding-agent panel uses Cursor-style composer placeholder contract (`Plan, @ for context, / for commands`) with run submission preserved.
+- Builder workspace coding-agent panel now uses AI elements `Conversation` scrolling model + `ConversationScrollButton`, with minimal/no-card event presentation and lightweight shimmering `Thinking...` text.
+- Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
+- Builder workspace shell now enforces viewport-bounded layout (`h-dvh` + `min-h-0` + overflow clamps) so chat scroll stays internal and the page does not grow with timeline length.
 - Builder workspace creates coding-agent runs through `/coding-agent/runs`, then streams via `/coding-agent/runs/{run_id}/stream`.
-- Builder workspace quick action restores latest coding-agent checkpoint via `/coding-agent/checkpoints` and `/coding-agent/checkpoints/{checkpoint_id}/restore`.
+- Builder workspace retries coding-agent run creation once after `REVISION_CONFLICT` by refreshing state and resubmitting with `latest_revision_id`.
+- Builder workspace renders `assistant.delta` incrementally while a run is active (partial text appears before stream completion).
+- Builder workspace sends prior user/assistant turns as `messages` on each new `/coding-agent/runs` request so follow-up prompts remain contextual.
+- Builder workspace shows per-run model selector options (`Auto` + active chat models) and sends `model_id` on run creation.
+- Builder workspace supports changing model selection between messages and uses the new selection for the next run payload.
+- Builder workspace surfaces actionable model availability errors when backend returns `CODING_AGENT_MODEL_UNAVAILABLE`.
+- Builder workspace shows per-run execution-engine selector (`Native` default, `OpenCode` optional) and sends `engine` on run creation.
+- Builder workspace surfaces actionable engine-availability errors when backend returns `CODING_AGENT_ENGINE_UNAVAILABLE` / `CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME`.
+- Builder workspace per-message revert action restores attached coding-agent checkpoints via `/coding-agent/checkpoints/{checkpoint_id}/restore`.
 - Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
 - Builder code tab auto-expands ancestor folders when the selected file is nested.
 - Builder code tab maps `index.html` to Monaco `html` language and sets builder-only validation decoration suppression.
@@ -70,6 +84,57 @@ Frontend coverage for:
 - Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
 - Date: 2026-02-16 20:04 UTC
 - Result: PASS (5 suites, 21 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 22:21 UTC
+- Result: PASS (1 suite, 17 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
+- Date: 2026-02-16 22:23 UTC
+- Result: PASS (5 suites, 22 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:14 UTC
+- Result: PASS (1 suite, 17 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
+- Date: 2026-02-16 23:17 UTC
+- Result: PASS (5 suites, 22 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:28 UTC
+- Result: PASS (1 suite, 18 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
+- Date: 2026-02-16 23:31 UTC
+- Result: PASS (5 suites, 23 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:43 UTC
+- Result: PASS (1 suite, 18 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:11 UTC
+- Result: PASS (1 suite, 19 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:15 UTC
+- Result: PASS (1 suite, 19 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:18 UTC
+- Result: PASS (1 suite, 19 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:22 UTC
+- Result: PASS (1 suite, 20 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:27 UTC
+- Result: PASS (1 suite, 21 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-16 23:49 UTC
+- Result: PASS (1 suite, 23 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "retries coding-agent run once after revision conflict" --runInBand`
+- Date: 2026-02-17 12:58 UTC
+- Result: FAIL (test harness currently errors with `useDirection must be used within DirectionProvider` before workspace render assertions)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "model selector|selected model_id|model is unavailable" --runInBand`
+- Date: 2026-02-17 22:55 UTC
+- Result: PASS (3 passed, 24 skipped)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-17 23:35 UTC
+- Result: PASS (1 suite, 27 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-18 12:54 UTC
+- Result: PASS (1 suite, 29 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for app detail publish/unpublish actions.

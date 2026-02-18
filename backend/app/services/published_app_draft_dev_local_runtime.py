@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shlex
 import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
+
+from app.services.published_app_draft_dev_patching import apply_unified_patch_transaction, hash_text
 
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,7 @@ class _SessionProcess:
     port: int
     process: subprocess.Popen
     dependency_hash: str
+    revision_seq: int = 1
 
 
 class LocalDraftDevRuntimeError(Exception):
@@ -93,6 +97,7 @@ class LocalDraftDevRuntimeManager:
                     "sandbox_id": session_id,
                     "preview_url": self._preview_url(current.port, draft_dev_token),
                     "status": "running",
+                    "revision_token": self._current_revision_token(current),
                 }
             if current:
                 await self._stop_session_locked(session_id)
@@ -105,11 +110,13 @@ class LocalDraftDevRuntimeManager:
                 port=port,
                 process=process,
                 dependency_hash=dependency_hash,
+                revision_seq=1,
             )
             return {
                 "sandbox_id": session_id,
                 "preview_url": self._preview_url(port, draft_dev_token),
                 "status": "running",
+                "revision_token": "sandbox-seq-1",
             }
 
     async def sync_session(
@@ -138,11 +145,18 @@ class LocalDraftDevRuntimeManager:
                     port=state.port,
                     process=restarted,
                     dependency_hash=dependency_hash,
+                    revision_seq=max(1, int(state.revision_seq)) + 1,
                 )
             else:
                 state.dependency_hash = dependency_hash
+                state.revision_seq = max(1, int(state.revision_seq)) + 1
 
-            return {"status": "running", "sandbox_id": sandbox_id}
+            state = self._require_running_session_locked(sandbox_id)
+            return {
+                "status": "running",
+                "sandbox_id": sandbox_id,
+                "revision_token": self._current_revision_token(state),
+            }
 
     async def heartbeat_session(self, *, sandbox_id: str) -> Dict[str, str]:
         async with self._lock:
@@ -156,6 +170,13 @@ class LocalDraftDevRuntimeManager:
             await self._stop_session_locked(sandbox_id)
             return {"status": "stopped", "sandbox_id": sandbox_id}
 
+    async def resolve_project_dir(self, *, sandbox_id: str) -> str | None:
+        async with self._lock:
+            state = self._state.get(sandbox_id)
+            if state is None or state.process.poll() is not None:
+                return None
+            return str(state.project_dir)
+
     async def list_files(self, *, sandbox_id: str, limit: int = 500) -> Dict[str, object]:
         async with self._lock:
             state = self._require_running_session_locked(sandbox_id)
@@ -164,6 +185,7 @@ class LocalDraftDevRuntimeManager:
                 "sandbox_id": sandbox_id,
                 "count": len(files),
                 "paths": files[:max(1, int(limit))],
+                "revision_token": self._current_revision_token(state),
             }
 
     async def read_file(self, *, sandbox_id: str, path: str) -> Dict[str, object]:
@@ -174,7 +196,86 @@ class LocalDraftDevRuntimeManager:
             if not target.exists() or not target.is_file():
                 raise LocalDraftDevRuntimeError(f"File not found: {normalized}")
             content = target.read_text(encoding="utf-8")
-            return {"sandbox_id": sandbox_id, "path": normalized, "content": content}
+            return {
+                "sandbox_id": sandbox_id,
+                "path": normalized,
+                "content": content,
+                "size_bytes": len(content.encode("utf-8")),
+                "sha256": hash_text(content),
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def read_file_range(
+        self,
+        *,
+        sandbox_id: str,
+        path: str,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        context_before: int = 0,
+        context_after: int = 0,
+        max_bytes: int = 12000,
+        with_line_numbers: bool = False,
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            normalized = self._normalize_runtime_path(path)
+            target = state.project_dir / normalized
+            if not target.exists() or not target.is_file():
+                raise LocalDraftDevRuntimeError(f"File not found: {normalized}")
+            source = target.read_text(encoding="utf-8", errors="replace")
+            lines = source.splitlines()
+            if not lines:
+                return {
+                    "sandbox_id": sandbox_id,
+                    "path": normalized,
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content": "",
+                    "line_count": 0,
+                    "truncated": False,
+                    "size_bytes": 0,
+                    "sha256": hash_text(source),
+                    "revision_token": self._current_revision_token(state),
+                }
+
+            effective_start = max(1, int(start_line or 1))
+            effective_end = int(end_line or effective_start)
+            if effective_end < effective_start:
+                effective_end = effective_start
+            effective_start = max(1, effective_start - max(0, int(context_before or 0)))
+            effective_end = min(len(lines), effective_end + max(0, int(context_after or 0)))
+            if effective_start > len(lines):
+                effective_start = len(lines)
+            if effective_end < effective_start:
+                effective_end = effective_start
+
+            selected = lines[effective_start - 1 : effective_end]
+            if with_line_numbers:
+                rendered = [f"{effective_start + idx}: {line}" for idx, line in enumerate(selected)]
+            else:
+                rendered = selected
+
+            limit = max(256, int(max_bytes or 12000))
+            content = "\n".join(rendered)
+            encoded = content.encode("utf-8")
+            truncated = False
+            if len(encoded) > limit:
+                content = encoded[:limit].decode("utf-8", errors="ignore")
+                truncated = True
+
+            return {
+                "sandbox_id": sandbox_id,
+                "path": normalized,
+                "start_line": effective_start,
+                "end_line": effective_end,
+                "content": content,
+                "line_count": len(selected),
+                "truncated": truncated,
+                "size_bytes": len(content.encode("utf-8")),
+                "sha256": hash_text(source),
+                "revision_token": self._current_revision_token(state),
+            }
 
     async def search_code(self, *, sandbox_id: str, query: str, max_results: int = 30) -> Dict[str, object]:
         async with self._lock:
@@ -189,8 +290,68 @@ class LocalDraftDevRuntimeManager:
                     if needle in line.lower():
                         matches.append({"path": rel_path, "line": line_no, "preview": line[:220]})
                         if len(matches) >= max(1, int(max_results)):
-                            return {"sandbox_id": sandbox_id, "query": query, "matches": matches}
-            return {"sandbox_id": sandbox_id, "query": query, "matches": matches}
+                            return {
+                                "sandbox_id": sandbox_id,
+                                "query": query,
+                                "matches": matches,
+                                "revision_token": self._current_revision_token(state),
+                            }
+            return {
+                "sandbox_id": sandbox_id,
+                "query": query,
+                "matches": matches,
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def workspace_index(
+        self,
+        *,
+        sandbox_id: str,
+        limit: int = 500,
+        query: str | None = None,
+        max_symbols_per_file: int = 16,
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            limit_value = max(1, int(limit))
+            query_text = (query or "").strip().lower()
+            rows: list[dict[str, object]] = []
+            total_size = 0
+            for rel_path in self._collect_project_files(state.project_dir):
+                source = (state.project_dir / rel_path).read_text(encoding="utf-8", errors="replace")
+                size_bytes = len(source.encode("utf-8"))
+                total_size += size_bytes
+                symbols = self._extract_symbol_outline(source, rel_path, max_symbols_per_file=max_symbols_per_file)
+                language = self._detect_language(rel_path)
+                score = 0
+                if query_text:
+                    if query_text in rel_path.lower():
+                        score += 4
+                    if query_text in source.lower():
+                        score += 2
+                    if any(query_text in str(item.get("name", "")).lower() for item in symbols):
+                        score += 3
+                    if score <= 0:
+                        continue
+                rows.append(
+                    {
+                        "path": rel_path,
+                        "size_bytes": size_bytes,
+                        "sha256": hash_text(source),
+                        "language": language,
+                        "symbol_outline": symbols,
+                        "score": score,
+                    }
+                )
+            rows.sort(key=lambda item: (-int(item.get("score", 0)), str(item.get("path", ""))))
+            return {
+                "sandbox_id": sandbox_id,
+                "query": query,
+                "total_files": len(rows),
+                "total_size_bytes": total_size,
+                "files": rows[:limit_value],
+                "revision_token": self._current_revision_token(state),
+            }
 
     async def write_file(self, *, sandbox_id: str, path: str, content: str) -> Dict[str, object]:
         async with self._lock:
@@ -199,7 +360,8 @@ class LocalDraftDevRuntimeManager:
             target = state.project_dir / normalized
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content if isinstance(content, str) else str(content), encoding="utf-8")
-            return {"sandbox_id": sandbox_id, "path": normalized, "status": "written"}
+            revision_token = self._bump_revision_token(state)
+            return {"sandbox_id": sandbox_id, "path": normalized, "status": "written", "revision_token": revision_token}
 
     async def delete_file(self, *, sandbox_id: str, path: str) -> Dict[str, object]:
         async with self._lock:
@@ -209,7 +371,10 @@ class LocalDraftDevRuntimeManager:
             if target.exists() and target.is_file():
                 target.unlink(missing_ok=True)
                 self._prune_empty_dirs(target.parent, state.project_dir)
-            return {"sandbox_id": sandbox_id, "path": normalized, "status": "deleted"}
+                revision_token = self._bump_revision_token(state)
+            else:
+                revision_token = self._current_revision_token(state)
+            return {"sandbox_id": sandbox_id, "path": normalized, "status": "deleted", "revision_token": revision_token}
 
     async def rename_file(self, *, sandbox_id: str, from_path: str, to_path: str) -> Dict[str, object]:
         async with self._lock:
@@ -225,7 +390,88 @@ class LocalDraftDevRuntimeManager:
             target.parent.mkdir(parents=True, exist_ok=True)
             source.replace(target)
             self._prune_empty_dirs(source.parent, state.project_dir)
-            return {"sandbox_id": sandbox_id, "from_path": src, "to_path": dst, "status": "renamed"}
+            revision_token = self._bump_revision_token(state)
+            return {
+                "sandbox_id": sandbox_id,
+                "from_path": src,
+                "to_path": dst,
+                "status": "renamed",
+                "revision_token": revision_token,
+            }
+
+    async def apply_patch(
+        self,
+        *,
+        sandbox_id: str,
+        patch: str,
+        options: dict[str, object] | None = None,
+        preconditions: dict[str, object] | None = None,
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            patch_text = patch if isinstance(patch, str) else str(patch or "")
+            max_patch_bytes = int(os.getenv("APPS_CODING_AGENT_MAX_PATCH_BYTES", "240000"))
+            if len(patch_text.encode("utf-8")) > max_patch_bytes:
+                return {
+                    "ok": False,
+                    "code": "PATCH_TOO_LARGE",
+                    "summary": f"Patch exceeds size limit ({max_patch_bytes} bytes)",
+                    "failures": [],
+                    "applied_files": [],
+                    "revision_token": self._current_revision_token(state),
+                }
+
+            def _normalize_path(path_value: str) -> str:
+                return self._normalize_runtime_path(path_value)
+
+            def _read_file(path_value: str) -> str | None:
+                target = state.project_dir / path_value
+                if not target.exists() or not target.is_file():
+                    return None
+                return target.read_text(encoding="utf-8", errors="replace")
+
+            try:
+                result = apply_unified_patch_transaction(
+                    patch=patch_text,
+                    normalize_path=_normalize_path,
+                    read_file=_read_file,
+                    options=options,
+                    preconditions=preconditions,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "code": "PATCH_POLICY_VIOLATION",
+                    "summary": str(exc) or "Patch policy violation",
+                    "failures": [],
+                    "applied_files": [],
+                    "revision_token": self._current_revision_token(state),
+                }
+
+            writes = result.get("writes") if isinstance(result.get("writes"), dict) else {}
+            deletes = result.get("deletes") if isinstance(result.get("deletes"), list) else []
+            has_changes = False
+            for path_value, content in writes.items():
+                target = state.project_dir / str(path_value)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content if isinstance(content, str) else str(content), encoding="utf-8")
+                has_changes = True
+            for path_value in deletes:
+                target = state.project_dir / str(path_value)
+                if target.exists() and target.is_file():
+                    target.unlink(missing_ok=True)
+                    self._prune_empty_dirs(target.parent, state.project_dir)
+                    has_changes = True
+
+            response = {key: value for key, value in result.items() if key not in {"writes", "deletes"}}
+            response["revision_token"] = self._bump_revision_token(state) if has_changes else self._current_revision_token(state)
+            response["metrics"] = {
+                "patch_bytes": len(patch_text.encode("utf-8")),
+                "applied_file_count": len(response.get("applied_files") or []),
+                "failure_count": len(response.get("failures") or []),
+                "edit_latency_ms": 0,
+            }
+            return response
 
     async def snapshot_files(self, *, sandbox_id: str) -> Dict[str, object]:
         async with self._lock:
@@ -233,7 +479,12 @@ class LocalDraftDevRuntimeManager:
             files: Dict[str, str] = {}
             for rel_path in self._collect_project_files(state.project_dir):
                 files[rel_path] = (state.project_dir / rel_path).read_text(encoding="utf-8", errors="replace")
-            return {"sandbox_id": sandbox_id, "files": files, "file_count": len(files)}
+            return {
+                "sandbox_id": sandbox_id,
+                "files": files,
+                "file_count": len(files),
+                "revision_token": self._current_revision_token(state),
+            }
 
     async def run_command(
         self,
@@ -274,6 +525,7 @@ class LocalDraftDevRuntimeManager:
                 "code": int(process.returncode or 0),
                 "stdout": out_text,
                 "stderr": err_text,
+                "revision_token": self._current_revision_token(state),
             }
 
     def _preview_url(self, port: int, draft_dev_token: str) -> str:
@@ -309,6 +561,70 @@ class LocalDraftDevRuntimeManager:
                 continue
             paths.append(relative)
         return paths
+
+    def _detect_language(self, path: str) -> str:
+        suffix = Path(path).suffix.lower()
+        mapping = {
+            ".py": "python",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".json": "json",
+            ".md": "markdown",
+            ".css": "css",
+            ".scss": "scss",
+            ".html": "html",
+            ".yml": "yaml",
+            ".yaml": "yaml",
+            ".sql": "sql",
+            ".sh": "shell",
+        }
+        return mapping.get(suffix, "text")
+
+    def _extract_symbol_outline(
+        self,
+        source: str,
+        path: str,
+        *,
+        max_symbols_per_file: int = 16,
+    ) -> list[dict[str, object]]:
+        symbols: list[dict[str, object]] = []
+        suffix = Path(path).suffix.lower()
+        patterns: list[tuple[str, str]] = []
+        if suffix in {".py"}:
+            patterns = [
+                (r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
+                (r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", "function"),
+            ]
+        elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
+            patterns = [
+                (r"^\s*export\s+class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
+                (r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
+                (r"^\s*export\s+function\s+([A-Za-z_][A-Za-z0-9_]*)", "function"),
+                (r"^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)", "function"),
+                (r"^\s*const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\(", "function"),
+            ]
+        if not patterns:
+            return symbols
+
+        for line_no, line in enumerate(source.splitlines(), start=1):
+            for pattern, kind in patterns:
+                matched = re.search(pattern, line)
+                if not matched:
+                    continue
+                symbols.append({"name": matched.group(1), "kind": kind, "line": line_no})
+                break
+            if len(symbols) >= max(1, int(max_symbols_per_file)):
+                break
+        return symbols
+
+    def _current_revision_token(self, state: _SessionProcess) -> str:
+        return f"sandbox-seq-{max(1, int(state.revision_seq))}"
+
+    def _bump_revision_token(self, state: _SessionProcess) -> str:
+        state.revision_seq = max(1, int(state.revision_seq)) + 1
+        return self._current_revision_token(state)
 
     def _require_running_session_locked(self, sandbox_id: str) -> _SessionProcess:
         state = self._state.get(sandbox_id)

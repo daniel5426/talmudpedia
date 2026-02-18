@@ -29,7 +29,7 @@ async def echo_tool(payload: Any) -> Any:
     return payload
 
 
-def run_tool_function(fn: Callable[..., Any], payload: Any) -> Any:
+def run_tool_function(_name: str, fn: Callable[..., Any], payload: Any) -> Any:
     if asyncio.iscoroutinefunction(fn):
         return fn(payload)
     return asyncio.to_thread(fn, payload)

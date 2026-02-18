@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TextDecoder } from "util";
 
 import { AppsBuilderWorkspace } from "@/features/apps-builder/workspace/AppsBuilderWorkspace";
-import { publishedAppsService, publishedRuntimeService } from "@/services";
+import { modelsService, publishedAppsService, publishedRuntimeService } from "@/services";
 
 const setOpenMock = jest.fn();
 const mockCodeEditor = jest.fn(
@@ -56,10 +56,20 @@ jest.mock("@/services", () => ({
   publishedRuntimeService: {
     getPreviewRuntime: jest.fn(),
   },
+  modelsService: {
+    listModels: jest.fn(),
+  },
 }));
 
 jest.mock("@/components/ui/sidebar", () => ({
   useSidebar: () => ({ setOpen: setOpenMock }),
+}));
+
+jest.mock("@/components/ui/dialog", () => ({
+  Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 jest.mock("@/lib/react-artifacts/compiler", () => ({
@@ -102,6 +112,30 @@ jest.mock("@/components/ai-elements/tool", () => ({
             : "")}
     </pre>
   ),
+}));
+
+jest.mock("@/components/ai-elements/model-selector", () => ({
+  ModelSelector: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ModelSelectorTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  ModelSelectorContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ModelSelectorInput: (props: React.ComponentPropsWithoutRef<"input">) => <input {...props} />,
+  ModelSelectorList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ModelSelectorEmpty: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ModelSelectorGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ModelSelectorItem: ({
+    children,
+    onSelect,
+    value,
+  }: {
+    children: React.ReactNode;
+    onSelect?: (value: string) => void;
+    value?: string;
+  }) => (
+    <button type="button" onClick={() => onSelect?.(value || "")}>
+      {children}
+    </button>
+  ),
+  ModelSelectorName: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }));
 
 jest.mock("@/components/ai-elements/prompt-input", () => {
@@ -357,6 +391,7 @@ describe("AppsBuilderWorkspace", () => {
     (publishedAppsService.createCodingAgentRun as jest.Mock).mockResolvedValue({
       run_id: "run-1",
       status: "queued",
+      execution_engine: "native",
       surface: "published_app_coding_agent",
       published_app_id: "app-1",
       base_revision_id: "rev-1",
@@ -372,10 +407,12 @@ describe("AppsBuilderWorkspace", () => {
         getReader: () => {
           const chunks = [
             'data: {"event":"run.accepted","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"run","payload":{"status":"queued"},"diagnostics":[]}\n\n',
-            'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"assistant","payload":{"content":"Applying patch"},"diagnostics":[]}\n\n',
-            'data: {"event":"revision.created","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:02Z","stage":"revision","payload":{"revision_id":"rev-2","file_count":4},"diagnostics":[]}\n\n',
-            'data: {"event":"checkpoint.created","run_id":"run-1","app_id":"app-1","seq":4,"ts":"2026-02-16T19:00:03Z","stage":"checkpoint","payload":{"checkpoint_id":"rev-2","revision_id":"rev-2"},"diagnostics":[]}\n\n',
-            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":5,"ts":"2026-02-16T19:00:04Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:00Z","stage":"tool","payload":{"tool":"write_file","span_id":"call-1","input":{"path":"src/App.tsx"}},"diagnostics":[]}\n\n',
+            'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:01Z","stage":"assistant","payload":{"content":"Applying patch"},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.completed","run_id":"run-1","app_id":"app-1","seq":4,"ts":"2026-02-16T19:00:01Z","stage":"tool","payload":{"tool":"write_file","span_id":"call-1","output":{"ok":true}},"diagnostics":[]}\n\n',
+            'data: {"event":"revision.created","run_id":"run-1","app_id":"app-1","seq":5,"ts":"2026-02-16T19:00:02Z","stage":"revision","payload":{"revision_id":"rev-2","file_count":4},"diagnostics":[]}\n\n',
+            'data: {"event":"checkpoint.created","run_id":"run-1","app_id":"app-1","seq":6,"ts":"2026-02-16T19:00:03Z","stage":"checkpoint","payload":{"checkpoint_id":"rev-2","revision_id":"rev-2"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":7,"ts":"2026-02-16T19:00:04Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
           ];
           let cursor = 0;
           return {
@@ -395,6 +432,45 @@ describe("AppsBuilderWorkspace", () => {
       checkpoint_id: "rev-2",
       revision: makeState().current_draft_revision,
       run_id: "run-1",
+    });
+    (modelsService.listModels as jest.Mock).mockResolvedValue({
+      models: [
+        {
+          id: "model-auto-a",
+          name: "GPT Test A",
+          slug: "gpt-test-a",
+          description: "",
+          capability_type: "chat",
+          metadata: {},
+          default_resolution_policy: {},
+          version: 1,
+          status: "active",
+          is_active: true,
+          is_default: true,
+          tenant_id: "tenant-1",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          providers: [],
+        },
+        {
+          id: "model-auto-b",
+          name: "GPT Test B",
+          slug: "gpt-test-b",
+          description: "",
+          capability_type: "chat",
+          metadata: {},
+          default_resolution_policy: {},
+          version: 1,
+          status: "active",
+          is_active: true,
+          is_default: false,
+          tenant_id: "tenant-1",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          providers: [],
+        },
+      ],
+      total: 2,
     });
     (publishedRuntimeService.getPreviewRuntime as jest.Mock).mockResolvedValue({
       app_id: "app-1",
@@ -433,6 +509,18 @@ describe("AppsBuilderWorkspace", () => {
         }),
       );
     });
+  });
+
+  it("keeps the builder shell viewport-bounded for internal chat scrolling", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalledWith("app-1"));
+    const tabsRoot = screen.getByRole("tab", { name: "Preview" }).closest("[data-slot='tabs']");
+    expect(tabsRoot).toHaveClass("h-dvh", "min-h-0", "overflow-hidden");
+    expect(tabsRoot).not.toHaveClass("h-screen");
+
+    const agentPanel = screen.getByRole("button", { name: "New chat" }).closest("aside");
+    expect(agentPanel).toHaveClass("min-h-0", "overflow-hidden");
   });
 
   it("does not sync draft preview while ensure is still starting", async () => {
@@ -648,28 +736,20 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
-  it("switches template with destructive confirmation", async () => {
+  it("renders template switch control", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    await screen.findAllByRole("combobox");
-
-    fireEvent.click(screen.getAllByRole("combobox")[0]);
-    fireEvent.click(screen.getByText("Neon Console"));
-
-    await waitFor(() => {
-      expect(window.confirm).toHaveBeenCalled();
-      expect(publishedAppsService.resetTemplate).toHaveBeenCalledWith("app-1", "chat-neon");
-    });
+    expect(await screen.findByRole("button", { name: /template/i })).toBeInTheDocument();
   });
 
-  it("streams builder run and renders timeline cards", async () => {
+  it("streams coding-agent run with assistant response and tool calls only", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    await screen.findByPlaceholderText("Refactor the header and align spacing with the hero...");
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
 
-    fireEvent.change(screen.getByPlaceholderText("Refactor the header and align spacing with the hero..."), {
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
       target: { value: "Make it bold" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -677,29 +757,544 @@ describe("AppsBuilderWorkspace", () => {
     await waitFor(() => {
       expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledWith(
         "app-1",
-        expect.objectContaining({ input: "Make it bold", base_revision_id: "rev-1" }),
+        expect.objectContaining({ input: "Make it bold", base_revision_id: "rev-1", engine: "native" }),
       );
       expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/Revision created/i)).toBeInTheDocument();
-      expect(screen.getByText(/Checkpoint created/i)).toBeInTheDocument();
+      expect(screen.getByText("Editing file")).toBeInTheDocument();
+      expect(screen.getByText("Applying patch")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Revision created/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Checkpoint created/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/revision_id/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Run accepted/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Run complete/i)).not.toBeInTheDocument();
+  });
+
+  it("retries coding-agent run once after revision conflict", async () => {
+    (publishedAppsService.createCodingAgentRun as jest.Mock)
+      .mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: "REVISION_CONFLICT",
+            latest_revision_id: "rev-2",
+            latest_updated_at: "2026-02-17T12:48:04.089449+00:00",
+            message: "Draft revision is stale",
+          }),
+        ),
+      )
+      .mockResolvedValueOnce({
+        run_id: "run-2",
+        status: "queued",
+        execution_engine: "native",
+        surface: "published_app_coding_agent",
+        published_app_id: "app-1",
+        base_revision_id: "rev-2",
+        result_revision_id: null,
+        checkpoint_revision_id: null,
+        error: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        completed_at: null,
+      });
+
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"assistant.delta","run_id":"run-2","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:01Z","stage":"assistant","payload":{"content":"Retry worked"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-2","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "change button color" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(2);
+    });
+    expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[0][1]).toEqual(
+      expect.objectContaining({ base_revision_id: "rev-1" }),
+    );
+    expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[1][1]).toEqual(
+      expect.objectContaining({ base_revision_id: "rev-2" }),
+    );
+    expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-2");
+
+    await waitFor(() => {
+      expect(screen.getByText("Retry worked")).toBeInTheDocument();
     });
   });
 
-  it("restores the latest coding-agent checkpoint from quick action", async () => {
+  it("shows running tool calls as shimmering text while in progress", async () => {
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"run.accepted","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"run","payload":{"status":"queued"},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:00Z","stage":"tool","payload":{"tool":"read_file","span_id":"call-2","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
+            'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:01Z","stage":"assistant","payload":{"content":"Working on it"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":4,"ts":"2026-02-16T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "inspect files" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const runningTool = await screen.findByText("Explored 1 file");
+    expect(runningTool).toHaveClass("animate-pulse");
+  });
+
+  it("streams assistant deltas incrementally instead of rendering all-at-once", async () => {
+    let released = false;
+    let releaseSecondChunk: () => void = () => {};
+    const secondChunkGate = new Promise<void>((resolve) => {
+      releaseSecondChunk = () => {
+        released = true;
+        resolve();
+      };
+    });
+
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"assistant","payload":{"content":"Part A"},"diagnostics":[]}\n\n',
+            'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"assistant","payload":{"content":" + Part B"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              if (cursor === 1 && !released) {
+                await secondChunkGate;
+              }
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "stream this" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Part A");
+    releaseSecondChunk();
+
+    await waitFor(() => {
+      expect(screen.getByText("Part A + Part B")).toBeInTheDocument();
+    });
+  });
+
+  it("sends prior user/assistant turns as coding-agent run history", async () => {
+    (publishedAppsService.createCodingAgentRun as jest.Mock)
+      .mockResolvedValueOnce({
+        run_id: "run-1",
+        status: "queued",
+        execution_engine: "native",
+        surface: "published_app_coding_agent",
+        published_app_id: "app-1",
+        base_revision_id: "rev-1",
+        result_revision_id: null,
+        checkpoint_revision_id: null,
+        error: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        completed_at: null,
+      })
+      .mockResolvedValueOnce({
+        run_id: "run-2",
+        status: "queued",
+        execution_engine: "native",
+        surface: "published_app_coding_agent",
+        published_app_id: "app-1",
+        base_revision_id: "rev-1",
+        result_revision_id: null,
+        checkpoint_revision_id: null,
+        error: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        completed_at: null,
+      });
+
+    (publishedAppsService.streamCodingAgentRun as jest.Mock)
+      .mockResolvedValueOnce({
+        body: {
+          getReader: () => {
+            const chunks = [
+              'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"assistant","payload":{"content":"First answer"},"diagnostics":[]}\n\n',
+              'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+            ];
+            let cursor = 0;
+            return {
+              read: async () => {
+                if (cursor >= chunks.length) return { done: true, value: undefined };
+                const next = chunks[cursor++];
+                return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+              },
+            };
+          },
+        },
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/event-stream" }),
+      })
+      .mockResolvedValueOnce({
+        body: {
+          getReader: () => {
+            const chunks = [
+              'data: {"event":"assistant.delta","run_id":"run-2","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:02Z","stage":"assistant","payload":{"content":"Second answer"},"diagnostics":[]}\n\n',
+              'data: {"event":"run.completed","run_id":"run-2","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:03Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+            ];
+            let cursor = 0;
+            return {
+              read: async () => {
+                if (cursor >= chunks.length) return { done: true, value: undefined };
+                const next = chunks[cursor++];
+                return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+              },
+            };
+          },
+        },
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/event-stream" }),
+      });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "hi" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("First answer");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "what is the first message?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Second answer");
+
+    expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls).toHaveLength(2);
+    const secondPayload = (publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[1][1];
+    expect(secondPayload.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "hi" }),
+        expect.objectContaining({ role: "assistant", content: "First answer" }),
+        expect.objectContaining({ role: "user", content: "what is the first message?" }),
+      ]),
+    );
+  });
+
+  it("shows default assistant text when stream emits no assistant delta", async () => {
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"run.accepted","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"run","payload":{"status":"queued"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "hi" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("I can help with code changes in this app workspace. Tell me what you want to change."),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Run accepted/i)).not.toBeInTheDocument();
+  });
+
+  it("parses SSE events when data prefix has no trailing space", async () => {
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data:{"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"assistant","payload":{"content":"Applied red color update"},"diagnostics":[]}\n\n',
+            'data:{"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "set red" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Applied red color update")).toBeInTheDocument();
+    });
+  });
+
+  it("does not enter full-page loading state while refreshing state after a run", async () => {
+    const getBuilderStateMock = publishedAppsService.getBuilderState as jest.Mock;
+    getBuilderStateMock.mockReset();
+    getBuilderStateMock.mockResolvedValueOnce(makeState());
+
+    let resolveRefresh!: (value: unknown) => void;
+    const refreshPromise = new Promise((resolve) => {
+      resolveRefresh = resolve;
+    });
+    getBuilderStateMock.mockReturnValueOnce(refreshPromise);
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalledTimes(1));
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "update spacing" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
+    });
+    expect(screen.queryByText("Loading builder...")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Plan, @ for context, / for commands")).toBeInTheDocument();
+
+    resolveRefresh(makeState());
+    await waitFor(() => {
+      expect(publishedAppsService.getBuilderState).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("renders model selector with Auto and chat model options", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: /Restore Last Checkpoint/i }));
+    const engineSelect = await screen.findByLabelText("Select run engine");
+    expect(engineSelect).toHaveValue("native");
+    const selectorTrigger = await screen.findByRole("button", { name: "Select run model" });
+    expect(selectorTrigger).toHaveTextContent("Auto");
+
+    fireEvent.click(selectorTrigger);
+    await waitFor(() => {
+      expect(screen.getByText("GPT Test A")).toBeInTheDocument();
+      expect(screen.getByText("GPT Test B")).toBeInTheDocument();
+    });
+  });
+
+  it("sends selected engine in create-run payload", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByLabelText("Select run engine"), {
+      target: { value: "opencode" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "use opencode" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(1));
+    expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[0][1]).toEqual(
+      expect.objectContaining({ engine: "opencode" }),
+    );
+  });
+
+  it("sends selected model_id and supports changing model between messages", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select run model" }));
+    fireEvent.click(await screen.findByText("GPT Test B"));
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "first request" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(1));
+    expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[0][1]).toEqual(
+      expect.objectContaining({ model_id: "model-auto-b", engine: "native" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select run model" }));
+    const autoOptions = await screen.findAllByText("Auto");
+    fireEvent.click(autoOptions[autoOptions.length - 1]);
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "second request" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(2));
+    expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[1][1]).toEqual(
+      expect.objectContaining({ model_id: null, engine: "native" }),
+    );
+  });
+
+  it("shows actionable error when selected model is unavailable", async () => {
+    (publishedAppsService.createCodingAgentRun as jest.Mock).mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: "CODING_AGENT_MODEL_UNAVAILABLE",
+          field: "model_id",
+          message: "Selected model is unavailable for this tenant.",
+        }),
+      ),
+    );
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select run model" }));
+    fireEvent.click(await screen.findByText("GPT Test A"));
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "use selected model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(publishedAppsService.listCodingAgentCheckpoints).toHaveBeenCalledWith("app-1", 1);
+      expect(screen.getByText("Selected model is unavailable for this tenant.")).toBeInTheDocument();
+    });
+  });
+
+  it("shows actionable error when selected engine is unavailable", async () => {
+    (publishedAppsService.createCodingAgentRun as jest.Mock).mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: "CODING_AGENT_ENGINE_UNAVAILABLE",
+          field: "engine",
+          message: "OpenCode engine is unavailable.",
+        }),
+      ),
+    );
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByLabelText("Select run engine"), {
+      target: { value: "opencode" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "use opencode engine" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("OpenCode engine is unavailable.")).toBeInTheDocument();
+    });
+  });
+
+  it("restores a checkpoint from per-message revert action", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "make a change" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /revert to this point/i }));
+
+    await waitFor(() => {
       expect(publishedAppsService.restoreCodingAgentCheckpoint).toHaveBeenCalledWith(
         "app-1",
         "rev-2",
-        { run_id: "run-1" },
+        {},
       );
     });
   });

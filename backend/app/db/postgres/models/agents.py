@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -131,6 +131,10 @@ class AgentRun(Base):
     base_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
     result_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
     checkpoint_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
+    requested_model_id = Column(UUID(as_uuid=True), ForeignKey("model_registry.id", ondelete="SET NULL"), nullable=True, index=True)
+    resolved_model_id = Column(UUID(as_uuid=True), ForeignKey("model_registry.id", ondelete="SET NULL"), nullable=True, index=True)
+    execution_engine = Column(String, nullable=False, default="native", server_default=text("'native'"), index=True)
+    engine_run_ref = Column(String, nullable=True)
 
     # Orchestration lineage and idempotency
     root_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -153,6 +157,8 @@ class AgentRun(Base):
     base_revision = relationship("PublishedAppRevision", foreign_keys=[base_revision_id])
     result_revision = relationship("PublishedAppRevision", foreign_keys=[result_revision_id])
     checkpoint_revision = relationship("PublishedAppRevision", foreign_keys=[checkpoint_revision_id])
+    requested_model = relationship("ModelRegistry", foreign_keys=[requested_model_id])
+    resolved_model = relationship("ModelRegistry", foreign_keys=[resolved_model_id])
     root_run = relationship("AgentRun", remote_side=[id], foreign_keys=[root_run_id], post_update=True)
     parent_run = relationship("AgentRun", remote_side=[id], foreign_keys=[parent_run_id], backref="child_runs")
     orchestration_group = relationship("OrchestrationGroup", foreign_keys=[orchestration_group_id])

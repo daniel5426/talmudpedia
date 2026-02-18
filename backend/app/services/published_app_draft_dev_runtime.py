@@ -264,6 +264,76 @@ class PublishedAppDraftDevRuntimeService:
         session.last_error = None
         return session
 
+    async def ensure_active_session(
+        self,
+        *,
+        app: PublishedApp,
+        revision: PublishedAppRevision,
+        user_id: UUID,
+    ) -> PublishedAppDraftDevSession:
+        """
+        Ensure an active sandbox session for tool execution without force-syncing
+        files from DB on every call.
+        """
+        if not self.settings.enabled:
+            raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
+        if not user_id:
+            raise self._scope_error()
+
+        now = self._now()
+        await self.expire_idle_sessions(app_id=app.id, user_id=user_id)
+        session = await self.get_session(app_id=app.id, user_id=user_id)
+        must_start = session is None
+
+        if session is not None and session.expires_at and session.expires_at <= now:
+            must_start = True
+            session.status = PublishedAppDraftDevSessionStatus.expired
+
+        if session is not None and (
+            session.status in {
+                PublishedAppDraftDevSessionStatus.stopped,
+                PublishedAppDraftDevSessionStatus.expired,
+                PublishedAppDraftDevSessionStatus.error,
+            }
+            or not session.sandbox_id
+        ):
+            must_start = True
+
+        if must_start:
+            return await self.ensure_session(
+                app=app,
+                revision=revision,
+                user_id=user_id,
+                files=dict(revision.files or {}),
+                entry_file=revision.entry_file,
+            )
+
+        session.revision_id = revision.id
+        session.idle_timeout_seconds = self.settings.idle_timeout_seconds
+        session.last_activity_at = now
+        session.expires_at = self._expires_at(now)
+
+        if session.sandbox_id:
+            try:
+                await self.client.heartbeat_session(
+                    sandbox_id=session.sandbox_id,
+                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                )
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                if self._is_runtime_not_running_error(exc):
+                    return await self.ensure_session(
+                        app=app,
+                        revision=revision,
+                        user_id=user_id,
+                        files=dict(revision.files or {}),
+                        entry_file=revision.entry_file,
+                    )
+                return self._mark_session_error(session, exc)
+
+        session.status = PublishedAppDraftDevSessionStatus.running
+        session.last_error = None
+        return session
+
     async def sync_session(
         self,
         *,

@@ -7,6 +7,7 @@ from app.services.apps_builder_dependency_policy import validate_builder_depende
 from .published_apps_admin_builder_core import _builder_compile_error, _builder_policy_error
 from .published_apps_admin_shared import (
     BUILDER_ALLOWED_DIR_ROOTS,
+    BUILDER_BLOCKED_DIR_PREFIXES,
     BUILDER_ALLOWED_EXTENSIONS,
     BUILDER_ALLOWED_ROOT_FILES,
     BUILDER_ALLOWED_ROOT_GLOBS,
@@ -42,16 +43,33 @@ def _normalize_builder_path(path: str) -> str:
 
 
 def _assert_builder_path_allowed(path: str, *, field: str = "path") -> None:
-    in_allowed_dir = any(path.startswith(root) for root in BUILDER_ALLOWED_DIR_ROOTS)
-    if not in_allowed_dir:
-        is_root_file = "/" not in path
-        matches_root_file = path in BUILDER_ALLOWED_ROOT_FILES
-        matches_root_glob = any(PurePosixPath(path).match(pattern) for pattern in BUILDER_ALLOWED_ROOT_GLOBS)
-        if not (is_root_file and (matches_root_file or matches_root_glob)):
-            raise _builder_policy_error(
-                "File path must be in src/, public/, or an allowed Vite root file",
-                field=field,
-            )
+    blocked_prefix = next(
+        (
+            prefix
+            for prefix in BUILDER_BLOCKED_DIR_PREFIXES
+            if path == prefix.rstrip("/") or path.startswith(prefix)
+        ),
+        None,
+    )
+    if blocked_prefix:
+        raise _builder_policy_error(
+            f"File path is blocked by policy: {blocked_prefix}",
+            field=field,
+        )
+
+    # Backward compatibility: if explicit allowed dir roots are configured,
+    # enforce them in addition to the blocked-prefix policy.
+    if BUILDER_ALLOWED_DIR_ROOTS:
+        in_allowed_dir = any(path.startswith(root) for root in BUILDER_ALLOWED_DIR_ROOTS)
+        if not in_allowed_dir:
+            is_root_file = "/" not in path
+            matches_root_file = path in BUILDER_ALLOWED_ROOT_FILES
+            matches_root_glob = any(PurePosixPath(path).match(pattern) for pattern in BUILDER_ALLOWED_ROOT_GLOBS)
+            if not (is_root_file and (matches_root_file or matches_root_glob)):
+                raise _builder_policy_error(
+                    "File path must be in configured allowed directories or an allowed Vite root file",
+                    field=field,
+                )
 
     suffix = PurePosixPath(path).suffix.lower()
     if suffix not in BUILDER_ALLOWED_EXTENSIONS:

@@ -7,6 +7,7 @@ import os
 import asyncio
 import logging
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
@@ -22,6 +23,8 @@ logger = logging.getLogger("backend.startup")
 _INFRA_BOOTSTRAPPED = False
 _LOCAL_PGVECTOR_STARTED_BY_APP = False
 _LOCAL_PGVECTOR_CONTAINER_NAME = ""
+_LOCAL_OPENCODE_STARTED_BY_APP = False
+_LOCAL_OPENCODE_PROCESS: subprocess.Popen | None = None
 
 
 def _is_truthy(raw: str) -> bool:
@@ -378,6 +381,106 @@ def _ensure_local_draft_dev_runtime_if_needed() -> None:
         logger.warning("Failed to bootstrap embedded local draft-dev runtime: %s", exc)
 
 
+def _ensure_local_opencode_if_needed() -> None:
+    """
+    Ensure local OpenCode server is available for coding-agent engine selection.
+
+    This auto-bootstraps only in local infra bootstrap mode and can be disabled with:
+    - APPS_CODING_AGENT_OPENCODE_AUTO_BOOTSTRAP=0
+    """
+    global _LOCAL_OPENCODE_STARTED_BY_APP, _LOCAL_OPENCODE_PROCESS
+
+    if not _is_truthy(os.getenv("APPS_CODING_AGENT_OPENCODE_AUTO_BOOTSTRAP", "1")):
+        return
+
+    enabled_raw = os.getenv("APPS_CODING_AGENT_OPENCODE_ENABLED")
+    if enabled_raw is None:
+        os.environ["APPS_CODING_AGENT_OPENCODE_ENABLED"] = "1"
+    elif not _is_truthy(enabled_raw):
+        return
+
+    base_url = (os.getenv("APPS_CODING_AGENT_OPENCODE_BASE_URL") or "").strip()
+    host = (os.getenv("APPS_CODING_AGENT_OPENCODE_HOST") or "127.0.0.1").strip()
+    port = int((os.getenv("APPS_CODING_AGENT_OPENCODE_PORT") or "8788").strip())
+    startup_timeout_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_STARTUP_TIMEOUT_SECONDS") or "20").strip())
+
+    if not base_url:
+        base_url = f"http://{host}:{port}"
+        os.environ["APPS_CODING_AGENT_OPENCODE_BASE_URL"] = base_url
+
+    parsed = _parse_endpoint_host_port(base_url)
+    if not parsed:
+        logger.warning("OpenCode base URL is invalid: %s", base_url)
+        return
+    target_host, target_port = parsed
+
+    if _is_port_open(target_host, target_port):
+        logger.info("OpenCode server is already reachable at %s:%s", target_host, target_port)
+        return
+
+    command_template = (
+        os.getenv("APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND")
+        or "opencode server --host {host} --port {port}"
+    ).strip()
+    try:
+        command = shlex.split(command_template.format(host=target_host, port=target_port))
+    except Exception as exc:
+        logger.warning("Invalid OpenCode server command template `%s`: %s", command_template, exc)
+        return
+    if not command:
+        logger.warning("OpenCode server command is empty; cannot auto-start.")
+        return
+
+    command_bin = command[0]
+    if shutil.which(command_bin) is None:
+        logger.warning(
+            "OpenCode auto-start command is unavailable (`%s`). Install it or set APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND.",
+            command_bin,
+        )
+        return
+
+    opencode_log_path = Path(os.getenv("APPS_CODING_AGENT_OPENCODE_LOG_PATH", "/tmp/talmudpedia-opencode.log"))
+    with opencode_log_path.open("ab") as log_file:
+        _LOCAL_OPENCODE_PROCESS = subprocess.Popen(
+            command,
+            env=os.environ.copy(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    if _wait_for_port(target_host, target_port, timeout_seconds=startup_timeout_seconds):
+        _LOCAL_OPENCODE_STARTED_BY_APP = True
+        logger.info("Started local OpenCode server on %s:%s", target_host, target_port)
+    else:
+        logger.warning(
+            "OpenCode server did not become ready on %s:%s. See %s for logs.",
+            target_host,
+            target_port,
+            opencode_log_path,
+        )
+
+
+def _stop_local_opencode_if_needed() -> None:
+    global _LOCAL_OPENCODE_STARTED_BY_APP, _LOCAL_OPENCODE_PROCESS
+    if not _LOCAL_OPENCODE_STARTED_BY_APP:
+        return
+    process = _LOCAL_OPENCODE_PROCESS
+    if process is None or process.poll() is not None:
+        _LOCAL_OPENCODE_STARTED_BY_APP = False
+        _LOCAL_OPENCODE_PROCESS = None
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=8)
+        logger.info("Stopped local OpenCode server")
+    except Exception:
+        process.kill()
+        logger.warning("Force-killed local OpenCode server process")
+    _LOCAL_OPENCODE_STARTED_BY_APP = False
+    _LOCAL_OPENCODE_PROCESS = None
+
+
 def _bootstrap_local_infra_once() -> None:
     global _INFRA_BOOTSTRAPPED
     if _INFRA_BOOTSTRAPPED:
@@ -396,6 +499,7 @@ def _bootstrap_local_infra_once() -> None:
     _ensure_local_bundle_bucket_if_needed()
     _ensure_celery_worker_if_needed()
     _ensure_local_draft_dev_runtime_if_needed()
+    _ensure_local_opencode_if_needed()
 
 
 def start_livekit_worker():
@@ -467,6 +571,7 @@ async def lifespan(app: FastAPI):
         pass
 
     _stop_local_pgvector_if_needed()
+    _stop_local_opencode_if_needed()
 
     await MongoDatabase.close()
 

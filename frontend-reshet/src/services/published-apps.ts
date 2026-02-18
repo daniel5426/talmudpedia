@@ -222,6 +222,7 @@ export interface BuilderValidationResponse {
 }
 
 export type CodingAgentDiagnostics = Array<{ message?: string; [key: string]: unknown }>;
+export type CodingAgentExecutionEngine = "native" | "opencode";
 
 export interface CodingAgentStreamEvent {
   event: string;
@@ -237,11 +238,14 @@ export interface CodingAgentStreamEvent {
 export interface CodingAgentRun {
   run_id: string;
   status: string;
+  execution_engine: CodingAgentExecutionEngine;
   surface?: string | null;
   published_app_id?: string | null;
   base_revision_id?: string | null;
   result_revision_id?: string | null;
   checkpoint_revision_id?: string | null;
+  requested_model_id?: string | null;
+  resolved_model_id?: string | null;
   error?: string | null;
   created_at: string;
   started_at?: string | null;
@@ -382,7 +386,13 @@ export const publishedAppsService = {
 
   async createCodingAgentRun(
     appId: string,
-    payload: { input: string; base_revision_id?: string },
+    payload: {
+      input: string;
+      base_revision_id?: string;
+      messages?: Array<{ role: string; content: string }>;
+      model_id?: string | null;
+      engine?: CodingAgentExecutionEngine;
+    },
   ): Promise<CodingAgentRun> {
     return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs`, payload);
   },

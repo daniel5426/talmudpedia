@@ -337,7 +337,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             return None
 
         tool_id = candidate.get("tool_id") or candidate.get("toolId") or candidate.get("toolID")
-        tool_name = candidate.get("tool")
+        tool_name = (
+            candidate.get("tool")
+            or candidate.get("tool_name")
+            or candidate.get("toolName")
+            or candidate.get("name")
+            or candidate.get("function")
+        )
 
         if "input" in candidate:
             input_data = candidate.get("input")
@@ -345,8 +351,33 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             input_data = candidate.get("args")
         elif "parameters" in candidate:
             input_data = candidate.get("parameters")
+        elif "payload" in candidate:
+            input_data = candidate.get("payload")
+        elif "data" in candidate:
+            input_data = candidate.get("data")
+        elif "arguments" in candidate:
+            input_data = candidate.get("arguments")
         else:
-            input_data = {}
+            input_data = {
+                key: value
+                for key, value in candidate.items()
+                if key
+                not in {
+                    "tool_call",
+                    "toolCall",
+                    "tool_id",
+                    "toolId",
+                    "toolID",
+                    "tool",
+                    "tool_name",
+                    "toolName",
+                    "name",
+                    "function",
+                    "id",
+                    "type",
+                    "index",
+                }
+            }
 
         if input_data is None:
             input_data = {}
@@ -386,12 +417,56 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         return input_schema if isinstance(input_schema, dict) else {}
 
     def _coerce_tool_input(self, tool_input: Any, tool: Any) -> Dict[str, Any]:
+        def _parse_json_object(raw: Any) -> Optional[Dict[str, Any]]:
+            if not isinstance(raw, str):
+                return None
+            text = raw.strip()
+            if not text:
+                return None
+            candidates: List[str] = [text]
+
+            fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
+            if fenced:
+                candidates.append(fenced.group(1).strip())
+
+            first = text.find("{")
+            last = text.rfind("}")
+            if first != -1 and last > first:
+                candidates.append(text[first:last + 1].strip())
+
+            trimmed = text.strip().rstrip(",")
+            if not trimmed.startswith("{") and ":" in trimmed:
+                candidates.append("{" + trimmed.strip("{} \t\r\n,") + "}")
+
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                try:
+                    parsed = json.loads(candidate)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, str):
+                    inner = parsed.strip()
+                    if inner and inner != candidate:
+                        try:
+                            parsed = json.loads(inner)
+                        except Exception:
+                            parsed = None
+                if isinstance(parsed, dict):
+                    return parsed
+            return None
+
         if not isinstance(tool_input, dict):
             tool_input = {"value": tool_input}
         else:
             tool_input = dict(tool_input)
 
         value_payload = tool_input.get("value")
+        if isinstance(value_payload, str):
+            parsed_value_payload = _parse_json_object(value_payload)
+            if isinstance(parsed_value_payload, dict):
+                value_payload = parsed_value_payload
+                tool_input["value"] = parsed_value_payload
         if isinstance(value_payload, dict):
             merged = dict(value_payload)
             for key, val in tool_input.items():
@@ -401,7 +476,22 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     merged[key] = val
             tool_input = merged
 
-        nested = tool_input.get("input") if isinstance(tool_input.get("input"), dict) else {}
+        nested_candidates: List[Dict[str, Any]] = []
+        for wrapper_key in ("input", "args", "parameters", "payload", "data"):
+            wrapper_value = tool_input.get(wrapper_key)
+            if isinstance(wrapper_value, str):
+                parsed_wrapper = _parse_json_object(wrapper_value)
+                if isinstance(parsed_wrapper, dict):
+                    wrapper_value = parsed_wrapper
+                    tool_input[wrapper_key] = parsed_wrapper
+            if isinstance(wrapper_value, dict):
+                nested_candidates.append(wrapper_value)
+
+        nested: Dict[str, Any] = {}
+        for candidate in nested_candidates:
+            for key, value in candidate.items():
+                if key not in nested:
+                    nested[key] = value
         query_aliases = ("query", "q", "search_query", "keywords", "text", "value")
         if not tool_input.get("query"):
             for alias in query_aliases:
@@ -411,6 +501,98 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 if isinstance(candidate, str) and candidate.strip():
                     tool_input["query"] = candidate
                     break
+
+        def _coerce_string_alias(target_key: str, aliases: tuple[str, ...]) -> None:
+            existing = tool_input.get(target_key)
+            if isinstance(existing, str) and existing.strip():
+                return
+            for alias in aliases:
+                candidate = tool_input.get(alias)
+                if candidate is None:
+                    candidate = nested.get(alias)
+                if isinstance(candidate, str) and candidate.strip():
+                    tool_input[target_key] = candidate
+                    return
+                if isinstance(candidate, (int, float)):
+                    tool_input[target_key] = str(candidate)
+                    return
+
+        _coerce_string_alias(
+            "path",
+            (
+                "path",
+                "file_path",
+                "filepath",
+                "filePath",
+                "file",
+                "filename",
+                "target_path",
+                "targetPath",
+                "relative_path",
+                "relativePath",
+                "pathname",
+            ),
+        )
+        _coerce_string_alias(
+            "content",
+            (
+                "content",
+                "contents",
+                "text",
+                "body",
+                "code",
+                "source",
+                "file_content",
+                "fileContent",
+                "new_content",
+                "newContent",
+            ),
+        )
+        _coerce_string_alias(
+            "from_path",
+            (
+                "from_path",
+                "fromPath",
+                "source_path",
+                "sourcePath",
+                "old_path",
+                "oldPath",
+                "from",
+            ),
+        )
+        _coerce_string_alias(
+            "to_path",
+            (
+                "to_path",
+                "toPath",
+                "destination_path",
+                "destinationPath",
+                "dest_path",
+                "destPath",
+                "new_path",
+                "newPath",
+                "to",
+            ),
+        )
+        _coerce_string_alias(
+            "entry_file",
+            (
+                "entry_file",
+                "entryFile",
+                "entry",
+                "entry_path",
+                "entryPath",
+            ),
+        )
+        _coerce_string_alias(
+            "checkpoint_revision_id",
+            (
+                "checkpoint_revision_id",
+                "checkpointRevisionId",
+                "checkpoint_id",
+                "checkpointId",
+            ),
+        )
 
         input_schema = self._parse_tool_input_schema(tool)
         properties = input_schema.get("properties", {}) if isinstance(input_schema, dict) else {}
@@ -545,6 +727,16 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         buffers: Dict[str, Dict[str, Any]],
         order: List[str],
     ) -> None:
+        def _merge_dict_fragments(target: Dict[str, Any], fragment: Dict[str, Any]) -> None:
+            for key, value in fragment.items():
+                existing = target.get(key)
+                if isinstance(existing, dict) and isinstance(value, dict):
+                    _merge_dict_fragments(existing, value)
+                elif isinstance(existing, str) and isinstance(value, str):
+                    target[key] = existing + value
+                else:
+                    target[key] = value
+
         tool_call_chunks = getattr(message, "tool_call_chunks", None)
         if not tool_call_chunks:
             return
@@ -586,7 +778,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 key = f"pos:{len(order)}"
 
             if key not in buffers:
-                buffers[key] = {"id": chunk_id, "name": chunk_name, "args": "", "index": chunk_index}
+                buffers[key] = {
+                    "id": chunk_id,
+                    "name": chunk_name,
+                    "args_text": "",
+                    "args_obj": {},
+                    "index": chunk_index,
+                }
                 order.append(key)
 
             # Promote index-keyed partial buffer to canonical chunk id when id later arrives.
@@ -606,12 +804,34 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             if chunk_id and not buf.get("id"):
                 buf["id"] = chunk_id
             if chunk_args:
+                if isinstance(chunk_args, dict):
+                    args_obj = buf.get("args_obj") if isinstance(buf.get("args_obj"), dict) else {}
+                    _merge_dict_fragments(args_obj, chunk_args)
+                    buf["args_obj"] = args_obj
+                    continue
+
                 if not isinstance(chunk_args, str):
                     try:
                         chunk_args = json.dumps(chunk_args)
                     except Exception:
                         chunk_args = str(chunk_args)
-                buf["args"] += chunk_args
+
+                if isinstance(chunk_args, str):
+                    parsed_args = None
+                    text = chunk_args.strip()
+                    if text.startswith("{") and text.endswith("}"):
+                        try:
+                            parsed_candidate = json.loads(text)
+                        except Exception:
+                            parsed_candidate = None
+                        if isinstance(parsed_candidate, dict):
+                            parsed_args = parsed_candidate
+                    if isinstance(parsed_args, dict):
+                        args_obj = buf.get("args_obj") if isinstance(buf.get("args_obj"), dict) else {}
+                        _merge_dict_fragments(args_obj, parsed_args)
+                        buf["args_obj"] = args_obj
+                    else:
+                        buf["args_text"] = str(buf.get("args_text") or "") + chunk_args
 
     def _finalize_tool_calls(
         self,
@@ -620,28 +840,42 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         fallback_calls: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         tool_calls: List[Dict[str, Any]] = []
+        parse_failed = False
         for key in order:
             buf = buffers.get(key, {})
             if not buf:
                 continue
-            args_raw = buf.get("args", "")
-            parsed_args: Any = {}
-            if isinstance(args_raw, str) and args_raw.strip():
+            args_obj = dict(buf.get("args_obj") or {}) if isinstance(buf.get("args_obj"), dict) else {}
+            args_text = str(buf.get("args_text") or "")
+            parsed_args: Any
+
+            if args_text.strip():
                 try:
-                    parsed_args = json.loads(args_raw)
+                    parsed_from_text = json.loads(args_text)
                 except Exception:
-                    parsed_args = {"value": args_raw}
-            elif isinstance(args_raw, dict):
-                parsed_args = args_raw
+                    parse_failed = True
+                    parsed_from_text = {"value": args_text}
             else:
-                parsed_args = {"value": args_raw}
+                parsed_from_text = {}
+
+            if isinstance(parsed_from_text, dict):
+                merged_args = dict(args_obj)
+                for arg_key, arg_value in parsed_from_text.items():
+                    if arg_key not in merged_args:
+                        merged_args[arg_key] = arg_value
+                parsed_args = merged_args if merged_args else {}
+            elif args_obj:
+                parsed_args = args_obj
+            else:
+                parsed_args = parsed_from_text
+
             tool_calls.append({
                 "id": buf.get("id"),
                 "name": buf.get("name"),
                 "args": parsed_args,
             })
 
-        if tool_calls:
+        if tool_calls and not (parse_failed and fallback_calls):
             return tool_calls
 
         if fallback_calls:
@@ -774,6 +1008,68 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         tool_state["context"] = merged_context
         return tool_state
 
+    @staticmethod
+    def _coerce_text_content(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: List[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "".join(parts)
+        if isinstance(value, dict):
+            for key in ("text", "content", "message", "summary"):
+                text = value.get(key)
+                if isinstance(text, str):
+                    return text
+        return ""
+
+    async def _ensure_text_response(
+        self,
+        *,
+        adapter: LLMProviderAdapter,
+        full_content: str,
+        last_message: Optional[BaseMessage],
+        conversation_messages: List[BaseMessage],
+        instructions: str,
+        temperature: float,
+        max_tokens: int,
+        emitter: Any,
+        node_id: str,
+        has_tool_signals: bool,
+    ) -> tuple[str, Optional[BaseMessage]]:
+        if str(full_content).strip() or has_tool_signals:
+            return full_content, last_message
+
+        try:
+            fallback_response = await adapter.ainvoke(
+                [
+                    *conversation_messages,
+                    HumanMessage(
+                        content="Respond to the user directly in plain text. Do not call tools. Keep it concise.",
+                    ),
+                ],
+                system_prompt=instructions,
+                tools=None,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            fallback_text = self._coerce_text_content(getattr(fallback_response, "content", ""))
+            if fallback_text.strip():
+                if emitter:
+                    emitter.emit_token(fallback_text, node_id)
+                return fallback_text, fallback_response
+            return full_content, fallback_response
+        except Exception as exc:
+            logger.warning(f"Fallback text response generation failed: {exc}")
+            return full_content, last_message
+
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         logger.debug(f"Executing Agent (Reasoning) node")
         
@@ -892,6 +1188,22 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     if emitter:
                         emitter.emit_token(full_content, node_id)
                     last_message = response
+
+                has_tool_signals = bool(tool_call_buffers)
+                if last_message is not None and getattr(last_message, "tool_calls", None):
+                    has_tool_signals = True
+                full_content, last_message = await self._ensure_text_response(
+                    adapter=adapter,
+                    full_content=full_content,
+                    last_message=last_message,
+                    conversation_messages=conversation_messages,
+                    instructions=instructions,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    emitter=emitter,
+                    node_id=node_id,
+                    has_tool_signals=has_tool_signals,
+                )
 
                 if emitter:
                     emitter.emit_node_end(node_id, node_name, "agent", {"content_length": len(full_content)})
