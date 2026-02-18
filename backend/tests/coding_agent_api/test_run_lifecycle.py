@@ -8,7 +8,13 @@ from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionEvent
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraftDevSessionStatus
-from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
+from app.db.postgres.models.registry import (
+    ModelCapabilityType,
+    ModelProviderBinding,
+    ModelProviderType,
+    ModelRegistry,
+    ModelStatus,
+)
 from app.services.published_app_coding_agent_engines.base import EngineCancelResult
 from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
@@ -324,6 +330,9 @@ async def test_coding_agent_create_run_persists_opencode_execution_engine(client
             "opencode_workspace_path": "/tmp/sandbox-1",
         }
 
+    async def _fake_opencode_model(self, *, tenant_id, resolved_model_id):
+        return "openai/gpt-5"
+
     async def _fake_start_run(self, agent_id, input_params, user_id=None, background=False, mode=None, requested_scopes=None, **kwargs):
         profile = await self.db.get(Agent, agent_id)
         assert profile is not None
@@ -342,6 +351,7 @@ async def test_coding_agent_create_run_persists_opencode_execution_engine(client
 
     monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_run_model_ids", _fake_resolve_model)
     monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_opencode_runtime_context", _fake_opencode_context)
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_opencode_model_id", _fake_opencode_model)
     monkeypatch.setattr(AgentExecutorService, "start_run", _fake_start_run)
 
     response = await client.post(
@@ -360,7 +370,75 @@ async def test_coding_agent_create_run_persists_opencode_execution_engine(client
     run_row = await db_session.get(AgentRun, UUID(payload["run_id"]))
     assert run_row is not None
     assert run_row.execution_engine == "opencode"
-    assert str(run_row.resolved_model_id) == str(resolved_model_id)
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_create_run_resolves_opencode_model_from_provider_binding(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    model = await _insert_chat_model(
+        db_session,
+        tenant_id=tenant.id,
+        name="Tenant Chat OpenCode Bound",
+        is_default=True,
+    )
+    binding = ModelProviderBinding(
+        model_id=model.id,
+        tenant_id=tenant.id,
+        provider=ModelProviderType.OPENAI,
+        provider_model_id="gpt-4o-mini",
+        is_enabled=True,
+        priority=0,
+        config={},
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    async def _fake_opencode_context(self, *, app, base_revision, actor_id):
+        return {
+            "opencode_sandbox_id": "sandbox-1",
+            "opencode_workspace_path": "/tmp/sandbox-1",
+        }
+
+    captured_input_params: dict = {}
+
+    async def _fake_start_run(self, agent_id, input_params, user_id=None, background=False, mode=None, requested_scopes=None, **kwargs):
+        captured_input_params.update(input_params)
+        profile = await self.db.get(Agent, agent_id)
+        assert profile is not None
+        run = AgentRun(
+            tenant_id=profile.tenant_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            initiator_user_id=user_id,
+            status=RunStatus.queued,
+            input_params=input_params,
+        )
+        self.db.add(run)
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run.id
+
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_opencode_runtime_context", _fake_opencode_context)
+    monkeypatch.setattr(AgentExecutorService, "start_run", _fake_start_run)
+
+    response = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/runs",
+        headers=headers,
+        json={
+            "input": "Use OpenCode with mapped model",
+            "base_revision_id": draft_revision_id,
+            "engine": "opencode",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["execution_engine"] == "opencode"
+    context = captured_input_params.get("context", {})
+    assert context.get("resolved_model_id") == str(model.id)
+    assert context.get("opencode_model_id") == "openai/gpt-4o-mini"
 
 
 @pytest.mark.asyncio

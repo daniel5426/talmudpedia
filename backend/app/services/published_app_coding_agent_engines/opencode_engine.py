@@ -28,6 +28,7 @@ class OpenCodePublishedAppCodingAgentEngine:
         messages = input_params.get("messages") if isinstance(input_params.get("messages"), list) else []
         prompt = str(input_params.get("input") or "").strip()
         resolved_model_id = str(context.get("resolved_model_id") or "").strip()
+        opencode_model_id = str(context.get("opencode_model_id") or "").strip()
         workspace_path = str(context.get("opencode_workspace_path") or "").strip()
         sandbox_id = str(context.get("opencode_sandbox_id") or "").strip()
 
@@ -37,7 +38,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                 app_id=str(ctx.app.id),
                 sandbox_id=sandbox_id,
                 workspace_path=workspace_path,
-                model_id=resolved_model_id,
+                model_id=opencode_model_id or resolved_model_id,
                 prompt=prompt,
                 messages=[item for item in messages if isinstance(item, dict)],
             )

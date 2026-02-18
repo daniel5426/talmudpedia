@@ -17,6 +17,7 @@ Last Updated: 2026-02-18
 - Run creation with explicit `model_id` persists `requested_model_id` and `resolved_model_id`.
 - Run creation with unavailable `model_id` fails with `400` + `CODING_AGENT_MODEL_UNAVAILABLE`.
 - Run creation with `engine=opencode` fails fast with deterministic `400` contracts when engine is unavailable (`CODING_AGENT_ENGINE_UNAVAILABLE`) or runtime path is unsupported (`CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME`).
+- Run creation with `engine=opencode` resolves `opencode_model_id` from tenant/global provider bindings (backend-authoritative mapping) and passes it in run context.
 - Auto model resolution pins `resolved_model_id` on run creation and remains stable even if tenant defaults change afterwards.
 - Run creation tolerates non-fatal draft runtime prewarm failures and still persists run metadata.
 - Execution service applies run-scoped model override onto graph node `model_id` fields.
@@ -62,6 +63,15 @@ Last Updated: 2026-02-18
 - Command: `PYTHONPATH=backend pytest -q backend/tests/coding_agent_api/test_run_lifecycle.py`
 - Date: 2026-02-18 12:58 UTC
 - Result: PASS (18 passed)
+- Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q`
+- Date: 2026-02-18 15:26:23 EET
+- Result: PASS (19 passed)
+- Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q`
+- Date: 2026-02-18 16:07:09 EET
+- Result: PASS (19 passed)
+- Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q`
+- Date: 2026-02-18 16:15:47 EET
+- Result: PASS (19 passed)
 
 ## Known gaps or follow-ups
 - Add authorization-negative coverage for cross-tenant run access.

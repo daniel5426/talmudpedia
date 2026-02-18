@@ -2,15 +2,19 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 import multiprocessing
 import os
 import asyncio
+import json
 import logging
 import shutil
 import shlex
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlparse
 # Load environment variables BEFORE importing any modules that might need them
@@ -25,6 +29,7 @@ _LOCAL_PGVECTOR_STARTED_BY_APP = False
 _LOCAL_PGVECTOR_CONTAINER_NAME = ""
 _LOCAL_OPENCODE_STARTED_BY_APP = False
 _LOCAL_OPENCODE_PROCESS: subprocess.Popen | None = None
+_LOCAL_OPENCODE_GCP_CREDS_FILE: Path | None = None
 
 
 def _is_truthy(raw: str) -> bool:
@@ -59,6 +64,15 @@ def _wait_for_port(host: str, port: int, timeout_seconds: float = 8.0) -> bool:
             return True
         time.sleep(0.25)
     return _is_port_open(host, port)
+
+
+def _wait_for_port_closed(host: str, port: int, timeout_seconds: float = 8.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if not _is_port_open(host, port):
+            return True
+        time.sleep(0.25)
+    return not _is_port_open(host, port)
 
 
 def _try_start_brew_service(service_name: str, host: str, port: int) -> bool:
@@ -415,35 +429,72 @@ def _ensure_local_opencode_if_needed() -> None:
     target_host, target_port = parsed
 
     if _is_port_open(target_host, target_port):
-        logger.info("OpenCode server is already reachable at %s:%s", target_host, target_port)
-        return
+        existing_pid = _find_listening_pid_on_port(target_port)
+        stale_reason = ""
+        if (
+            existing_pid
+            and _is_truthy(os.getenv("APPS_CODING_AGENT_OPENCODE_REPLACE_MISCONFIGURED_PROCESS", "1"))
+            and (
+                _opencode_process_has_inline_google_credentials(existing_pid)
+                or _opencode_process_has_stale_managed_google_credentials_file(existing_pid)
+            )
+        ):
+            if _opencode_process_has_inline_google_credentials(existing_pid):
+                stale_reason = "inline GOOGLE_APPLICATION_CREDENTIALS JSON"
+            else:
+                stale_reason = "stale managed GOOGLE_APPLICATION_CREDENTIALS file"
+            logger.warning(
+                "Detected running OpenCode process (pid=%s) with %s. Restarting process with healthy credentials.",
+                existing_pid,
+                stale_reason,
+            )
+            if not _terminate_process(existing_pid):
+                logger.warning("Failed to terminate misconfigured OpenCode process pid=%s", existing_pid)
+                return
+            _wait_for_port_closed(target_host, target_port, timeout_seconds=8.0)
+        else:
+            logger.info("OpenCode server is already reachable at %s:%s", target_host, target_port)
+            return
 
-    command_template = (
-        os.getenv("APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND")
-        or "opencode server --host {host} --port {port}"
-    ).strip()
-    try:
-        command = shlex.split(command_template.format(host=target_host, port=target_port))
-    except Exception as exc:
-        logger.warning("Invalid OpenCode server command template `%s`: %s", command_template, exc)
-        return
+    command_templates: list[str] = []
+    explicit_template = (os.getenv("APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND") or "").strip()
+    if explicit_template:
+        command_templates.append(explicit_template)
+    else:
+        command_templates.extend(
+            [
+                "opencode serve --hostname {host} --port {port}",
+                "npx -y opencode-ai serve --hostname {host} --port {port}",
+            ]
+        )
+
+    command: list[str] | None = None
+    for template in command_templates:
+        try:
+            candidate = shlex.split(template.format(host=target_host, port=target_port))
+        except Exception as exc:
+            logger.warning("Invalid OpenCode server command template `%s`: %s", template, exc)
+            continue
+        if not candidate:
+            continue
+        if shutil.which(candidate[0]) is None:
+            continue
+        command = candidate
+        break
+
     if not command:
-        logger.warning("OpenCode server command is empty; cannot auto-start.")
-        return
-
-    command_bin = command[0]
-    if shutil.which(command_bin) is None:
         logger.warning(
-            "OpenCode auto-start command is unavailable (`%s`). Install it or set APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND.",
-            command_bin,
+            "OpenCode auto-start command is unavailable. Install `opencode` or ensure `npx` is available, "
+            "or set APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND."
         )
         return
 
     opencode_log_path = Path(os.getenv("APPS_CODING_AGENT_OPENCODE_LOG_PATH", "/tmp/talmudpedia-opencode.log"))
+    opencode_env = _prepare_opencode_process_env()
     with opencode_log_path.open("ab") as log_file:
         _LOCAL_OPENCODE_PROCESS = subprocess.Popen(
             command,
-            env=os.environ.copy(),
+            env=opencode_env,
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -462,7 +513,7 @@ def _ensure_local_opencode_if_needed() -> None:
 
 
 def _stop_local_opencode_if_needed() -> None:
-    global _LOCAL_OPENCODE_STARTED_BY_APP, _LOCAL_OPENCODE_PROCESS
+    global _LOCAL_OPENCODE_STARTED_BY_APP, _LOCAL_OPENCODE_PROCESS, _LOCAL_OPENCODE_GCP_CREDS_FILE
     if not _LOCAL_OPENCODE_STARTED_BY_APP:
         return
     process = _LOCAL_OPENCODE_PROCESS
@@ -479,6 +530,117 @@ def _stop_local_opencode_if_needed() -> None:
         logger.warning("Force-killed local OpenCode server process")
     _LOCAL_OPENCODE_STARTED_BY_APP = False
     _LOCAL_OPENCODE_PROCESS = None
+    if _LOCAL_OPENCODE_GCP_CREDS_FILE and _LOCAL_OPENCODE_GCP_CREDS_FILE.exists():
+        try:
+            _LOCAL_OPENCODE_GCP_CREDS_FILE.unlink()
+        except Exception:
+            pass
+    _LOCAL_OPENCODE_GCP_CREDS_FILE = None
+
+
+def _prepare_opencode_process_env() -> dict[str, str]:
+    global _LOCAL_OPENCODE_GCP_CREDS_FILE
+    env = os.environ.copy()
+    raw_google_credentials = (env.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    if not raw_google_credentials.startswith("{"):
+        return env
+    try:
+        parsed = json.loads(raw_google_credentials)
+    except Exception:
+        return env
+    if not isinstance(parsed, dict) or "private_key" not in parsed:
+        return env
+    creds_path = Path(tempfile.gettempdir()) / f"talmudpedia-opencode-gcp-{os.getpid()}.json"
+    try:
+        creds_path.write_text(json.dumps(parsed), encoding="utf-8")
+        os.chmod(creds_path, 0o600)
+        env["GOOGLE_APPLICATION_CREDENTIALS"] = str(creds_path)
+        _LOCAL_OPENCODE_GCP_CREDS_FILE = creds_path
+        logger.info("Prepared GOOGLE_APPLICATION_CREDENTIALS temp file for OpenCode subprocess")
+    except Exception as exc:
+        logger.warning("Failed to materialize GOOGLE_APPLICATION_CREDENTIALS file for OpenCode: %s", exc)
+    return env
+
+
+def _find_listening_pid_on_port(port: int) -> int | None:
+    try:
+        proc = subprocess.run(
+            ["lsof", "-nP", "-iTCP:%s" % int(port), "-sTCP:LISTEN", "-t"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return None
+    raw = (proc.stdout or "").strip().splitlines()
+    if not raw:
+        return None
+    try:
+        return int(raw[0].strip())
+    except Exception:
+        return None
+
+
+def _opencode_process_has_inline_google_credentials(pid: int) -> bool:
+    value = _extract_process_env_var(pid, "GOOGLE_APPLICATION_CREDENTIALS")
+    if not value:
+        return False
+    value = value.lstrip()
+    return value.startswith("{") or value.startswith("\\012{")
+
+
+def _opencode_process_has_stale_managed_google_credentials_file(pid: int) -> bool:
+    value = _extract_process_env_var(pid, "GOOGLE_APPLICATION_CREDENTIALS")
+    if not value:
+        return False
+    if value.startswith("{") or value.startswith("\\012{"):
+        return False
+    creds_path = Path(value)
+    if creds_path.exists():
+        return False
+    return creds_path.name.startswith("talmudpedia-opencode-gcp-")
+
+
+def _extract_process_env_var(pid: int, key: str) -> str:
+    try:
+        proc = subprocess.run(
+            ["ps", "eww", "-p", str(int(pid))],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return ""
+    output = proc.stdout or ""
+    marker = f"{key}="
+    idx = output.find(marker)
+    if idx < 0:
+        return ""
+    start = idx + len(marker)
+    end = output.find(" ", start)
+    if end < 0:
+        return output[start:].strip()
+    return output[start:end].strip()
+
+
+def _terminate_process(pid: int) -> bool:
+    try:
+        os.kill(int(pid), signal.SIGTERM)
+    except Exception:
+        return False
+    for _ in range(24):
+        try:
+            os.kill(int(pid), 0)
+            time.sleep(0.2)
+        except OSError:
+            return True
+    try:
+        os.kill(int(pid), signal.SIGKILL)
+    except Exception:
+        return False
+    return True
 
 
 def _bootstrap_local_infra_once() -> None:

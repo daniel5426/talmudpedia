@@ -11,11 +11,12 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry
+from app.db.postgres.models.registry import ModelCapabilityType, ModelProviderType, ModelRegistry
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSessionStatus,
@@ -173,6 +174,82 @@ class PublishedAppCodingAgentRuntimeService:
             return CODING_AGENT_ENGINE_OPENCODE
         return CODING_AGENT_ENGINE_NATIVE
 
+    @staticmethod
+    def _opencode_provider_prefix(provider: ModelProviderType | str | None) -> str | None:
+        key = str(provider.value if hasattr(provider, "value") else provider or "").strip().lower()
+        if not key:
+            return None
+        mapping = {
+            "openai": "openai",
+            "anthropic": "anthropic",
+            "google": "google",
+            "gemini": "google",
+            "groq": "groq",
+            "mistral": "mistral",
+            "together": "together",
+            "cohere": "cohere",
+        }
+        return mapping.get(key)
+
+    async def _resolve_opencode_model_id(
+        self,
+        *,
+        tenant_id: UUID,
+        resolved_model_id: UUID,
+    ) -> str:
+        resolved_model_str = str(resolved_model_id).strip()
+        if "/" in resolved_model_str:
+            return resolved_model_str
+
+        map_raw = (os.getenv("APPS_CODING_AGENT_OPENCODE_MODEL_MAP_JSON") or "").strip()
+        if map_raw:
+            try:
+                model_map = json.loads(map_raw)
+            except Exception:
+                model_map = {}
+            mapped = ""
+            if isinstance(model_map, dict):
+                mapped = str(model_map.get(resolved_model_str) or "").strip()
+            if mapped:
+                return mapped
+
+        model_row = (
+            await self.db.execute(
+                select(ModelRegistry)
+                .options(selectinload(ModelRegistry.providers))
+                .where(
+                    and_(
+                        ModelRegistry.id == resolved_model_id,
+                        ModelRegistry.is_active == True,
+                        ModelRegistry.capability_type == ModelCapabilityType.CHAT,
+                        or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id.is_(None)),
+                    )
+                )
+            )
+        ).scalar_one_or_none()
+        if model_row is not None:
+            tenant_bindings = [item for item in (model_row.providers or []) if item.is_enabled and item.tenant_id == tenant_id]
+            global_bindings = [item for item in (model_row.providers or []) if item.is_enabled and item.tenant_id is None]
+            for binding in sorted([*tenant_bindings, *global_bindings], key=lambda item: int(item.priority or 0)):
+                provider_model_id = str(binding.provider_model_id or "").strip()
+                if not provider_model_id:
+                    continue
+                if "/" in provider_model_id:
+                    return provider_model_id
+                prefix = self._opencode_provider_prefix(binding.provider)
+                if prefix:
+                    return f"{prefix}/{provider_model_id}"
+
+        default_model = (os.getenv("APPS_CODING_AGENT_OPENCODE_DEFAULT_MODEL") or "").strip()
+        if default_model:
+            return default_model
+
+        raise self._engine_unavailable_error(
+            "OpenCode model mapping unavailable for resolved model. "
+            "Configure provider bindings, APPS_CODING_AGENT_OPENCODE_MODEL_MAP_JSON, "
+            "or APPS_CODING_AGENT_OPENCODE_DEFAULT_MODEL."
+        )
+
     async def _resolve_opencode_runtime_context(
         self,
         *,
@@ -247,6 +324,10 @@ class PublishedAppCodingAgentRuntimeService:
                 app=app,
                 base_revision=base_revision,
                 actor_id=actor_id,
+            )
+            opencode_context["opencode_model_id"] = await self._resolve_opencode_model_id(
+                tenant_id=app.tenant_id,
+                resolved_model_id=resolved_model_id,
             )
         profile = await ensure_coding_agent_profile(self.db, app.tenant_id)
 
