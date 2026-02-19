@@ -16,6 +16,14 @@ Last Updated: 2026-02-19
 - Hardened dev shim OpenCode start path to fail closed when sandbox workspace is not active (no payload-path fallback).
 - Added coding-run create behavior to snapshot active builder draft sandbox files into a fresh draft revision before run start, so run sandbox seeds from live builder code instead of stale template revisions.
 - Updated local shim OpenCode execution to support sandbox-scoped OpenCode server processes (`cwd` bound to sandbox workspace) so OpenCode project root aligns with the same draft preview sandbox.
+- Hardened OpenCode completion semantics so runs fail closed when `apply_patch` fails and no successful follow-up patch is observed before terminal completion.
+- Improved OpenCode tool guidance and post-edit verification behavior:
+  - prompt-level guardrails to avoid claiming success after tool errors,
+  - automatic verification defaults for OpenCode patch flows,
+  - optional fail-on-verify behavior via env (`APPS_CODING_AGENT_AUTO_VERIFY_FAIL_ON_ERROR`).
+- Hardened sandbox controller SSE stream handling in draft-dev runtime client to avoid premature stream disconnects:
+  - OpenCode event stream read timeout is now disabled by default (SSE-friendly),
+  - new optional env for explicit stream read timeout: `APPS_DRAFT_DEV_CONTROLLER_STREAM_READ_TIMEOUT_SECONDS`.
 
 ## Backend Changes
 - New DB model + migration:

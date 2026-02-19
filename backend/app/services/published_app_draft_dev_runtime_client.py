@@ -473,7 +473,20 @@ class PublishedAppDraftDevRuntimeClient:
         headers: Dict[str, str] = {"Content-Type": "application/json"}
         if self._config.controller_token:
             headers["Authorization"] = f"Bearer {self._config.controller_token}"
-        timeout = httpx.Timeout(self._config.request_timeout_seconds)
+        stream_read_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_STREAM_READ_TIMEOUT_SECONDS") or "").strip()
+        stream_read_timeout_seconds: float | None = None
+        if stream_read_timeout_raw:
+            try:
+                parsed = float(stream_read_timeout_raw)
+                stream_read_timeout_seconds = parsed if parsed > 0 else None
+            except Exception:
+                stream_read_timeout_seconds = None
+        timeout = httpx.Timeout(
+            connect=max(1.0, float(self._config.request_timeout_seconds)),
+            write=max(1.0, float(self._config.request_timeout_seconds)),
+            pool=max(1.0, float(self._config.request_timeout_seconds)),
+            read=stream_read_timeout_seconds,
+        )
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream("GET", url, headers=headers, params={"run_ref": run_ref}) as response:
@@ -502,7 +515,8 @@ class PublishedAppDraftDevRuntimeClient:
         except PublishedAppDraftDevRuntimeClientError:
             raise
         except Exception as exc:
-            raise PublishedAppDraftDevRuntimeClientError(f"Draft dev controller stream request failed: {exc}") from exc
+            detail = str(exc).strip() or exc.__class__.__name__
+            raise PublishedAppDraftDevRuntimeClientError(f"Draft dev controller stream request failed: {detail}") from exc
 
     async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
         if not self.is_remote_enabled:

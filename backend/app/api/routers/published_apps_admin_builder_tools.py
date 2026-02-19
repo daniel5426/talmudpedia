@@ -31,7 +31,11 @@ from .published_apps_admin_builder_core import (
     _summarize_dist_manifest,
     _truncate_for_context,
 )
-from .published_apps_admin_files import _apply_patch_operations, _validate_builder_project_or_raise
+from .published_apps_admin_files import (
+    _apply_patch_operations,
+    _filter_builder_snapshot_files,
+    _validate_builder_project_or_raise,
+)
 from .published_apps_admin_shared import (
     BUILDER_AGENT_MAX_SEARCH_RESULTS,
     BUILDER_CONTEXT_MAX_FILES,
@@ -410,11 +414,7 @@ async def _snapshot_files_from_sandbox(
     files = payload.get("files")
     if not isinstance(files, dict):
         raise RuntimeError("Sandbox snapshot did not return a files map")
-    normalized: Dict[str, str] = {}
-    for path, content in files.items():
-        if isinstance(path, str):
-            normalized[path] = content if isinstance(content, str) else str(content)
-    return normalized
+    return _filter_builder_snapshot_files(files)
 
 
 async def _run_allowlisted_sandbox_command(
@@ -470,13 +470,14 @@ async def _create_draft_revision_from_files(
     files: Dict[str, str],
     entry_file: str,
 ) -> PublishedAppRevision:
-    _validate_builder_project_or_raise(files, entry_file)
+    sanitized_files = _filter_builder_snapshot_files(files)
+    _validate_builder_project_or_raise(sanitized_files, entry_file)
     revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
-        files=files,
+        files=sanitized_files,
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=_next_build_seq(current),
         build_error=None,
@@ -486,7 +487,7 @@ async def _create_draft_revision_from_files(
         dist_manifest=None,
         template_runtime="vite_static",
         compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+        bundle_hash=sha256(json.dumps(sanitized_files, sort_keys=True).encode("utf-8")).hexdigest(),
         source_revision_id=current.id,
         created_by=actor_id,
     )

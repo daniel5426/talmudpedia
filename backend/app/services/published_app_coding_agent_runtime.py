@@ -33,7 +33,7 @@ from app.services.published_app_coding_agent_engines.opencode_engine import Open
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.opencode_server_client import OpenCodeServerClient
-from app.api.routers.published_apps_admin_files import _validate_builder_project_or_raise
+from app.api.routers.published_apps_admin_files import _filter_builder_snapshot_files, _validate_builder_project_or_raise
 
 logger = logging.getLogger(__name__)
 
@@ -653,13 +653,14 @@ class PublishedAppCodingAgentRuntimeService:
         files: dict[str, str],
         entry_file: str,
     ) -> PublishedAppRevision:
-        _validate_builder_project_or_raise(files, entry_file)
+        sanitized_files = _filter_builder_snapshot_files(files)
+        _validate_builder_project_or_raise(sanitized_files, entry_file)
         revision = PublishedAppRevision(
             published_app_id=app.id,
             kind=PublishedAppRevisionKind.draft,
             template_key=app.template_key,
             entry_file=entry_file,
-            files=files,
+            files=sanitized_files,
             build_status=PublishedAppRevisionBuildStatus.queued,
             build_seq=int(current.build_seq or 0) + 1,
             build_error=None,
@@ -669,7 +670,7 @@ class PublishedAppCodingAgentRuntimeService:
             dist_manifest=None,
             template_runtime="vite_static",
             compiled_bundle=None,
-            bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+            bundle_hash=sha256(json.dumps(sanitized_files, sort_keys=True).encode("utf-8")).hexdigest(),
             source_revision_id=current.id,
             created_by=actor_id,
         )
@@ -724,7 +725,7 @@ class PublishedAppCodingAgentRuntimeService:
         raw_files = snapshot.get("files")
         if not isinstance(raw_files, dict):
             return None
-        files = {path: content if isinstance(content, str) else str(content) for path, content in raw_files.items() if isinstance(path, str)}
+        files = _filter_builder_snapshot_files(raw_files)
 
         revision = await self._create_draft_revision_from_files(
             app=app,

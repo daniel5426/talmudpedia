@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routers.published_apps_admin_files import (
     _assert_builder_path_allowed,
+    _filter_builder_snapshot_files,
     _normalize_builder_path,
     _validate_builder_project_or_raise,
 )
@@ -64,14 +65,25 @@ def _build_verification_plan(changed_paths: list[str]) -> dict[str, Any]:
     plan: dict[str, Any] = {"changed_paths": normalized[:40], "recommended_commands": []}
     if not normalized:
         return plan
+    commands: list[list[str]] = []
     extensions = {path.rsplit(".", 1)[-1].lower() for path in normalized if "." in path}
+    has_web_changes = any(ext in {"ts", "tsx", "js", "jsx", "css", "scss"} for ext in extensions)
+    if has_web_changes:
+        commands.append(["npm", "run", "build"])
     if any(ext in {"ts", "tsx", "js", "jsx"} for ext in extensions):
-        plan["recommended_commands"].append(["npm", "run", "typecheck"])
-        plan["recommended_commands"].append(["npm", "run", "test", "--", "--run", "--passWithNoTests"])
+        commands.append(["npm", "run", "typecheck"])
+        commands.append(["npm", "run", "test", "--", "--run", "--passWithNoTests"])
     if any(ext in {"py"} for ext in extensions):
-        plan["recommended_commands"].append(["pytest", "-q"])
-    if any(path.endswith((".css", ".scss", ".tsx", ".jsx")) for path in normalized):
-        plan["recommended_commands"].append(["npm", "run", "build"])
+        commands.append(["pytest", "-q"])
+    deduped: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for command in commands:
+        key = tuple(command)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(command)
+    plan["recommended_commands"] = deduped
     return plan
 
 
@@ -196,13 +208,14 @@ async def _create_draft_revision_from_files(
     files: dict[str, str],
     entry_file: str,
 ) -> PublishedAppRevision:
-    _validate_builder_project_or_raise(files, entry_file)
+    sanitized_files = _filter_builder_snapshot_files(files)
+    _validate_builder_project_or_raise(sanitized_files, entry_file)
     revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
-        files=files,
+        files=sanitized_files,
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=int(current.build_seq or 0) + 1,
         build_error=None,
@@ -212,7 +225,7 @@ async def _create_draft_revision_from_files(
         dist_manifest=None,
         template_runtime="vite_static",
         compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+        bundle_hash=sha256(json.dumps(sanitized_files, sort_keys=True).encode("utf-8")).hexdigest(),
         source_revision_id=current.id,
         created_by=actor_id,
     )
@@ -227,11 +240,7 @@ async def _snapshot_files(ctx: _RunToolContext) -> dict[str, str]:
     raw_files = payload.get("files")
     if not isinstance(raw_files, dict):
         raise RuntimeError("Sandbox snapshot did not return files")
-    files: dict[str, str] = {}
-    for path, content in raw_files.items():
-        if isinstance(path, str):
-            files[path] = content if isinstance(content, str) else str(content)
-    return files
+    return _filter_builder_snapshot_files(raw_files)
 
 
 def _coerce_string_arg(payload: dict[str, Any], aliases: tuple[str, ...]) -> str:
@@ -959,7 +968,8 @@ async def coding_agent_apply_patch(payload: Any) -> dict[str, Any]:
         changed_paths = result.get("applied_files") if isinstance(result.get("applied_files"), list) else []
         verification_plan = _build_verification_plan(changed_paths)
         result["verification_plan"] = verification_plan
-        auto_verify_enabled = os.getenv("APPS_CODING_AGENT_AUTO_VERIFY_PATCH", "0").strip().lower() in {
+        auto_verify_default = "1" if str(getattr(ctx.run, "execution_engine", "")).strip().lower() == "opencode" else "0"
+        auto_verify_enabled = os.getenv("APPS_CODING_AGENT_AUTO_VERIFY_PATCH", auto_verify_default).strip().lower() in {
             "1",
             "true",
             "on",
@@ -967,9 +977,17 @@ async def coding_agent_apply_patch(payload: Any) -> dict[str, Any]:
         }
         if auto_verify_enabled:
             verification_runs: list[dict[str, Any]] = []
+            verification_failures: list[dict[str, Any]] = []
+            fail_on_verify_error = os.getenv("APPS_CODING_AGENT_AUTO_VERIFY_FAIL_ON_ERROR", "1").strip().lower() in {
+                "1",
+                "true",
+                "on",
+                "yes",
+            }
+            max_verify_commands = max(1, int(os.getenv("APPS_CODING_AGENT_AUTO_VERIFY_MAX_COMMANDS", "3")))
             timeout_seconds = int(os.getenv("APPS_CODING_AGENT_TEST_TIMEOUT_SECONDS", "240"))
             max_output_bytes = int(os.getenv("APPS_CODING_AGENT_MAX_COMMAND_OUTPUT_BYTES", "12000"))
-            for command in verification_plan.get("recommended_commands", [])[:2]:
+            for command in verification_plan.get("recommended_commands", [])[:max_verify_commands]:
                 if not isinstance(command, list):
                     continue
                 normalized_command = [str(token) for token in command if str(token).strip()]
@@ -989,8 +1007,27 @@ async def coding_agent_apply_patch(payload: Any) -> dict[str, Any]:
                         "stderr": run_result.get("stderr"),
                     }
                 )
+                if int(run_result.get("code") or 0) != 0:
+                    verification_failures.append(
+                        {
+                            "command": normalized_command,
+                            "code": int(run_result.get("code") or 0),
+                            "stdout": run_result.get("stdout"),
+                            "stderr": run_result.get("stderr"),
+                        }
+                    )
             if verification_runs:
                 result["verification_runs"] = verification_runs
+            if verification_failures:
+                result["verification_failures"] = verification_failures
+                if fail_on_verify_error:
+                    await db.commit()
+                    return {
+                        "error": "Patch applied but automatic verification failed",
+                        "code": "PATCH_VERIFICATION_FAILED",
+                        "result": result,
+                        "verification_failures": verification_failures,
+                    }
         await db.commit()
         return result
 

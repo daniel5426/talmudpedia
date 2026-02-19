@@ -27,6 +27,7 @@ from .published_apps_admin_access import (
     _get_revision_for_app,
     _resolve_tenant_admin_context,
 )
+from .published_apps_admin_files import _filter_builder_snapshot_files
 from .published_apps_admin_shared import PublishedAppRevisionResponse, _revision_to_response, router
 
 
@@ -127,11 +128,7 @@ async def _refresh_draft_from_active_builder_sandbox(
     files_payload = snapshot_payload.get("files")
     if not isinstance(files_payload, dict):
         return draft
-    normalized_files: dict[str, str] = {
-        path: (content if isinstance(content, str) else str(content))
-        for path, content in files_payload.items()
-        if isinstance(path, str)
-    }
+    normalized_files = _filter_builder_snapshot_files(files_payload)
     if not normalized_files:
         return draft
 

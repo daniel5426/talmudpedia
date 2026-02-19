@@ -66,11 +66,17 @@ class OpenCodePublishedAppCodingAgentEngine:
         saw_terminal = False
         saw_failure = False
         failure_message = "OpenCode run failed"
+        saw_apply_patch_failure = False
+        saw_apply_patch_success = False
 
         async for raw in self._client.stream_run_events(run_ref=str(run.engine_run_ref)):
             mapped = self._translate_event(raw)
             if mapped is None:
                 continue
+            if mapped.event == "tool.failed" and self._is_apply_patch_tool(mapped.payload):
+                saw_apply_patch_failure = True
+            elif mapped.event == "tool.completed" and self._is_successful_apply_patch(mapped.payload):
+                saw_apply_patch_success = True
             workspace_violations = self._extract_workspace_violations(
                 payload=mapped.payload or {},
                 workspace_root=workspace_root,
@@ -123,6 +129,11 @@ class OpenCodePublishedAppCodingAgentEngine:
             yield mapped
 
         persisted = await self._db.get(AgentRun, run.id) or run
+        if saw_terminal and not saw_failure and saw_apply_patch_failure and not saw_apply_patch_success:
+            saw_failure = True
+            failure_message = (
+                "OpenCode run completed after apply_patch failures without a successful follow-up patch."
+            )
         if saw_terminal and not saw_failure:
             persisted.status = RunStatus.completed
             persisted.error_message = None
@@ -223,6 +234,25 @@ class OpenCodePublishedAppCodingAgentEngine:
         except Exception:
             return False
         return common == root
+
+    @staticmethod
+    def _is_apply_patch_tool(payload: dict[str, Any] | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        tool_name = str(payload.get("tool") or "").strip().lower()
+        return "apply_patch" in tool_name
+
+    @classmethod
+    def _is_successful_apply_patch(cls, payload: dict[str, Any] | None) -> bool:
+        if not cls._is_apply_patch_tool(payload):
+            return False
+        output = payload.get("output") if isinstance(payload, dict) else None
+        if not isinstance(output, dict):
+            return False
+        if not bool(output.get("ok")):
+            return False
+        applied_files = output.get("applied_files")
+        return isinstance(applied_files, list) and len(applied_files) > 0
 
     @staticmethod
     def _translate_event(raw: dict[str, Any]) -> EngineStreamEvent | None:

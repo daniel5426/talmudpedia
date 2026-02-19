@@ -11,6 +11,7 @@ from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
+    PublishedAppRevision,
 )
 from app.db.postgres.models.registry import (
     ModelCapabilityType,
@@ -256,6 +257,9 @@ async def test_coding_agent_create_run_uses_active_builder_sandbox_snapshot(clie
             "files": {
                 "src/main.tsx": "import React from 'react';\nexport default function App(){return <main>Live</main>}\n",
                 "package.json": '{"name":"live-app"}',
+                "dist/assets/index.js": "console.log('artifact');",
+                ".vite/deps/chunk-1.js": "export default 1;",
+                "tsconfig.tsbuildinfo": '{"version": "5.0"}',
             }
         }
 
@@ -303,6 +307,14 @@ async def test_coding_agent_create_run_uses_active_builder_sandbox_snapshot(clie
     updated_app = await db_session.get(PublishedApp, UUID(app_id))
     assert updated_app is not None
     assert str(updated_app.current_draft_revision_id) == payload["base_revision_id"]
+    updated_revision = await db_session.get(PublishedAppRevision, UUID(payload["base_revision_id"]))
+    assert updated_revision is not None
+    draft_files = dict(updated_revision.files or {})
+    assert "src/main.tsx" in draft_files
+    assert "package.json" in draft_files
+    assert "dist/assets/index.js" not in draft_files
+    assert ".vite/deps/chunk-1.js" not in draft_files
+    assert "tsconfig.tsbuildinfo" not in draft_files
 
 
 @pytest.mark.asyncio
@@ -1011,6 +1023,91 @@ async def test_opencode_engine_falls_back_to_coding_run_sandbox_context(db_sessi
     assert events == []
     assert captured["sandbox_id"] == "sandbox-fallback"
     assert captured["workspace_path"] == "/workspace/fallback"
+    assert run.status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_opencode_engine_fails_when_apply_patch_failure_is_not_recovered(db_session):
+    run = AgentRun(
+        id=uuid4(),
+        status=RunStatus.queued,
+        input_params={
+            "input": "update app",
+            "messages": [{"role": "user", "content": "update app"}],
+            "context": {
+                "coding_run_sandbox_id": "sandbox-apply-fail",
+                "coding_run_sandbox_workspace_path": "/workspace/apply-fail",
+                "resolved_model_id": "openai/gpt-5",
+            },
+        },
+    )
+    app = SimpleNamespace(id=uuid4())
+
+    class _FakeOpenCodeClient:
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+            return "run-ref-apply-fail"
+
+        async def stream_run_events(self, *, run_ref):
+            assert run_ref == "run-ref-apply-fail"
+            yield {
+                "event": "tool.failed",
+                "payload": {
+                    "tool": "coding_agent_apply_patch",
+                    "output": {"error": "Patch apply failed", "code": "PATCH_HUNK_MISMATCH"},
+                },
+            }
+            yield {"event": "run.completed", "payload": {"status": "completed"}}
+
+    engine = OpenCodePublishedAppCodingAgentEngine(db=db_session, client=_FakeOpenCodeClient())
+    events = [event async for event in engine.stream(ctx=SimpleNamespace(app=app, run=run, resume_payload=None))]
+    assert any(item.event == "tool.failed" for item in events)
+    assert run.status == RunStatus.failed
+    assert "apply_patch" in str(run.error_message)
+
+
+@pytest.mark.asyncio
+async def test_opencode_engine_allows_recovered_apply_patch_failures(db_session):
+    run = AgentRun(
+        id=uuid4(),
+        status=RunStatus.queued,
+        input_params={
+            "input": "update app",
+            "messages": [{"role": "user", "content": "update app"}],
+            "context": {
+                "coding_run_sandbox_id": "sandbox-apply-recover",
+                "coding_run_sandbox_workspace_path": "/workspace/apply-recover",
+                "resolved_model_id": "openai/gpt-5",
+            },
+        },
+    )
+    app = SimpleNamespace(id=uuid4())
+
+    class _FakeOpenCodeClient:
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+            return "run-ref-apply-recover"
+
+        async def stream_run_events(self, *, run_ref):
+            assert run_ref == "run-ref-apply-recover"
+            yield {
+                "event": "tool.failed",
+                "payload": {
+                    "tool": "coding_agent_apply_patch",
+                    "output": {"error": "Patch apply failed", "code": "PATCH_HUNK_MISMATCH"},
+                },
+            }
+            yield {
+                "event": "tool.completed",
+                "payload": {
+                    "tool": "coding_agent_apply_patch",
+                    "output": {"ok": True, "applied_files": ["src/App.tsx"]},
+                },
+            }
+            yield {"event": "run.completed", "payload": {"status": "completed"}}
+
+    engine = OpenCodePublishedAppCodingAgentEngine(db=db_session, client=_FakeOpenCodeClient())
+    events = [event async for event in engine.stream(ctx=SimpleNamespace(app=app, run=run, resume_payload=None))]
+    assert any(item.event == "tool.failed" for item in events)
+    assert any(item.event == "tool.completed" for item in events)
     assert run.status == RunStatus.completed
 
 

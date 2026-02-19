@@ -9,6 +9,7 @@ Last Updated: 2026-02-19
 ## Test files present
 - `backend/tests/sandbox_controller/test_opencode_controller_proxy.py`
 - `backend/tests/sandbox_controller/test_dev_shim.py`
+- `backend/tests/sandbox_controller/test_draft_dev_runtime_client_stream.py`
 
 ## Key scenarios covered
 - `OpenCodeServerClient.start_run` routes to `POST /sessions/{sandbox_id}/opencode/start` when sandbox-controller mode is enabled.
@@ -22,11 +23,13 @@ Last Updated: 2026-02-19
 - Dev shim OpenCode start fails closed with `400` when draft sandbox is not running (no payload workspace fallback).
 - Dev shim can run OpenCode in sandbox-scoped mode (per-sandbox OpenCode server rooted at sandbox workspace) and routes OpenCode start through that scoped client.
 - Dev shim stops sandbox-scoped OpenCode process when draft sandbox session is stopped.
+- Draft-dev runtime client OpenCode event streaming uses SSE-friendly timeout config (no read timeout by default) to avoid mid-run stream drops.
+- Draft-dev runtime client stream errors now include a fallback exception class label when exception text is empty.
 
 ## Last run command + date/time + result
-- Command: `cd backend && PYTHONPATH=. pytest tests/sandbox_controller/test_dev_shim.py tests/sandbox_controller/test_opencode_controller_proxy.py -q`
-- Date: 2026-02-19 03:21:28 EET
-- Result: PASS (8 passed overall, sandbox-controller suites)
+- Command: `cd backend && PYTHONPATH=. pytest tests/sandbox_controller/test_draft_dev_runtime_client_stream.py tests/sandbox_controller/test_dev_shim.py tests/sandbox_controller/test_opencode_controller_proxy.py -q`
+- Date: 2026-02-19 03:37:58 EET
+- Result: PASS (10 passed overall, sandbox-controller suites)
 
 ## Known gaps or follow-ups
 - Add integration tests against a real sandbox-controller deployment once the controller service is live.

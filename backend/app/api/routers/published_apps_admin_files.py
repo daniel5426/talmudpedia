@@ -2,6 +2,8 @@ import json
 from pathlib import PurePosixPath
 from typing import Dict, List, Optional
 
+from fastapi import HTTPException
+
 from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
 
 from .published_apps_admin_builder_core import _builder_compile_error, _builder_policy_error
@@ -19,6 +21,14 @@ from .published_apps_admin_shared import (
     BUILDER_MAX_PROJECT_BYTES,
     BuilderPatchOp,
     IMPORT_RE,
+)
+
+BUILDER_SNAPSHOT_IGNORED_FILE_NAMES = {
+    ".eslintcache",
+    ".stylelintcache",
+}
+BUILDER_SNAPSHOT_IGNORED_SUFFIXES = (
+    ".tsbuildinfo",
 )
 
 
@@ -77,6 +87,49 @@ def _assert_builder_path_allowed(path: str, *, field: str = "path") -> None:
             f"Unsupported file extension: {suffix or '(none)'}",
             field=field,
         )
+
+
+def _is_builder_snapshot_artifact_path(path: str) -> bool:
+    lowered = path.lower()
+    blocked_prefix = next(
+        (
+            prefix
+            for prefix in BUILDER_BLOCKED_DIR_PREFIXES
+            if lowered == prefix.rstrip("/") or lowered.startswith(prefix)
+        ),
+        None,
+    )
+    if blocked_prefix:
+        return True
+
+    filename = PurePosixPath(lowered).name
+    if filename in BUILDER_SNAPSHOT_IGNORED_FILE_NAMES:
+        return True
+    if any(filename.endswith(suffix) for suffix in BUILDER_SNAPSHOT_IGNORED_SUFFIXES):
+        return True
+    return False
+
+
+def _filter_builder_snapshot_files(files: Dict[str, object]) -> Dict[str, str]:
+    filtered: Dict[str, str] = {}
+    for raw_path, raw_content in files.items():
+        if not isinstance(raw_path, str):
+            continue
+        try:
+            normalized_path = _normalize_builder_path(raw_path)
+        except HTTPException:
+            continue
+
+        if _is_builder_snapshot_artifact_path(normalized_path):
+            continue
+
+        try:
+            _assert_builder_path_allowed(normalized_path, field="files")
+        except HTTPException:
+            continue
+
+        filtered[normalized_path] = raw_content if isinstance(raw_content, str) else str(raw_content)
+    return filtered
 
 
 def _resolve_local_project_import(import_path: str, importer_path: str, files: Dict[str, str]) -> Optional[str]:

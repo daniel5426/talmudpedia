@@ -21,6 +21,7 @@ Last Updated: 2026-02-19
 - Run creation with `engine=opencode` fails with deterministic `400` contract when sandbox-required mode is enabled but sandbox controller mode is unavailable (`CODING_AGENT_SANDBOX_REQUIRED`).
 - Run creation with `engine=opencode` resolves `opencode_model_id` from tenant/global provider bindings (backend-authoritative mapping) and passes it in run context.
 - Run creation snapshots files from the active builder draft sandbox (when available) and seeds coding run base revision from that live snapshot.
+- Run creation snapshot sanitization drops generated artifacts (`dist`, `.vite`, `*.tsbuildinfo`) before persisting the refreshed draft revision.
 - Auto model resolution pins `resolved_model_id` on run creation and remains stable even if tenant defaults change afterwards.
 - Execution service applies run-scoped model override onto graph node `model_id` fields.
 - Stale `base_revision_id` conflict contract (`REVISION_CONFLICT`).
@@ -29,6 +30,8 @@ Last Updated: 2026-02-19
 - Stream endpoint attempts sandbox-context recovery/bootstrap before failing closed on missing sandbox metadata.
 - Completed runs auto-apply/checkpoint from run sandbox before sandbox teardown, avoiding end-of-run snapshot races.
 - OpenCode engine accepts `coding_run_sandbox_*` context as fallback to avoid missing `sandbox_id` start failures.
+- OpenCode run finalization now fails when `apply_patch` fails and no later successful `apply_patch` result is observed, preventing false-positive "completed" runs.
+- OpenCode run finalization still allows recovered flows where an initial `apply_patch` failure is followed by a successful patch apply.
 - Runtime stream emits `assistant.delta` from final persisted output when token streaming is empty.
 - Runtime stream emits prompt-aware assistant fallback text when final output is missing.
 - Runtime stream handles detached/non-persistent `AgentRun` instances by reloading the run row from DB before finalize/refresh paths.
@@ -108,9 +111,15 @@ Last Updated: 2026-02-19
 - Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q`
 - Date: 2026-02-19 03:13:09 EET
 - Result: PASS (22 passed)
+- Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q`
+- Date: 2026-02-19 03:32:18 EET
+- Result: PASS (24 passed)
 - Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py tests/sandbox_controller/test_dev_shim.py tests/coding_agent_sandbox_isolation/test_run_sandbox_isolation.py -q`
 - Date: 2026-02-19 03:21:28 EET
 - Result: PASS (29 passed overall, including coding-agent API coverage)
+- Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q`
+- Date: 2026-02-19 04:22 UTC
+- Result: PASS (24 passed)
 
 ## Known gaps or follow-ups
 - Add authorization-negative coverage for cross-tenant run access.

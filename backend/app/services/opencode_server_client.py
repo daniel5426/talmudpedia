@@ -910,6 +910,9 @@ class OpenCodeServerClient:
             f"[Execution context]\n"
             f"- sandbox_id: {sandbox_id or 'unknown'}\n"
             f"- workspace_path: {workspace_path or 'unknown'}\n"
+            f"- editing_rules: use coding-agent tools only for file changes; never claim success if a tool reports error/non-zero exit code.\n"
+            f"- recovery_rules: on apply_patch/context mismatch, read current file range and retry with refreshed patch.\n"
+            f"- verification_rules: after edits, run recommended verification/build commands and fix failures before final response.\n"
             f"- output: respond with coding-agent updates and edits."
         )
 
