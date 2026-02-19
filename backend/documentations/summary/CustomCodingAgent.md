@@ -1,8 +1,10 @@
 # Custom Coding Agent
 
-Last Updated: 2026-02-19
+Last Updated: 2026-02-18
 
 ## Source Documents Consolidated
+- Note: the historical plan files listed in this section were archived/removed from
+  `backend/documentations/Plans/`; this summary remains as the retained consolidated record.
 - `backend/documentations/Plans/ChatBuilderProductionRoadmap.md`
 - `backend/documentations/Plans/ChatBuilderProductionCompletionImplementationTracker.md`
 - `backend/documentations/Plans/CodingAgentRuntimeRefactorPlan.md`

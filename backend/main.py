@@ -404,7 +404,12 @@ def _ensure_local_opencode_if_needed() -> None:
     """
     global _LOCAL_OPENCODE_STARTED_BY_APP, _LOCAL_OPENCODE_PROCESS
 
-    if not _is_truthy(os.getenv("APPS_CODING_AGENT_OPENCODE_AUTO_BOOTSTRAP", "1")):
+    sandbox_required = _is_truthy(os.getenv("APPS_CODING_AGENT_SANDBOX_REQUIRED", "0"))
+    shim_enabled = _is_truthy(os.getenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "0"))
+    if sandbox_required and not shim_enabled:
+        return
+
+    if not _is_truthy(os.getenv("APPS_CODING_AGENT_OPENCODE_AUTO_BOOTSTRAP", "0")):
         return
 
     enabled_raw = os.getenv("APPS_CODING_AGENT_OPENCODE_ENABLED")
@@ -785,6 +790,7 @@ from app.api.routers import orchestration_internal as orchestration_internal_rou
 from app.api.routers import workload_security as workload_security_router
 from app.api.routers import published_apps_admin as published_apps_admin_router
 from app.api.routers import published_apps_public as published_apps_public_router
+from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 from app.api.routers import agent_operators
@@ -803,6 +809,7 @@ app.include_router(internal_auth_router.jwks_router)
 app.include_router(orchestration_internal_router.router)
 app.include_router(published_apps_admin_router.router)
 app.include_router(published_apps_public_router.router)
+app.include_router(sandbox_controller_dev_shim_router.router)
 
 from app.api.routers import knowledge_stores as knowledge_stores_router
 app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stores", tags=["knowledge-stores"])

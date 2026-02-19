@@ -39,6 +39,8 @@ from .published_apps import (
     BuilderConversationTurnStatus,
     PublishedApp,
     PublishedAppBuilderConversationTurn,
+    PublishedAppCodingRunSandboxSession,
+    PublishedAppCodingRunSandboxStatus,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,
     PublishedAppDraftDevSession,

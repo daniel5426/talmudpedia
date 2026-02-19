@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -33,10 +34,20 @@ class PublishedAppDraftDevRuntimeClient:
     @classmethod
     def from_env(cls) -> "PublishedAppDraftDevRuntimeClient":
         timeout_seconds = int(os.getenv("APPS_DRAFT_DEV_CONTROLLER_TIMEOUT_SECONDS", "15"))
+        controller_url = (
+            (os.getenv("APPS_SANDBOX_CONTROLLER_URL") or "").strip()
+            or (os.getenv("APPS_DRAFT_DEV_CONTROLLER_URL") or "").strip()
+            or None
+        )
+        controller_token = (
+            (os.getenv("APPS_SANDBOX_CONTROLLER_TOKEN") or "").strip()
+            or (os.getenv("APPS_DRAFT_DEV_CONTROLLER_TOKEN") or "").strip()
+            or None
+        )
         return cls(
             PublishedAppDraftDevRuntimeClientConfig(
-                controller_url=(os.getenv("APPS_DRAFT_DEV_CONTROLLER_URL") or "").strip() or None,
-                controller_token=(os.getenv("APPS_DRAFT_DEV_CONTROLLER_TOKEN") or "").strip() or None,
+                controller_url=controller_url,
+                controller_token=controller_token,
                 request_timeout_seconds=max(3, timeout_seconds),
                 local_preview_base_url=(os.getenv("APPS_DRAFT_DEV_PREVIEW_BASE_URL") or "http://127.0.0.1:5173").strip(),
                 embedded_local_enabled=(os.getenv("APPS_DRAFT_DEV_EMBEDDED_LOCAL_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}),
@@ -123,11 +134,15 @@ class PublishedAppDraftDevRuntimeClient:
             "draft_dev_token": draft_dev_token,
         }
         response = await self._request("POST", "/sessions/start", json=payload)
-        return {
+        workspace_path = str(response.get("workspace_path") or "").strip()
+        result: Dict[str, Any] = {
             "sandbox_id": str(response.get("sandbox_id") or session_id),
             "preview_url": str(response.get("preview_url") or self._local_preview_url(session_id, draft_dev_token)),
             "status": str(response.get("status") or "running"),
         }
+        if workspace_path:
+            result["workspace_path"] = workspace_path
+        return result
 
     async def sync_session(
         self,
@@ -420,6 +435,82 @@ class PublishedAppDraftDevRuntimeClient:
             return None
         manager = get_local_draft_dev_runtime_manager()
         return await manager.resolve_project_dir(sandbox_id=sandbox_id)
+
+    async def start_opencode_run(
+        self,
+        *,
+        sandbox_id: str,
+        run_id: str,
+        app_id: str,
+        workspace_path: str,
+        model_id: str,
+        prompt: str,
+        messages: list[dict[str, str]],
+    ) -> Dict[str, Any]:
+        if not self.is_remote_enabled:
+            raise PublishedAppDraftDevRuntimeClientError(
+                "OpenCode sandbox run requires APPS_SANDBOX_CONTROLLER_URL or APPS_DRAFT_DEV_CONTROLLER_URL"
+            )
+        payload = {
+            "run_id": run_id,
+            "app_id": app_id,
+            "workspace_path": workspace_path,
+            "model_id": model_id,
+            "prompt": prompt,
+            "messages": messages,
+        }
+        return await self._request("POST", f"/sessions/{sandbox_id}/opencode/start", json=payload)
+
+    async def stream_opencode_events(
+        self,
+        *,
+        sandbox_id: str,
+        run_ref: str,
+    ):
+        if not self._config.controller_url:
+            raise PublishedAppDraftDevRuntimeClientError("Draft dev controller URL is not configured")
+        url = f"{self._config.controller_url.rstrip('/')}/sessions/{sandbox_id}/opencode/events"
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if self._config.controller_token:
+            headers["Authorization"] = f"Bearer {self._config.controller_token}"
+        timeout = httpx.Timeout(self._config.request_timeout_seconds)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("GET", url, headers=headers, params={"run_ref": run_ref}) as response:
+                    if response.status_code >= 400:
+                        body = (await response.aread()).decode("utf-8", errors="replace").strip()
+                        raise PublishedAppDraftDevRuntimeClientError(
+                            f"Draft dev controller stream request failed ({response.status_code}): "
+                            f"{body or response.reason_phrase}"
+                        )
+                    async for line in response.aiter_lines():
+                        raw = (line or "").strip()
+                        if not raw or raw.startswith(":"):
+                            continue
+                        if raw.startswith("data:"):
+                            raw = raw[5:].strip()
+                        if not raw or raw == "[DONE]":
+                            continue
+                        try:
+                            parsed = json.loads(raw)
+                        except Exception as exc:
+                            raise PublishedAppDraftDevRuntimeClientError(
+                                f"Draft dev controller event stream returned invalid JSON: {raw}"
+                            ) from exc
+                        if isinstance(parsed, dict):
+                            yield parsed
+        except PublishedAppDraftDevRuntimeClientError:
+            raise
+        except Exception as exc:
+            raise PublishedAppDraftDevRuntimeClientError(f"Draft dev controller stream request failed: {exc}") from exc
+
+    async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
+        if not self.is_remote_enabled:
+            raise PublishedAppDraftDevRuntimeClientError(
+                "OpenCode sandbox run requires APPS_SANDBOX_CONTROLLER_URL or APPS_DRAFT_DEV_CONTROLLER_URL"
+            )
+        payload = {"run_ref": run_ref}
+        return await self._request("POST", f"/sessions/{sandbox_id}/opencode/cancel", json=payload)
 
     async def _request(self, method: str, path: str, *, json: Dict[str, Any]) -> Dict[str, Any]:
         if not self._config.controller_url:

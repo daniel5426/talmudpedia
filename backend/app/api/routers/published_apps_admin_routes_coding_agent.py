@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Literal
 from uuid import UUID
@@ -10,11 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.models.agents import RunStatus
+from app.db.postgres.models.published_apps import PublishedAppDraftDevSessionStatus, PublishedAppRevision
 from app.db.postgres.session import get_db
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
+from app.services.published_app_draft_dev_runtime import (
+    PublishedAppDraftDevRuntimeDisabled,
+    PublishedAppDraftDevRuntimeService,
+)
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
+    _create_draft_revision_snapshot,
     _ensure_current_draft_revision,
     _get_app_for_tenant,
     _get_revision_for_app,
@@ -54,6 +61,9 @@ class CodingAgentRunResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    sandbox_id: Optional[str] = None
+    sandbox_status: Optional[str] = None
+    sandbox_started_at: Optional[datetime] = None
 
 
 class CodingAgentCheckpointResponse(BaseModel):
@@ -70,12 +80,72 @@ class CodingAgentRestoreCheckpointResponse(BaseModel):
     run_id: Optional[str] = None
 
 
+logger = logging.getLogger(__name__)
+
+
 def _run_to_response(service: PublishedAppCodingAgentRuntimeService, run) -> CodingAgentRunResponse:
     return CodingAgentRunResponse(**service.serialize_run(run))
 
 
 def _sse(payload: Dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, default=str)}\n\n"
+
+
+async def _refresh_draft_from_active_builder_sandbox(
+    *,
+    db: AsyncSession,
+    app,
+    draft: PublishedAppRevision,
+    actor_id: UUID | None,
+) -> PublishedAppRevision:
+    if actor_id is None:
+        return draft
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    try:
+        session = await runtime_service.get_session(app_id=app.id, user_id=actor_id)
+    except PublishedAppDraftDevRuntimeDisabled:
+        return draft
+    if (
+        session is None
+        or not session.sandbox_id
+        or session.status not in {PublishedAppDraftDevSessionStatus.running, PublishedAppDraftDevSessionStatus.starting}
+    ):
+        return draft
+
+    try:
+        snapshot_payload = await runtime_service.client.snapshot_files(sandbox_id=session.sandbox_id)
+    except Exception as exc:
+        logger.warning(
+            "Skipping builder sandbox snapshot before coding run app_id=%s user_id=%s session_id=%s: %s",
+            app.id,
+            actor_id,
+            session.id,
+            exc,
+        )
+        return draft
+
+    files_payload = snapshot_payload.get("files")
+    if not isinstance(files_payload, dict):
+        return draft
+    normalized_files: dict[str, str] = {
+        path: (content if isinstance(content, str) else str(content))
+        for path, content in files_payload.items()
+        if isinstance(path, str)
+    }
+    if not normalized_files:
+        return draft
+
+    refreshed = await _create_draft_revision_snapshot(
+        db=db,
+        app=app,
+        current=draft,
+        actor_id=actor_id,
+        files=normalized_files,
+        entry_file=draft.entry_file,
+    )
+    if session.revision_id != refreshed.id:
+        session.revision_id = refreshed.id
+    return refreshed
 
 
 @router.post("/{app_id}/coding-agent/runs", response_model=CodingAgentRunResponse)
@@ -105,6 +175,12 @@ async def create_coding_agent_run(
                 "message": "Draft revision is stale",
             },
         )
+    draft = await _refresh_draft_from_active_builder_sandbox(
+        db=db,
+        app=app,
+        draft=draft,
+        actor_id=actor_id,
+    )
 
     user_prompt = (payload.input or "").strip()
     if not user_prompt:

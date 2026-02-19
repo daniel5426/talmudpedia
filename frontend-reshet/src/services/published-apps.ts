@@ -250,6 +250,9 @@ export interface CodingAgentRun {
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
+  sandbox_id?: string | null;
+  sandbox_status?: string | null;
+  sandbox_started_at?: string | null;
 }
 
 export interface CodingAgentCheckpoint {

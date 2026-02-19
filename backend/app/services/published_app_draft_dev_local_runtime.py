@@ -97,6 +97,7 @@ class LocalDraftDevRuntimeManager:
                     "sandbox_id": session_id,
                     "preview_url": self._preview_url(current.port, draft_dev_token),
                     "status": "running",
+                    "workspace_path": str(current.project_dir),
                     "revision_token": self._current_revision_token(current),
                 }
             if current:
@@ -116,6 +117,7 @@ class LocalDraftDevRuntimeManager:
                 "sandbox_id": session_id,
                 "preview_url": self._preview_url(port, draft_dev_token),
                 "status": "running",
+                "workspace_path": str(project_dir),
                 "revision_token": "sandbox-seq-1",
             }
 

@@ -52,6 +52,14 @@ class PublishedAppPublishJobStatus(str, enum.Enum):
     failed = "failed"
 
 
+class PublishedAppCodingRunSandboxStatus(str, enum.Enum):
+    starting = "starting"
+    running = "running"
+    stopped = "stopped"
+    expired = "expired"
+    error = "error"
+
+
 class BuilderConversationTurnStatus(str, enum.Enum):
     succeeded = "succeeded"
     failed = "failed"
@@ -371,6 +379,61 @@ class PublishedAppDraftDevSession(Base):
     __table_args__ = (
         UniqueConstraint("published_app_id", "user_id", name="uq_published_app_draft_dev_session_scope"),
         Index("ix_published_app_draft_dev_sessions_scope", "published_app_id", "user_id"),
+    )
+
+
+class PublishedAppCodingRunSandboxSession(Base):
+    __tablename__ = "published_app_coding_run_sandbox_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status = Column(
+        SQLEnum(PublishedAppCodingRunSandboxStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppCodingRunSandboxStatus.starting,
+    )
+    sandbox_id = Column(String(128), nullable=True, index=True)
+    preview_url = Column(String, nullable=True)
+    workspace_path = Column(String, nullable=True)
+    idle_timeout_seconds = Column(Integer, nullable=False, default=180)
+    run_timeout_seconds = Column(Integer, nullable=False, default=1200)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_activity_at = Column(DateTime(timezone=True), nullable=True)
+    stopped_at = Column(DateTime(timezone=True), nullable=True)
+    dependency_hash = Column(String(64), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    run = relationship("AgentRun")
+    tenant = relationship("Tenant")
+    published_app = relationship("PublishedApp")
+    revision = relationship("PublishedAppRevision")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_published_app_coding_run_sandbox_run_id"),
+        Index("ix_published_app_coding_run_sandbox_app_created_at", "published_app_id", "created_at"),
     )
 
 

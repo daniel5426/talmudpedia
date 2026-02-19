@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
+import os
 from typing import Any, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +11,9 @@ from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.services.opencode_server_client import OpenCodeServerClient
 
 from .base import EngineCancelResult, EngineRunContext, EngineStreamEvent
+
+
+logger = logging.getLogger(__name__)
 
 
 class OpenCodePublishedAppCodingAgentEngine:
@@ -29,8 +34,17 @@ class OpenCodePublishedAppCodingAgentEngine:
         prompt = str(input_params.get("input") or "").strip()
         resolved_model_id = str(context.get("resolved_model_id") or "").strip()
         opencode_model_id = str(context.get("opencode_model_id") or "").strip()
-        workspace_path = str(context.get("opencode_workspace_path") or "").strip()
-        sandbox_id = str(context.get("opencode_sandbox_id") or "").strip()
+        workspace_path = str(
+            context.get("opencode_workspace_path")
+            or context.get("coding_run_sandbox_workspace_path")
+            or ""
+        ).strip()
+        sandbox_id = str(
+            context.get("opencode_sandbox_id")
+            or context.get("coding_run_sandbox_id")
+            or ""
+        ).strip()
+        workspace_root = os.path.realpath(os.path.abspath(workspace_path)) if workspace_path else ""
 
         if not run.engine_run_ref:
             run.engine_run_ref = await self._client.start_run(
@@ -57,6 +71,44 @@ class OpenCodePublishedAppCodingAgentEngine:
             mapped = self._translate_event(raw)
             if mapped is None:
                 continue
+            workspace_violations = self._extract_workspace_violations(
+                payload=mapped.payload or {},
+                workspace_root=workspace_root,
+            )
+            if workspace_violations:
+                saw_terminal = True
+                saw_failure = True
+                failure_message = (
+                    "Security violation: tool emitted path outside run workspace root "
+                    f"({', '.join(workspace_violations[:3])})"
+                )
+                logger.error(
+                    "AUDIT_SANDBOX_PATH_VIOLATION tenant_id=%s run_id=%s app_id=%s sandbox_id=%s workspace_root=%s violations=%s",
+                    run.tenant_id,
+                    run.id,
+                    ctx.app.id,
+                    sandbox_id,
+                    workspace_root,
+                    workspace_violations,
+                )
+                try:
+                    if run.engine_run_ref:
+                        await self._client.cancel_run(run_ref=str(run.engine_run_ref))
+                except Exception:
+                    pass
+                yield EngineStreamEvent(
+                    event="run.failed",
+                    stage="run",
+                    payload={"error": failure_message},
+                    diagnostics=[
+                        {
+                            "code": "CODING_AGENT_SANDBOX_PATH_VIOLATION",
+                            "message": failure_message,
+                            "paths": workspace_violations[:10],
+                        }
+                    ],
+                )
+                break
             if mapped.event == "run.completed":
                 saw_terminal = True
                 continue
@@ -107,6 +159,70 @@ class OpenCodePublishedAppCodingAgentEngine:
             confirmed=False,
             diagnostics=[{"code": "OPENCODE_CANCEL_UNCONFIRMED", "message": "OpenCode cancellation not confirmed"}],
         )
+
+    @classmethod
+    def _extract_workspace_violations(cls, *, payload: dict[str, Any], workspace_root: str) -> list[str]:
+        if not workspace_root:
+            return []
+        candidates = cls._collect_path_candidates(payload)
+        violations: list[str] = []
+        for candidate in candidates:
+            if not cls._path_within_workspace(candidate, workspace_root):
+                violations.append(candidate)
+        return violations
+
+    @classmethod
+    def _collect_path_candidates(cls, value: Any, *, key_hint: str = "") -> list[str]:
+        candidates: list[str] = []
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                key_text = str(key or "").strip().lower()
+                if isinstance(nested, str) and cls._looks_like_path_key(key_text):
+                    token = nested.strip()
+                    if token:
+                        candidates.append(token)
+                candidates.extend(cls._collect_path_candidates(nested, key_hint=key_text))
+            return candidates
+        if isinstance(value, list):
+            for item in value:
+                candidates.extend(cls._collect_path_candidates(item, key_hint=key_hint))
+            return candidates
+        if isinstance(value, str) and cls._looks_like_path_key(key_hint):
+            token = value.strip()
+            if token:
+                candidates.append(token)
+        return candidates
+
+    @staticmethod
+    def _looks_like_path_key(key: str) -> bool:
+        return key in {
+            "path",
+            "file",
+            "filepath",
+            "file_path",
+            "from_path",
+            "to_path",
+            "target_path",
+            "workspace_path",
+        }
+
+    @staticmethod
+    def _path_within_workspace(path_value: str, workspace_root: str) -> bool:
+        candidate = str(path_value or "").strip()
+        if not candidate:
+            return True
+        if candidate.startswith("http://") or candidate.startswith("https://"):
+            return True
+        if not os.path.isabs(candidate):
+            resolved = os.path.realpath(os.path.abspath(os.path.join(workspace_root, candidate)))
+        else:
+            resolved = os.path.realpath(os.path.abspath(candidate))
+        root = os.path.realpath(os.path.abspath(workspace_root))
+        try:
+            common = os.path.commonpath([root, resolved])
+        except Exception:
+            return False
+        return common == root
 
     @staticmethod
     def _translate_event(raw: dict[str, Any]) -> EngineStreamEvent | None:

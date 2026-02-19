@@ -11,6 +11,11 @@ from uuid import uuid4
 
 import httpx
 
+from app.services.published_app_draft_dev_runtime_client import (
+    PublishedAppDraftDevRuntimeClient,
+    PublishedAppDraftDevRuntimeClientError,
+)
+
 
 class OpenCodeServerClientError(Exception):
     pass
@@ -24,6 +29,7 @@ class OpenCodeServerClientConfig:
     request_timeout_seconds: float
     connect_timeout_seconds: float
     health_cache_seconds: int
+    sandbox_controller_mode_override: bool | None = None
 
 
 class OpenCodeServerClient:
@@ -33,6 +39,8 @@ class OpenCodeServerClient:
         self._health_ok = False
         self._api_mode: str | None = None
         self._official_run_state: dict[str, dict[str, Any]] = {}
+        self._sandbox_runtime_client = PublishedAppDraftDevRuntimeClient.from_env()
+        self._sandbox_run_ref_to_sandbox_id: dict[str, str] = {}
 
     @classmethod
     def from_env(cls) -> "OpenCodeServerClient":
@@ -55,13 +63,38 @@ class OpenCodeServerClient:
 
     @property
     def is_enabled(self) -> bool:
-        return bool(self._config.enabled and self._config.base_url)
+        if self._sandbox_controller_mode_enabled():
+            return True
+        if not self._config.enabled:
+            return False
+        return bool(self._config.base_url)
+
+    def _sandbox_controller_mode_enabled(self) -> bool:
+        if self._config.sandbox_controller_mode_override is not None:
+            return bool(self._config.sandbox_controller_mode_override)
+        explicit = (os.getenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER") or "").strip().lower()
+        if explicit:
+            return explicit in {"1", "true", "yes", "on"}
+        if self._sandbox_runtime_client.is_remote_enabled:
+            return True
+        return bool((os.getenv("APPS_SANDBOX_CONTROLLER_URL") or "").strip())
 
     async def ensure_healthy(self, *, force: bool = False) -> None:
         if not self.is_enabled:
             raise OpenCodeServerClientError(
-                "OpenCode engine is disabled or missing APPS_CODING_AGENT_OPENCODE_BASE_URL."
+                "OpenCode engine is disabled. Configure sandbox mode via "
+                "APPS_SANDBOX_CONTROLLER_URL/APPS_DRAFT_DEV_CONTROLLER_URL, "
+                "or set APPS_CODING_AGENT_OPENCODE_ENABLED=1 with "
+                "APPS_CODING_AGENT_OPENCODE_BASE_URL for host mode."
             )
+        if self._sandbox_controller_mode_enabled():
+            if not self._sandbox_runtime_client.is_remote_enabled:
+                raise OpenCodeServerClientError(
+                    "OpenCode sandbox mode is enabled but sandbox controller URL is unavailable."
+                )
+            self._health_checked_at = datetime.now(timezone.utc)
+            self._health_ok = True
+            return
 
         now = datetime.now(timezone.utc)
         if not force and self._health_checked_at is not None:
@@ -91,6 +124,27 @@ class OpenCodeServerClient:
         prompt: str,
         messages: list[dict[str, str]],
     ) -> str:
+        if self._sandbox_controller_mode_enabled():
+            if not sandbox_id:
+                raise OpenCodeServerClientError("OpenCode sandbox mode requires sandbox_id.")
+            try:
+                response = await self._sandbox_runtime_client.start_opencode_run(
+                    sandbox_id=sandbox_id,
+                    run_id=run_id,
+                    app_id=app_id,
+                    workspace_path=workspace_path,
+                    model_id=model_id,
+                    prompt=prompt,
+                    messages=messages,
+                )
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                raise OpenCodeServerClientError(f"OpenCode sandbox start request failed: {exc}") from exc
+            run_ref = str(response.get("run_ref") or response.get("id") or run_id).strip()
+            if not run_ref:
+                raise OpenCodeServerClientError("OpenCode sandbox start response is missing run_ref.")
+            self._sandbox_run_ref_to_sandbox_id[run_ref] = sandbox_id
+            return run_ref
+
         mode = await self._ensure_api_mode()
         if mode == "official":
             return await self._start_run_official(
@@ -120,6 +174,21 @@ class OpenCodeServerClient:
         return str(run_ref)
 
     async def stream_run_events(self, *, run_ref: str) -> AsyncGenerator[dict[str, Any], None]:
+        sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref))
+        if sandbox_id:
+            try:
+                async for event in self._sandbox_runtime_client.stream_opencode_events(
+                    sandbox_id=sandbox_id,
+                    run_ref=str(run_ref),
+                ):
+                    if isinstance(event, dict):
+                        yield event
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                raise OpenCodeServerClientError(f"OpenCode sandbox stream request failed: {exc}") from exc
+            finally:
+                self._sandbox_run_ref_to_sandbox_id.pop(str(run_ref), None)
+            return
+
         if not self._config.base_url:
             raise OpenCodeServerClientError("OpenCode base URL is not configured.")
         mode = await self._ensure_api_mode()
@@ -158,6 +227,25 @@ class OpenCodeServerClient:
             raise OpenCodeServerClientError(f"OpenCode stream request failed: {exc}") from exc
 
     async def cancel_run(self, *, run_ref: str) -> bool:
+        sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref))
+        if sandbox_id:
+            try:
+                response = await self._sandbox_runtime_client.cancel_opencode_run(
+                    sandbox_id=sandbox_id,
+                    run_ref=str(run_ref),
+                )
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                raise OpenCodeServerClientError(f"OpenCode sandbox cancel request failed: {exc}") from exc
+            finally:
+                self._sandbox_run_ref_to_sandbox_id.pop(str(run_ref), None)
+            cancelled = response.get("cancelled")
+            if isinstance(cancelled, bool):
+                return cancelled
+            ok = response.get("ok")
+            if isinstance(ok, bool):
+                return ok
+            return True
+
         mode = await self._ensure_api_mode()
         if mode == "official":
             response = await self._request("POST", f"/session/{run_ref}/abort", json_payload={}, retries=0)

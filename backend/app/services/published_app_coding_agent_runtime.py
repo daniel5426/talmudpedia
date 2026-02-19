@@ -19,12 +19,14 @@ from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.registry import ModelCapabilityType, ModelProviderType, ModelRegistry
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppCodingRunSandboxStatus,
     PublishedAppDraftDevSessionStatus,
     PublishedAppRevision,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
 )
 from app.services.published_app_coding_agent_profile import ensure_coding_agent_profile, resolve_coding_agent_chat_model_id
+from app.services.published_app_coding_run_sandbox_service import PublishedAppCodingRunSandboxService
 from app.services.published_app_coding_agent_engines.base import EngineRunContext, PublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
@@ -44,6 +46,7 @@ class PublishedAppCodingAgentRuntimeService:
         self.db = db
         self.executor = AgentExecutorService(db=db)
         self._opencode_client = OpenCodeServerClient.from_env()
+        self._run_sandbox_service = PublishedAppCodingRunSandboxService(db)
         self._native_engine = NativePublishedAppCodingAgentEngine(executor=self.executor)
         self._opencode_engine = OpenCodePublishedAppCodingAgentEngine(
             db=self.db,
@@ -53,6 +56,8 @@ class PublishedAppCodingAgentRuntimeService:
     @staticmethod
     def serialize_run(run: AgentRun) -> dict[str, Any]:
         execution_engine = str(run.execution_engine or CODING_AGENT_ENGINE_NATIVE).strip().lower() or CODING_AGENT_ENGINE_NATIVE
+        input_params = run.input_params if isinstance(run.input_params, dict) else {}
+        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         return {
             "run_id": str(run.id),
             "status": run.status.value if hasattr(run.status, "value") else str(run.status),
@@ -68,6 +73,9 @@ class PublishedAppCodingAgentRuntimeService:
             "created_at": run.created_at,
             "started_at": run.started_at,
             "completed_at": run.completed_at,
+            "sandbox_id": str(context.get("coding_run_sandbox_id") or "") or None,
+            "sandbox_status": str(context.get("coding_run_sandbox_status") or "") or None,
+            "sandbox_started_at": context.get("coding_run_sandbox_started_at"),
         }
 
     @staticmethod
@@ -98,6 +106,17 @@ class PublishedAppCodingAgentRuntimeService:
             status_code=400,
             detail={
                 "code": "CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME",
+                "field": "engine",
+                "message": message,
+            },
+        )
+
+    @staticmethod
+    def _sandbox_required_error(message: str) -> HTTPException:
+        return HTTPException(
+            status_code=400,
+            detail={
+                "code": "CODING_AGENT_SANDBOX_REQUIRED",
                 "field": "engine",
                 "message": message,
             },
@@ -250,50 +269,122 @@ class PublishedAppCodingAgentRuntimeService:
             "or APPS_CODING_AGENT_OPENCODE_DEFAULT_MODEL."
         )
 
-    async def _resolve_opencode_runtime_context(
+    @staticmethod
+    def _run_context(run: AgentRun) -> dict[str, Any]:
+        input_params = run.input_params if isinstance(run.input_params, dict) else {}
+        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        input_params["context"] = context
+        run.input_params = input_params
+        return context
+
+    def _assert_opencode_sandbox_mode_available(self) -> None:
+        if not self._run_sandbox_service.settings.required:
+            return
+        if self._run_sandbox_service.is_controller_enabled:
+            return
+        raise self._sandbox_required_error(
+            "OpenCode engine requires sandbox-controller mode when "
+            "APPS_CODING_AGENT_SANDBOX_REQUIRED=1."
+        )
+
+    async def _ensure_run_sandbox_context(
         self,
         *,
+        run: AgentRun,
         app: PublishedApp,
         base_revision: PublishedAppRevision,
         actor_id: UUID | None,
     ) -> dict[str, str]:
-        if actor_id is None:
-            raise self._engine_unsupported_runtime_error("OpenCode engine requires a user-scoped draft sandbox session.")
-
-        try:
-            await self._opencode_client.ensure_healthy()
-        except Exception as exc:
-            raise self._engine_unavailable_error(f"OpenCode engine is unavailable: {exc}") from exc
-
-        runtime_service = PublishedAppDraftDevRuntimeService(self.db)
-        try:
-            session = await runtime_service.ensure_active_session(
-                app=app,
-                revision=base_revision,
-                user_id=actor_id,
-            )
-        except PublishedAppDraftDevRuntimeDisabled as exc:
+        session = await self._run_sandbox_service.ensure_session(
+            run=run,
+            app=app,
+            revision=base_revision,
+            actor_id=actor_id,
+        )
+        status = session.status.value if hasattr(session.status, "value") else str(session.status)
+        if session.status == PublishedAppCodingRunSandboxStatus.error or not session.sandbox_id:
             raise self._engine_unsupported_runtime_error(
-                "OpenCode engine requires embedded local draft runtime mode in this backend process."
-            ) from exc
-        except Exception as exc:
-            raise self._engine_unsupported_runtime_error(f"Failed to resolve draft runtime session: {exc}") from exc
-
-        if session.status == PublishedAppDraftDevSessionStatus.error or not session.sandbox_id:
-            raise self._engine_unsupported_runtime_error(
-                "OpenCode engine requires an active draft sandbox session with a resolvable workspace path."
+                f"Failed to initialize run sandbox session: {session.last_error or 'unknown error'}"
             )
-
-        workspace_path = await runtime_service.client.resolve_local_workspace_path(sandbox_id=session.sandbox_id)
-        if not workspace_path:
-            raise self._engine_unsupported_runtime_error(
-                "OpenCode engine is unsupported for this runtime because sandbox workspace path is not locally resolvable."
-            )
-
+        workspace_path = str(session.workspace_path or "/workspace")
+        context = self._run_context(run)
+        context["coding_run_sandbox_id"] = str(session.sandbox_id)
+        context["coding_run_sandbox_status"] = status
+        context["coding_run_sandbox_started_at"] = (
+            session.started_at.isoformat() if isinstance(session.started_at, datetime) else None
+        )
+        context["coding_run_sandbox_workspace_path"] = workspace_path
         return {
             "opencode_sandbox_id": str(session.sandbox_id),
-            "opencode_workspace_path": str(workspace_path),
+            "opencode_workspace_path": workspace_path,
         }
+
+    async def _recover_or_bootstrap_run_sandbox_context(
+        self,
+        *,
+        run: AgentRun,
+        app: PublishedApp,
+    ) -> tuple[str | None, str | None]:
+        context = self._run_context(run)
+        sandbox_id = str(context.get("coding_run_sandbox_id") or "").strip()
+        if sandbox_id:
+            changed = False
+            if not str(context.get("opencode_sandbox_id") or "").strip():
+                context["opencode_sandbox_id"] = sandbox_id
+                changed = True
+            workspace_path = str(context.get("coding_run_sandbox_workspace_path") or "").strip()
+            if workspace_path and not str(context.get("opencode_workspace_path") or "").strip():
+                context["opencode_workspace_path"] = workspace_path
+                changed = True
+            if changed:
+                await self.db.commit()
+            return sandbox_id, None
+
+        session = await self._run_sandbox_service.get_session_for_run(run_id=run.id)
+        if session is not None and session.sandbox_id:
+            context["coding_run_sandbox_id"] = str(session.sandbox_id)
+            context["coding_run_sandbox_status"] = (
+                session.status.value if hasattr(session.status, "value") else str(session.status)
+            )
+            context["coding_run_sandbox_started_at"] = (
+                session.started_at.isoformat() if isinstance(session.started_at, datetime) else None
+            )
+            workspace_path = str(session.workspace_path or "/workspace")
+            context["coding_run_sandbox_workspace_path"] = workspace_path
+            context["opencode_sandbox_id"] = str(session.sandbox_id)
+            context["opencode_workspace_path"] = workspace_path
+            await self.db.commit()
+            return str(session.sandbox_id), None
+
+        base_revision_id = run.base_revision_id or app.current_draft_revision_id
+        if base_revision_id is None:
+            return None, "Run sandbox session is required before execution (base revision missing)."
+        base_revision = await self.db.get(PublishedAppRevision, base_revision_id)
+        if base_revision is None:
+            return None, "Run sandbox session is required before execution (base revision not found)."
+
+        actor_id = run.initiator_user_id or run.user_id
+        try:
+            context.update(
+                await self._ensure_run_sandbox_context(
+                    run=run,
+                    app=app,
+                    base_revision=base_revision,
+                    actor_id=actor_id,
+                )
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            message = str(detail.get("message") or exc.detail or "sandbox bootstrap failed")
+            return None, f"Run sandbox session is required before execution ({message})."
+        except Exception as exc:
+            return None, f"Run sandbox session is required before execution ({exc})."
+
+        await self.db.commit()
+        sandbox_id = str(context.get("coding_run_sandbox_id") or "").strip()
+        if sandbox_id:
+            return sandbox_id, None
+        return None, "Run sandbox session is required before execution."
 
     def _resolve_engine_for_run(self, run: AgentRun) -> PublishedAppCodingAgentEngine:
         engine = self._normalize_execution_engine(str(run.execution_engine or CODING_AGENT_ENGINE_NATIVE))
@@ -318,14 +409,14 @@ class PublishedAppCodingAgentRuntimeService:
             requested_model_id=requested_model_id,
         )
         normalized_engine = self._normalize_execution_engine(execution_engine)
-        opencode_context: dict[str, str] = {}
+        opencode_model_id: str | None = None
         if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
-            opencode_context = await self._resolve_opencode_runtime_context(
-                app=app,
-                base_revision=base_revision,
-                actor_id=actor_id,
-            )
-            opencode_context["opencode_model_id"] = await self._resolve_opencode_model_id(
+            self._assert_opencode_sandbox_mode_available()
+            try:
+                await self._opencode_client.ensure_healthy()
+            except Exception as exc:
+                raise self._engine_unavailable_error(f"OpenCode engine is unavailable: {exc}") from exc
+            opencode_model_id = await self._resolve_opencode_model_id(
                 tenant_id=app.tenant_id,
                 resolved_model_id=resolved_model_id,
             )
@@ -359,7 +450,7 @@ class PublishedAppCodingAgentRuntimeService:
                 "entry_file": base_revision.entry_file,
                 "resolved_model_id": str(resolved_model_id),
                 "execution_engine": normalized_engine,
-                **opencode_context,
+                "opencode_model_id": opencode_model_id,
             },
         }
 
@@ -386,26 +477,31 @@ class PublishedAppCodingAgentRuntimeService:
         run.execution_engine = normalized_engine
         run.engine_run_ref = None
 
-        if actor_id and normalized_engine == CODING_AGENT_ENGINE_NATIVE:
-            runtime_service = PublishedAppDraftDevRuntimeService(self.db)
-            try:
-                await runtime_service.ensure_session(
-                    app=app,
-                    revision=base_revision,
-                    user_id=actor_id,
-                    files=dict(base_revision.files or {}),
-                    entry_file=base_revision.entry_file,
-                )
-            except PublishedAppDraftDevRuntimeDisabled:
-                pass
-            except Exception as exc:
-                # Session prewarm is best-effort. Run creation should still succeed even
-                # when the local draft runtime cannot be initialized in this environment.
-                logger.warning(
-                    "Coding-agent create_run proceeding without prewarmed draft session for app %s: %s",
-                    app.id,
-                    exc,
-                )
+        try:
+            sandbox_context = await self._ensure_run_sandbox_context(
+                run=run,
+                app=app,
+                base_revision=base_revision,
+                actor_id=actor_id,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            message = str(detail.get("message") or exc.detail)
+            run.status = RunStatus.failed
+            run.error_message = message
+            run.completed_at = datetime.now(timezone.utc)
+            await self.db.commit()
+            raise
+        except Exception as exc:
+            run.status = RunStatus.failed
+            run.error_message = str(exc)
+            run.completed_at = datetime.now(timezone.utc)
+            await self.db.commit()
+            raise self._engine_unsupported_runtime_error(f"Failed to initialize run sandbox: {exc}") from exc
+
+        context = self._run_context(run)
+        if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
+            context.update(sandbox_context)
 
         await self.db.commit()
         await self.db.refresh(run)
@@ -461,6 +557,16 @@ class PublishedAppCodingAgentRuntimeService:
                 run.error_message = message
         else:
             run.status = RunStatus.cancelled
+
+        sandbox_session = await self._run_sandbox_service.stop_session_for_run(run_id=run.id)
+        if sandbox_session is not None:
+            context = self._run_context(run)
+            context["coding_run_sandbox_status"] = (
+                sandbox_session.status.value
+                if hasattr(sandbox_session.status, "value")
+                else str(sandbox_session.status)
+            )
+
         run.completed_at = datetime.now(timezone.utc)
         await self.db.commit()
         await self.db.refresh(run)
@@ -595,19 +701,26 @@ class PublishedAppCodingAgentRuntimeService:
             return None
 
         runtime_service = PublishedAppDraftDevRuntimeService(self.db)
-        try:
-            session = await runtime_service.ensure_active_session(
-                app=app,
-                revision=current,
-                user_id=actor_id,
-            )
-        except PublishedAppDraftDevRuntimeDisabled:
-            return None
+        input_params = run.input_params if isinstance(run.input_params, dict) else {}
+        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        run_sandbox_id = str(context.get("coding_run_sandbox_id") or "").strip()
 
-        if session.status == PublishedAppDraftDevSessionStatus.error or not session.sandbox_id:
-            return None
+        if run_sandbox_id:
+            snapshot = await runtime_service.client.snapshot_files(sandbox_id=run_sandbox_id)
+        else:
+            try:
+                session = await runtime_service.ensure_active_session(
+                    app=app,
+                    revision=current,
+                    user_id=actor_id,
+                )
+            except PublishedAppDraftDevRuntimeDisabled:
+                return None
 
-        snapshot = await runtime_service.client.snapshot_files(sandbox_id=session.sandbox_id)
+            if session.status == PublishedAppDraftDevSessionStatus.error or not session.sandbox_id:
+                return None
+            snapshot = await runtime_service.client.snapshot_files(sandbox_id=session.sandbox_id)
+
         raw_files = snapshot.get("files")
         if not isinstance(raw_files, dict):
             return None
@@ -624,6 +737,32 @@ class PublishedAppCodingAgentRuntimeService:
         run.checkpoint_revision_id = revision.id
         await self.db.commit()
         await self.db.refresh(revision)
+
+        # If the user already has an active builder draft session, best-effort sync it
+        # to the newly auto-applied revision so preview reflects coding-run changes.
+        try:
+            existing_builder_session = await runtime_service.get_session(
+                app_id=app.id,
+                user_id=actor_id,
+            )
+            if existing_builder_session is not None and existing_builder_session.sandbox_id:
+                await runtime_service.sync_session(
+                    app=app,
+                    revision=revision,
+                    user_id=actor_id,
+                    files=files,
+                    entry_file=revision.entry_file,
+                )
+                await self.db.commit()
+        except PublishedAppDraftDevRuntimeDisabled:
+            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync existing builder draft session after auto-apply for app %s run %s: %s",
+                app.id,
+                run.id,
+                exc,
+            )
         return revision
 
     def _envelope(
@@ -750,6 +889,20 @@ class PublishedAppCodingAgentRuntimeService:
             seq += 1
             return envelope
 
+        async def finalize_sandbox(reason: PublishedAppCodingRunSandboxStatus) -> None:
+            sandbox_session = await self._run_sandbox_service.stop_session_for_run(
+                run_id=run.id,
+                reason=reason,
+            )
+            if sandbox_session is None:
+                return
+            context = self._run_context(run)
+            context["coding_run_sandbox_status"] = (
+                sandbox_session.status.value
+                if hasattr(sandbox_session.status, "value")
+                else str(sandbox_session.status)
+            )
+
         yield emit(
             "run.accepted",
             "run",
@@ -763,16 +916,37 @@ class PublishedAppCodingAgentRuntimeService:
         terminal_status = run.status.value if hasattr(run.status, "value") else str(run.status)
         if terminal_status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
             if terminal_status == RunStatus.completed.value:
+                await finalize_sandbox(PublishedAppCodingRunSandboxStatus.stopped)
                 assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
                 yield emit("assistant.delta", "assistant", {"content": assistant_text})
                 yield emit("run.completed", "run", self.serialize_run(run))
             else:
+                await finalize_sandbox(PublishedAppCodingRunSandboxStatus.error)
                 yield emit(
                     "run.failed",
                     "run",
                     self.serialize_run(run),
                     [{"message": run.error_message or f"run {terminal_status}"}],
                 )
+            return
+
+        run_context = self._run_context(run)
+        sandbox_id = str(run_context.get("coding_run_sandbox_id") or "").strip()
+        if not sandbox_id:
+            sandbox_id, sandbox_error = await self._recover_or_bootstrap_run_sandbox_context(run=run, app=app)
+        else:
+            sandbox_error = None
+        if not sandbox_id:
+            run.status = RunStatus.failed
+            run.error_message = sandbox_error or "Run sandbox session is required before execution."
+            run.completed_at = datetime.now(timezone.utc)
+            await self.db.commit()
+            yield emit(
+                "run.failed",
+                "run",
+                self.serialize_run(run),
+                [{"code": "CODING_AGENT_SANDBOX_REQUIRED", "message": run.error_message}],
+            )
             return
 
         try:
@@ -798,6 +972,7 @@ class PublishedAppCodingAgentRuntimeService:
             status = run.status.value if hasattr(run.status, "value") else str(run.status)
             if status == RunStatus.completed.value:
                 revision = await self.auto_apply_and_checkpoint(run)
+                await finalize_sandbox(PublishedAppCodingRunSandboxStatus.stopped)
                 if revision is not None:
                     yield emit(
                         "revision.created",
@@ -823,6 +998,7 @@ class PublishedAppCodingAgentRuntimeService:
                 return
 
             if status == RunStatus.cancelled.value:
+                await finalize_sandbox(PublishedAppCodingRunSandboxStatus.stopped)
                 yield emit(
                     "run.failed",
                     "run",
@@ -832,9 +1008,11 @@ class PublishedAppCodingAgentRuntimeService:
                 return
 
             if status == RunStatus.paused.value:
+                await finalize_sandbox(PublishedAppCodingRunSandboxStatus.stopped)
                 yield emit("run.completed", "run", self.serialize_run(run))
                 return
 
+            await finalize_sandbox(PublishedAppCodingRunSandboxStatus.error)
             yield emit(
                 "run.failed",
                 "run",
@@ -847,6 +1025,17 @@ class PublishedAppCodingAgentRuntimeService:
                 failed_run.status = RunStatus.failed
                 failed_run.error_message = str(exc)
                 failed_run.completed_at = datetime.now(timezone.utc)
+                sandbox_session = await self._run_sandbox_service.stop_session_for_run(
+                    run_id=failed_run.id,
+                    reason=PublishedAppCodingRunSandboxStatus.error,
+                )
+                if sandbox_session is not None:
+                    context = self._run_context(failed_run)
+                    context["coding_run_sandbox_status"] = (
+                        sandbox_session.status.value
+                        if hasattr(sandbox_session.status, "value")
+                        else str(sandbox_session.status)
+                    )
                 await self.db.commit()
                 run = failed_run
             yield emit(

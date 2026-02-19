@@ -147,19 +147,34 @@ async def _resolve_run_tool_context(
         raise PermissionError("Revision does not belong to run app")
 
     runtime_service = PublishedAppDraftDevRuntimeService(db)
-    try:
-        session = await runtime_service.ensure_active_session(
-            app=app,
-            revision=revision,
-            user_id=actor_id,
-        )
-    except PublishedAppDraftDevRuntimeDisabled as exc:
-        raise RuntimeError(str(exc)) from exc
+    input_params = run.input_params if isinstance(run.input_params, dict) else {}
+    run_context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+    run_sandbox_id = str(run_context.get("coding_run_sandbox_id") or "").strip()
 
-    if session.status == PublishedAppDraftDevSessionStatus.error:
-        raise RuntimeError(session.last_error or "Draft dev sandbox failed")
-    if not session.sandbox_id:
-        raise RuntimeError("Draft dev sandbox id is missing")
+    if run_sandbox_id:
+        try:
+            await runtime_service.client.heartbeat_session(
+                sandbox_id=run_sandbox_id,
+                idle_timeout_seconds=int(os.getenv("APPS_CODING_AGENT_SANDBOX_IDLE_TIMEOUT_SECONDS", "180")),
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Run sandbox heartbeat failed: {exc}") from exc
+        sandbox_id = run_sandbox_id
+    else:
+        try:
+            session = await runtime_service.ensure_active_session(
+                app=app,
+                revision=revision,
+                user_id=actor_id,
+            )
+        except PublishedAppDraftDevRuntimeDisabled as exc:
+            raise RuntimeError(str(exc)) from exc
+
+        if session.status == PublishedAppDraftDevSessionStatus.error:
+            raise RuntimeError(session.last_error or "Draft dev sandbox failed")
+        if not session.sandbox_id:
+            raise RuntimeError("Draft dev sandbox id is missing")
+        sandbox_id = session.sandbox_id
 
     return _RunToolContext(
         db=db,
@@ -167,7 +182,7 @@ async def _resolve_run_tool_context(
         app=app,
         revision=revision,
         runtime_service=runtime_service,
-        sandbox_id=session.sandbox_id,
+        sandbox_id=sandbox_id,
         actor_id=actor_id,
     )
 
