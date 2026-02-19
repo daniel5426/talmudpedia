@@ -1,6 +1,6 @@
 # Custom Coding Agent
 
-Last Updated: 2026-02-18
+Last Updated: 2026-02-19
 
 ## Source Documents Consolidated
 - Note: the historical plan files listed in this section were archived/removed from
@@ -39,7 +39,7 @@ Last Updated: 2026-02-18
   - patch-first runtime improvements,
   - SSE framing and streaming reliability fixes,
   - UI contract migration to coding-agent stream semantics,
-  - optional OpenCode engine path under same external API contract.
+  - OpenCode-first engine path under the same external API contract, with native fallback policy controls.
 - Captures test command history and outcomes for backend/frontend suites.
 
 ## 5) CodingAgentHardeningAndPerRunModelSelectionPlan.md (Summary)
@@ -56,7 +56,24 @@ Last Updated: 2026-02-18
 - Current production contract is coding-agent run lifecycle + SSE events + checkpoint restore.
 - Legacy ChatBuilder chat contracts are intentionally retired.
 - Per-run model selection is first-class (`Auto` or explicit model) and execution is pinned to resolved model at run time.
-- OpenCode is integrated as an optional engine behind the same coding-agent API, with fail-closed behavior and deterministic error contracts.
+- OpenCode is now the default coding-agent engine; native execution is opt-in via backend/frontend env policy.
+- Chat memory continuity is now server-persisted per `(published_app_id, user_id)` chat session and reused across runs.
+
+## Latest OpenCode-First + Durable Chat History Updates (2026-02-19)
+- `POST /admin/apps/{app_id}/coding-agent/runs` now accepts optional `chat_session_id`; request `engine` is optional and resolves from backend policy.
+- Engine policy is backend-authoritative:
+  - default: `APPS_CODING_AGENT_DEFAULT_ENGINE=opencode`,
+  - native allowed only when `APPS_CODING_AGENT_NATIVE_ENABLED=1`,
+  - explicit native requests return deterministic `400` `CODING_AGENT_ENGINE_UNAVAILABLE` when disabled.
+- New chat history APIs are available:
+  - `GET /admin/apps/{app_id}/coding-agent/chat-sessions`
+  - `GET /admin/apps/{app_id}/coding-agent/chat-sessions/{session_id}`
+- New persisted storage tables:
+  - `published_app_coding_chat_sessions`
+  - `published_app_coding_chat_messages`
+- Run creation now builds effective history from persisted turns (session-scoped), persists user messages immediately, and persists assistant messages on terminal stream events.
+- OpenCode prompt construction now includes bounded prior user/assistant turns via a dedicated prompt-history formatter so context continuity works across fresh OpenCode session bootstraps.
+- Frontend builder chat no longer exposes an engine dropdown; engine is resolved from `NEXT_PUBLIC_APPS_CODING_AGENT_ENGINE` (default `opencode`).
 
 ## Latest OpenCode Updates (2026-02-19)
 - Official OpenCode mode now streams from `/global/event` in real time (with snapshot polling fallback), so assistant output is emitted incrementally instead of waiting for block-style completion.
@@ -70,13 +87,24 @@ Last Updated: 2026-02-18
   - added unit tests for global-event streaming + tool events + reasoning suppression,
   - retained and improved live roundtrip and live filesystem-edit tests.
 
+## Latest Sandbox + Draft Sync Updates (2026-02-19)
+- OpenCode sandbox mode now runs against sandbox-controller-scoped sessions and supports per-sandbox OpenCode process routing in the local dev shim, aligning OpenCode workspace root with the active draft sandbox.
+- Coding run creation now refreshes from active builder sandbox state before execution, reducing stale template-base runs.
+- Snapshot-to-draft persistence now sanitizes generated artifacts so build outputs are not saved as source files.
+  - Filtered examples: `dist/`, `.vite/`, `.turbo/`, `.cache/`, `.parcel-cache/`, `.npm/`, `.pnpm-store/`, `.yarn/`, `*.tsbuildinfo`, `.eslintcache`, `.stylelintcache`.
+- Builder blocked path policy was expanded to include these generated directories, reducing accidental artifact persistence and draft file-count inflation.
+- OpenCode completion semantics are fail-closed when `apply_patch` failures are not followed by a successful patch apply event.
+- OpenCode patch auto-verification defaults on for OpenCode runs and can fail the tool result when verification commands fail.
+- Draft-dev controller SSE stream handling is hardened by default (read timeout disabled unless explicitly configured), reducing mid-run stream disconnects.
+- Current known behavior: assistant identity text can still reflect underlying OpenCode persona unless explicitly overridden by upstream prompt/response policy.
+
 ## OpenCode Validation Snapshot
 - `cd backend && PYTHONPATH=. pytest tests/opencode_server_client -q` -> pass (`19 passed, 2 skipped`).
 - `cd backend && OPENCODE_LIVE_TEST=1 OPENCODE_LIVE_FULL_TASK=1 APPS_CODING_AGENT_OPENCODE_BASE_URL=http://127.0.0.1:8788 OPENCODE_LIVE_MODEL_ID=opencode/gpt-5-nano PYTHONPATH=. pytest tests/opencode_server_client/test_opencode_server_client_live.py -q` -> pass (`2 passed`).
-- `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q` -> pass (`19 passed`).
+- `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q` -> pass (`24 passed`).
 
 ## Decision Record Preserved by This Merge
 - Keep platform runtime primitives as source of truth.
 - Keep coding-agent API/SSE contract as the stable external interface.
 - Keep run-scoped model pinning and tool validation semantics.
-- Keep OpenCode as optional, env-gated, fail-closed secondary engine.
+- Keep OpenCode as default, with env-gated native fallback and fail-closed execution/error contracts.

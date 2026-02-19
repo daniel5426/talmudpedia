@@ -224,6 +224,11 @@ export interface BuilderValidationResponse {
 export type CodingAgentDiagnostics = Array<{ message?: string; [key: string]: unknown }>;
 export type CodingAgentExecutionEngine = "native" | "opencode";
 
+export const resolveAppsCodingAgentEngine = (): CodingAgentExecutionEngine => {
+  const raw = String(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_ENGINE || "opencode").trim().toLowerCase();
+  return raw === "native" ? "native" : "opencode";
+};
+
 export interface CodingAgentStreamEvent {
   event: string;
   run_id: string;
@@ -239,6 +244,7 @@ export interface CodingAgentRun {
   run_id: string;
   status: string;
   execution_engine: CodingAgentExecutionEngine;
+  chat_session_id?: string | null;
   surface?: string | null;
   published_app_id?: string | null;
   base_revision_id?: string | null;
@@ -253,6 +259,27 @@ export interface CodingAgentRun {
   sandbox_id?: string | null;
   sandbox_status?: string | null;
   sandbox_started_at?: string | null;
+}
+
+export interface CodingAgentChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string;
+}
+
+export interface CodingAgentChatMessage {
+  id: string;
+  run_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export interface CodingAgentChatSessionDetail {
+  session: CodingAgentChatSession;
+  messages: CodingAgentChatMessage[];
 }
 
 export interface CodingAgentCheckpoint {
@@ -395,9 +422,22 @@ export const publishedAppsService = {
       messages?: Array<{ role: string; content: string }>;
       model_id?: string | null;
       engine?: CodingAgentExecutionEngine;
+      chat_session_id?: string;
     },
   ): Promise<CodingAgentRun> {
     return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs`, payload);
+  },
+
+  async listCodingAgentChatSessions(appId: string, limit = 25): Promise<CodingAgentChatSession[]> {
+    return httpClient.get<CodingAgentChatSession[]>(
+      `/admin/apps/${appId}/coding-agent/chat-sessions?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  async getCodingAgentChatSession(appId: string, sessionId: string, limit = 200): Promise<CodingAgentChatSessionDetail> {
+    return httpClient.get<CodingAgentChatSessionDetail>(
+      `/admin/apps/${appId}/coding-agent/chat-sessions/${sessionId}?limit=${encodeURIComponent(String(limit))}`,
+    );
   },
 
   async streamCodingAgentRun(appId: string, runId: string): Promise<Response> {

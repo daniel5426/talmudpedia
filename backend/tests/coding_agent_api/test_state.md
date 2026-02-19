@@ -11,8 +11,12 @@ Last Updated: 2026-02-19
 
 ## Key scenarios covered
 - Run creation through new coding-agent endpoint with app/revision linkage.
-- Run creation forwards normalized prior chat turns (`messages`) and appends the current user prompt for stateful follow-up behavior.
-- Run creation defaults `execution_engine` to `native` when omitted.
+- Run creation builds run history from persisted chat-session turns (server source of truth) and appends the current prompt.
+- Run creation accepts optional `chat_session_id`; missing values create a new per-user/per-app chat session.
+- Run creation validates `chat_session_id` ownership by `(app_id, user_id)` and rejects foreign scope with `404`.
+- Run creation defaults `execution_engine` to `opencode` when omitted.
+- Run creation rejects explicit `engine=native` when policy disables native (`APPS_CODING_AGENT_NATIVE_ENABLED=0`).
+- Run creation allows explicit `engine=native` when policy enables native (`APPS_CODING_AGENT_NATIVE_ENABLED=1`).
 - Run creation supports explicit `engine=opencode` and persists run-level execution-engine audit data.
 - Run creation provisions run-scoped sandbox context and returns sandbox metadata fields (`sandbox_id`, `sandbox_status`, `sandbox_started_at`).
 - Run creation with explicit `model_id` persists `requested_model_id` and `resolved_model_id`.
@@ -20,6 +24,7 @@ Last Updated: 2026-02-19
 - Run creation with `engine=opencode` fails fast with deterministic `400` contracts when engine is unavailable (`CODING_AGENT_ENGINE_UNAVAILABLE`) or runtime path is unsupported (`CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME`).
 - Run creation with `engine=opencode` fails with deterministic `400` contract when sandbox-required mode is enabled but sandbox controller mode is unavailable (`CODING_AGENT_SANDBOX_REQUIRED`).
 - Run creation with `engine=opencode` resolves `opencode_model_id` from tenant/global provider bindings (backend-authoritative mapping) and passes it in run context.
+- Run creation response includes `chat_session_id` when session-scoped history is active.
 - Run creation snapshots files from the active builder draft sandbox (when available) and seeds coding run base revision from that live snapshot.
 - Run creation snapshot sanitization drops generated artifacts (`dist`, `.vite`, `*.tsbuildinfo`) before persisting the refreshed draft revision.
 - Auto model resolution pins `resolved_model_id` on run creation and remains stable even if tenant defaults change afterwards.
@@ -120,6 +125,9 @@ Last Updated: 2026-02-19
 - Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q`
 - Date: 2026-02-19 04:22 UTC
 - Result: PASS (24 passed)
+- Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py tests/coding_agent_chat_history_api/test_chat_history_endpoints.py -q`
+- Date: 2026-02-19 18:43 UTC
+- Result: PASS (34 passed)
 
 ## Known gaps or follow-ups
 - Add authorization-negative coverage for cross-tenant run access.

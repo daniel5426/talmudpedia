@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TextDecoder } from "util";
 
 import { AppsBuilderWorkspace } from "@/features/apps-builder/workspace/AppsBuilderWorkspace";
-import { modelsService, publishedAppsService, publishedRuntimeService } from "@/services";
+import { modelsService, publishedAppsService, publishedRuntimeService, resolveAppsCodingAgentEngine } from "@/services";
 
 const setOpenMock = jest.fn();
 const mockCodeEditor = jest.fn(
@@ -51,8 +51,11 @@ jest.mock("@/services", () => ({
     resetTemplate: jest.fn(),
     createCodingAgentRun: jest.fn(),
     streamCodingAgentRun: jest.fn(),
+    listCodingAgentChatSessions: jest.fn(),
+    getCodingAgentChatSession: jest.fn(),
     restoreCodingAgentCheckpoint: jest.fn(),
   },
+  resolveAppsCodingAgentEngine: jest.fn(() => "opencode"),
   publishedRuntimeService: {
     getPreviewRuntime: jest.fn(),
   },
@@ -391,7 +394,8 @@ describe("AppsBuilderWorkspace", () => {
     (publishedAppsService.createCodingAgentRun as jest.Mock).mockResolvedValue({
       run_id: "run-1",
       status: "queued",
-      execution_engine: "native",
+      execution_engine: "opencode",
+      chat_session_id: null,
       surface: "published_app_coding_agent",
       published_app_id: "app-1",
       base_revision_id: "rev-1",
@@ -433,6 +437,18 @@ describe("AppsBuilderWorkspace", () => {
       revision: makeState().current_draft_revision,
       run_id: "run-1",
     });
+    (publishedAppsService.listCodingAgentChatSessions as jest.Mock).mockResolvedValue([]);
+    (publishedAppsService.getCodingAgentChatSession as jest.Mock).mockResolvedValue({
+      session: {
+        id: "chat-1",
+        title: "Initial chat",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        last_message_at: new Date().toISOString(),
+      },
+      messages: [],
+    });
+    (resolveAppsCodingAgentEngine as jest.Mock).mockReturnValue("opencode");
     (modelsService.listModels as jest.Mock).mockResolvedValue({
       models: [
         {
@@ -757,7 +773,7 @@ describe("AppsBuilderWorkspace", () => {
     await waitFor(() => {
       expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledWith(
         "app-1",
-        expect.objectContaining({ input: "Make it bold", base_revision_id: "rev-1", engine: "native" }),
+        expect.objectContaining({ input: "Make it bold", base_revision_id: "rev-1", engine: "opencode" }),
       );
       expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
     });
@@ -788,7 +804,7 @@ describe("AppsBuilderWorkspace", () => {
       .mockResolvedValueOnce({
         run_id: "run-2",
         status: "queued",
-        execution_engine: "native",
+        execution_engine: "opencode",
         surface: "published_app_coding_agent",
         published_app_id: "app-1",
         base_revision_id: "rev-2",
@@ -938,12 +954,13 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
-  it("sends prior user/assistant turns as coding-agent run history", async () => {
+  it("reuses returned chat_session_id for subsequent messages", async () => {
     (publishedAppsService.createCodingAgentRun as jest.Mock)
       .mockResolvedValueOnce({
         run_id: "run-1",
         status: "queued",
-        execution_engine: "native",
+        execution_engine: "opencode",
+        chat_session_id: "chat-1",
         surface: "published_app_coding_agent",
         published_app_id: "app-1",
         base_revision_id: "rev-1",
@@ -957,7 +974,8 @@ describe("AppsBuilderWorkspace", () => {
       .mockResolvedValueOnce({
         run_id: "run-2",
         status: "queued",
-        execution_engine: "native",
+        execution_engine: "opencode",
+        chat_session_id: "chat-1",
         surface: "published_app_coding_agent",
         published_app_id: "app-1",
         base_revision_id: "rev-1",
@@ -1031,13 +1049,7 @@ describe("AppsBuilderWorkspace", () => {
 
     expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls).toHaveLength(2);
     const secondPayload = (publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[1][1];
-    expect(secondPayload.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ role: "user", content: "hi" }),
-        expect.objectContaining({ role: "assistant", content: "First answer" }),
-        expect.objectContaining({ role: "user", content: "what is the first message?" }),
-      ]),
-    );
+    expect(secondPayload.chat_session_id).toBe("chat-1");
   });
 
   it("shows default assistant text when stream emits no assistant delta", async () => {
@@ -1154,8 +1166,7 @@ describe("AppsBuilderWorkspace", () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    const engineSelect = await screen.findByLabelText("Select run engine");
-    expect(engineSelect).toHaveValue("native");
+    expect(screen.queryByLabelText("Select run engine")).not.toBeInTheDocument();
     const selectorTrigger = await screen.findByRole("button", { name: "Select run model" });
     expect(selectorTrigger).toHaveTextContent("Auto");
 
@@ -1166,15 +1177,82 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
-  it("sends selected engine in create-run payload", async () => {
+  it("loads chat sessions from API, hydrates timeline, and resumes with the same chat_session_id", async () => {
+    const now = new Date().toISOString();
+    (publishedAppsService.listCodingAgentChatSessions as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "chat-1",
+        title: "Past thread",
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+      },
+    ]);
+    (publishedAppsService.getCodingAgentChatSession as jest.Mock).mockResolvedValueOnce({
+      session: {
+        id: "chat-1",
+        title: "Past thread",
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+      },
+      messages: [
+        { id: "m1", run_id: "run-a", role: "user", content: "Earlier prompt", created_at: now },
+        { id: "m2", run_id: "run-a", role: "assistant", content: "Earlier answer", created_at: now },
+      ],
+    });
+    (publishedAppsService.createCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      run_id: "run-1",
+      status: "queued",
+      execution_engine: "opencode",
+      chat_session_id: "chat-1",
+      surface: "published_app_coding_agent",
+      published_app_id: "app-1",
+      base_revision_id: "rev-1",
+      result_revision_id: null,
+      checkpoint_revision_id: null,
+      error: null,
+      created_at: now,
+      started_at: null,
+      completed_at: null,
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalledWith("app-1"));
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+    await waitFor(() =>
+      expect(publishedAppsService.listCodingAgentChatSessions).toHaveBeenCalledWith("app-1", 50),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat history" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Past thread/i }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.getCodingAgentChatSession).toHaveBeenCalledWith("app-1", "chat-1", 300);
+    });
+    expect(screen.getByText("Earlier prompt")).toBeInTheDocument();
+    expect(screen.getByText("Earlier answer")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "continue this thread" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledWith(
+        "app-1",
+        expect.objectContaining({ chat_session_id: "chat-1" }),
+      );
+    });
+  });
+
+  it("sends env-resolved engine in create-run payload", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
     await screen.findByPlaceholderText("Plan, @ for context, / for commands");
 
-    fireEvent.change(screen.getByLabelText("Select run engine"), {
-      target: { value: "opencode" },
-    });
     fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
       target: { value: "use opencode" },
     });
@@ -1202,7 +1280,7 @@ describe("AppsBuilderWorkspace", () => {
 
     await waitFor(() => expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(1));
     expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[0][1]).toEqual(
-      expect.objectContaining({ model_id: "model-auto-b", engine: "native" }),
+      expect.objectContaining({ model_id: "model-auto-b", engine: "opencode" }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Select run model" }));
@@ -1216,7 +1294,7 @@ describe("AppsBuilderWorkspace", () => {
 
     await waitFor(() => expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(2));
     expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[1][1]).toEqual(
-      expect.objectContaining({ model_id: null, engine: "native" }),
+      expect.objectContaining({ model_id: null, engine: "opencode" }),
     );
   });
 
@@ -1265,9 +1343,6 @@ describe("AppsBuilderWorkspace", () => {
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
     await screen.findByPlaceholderText("Plan, @ for context, / for commands");
 
-    fireEvent.change(screen.getByLabelText("Select run engine"), {
-      target: { value: "opencode" },
-    });
     fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
       target: { value: "use opencode engine" },
     });
@@ -1287,8 +1362,8 @@ describe("AppsBuilderWorkspace", () => {
       target: { value: "make a change" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-    fireEvent.click(await screen.findByRole("button", { name: /revert to this point/i }));
+    await waitFor(() => expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1"));
+    fireEvent.click(await screen.findByLabelText("Revert to this point"));
 
     await waitFor(() => {
       expect(publishedAppsService.restoreCodingAgentCheckpoint).toHaveBeenCalledWith(

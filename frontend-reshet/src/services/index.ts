@@ -54,6 +54,7 @@ export { modelsService } from "./models";
 export { toolsService } from "./tools";
 export { credentialsService } from "./credentials";
 export { publishedAppsService } from "./published-apps";
+export { resolveAppsCodingAgentEngine } from "./published-apps";
 export { publishedRuntimeService } from "./published-runtime";
 
 export type {
@@ -104,6 +105,9 @@ export type {
   RevisionConflictResponse,
   CodingAgentStreamEvent,
   CodingAgentRun,
+  CodingAgentChatSession,
+  CodingAgentChatMessage,
+  CodingAgentChatSessionDetail,
   CodingAgentCheckpoint,
   CodingAgentRestoreCheckpointResponse,
   CreatePublishedAppRequest,

@@ -4,55 +4,19 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  Clock,
   ExternalLink,
   Layers,
   Loader2,
   Monitor,
-  PanelRightClose,
-  Plus,
   RefreshCw,
   Rocket,
   Save,
   Smartphone,
-  Sparkles,
-  Square,
-  Undo2,
   X,
 } from "lucide-react";
 
-import {
-  Conversation,
-  ConversationContent,
-  ConversationScrollButton,
-} from "@/components/ai-elements/conversation";
-import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
-import {
-  PromptInput,
-  PromptInputBody,
-  PromptInputFooter,
-  PromptInputSubmit,
-  PromptInputTextarea,
-} from "@/components/ai-elements/prompt-input";
-import {
-  ModelSelector,
-  ModelSelectorContent,
-  ModelSelectorEmpty,
-  ModelSelectorGroup,
-  ModelSelectorInput,
-  ModelSelectorItem,
-  ModelSelectorList,
-  ModelSelectorName,
-  ModelSelectorTrigger,
-} from "@/components/ai-elements/model-selector";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -72,137 +36,23 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { modelsService, publishedAppsService, publishedRuntimeService } from "@/services";
+import { publishedAppsService, publishedRuntimeService } from "@/services";
 import type {
   BuilderStateResponse,
-  CodingAgentExecutionEngine,
-  CodingAgentStreamEvent,
   DraftDevSessionResponse,
   DraftDevSessionStatus,
-  LogicalModel,
   PublishedAppAuthTemplate,
   PublishedAppDomain,
   PublishedAppRevision,
   PublishedAppUser,
-  RevisionConflictResponse,
 } from "@/services";
 import { cn } from "@/lib/utils";
 import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
-
-const parseSse = (raw: string): CodingAgentStreamEvent | null => {
-  const dataLines = raw
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"));
-  if (dataLines.length === 0) return null;
-  const payload = dataLines.map((line) => line.slice(5).trimStart()).join("\n");
-  if (!payload || payload === "[DONE]") return null;
-  try {
-    return JSON.parse(payload) as CodingAgentStreamEvent;
-  } catch {
-    return null;
-  }
-};
-
-const parseRevisionConflict = (detail: unknown): RevisionConflictResponse | null => {
-  let parsed: unknown = detail;
-  if (typeof parsed === "string") {
-    const text = parsed.trim();
-    if (!text) return null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-  const candidate = parsed as Partial<RevisionConflictResponse>;
-  if (candidate.code !== "REVISION_CONFLICT") {
-    return null;
-  }
-  if (!candidate.latest_revision_id || !candidate.latest_updated_at) {
-    return null;
-  }
-  return {
-    code: "REVISION_CONFLICT",
-    latest_revision_id: String(candidate.latest_revision_id),
-    latest_updated_at: String(candidate.latest_updated_at),
-    message: String(candidate.message || "Draft revision is stale"),
-  };
-};
-
-type CodingAgentModelUnavailableDetail = {
-  code: "CODING_AGENT_MODEL_UNAVAILABLE";
-  field: "model_id";
-  message: string;
-};
-
-const parseModelUnavailableDetail = (detail: unknown): CodingAgentModelUnavailableDetail | null => {
-  let parsed: unknown = detail;
-  if (typeof parsed === "string") {
-    const text = parsed.trim();
-    if (!text) return null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-  const candidate = parsed as Partial<CodingAgentModelUnavailableDetail>;
-  if (candidate.code !== "CODING_AGENT_MODEL_UNAVAILABLE") {
-    return null;
-  }
-  if (candidate.field !== "model_id") {
-    return null;
-  }
-  return {
-    code: "CODING_AGENT_MODEL_UNAVAILABLE",
-    field: "model_id",
-    message: String(candidate.message || "Selected model is unavailable. Pick another model and retry."),
-  };
-};
-
-type CodingAgentEngineUnavailableDetail = {
-  code: "CODING_AGENT_ENGINE_UNAVAILABLE" | "CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME";
-  field: "engine";
-  message: string;
-};
-
-const parseEngineUnavailableDetail = (detail: unknown): CodingAgentEngineUnavailableDetail | null => {
-  let parsed: unknown = detail;
-  if (typeof parsed === "string") {
-    const text = parsed.trim();
-    if (!text) return null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-  const candidate = parsed as Partial<CodingAgentEngineUnavailableDetail>;
-  if (candidate.field !== "engine") {
-    return null;
-  }
-  if (candidate.code !== "CODING_AGENT_ENGINE_UNAVAILABLE" && candidate.code !== "CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME") {
-    return null;
-  }
-  return {
-    code: candidate.code,
-    field: "engine",
-    message: String(candidate.message || "Selected engine is unavailable for this runtime."),
-  };
-};
+import { AppsBuilderChatPanel } from "@/features/apps-builder/workspace/chat/AppsBuilderChatPanel";
+import { useAppsBuilderChat } from "@/features/apps-builder/workspace/chat/useAppsBuilderChat";
 
 const DRAFT_DEV_SYNC_DEBOUNCE_MS = 800;
 const DRAFT_DEV_HEARTBEAT_MS = 45_000;
@@ -214,40 +64,6 @@ type WorkspaceProps = {
 };
 
 type ConfigSection = "overview" | "users" | "domains" | "code";
-
-type TimelineTone = "default" | "success" | "error";
-type TimelineKind = "user" | "assistant" | "tool";
-type ToolRunStatus = "running" | "completed" | "failed";
-
-type TimelineItem = {
-  id: string;
-  kind: TimelineKind;
-  title: string;
-  description?: string;
-  tone?: TimelineTone;
-  toolCallId?: string;
-  toolStatus?: ToolRunStatus;
-  assistantStreamId?: string;
-  checkpointId?: string;
-};
-
-function normalizeToolName(toolName: string): string {
-  return toolName.trim().toLowerCase();
-}
-
-function describeToolIntent(toolName: string): string {
-  const normalized = normalizeToolName(toolName);
-  if (normalized.includes("read_file")) return "Reading file";
-  if (normalized.includes("write_file")) return "Editing file";
-  if (normalized.includes("search_code")) return "Searching code";
-  if (normalized.includes("list_files")) return "Listing files";
-  if (normalized.includes("rename_file")) return "Renaming file";
-  if (normalized.includes("delete_file")) return "Deleting file";
-  if (normalized.includes("snapshot_files")) return "Snapshotting workspace";
-  if (normalized.includes("run_targeted_tests")) return "Running tests";
-  if (normalized.includes("build_worker_precheck")) return "Running build precheck";
-  return `Running ${toolName || "tool"}`;
-}
 
 /** Extract route paths from app source files by matching common React Router patterns. */
 function extractRoutesFromFiles(files: Record<string, string>): string[] {
@@ -297,27 +113,11 @@ function wait(ms: number): Promise<void> {
   });
 }
 
-function timelineId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, string>): string {
   return JSON.stringify({
     entry,
     files: nextFiles,
   });
-}
-
-function isUserTimelineItem(item: TimelineItem): boolean {
-  return item.kind === "user";
-}
-
-function isAssistantTimelineItem(item: TimelineItem): boolean {
-  return item.kind === "assistant";
-}
-
-function isToolTimelineItem(item: TimelineItem): boolean {
-  return item.kind === "tool";
 }
 
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
@@ -326,7 +126,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [activeTab, setActiveTab] = useState<"preview" | "config">("preview");
   const [configSection, setConfigSection] = useState<ConfigSection>("overview");
   const [lastNonCodeConfigSection, setLastNonCodeConfigSection] = useState<Exclude<ConfigSection, "code">>("overview");
-  const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
   const [files, setFiles] = useState<Record<string, string>>({});
   const [entryFile, setEntryFile] = useState("src/main.tsx");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -351,21 +150,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [pendingDomainDeleteId, setPendingDomainDeleteId] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isOpeningApp, setIsOpeningApp] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [isUndoing, setIsUndoing] = useState(false);
-  const [timeline, setTimeline] = useState<TimelineItem[]>([]);
-  const [activeThinkingSummary, setActiveThinkingSummary] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [chatSessions, setChatSessions] = useState<Array<{ id: string; firstMessage: string; timestamp: number }>>([]);
   const [previewRoute, setPreviewRoute] = useState("/");
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
-  const [chatModels, setChatModels] = useState<LogicalModel[]>([]);
-  const [selectedRunModelId, setSelectedRunModelId] = useState<string | null>(null);
-  const [selectedRunEngine, setSelectedRunEngine] = useState<CodingAgentExecutionEngine>("native");
-  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const abortReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const syncFingerprintRef = useRef<string>("");
   const draftDevSnapshotRef = useRef<{
     sessionId: string | null;
@@ -387,11 +175,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     () => `${state?.app.slug || "app"}.${process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost"}`,
     [state?.app.slug],
   );
-  const selectedRunModelLabel = useMemo(() => {
-    if (!selectedRunModelId) return "Auto";
-    const match = chatModels.find((model) => model.id === selectedRunModelId);
-    return match?.name || "Auto";
-  }, [chatModels, selectedRunModelId]);
 
   const navigatePreview = useCallback((route: string) => {
     setPreviewRoute(route);
@@ -414,81 +197,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       // eslint-disable-next-line no-self-assign
       iframe.src = iframe.src;
     }
-  }, []);
-
-  const pushTimeline = useCallback((item: Omit<TimelineItem, "id" | "kind"> & { kind?: TimelineKind }) => {
-    setTimeline((prev) => [...prev, { ...item, kind: item.kind || "assistant", id: timelineId("timeline") }]);
-  }, []);
-
-  const upsertAssistantTimeline = useCallback((assistantStreamId: string, description: string) => {
-    setTimeline((prev) => {
-      const existingIndex = prev.findIndex(
-        (item) => item.kind === "assistant" && item.assistantStreamId === assistantStreamId,
-      );
-      if (existingIndex >= 0) {
-        const next = [...prev];
-        next[existingIndex] = {
-          ...next[existingIndex],
-          description,
-          tone: "default",
-        };
-        return next;
-      }
-      return [
-        ...prev,
-        {
-          id: timelineId("assistant"),
-          kind: "assistant",
-          title: "Assistant",
-          description,
-          tone: "default",
-          assistantStreamId,
-        },
-      ];
-    });
-  }, []);
-
-  const upsertToolTimeline = useCallback((toolCallId: string, title: string, status: ToolRunStatus) => {
-    setTimeline((prev) => {
-      const existingIndex = prev.findIndex(
-        (item) => item.kind === "tool" && item.toolCallId === toolCallId,
-      );
-      const nextTone: TimelineTone | undefined = status === "failed" ? "error" : status === "completed" ? "success" : undefined;
-      if (existingIndex >= 0) {
-        const next = [...prev];
-        next[existingIndex] = {
-          ...next[existingIndex],
-          title,
-          toolStatus: status,
-          tone: nextTone,
-        };
-        return next;
-      }
-      return [
-        ...prev,
-        {
-          id: timelineId("tool"),
-          kind: "tool",
-          toolCallId,
-          toolStatus: status,
-          title,
-          tone: nextTone,
-        },
-      ];
-    });
-  }, []);
-
-  const attachCheckpointToLastUser = useCallback((checkpointId: string) => {
-    setTimeline((prev) => {
-      for (let i = prev.length - 1; i >= 0; i--) {
-        if (prev[i].kind === "user" && !prev[i].checkpointId) {
-          const next = [...prev];
-          next[i] = { ...next[i], checkpointId };
-          return next;
-        }
-      }
-      return prev;
-    });
   }, []);
 
   const applyDraftDevSession = useCallback((session?: DraftDevSessionResponse | null) => {
@@ -527,20 +235,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
   }, [appId, applyDraftDevSession, hydrateFromRevision]);
 
-  const loadChatModels = useCallback(async () => {
-    try {
-      const response = await modelsService.listModels("chat", "active", 0, 200);
-      const models = (response.models || []).filter((item) => item.is_active !== false);
-      setChatModels(models);
-      setSelectedRunModelId((prev) => {
-        if (!prev) return prev;
-        return models.some((item) => item.id === prev) ? prev : null;
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load chat models");
-    }
-  }, []);
-
   const refreshStateSilently = useCallback(async () => {
     try {
       const response = await publishedAppsService.getBuilderState(appId);
@@ -555,10 +249,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   useEffect(() => {
     loadState();
   }, [loadState]);
-
-  useEffect(() => {
-    void loadChatModels();
-  }, [loadChatModels]);
 
   const updateLocalApp = useCallback((patch: Record<string, unknown>) => {
     setState((prev) => {
@@ -913,289 +603,46 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     [appId, hydrateFromRevision],
   );
 
-  const buildRunConversationMessages = useCallback((nextInput: string) => {
-    const history = timeline
-      .filter((item) => isUserTimelineItem(item) || isAssistantTimelineItem(item))
-      .map((item) => ({
-        role: isUserTimelineItem(item) ? "user" : "assistant",
-        content: String(item.description || "").trim(),
-      }))
-      .filter((item) => item.content.length > 0);
-    const cappedHistory = history.slice(-20);
-    return [...cappedHistory, { role: "user", content: nextInput }];
-  }, [timeline]);
-
-  const sendBuilderChat = useCallback(async (rawInput: string) => {
-    const input = rawInput.trim();
-    if (!input) return;
-    const runMessages = buildRunConversationMessages(input);
-
-    setIsSending(true);
-    setError(null);
-    setActiveThinkingSummary("Thinking...");
-    pushTimeline({ kind: "user", title: "User request", description: input });
-
-    try {
-      const createRun = async (baseRevisionId?: string) =>
-        publishedAppsService.createCodingAgentRun(appId, {
-          input,
-          base_revision_id: baseRevisionId,
-          messages: runMessages,
-          model_id: selectedRunModelId,
-          engine: selectedRunEngine,
-        });
-
-      let run;
-      try {
-        run = await createRun(currentRevisionId || undefined);
-      } catch (err: any) {
-        const engineUnavailable = parseEngineUnavailableDetail(err?.message);
-        if (engineUnavailable) {
-          throw new Error(engineUnavailable.message);
-        }
-        const modelUnavailable = parseModelUnavailableDetail(err?.message);
-        if (modelUnavailable) {
-          throw new Error(modelUnavailable.message);
-        }
-        const conflict = parseRevisionConflict(err?.message);
-        if (!conflict) {
-          throw err;
-        }
-        const latestRevisionId = String(conflict.latest_revision_id || "").trim();
-        setActiveThinkingSummary("Draft changed. Refreshing and retrying...");
-        await refreshStateSilently();
-        run = await createRun(latestRevisionId || undefined);
-        if (latestRevisionId) {
-          setCurrentRevisionId(latestRevisionId);
-        }
-      }
-
-      const assistantStreamId = `assistant-${run.run_id}`;
-
-      const response = await publishedAppsService.streamCodingAgentRun(appId, run.run_id);
-      if (!response.ok) {
-        let message = `Failed to stream coding-agent run (${response.status})`;
-        try {
-          const payload = await response.json();
-          const detail = payload?.detail;
-          if (typeof detail === "string") {
-            message = detail;
-          } else if (detail && typeof detail === "object") {
-            message = JSON.stringify(detail);
-          }
-        } catch {
-          // Keep fallback message.
-        }
-        throw new Error(message);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Streaming reader unavailable");
-      }
-      abortReaderRef.current = reader;
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let assistantText = "";
-      let currentStreamId = assistantStreamId;
-      let segmentCounter = 0;
-      let latestSummary = "";
-      let latestResultRevisionId = "";
-      let sawRunFailure = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let splitIndex = buffer.indexOf("\n\n");
-        while (splitIndex >= 0) {
-          const raw = buffer.slice(0, splitIndex).trim();
-          buffer = buffer.slice(splitIndex + 2);
-          const parsed = parseSse(raw);
-          if (!parsed) {
-            splitIndex = buffer.indexOf("\n\n");
-            continue;
-          }
-
-          const payload = (parsed.payload || {}) as Record<string, unknown>;
-
-          if (parsed.event === "assistant.delta" && payload.content) {
-            assistantText += String(payload.content);
-            if (assistantText.trim()) {
-              setActiveThinkingSummary("");
-              upsertAssistantTimeline(currentStreamId, assistantText);
-            }
-          }
-
-          if (parsed.event === "plan.updated") {
-            const summary = String(payload.summary || "").trim();
-            if (summary && summary.toLowerCase() !== "coding-agent run started") {
-              latestSummary = summary;
-              setActiveThinkingSummary(summary);
-            }
-          }
-
-          if (parsed.event === "tool.started") {
-            const toolName = String(payload.tool || "tool");
-            const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
-            // Freeze current assistant text segment and start a new one after the tool
-            if (assistantText.trim()) {
-              upsertAssistantTimeline(currentStreamId, assistantText.trim());
-            }
-            assistantText = "";
-            segmentCounter++;
-            currentStreamId = `${assistantStreamId}-seg${segmentCounter}`;
-            upsertToolTimeline(toolCallId, describeToolIntent(toolName), "running");
-          }
-
-          if (parsed.event === "tool.completed") {
-            const toolName = String(payload.tool || "tool");
-            const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
-            upsertToolTimeline(toolCallId, describeToolIntent(toolName), "completed");
-          }
-
-          if (parsed.event === "tool.failed") {
-            const toolName = String(payload.tool || "tool");
-            const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
-            upsertToolTimeline(toolCallId, describeToolIntent(toolName), "failed");
-          }
-
-          if (parsed.event === "revision.created") {
-            const revisionId = String(payload.revision_id || "");
-            latestResultRevisionId = revisionId || latestResultRevisionId;
-            if (revisionId) {
-              setCurrentRevisionId(revisionId);
-            }
-          }
-
-          if (parsed.event === "checkpoint.created") {
-            const revisionId = String(payload.revision_id || "");
-            const checkpointId = String(payload.checkpoint_id || "");
-            if (revisionId) {
-              setCurrentRevisionId(revisionId);
-            }
-            if (checkpointId) {
-              attachCheckpointToLastUser(checkpointId);
-            }
-          }
-
-          if (parsed.event === "run.failed") {
-            sawRunFailure = true;
-            const failureMessage = String(
-              parsed.diagnostics?.[0]?.message || payload.error || "Coding-agent run failed",
-            );
-            setError(failureMessage);
-          }
-
-          if (parsed.event !== "run.failed" && Array.isArray(parsed.diagnostics) && parsed.diagnostics.length > 0) {
-            const diagnosticMessage = String(parsed.diagnostics[0]?.message || "").trim();
-            if (diagnosticMessage) {
-              setError(diagnosticMessage);
-            }
-          }
-
-          splitIndex = buffer.indexOf("\n\n");
-        }
-      }
-
-      const finalAssistantText =
-        assistantText.trim() ||
-        latestSummary ||
-        (sawRunFailure
-          ? ""
-          : "I can help with code changes in this app workspace. Tell me what you want to change.");
-      if (assistantText.trim()) {
-        upsertAssistantTimeline(currentStreamId, assistantText.trim());
-      } else if (finalAssistantText) {
-        pushTimeline({
-          kind: "assistant",
-          title: "Assistant",
-          description: finalAssistantText,
-          tone: "default",
-        });
-      }
-
-      await refreshStateSilently();
-      if (activeTab === "preview") {
-        await ensureDraftDevSession();
-      }
-      if (latestResultRevisionId) {
-        setCurrentRevisionId(latestResultRevisionId);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to run coding agent");
-    } finally {
-      abortReaderRef.current = null;
-      setActiveThinkingSummary("");
-      setIsSending(false);
-    }
-  }, [
-    activeTab,
-    appId,
-    attachCheckpointToLastUser,
-    buildRunConversationMessages,
-    currentRevisionId,
-    ensureDraftDevSession,
-    pushTimeline,
-    refreshStateSilently,
-    selectedRunEngine,
-    selectedRunModelId,
-    upsertAssistantTimeline,
-    upsertToolTimeline,
-  ]);
-
-  const stopCurrentRun = useCallback(() => {
-    if (abortReaderRef.current) {
-      abortReaderRef.current.cancel();
-      abortReaderRef.current = null;
-    }
-  }, []);
-
-  const startNewChat = useCallback(() => {
-    if (isSending) stopCurrentRun();
-    const firstUserItem = timeline.find((item) => item.kind === "user");
-    if (firstUserItem?.description && timeline.length > 0) {
-      setChatSessions((prev) => [
-        { id: timelineId("session"), firstMessage: firstUserItem.description || "Chat", timestamp: Date.now() },
+  const applyRestoredRevision = useCallback((revision: PublishedAppRevision) => {
+    hydrateFromRevision(revision);
+    setState((prev) => {
+      if (!prev) return prev;
+      return {
         ...prev,
-      ]);
-    }
-    setTimeline([]);
-    setActiveThinkingSummary("");
-  }, [isSending, stopCurrentRun, timeline]);
+        current_draft_revision: revision,
+        app: { ...prev.app, current_draft_revision_id: revision.id },
+      };
+    });
+  }, [hydrateFromRevision]);
 
-  const revertToCheckpoint = useCallback(async (userItemId: string, checkpointId: string) => {
-    if (isSending) stopCurrentRun();
-    setIsUndoing(true);
-    setError(null);
-    try {
-      const response = await publishedAppsService.restoreCodingAgentCheckpoint(appId, checkpointId, {});
-      const revision = response.revision;
-      hydrateFromRevision(revision);
-      setState((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          current_draft_revision: revision,
-          app: { ...prev.app, current_draft_revision_id: revision.id },
-        };
-      });
-      // Trim timeline: remove this user message and everything after it
-      setTimeline((prev) => {
-        const idx = prev.findIndex((item) => item.id === userItemId);
-        if (idx < 0) return prev;
-        return prev.slice(0, idx);
-      });
-      if (activeTab === "preview") {
-        await ensureDraftDevSession();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to revert to checkpoint");
-    } finally {
-      setIsUndoing(false);
-    }
-  }, [activeTab, appId, ensureDraftDevSession, hydrateFromRevision, isSending, stopCurrentRun]);
+  const {
+    isAgentPanelOpen,
+    setIsAgentPanelOpen,
+    isSending,
+    isUndoing,
+    timeline,
+    activeThinkingSummary,
+    chatSessions,
+    chatModels,
+    setSelectedRunModelId,
+    isModelSelectorOpen,
+    setIsModelSelectorOpen,
+    selectedRunModelLabel,
+    sendBuilderChat,
+    stopCurrentRun,
+    startNewChat,
+    revertToCheckpoint,
+    loadChatSession,
+  } = useAppsBuilderChat({
+    appId,
+    currentRevisionId,
+    activeTab,
+    ensureDraftDevSession,
+    refreshStateSilently,
+    onApplyRestoredRevision: applyRestoredRevision,
+    onSetCurrentRevisionId: setCurrentRevisionId,
+    onError: setError,
+  });
 
   const openApp = useCallback(async () => {
     setError(null);
@@ -1724,328 +1171,25 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             </div>
           </main>
 
-          {isAgentPanelOpen ? (
-            <aside className="flex h-full min-h-0 w-[430px] shrink-0 flex-col overflow-hidden border-l border-border/60 bg-background">
-              {/* Minimalist header - no title, no separator */}
-              <div className="flex items-center justify-end gap-0.5 px-2 py-1.5">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  onClick={startNewChat}
-                  aria-label="New chat"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  onClick={() => setIsHistoryOpen(true)}
-                  aria-label="Chat history"
-                >
-                  <Clock className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  onClick={() => setIsAgentPanelOpen(false)}
-                  aria-label="Close agent panel"
-                >
-                  <PanelRightClose className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-
-              <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
-                <Conversation className="flex min-h-0 flex-1 flex-col">
-                  <ConversationContent className="gap-2 px-0 py-0 pb-3">
-                    {timeline.length === 0 ? (
-                      <Message from="assistant" className="max-w-full">
-                        <MessageContent className="bg-transparent px-0 py-0 text-sm text-muted-foreground">
-                          <MessageResponse>
-                            Ask for a code change to start a live run. You will see tool calls and assistant responses here.
-                          </MessageResponse>
-                        </MessageContent>
-                      </Message>
-                    ) : (
-                      (() => {
-                        const rendered: React.ReactNode[] = [];
-                        let i = 0;
-                        while (i < timeline.length) {
-                          const item = timeline[i];
-
-                          if (isUserTimelineItem(item)) {
-                            rendered.push(
-                              <Message key={item.id} from="user" className="group/usermsg max-w-full">
-                                <MessageContent className="relative">
-                                  <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
-                                  {item.checkpointId && (
-                                    <button
-                                      type="button"
-                                      className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-md bg-muted text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/usermsg:opacity-100"
-                                      onClick={() => revertToCheckpoint(item.id, item.checkpointId!)}
-                                      disabled={isUndoing}
-                                      aria-label="Revert to this point"
-                                    >
-                                      <Undo2 className="h-3 w-3" />
-                                    </button>
-                                  )}
-                                </MessageContent>
-                              </Message>,
-                            );
-                            i++;
-                            continue;
-                          }
-
-                          if (isAssistantTimelineItem(item)) {
-                            rendered.push(
-                              <Message key={item.id} from="assistant" className="max-w-full">
-                                <MessageContent className="bg-transparent px-0 py-0">
-                                  <MessageResponse>
-                                    {item.description ||
-                                      "I can help with code changes in this app workspace. Tell me what you want to change."}
-                                  </MessageResponse>
-                                </MessageContent>
-                              </Message>,
-                            );
-                            i++;
-                            continue;
-                          }
-
-                          if (isToolTimelineItem(item)) {
-                            // Group consecutive "Reading file" tool items
-                            if (item.title === "Reading file") {
-                              const groupStart = i;
-                              let readCount = 0;
-                              let hasRunning = false;
-                              while (i < timeline.length && isToolTimelineItem(timeline[i]) && timeline[i].title === "Reading file") {
-                                readCount++;
-                                if (timeline[i].toolStatus === "running") hasRunning = true;
-                                i++;
-                              }
-                              rendered.push(
-                                <Message key={timeline[groupStart].id} from="assistant" className="max-w-full">
-                                  <MessageContent className="bg-transparent px-0 py-0 text-xs">
-                                    <div className="inline-flex items-center gap-2 rounded-md px-1 py-0.5">
-                                      <span
-                                        className={cn(
-                                          "h-1.5 w-1.5 rounded-full",
-                                          hasRunning ? "animate-pulse bg-foreground/70" : "bg-emerald-500",
-                                        )}
-                                      />
-                                      <span
-                                        className={cn(
-                                          "text-xs",
-                                          hasRunning ? "animate-pulse text-foreground/75" : "text-muted-foreground",
-                                        )}
-                                      >
-                                        Explored {readCount} {readCount === 1 ? "file" : "files"}
-                                      </span>
-                                    </div>
-                                  </MessageContent>
-                                </Message>,
-                              );
-                              continue;
-                            }
-
-                            // Non-read tool items render normally
-                            const status = item.toolStatus || "completed";
-                            rendered.push(
-                              <Message key={item.id} from="assistant" className="max-w-full">
-                                <MessageContent className="bg-transparent px-0 py-0 text-xs">
-                                  <div className="inline-flex items-center gap-2 rounded-md px-1 py-0.5">
-                                    <span
-                                      className={cn(
-                                        "h-1.5 w-1.5 rounded-full",
-                                        status === "running"
-                                          ? "animate-pulse bg-foreground/70"
-                                          : status === "failed"
-                                            ? "bg-destructive"
-                                            : "bg-emerald-500",
-                                      )}
-                                    />
-                                    <span
-                                      className={cn(
-                                        "text-xs",
-                                        status === "running"
-                                          ? "animate-pulse text-foreground/75"
-                                          : status === "failed"
-                                            ? "text-destructive"
-                                            : "text-muted-foreground",
-                                      )}
-                                    >
-                                      {item.title}
-                                    </span>
-                                  </div>
-                                </MessageContent>
-                              </Message>,
-                            );
-                            i++;
-                            continue;
-                          }
-
-                          rendered.push(
-                            <Message key={item.id} from="assistant" className="max-w-full">
-                              <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
-                                <div>{item.title}{item.description ? ` ${item.description}` : ""}</div>
-                              </MessageContent>
-                            </Message>,
-                          );
-                          i++;
-                        }
-                        return rendered;
-                      })()
-                    )}
-                    {isSending && !timeline.some((item) => item.kind === "assistant" && item.assistantStreamId) ? (
-                      <Message from="assistant" className="max-w-full">
-                        <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
-                          <span className="animate-pulse">
-                            Thinking... {activeThinkingSummary && activeThinkingSummary !== "Thinking..." ? activeThinkingSummary : ""}
-                          </span>
-                        </MessageContent>
-                      </Message>
-                    ) : null}
-                  </ConversationContent>
-                  <ConversationScrollButton />
-                </Conversation>
-
-                <div className="shrink-0 pt-1">
-                  <PromptInput
-                    onSubmit={async (message) => {
-                      if (isSending) {
-                        stopCurrentRun();
-                        return;
-                      }
-                      await sendBuilderChat(message.text);
-                    }}
-                    className="rounded-xl border border-border/40 bg-muted/30 shadow-none"
-                  >
-                    <PromptInputBody>
-                      <PromptInputTextarea
-                        placeholder="Plan, @ for context, / for commands"
-                        className="min-h-10 max-h-40 bg-transparent px-3 pt-2.5 text-sm"
-                      />
-                    </PromptInputBody>
-                    <PromptInputFooter className="justify-between px-2 pb-1.5 pt-0">
-                      <label className="sr-only" htmlFor="run-engine-select">Select run engine</label>
-                      <select
-                        id="run-engine-select"
-                        aria-label="Select run engine"
-                        value={selectedRunEngine}
-                        onChange={(event) => setSelectedRunEngine(event.target.value as CodingAgentExecutionEngine)}
-                        className="h-6 rounded border border-border/50 bg-background px-2 text-[11px] text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                      >
-                        <option value="native">Native</option>
-                        <option value="opencode">OpenCode</option>
-                      </select>
-                      <ModelSelector open={isModelSelectorOpen} onOpenChange={setIsModelSelectorOpen}>
-                        <ModelSelectorTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-                            aria-label="Select run model"
-                          >
-                            {selectedRunModelLabel}
-                          </Button>
-                        </ModelSelectorTrigger>
-                        <ModelSelectorContent className="max-w-xs">
-                          <ModelSelectorInput placeholder="Search models..." />
-                          <ModelSelectorList>
-                            <ModelSelectorEmpty>No active chat models</ModelSelectorEmpty>
-                            <ModelSelectorGroup heading="Run model">
-                              <ModelSelectorItem
-                                value="auto"
-                                onSelect={() => {
-                                  setSelectedRunModelId(null);
-                                  setIsModelSelectorOpen(false);
-                                }}
-                              >
-                                <ModelSelectorName>Auto</ModelSelectorName>
-                              </ModelSelectorItem>
-                              {chatModels.map((model) => (
-                                <ModelSelectorItem
-                                  key={model.id}
-                                  value={`${model.name} ${model.slug}`}
-                                  onSelect={() => {
-                                    setSelectedRunModelId(model.id);
-                                    setIsModelSelectorOpen(false);
-                                  }}
-                                >
-                                  <ModelSelectorName>{model.name}</ModelSelectorName>
-                                </ModelSelectorItem>
-                              ))}
-                            </ModelSelectorGroup>
-                          </ModelSelectorList>
-                        </ModelSelectorContent>
-                      </ModelSelector>
-                      {isSending ? (
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                          onClick={stopCurrentRun}
-                          aria-label="Stop"
-                        >
-                          <Square className="h-3 w-3 fill-current" />
-                        </Button>
-                      ) : (
-                        <PromptInputSubmit
-                          size="icon-sm"
-                          variant="ghost"
-                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                          aria-label="Send"
-                        />
-                      )}
-                    </PromptInputFooter>
-                  </PromptInput>
-                </div>
-              </div>
-
-              {/* Chat history dialog */}
-              <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-                <DialogContent className="max-w-sm">
-                  <DialogHeader>
-                    <DialogTitle>Chat History</DialogTitle>
-                  </DialogHeader>
-                  <div className="flex flex-col gap-1 py-2">
-                    {chatSessions.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No previous chats yet.</p>
-                    ) : (
-                      chatSessions.map((session) => (
-                        <button
-                          key={session.id}
-                          type="button"
-                          className="rounded-md px-3 py-2 text-left text-sm hover:bg-muted transition-colors"
-                          onClick={() => setIsHistoryOpen(false)}
-                        >
-                          <div className="truncate">{session.firstMessage}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {new Date(session.timestamp).toLocaleDateString()}
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </aside>
-          ) : (
-            <div className="flex h-full w-10 shrink-0 flex-col items-center border-l border-border/60 bg-muted/20 pt-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => setIsAgentPanelOpen(true)}
-                aria-label="Open agent panel"
-              >
-                <Sparkles className="h-4 w-4" />
-              </Button>
-            </div>
-          )}
+          <AppsBuilderChatPanel
+            isOpen={isAgentPanelOpen}
+            onOpenChange={setIsAgentPanelOpen}
+            isSending={isSending}
+            isUndoing={isUndoing}
+            timeline={timeline}
+            activeThinkingSummary={activeThinkingSummary}
+            chatSessions={chatSessions}
+            onStartNewChat={startNewChat}
+            onLoadChatSession={loadChatSession}
+            onSendMessage={sendBuilderChat}
+            onStopRun={stopCurrentRun}
+            onRevertToCheckpoint={revertToCheckpoint}
+            chatModels={chatModels}
+            selectedRunModelLabel={selectedRunModelLabel}
+            isModelSelectorOpen={isModelSelectorOpen}
+            onModelSelectorOpenChange={setIsModelSelectorOpen}
+            onSelectModelId={setSelectedRunModelId}
+          />
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-18
+Last Updated: 2026-02-19
 
 ## Scope
 Frontend coverage for:
@@ -37,12 +37,13 @@ Frontend coverage for:
 - Builder workspace creates coding-agent runs through `/coding-agent/runs`, then streams via `/coding-agent/runs/{run_id}/stream`.
 - Builder workspace retries coding-agent run creation once after `REVISION_CONFLICT` by refreshing state and resubmitting with `latest_revision_id`.
 - Builder workspace renders `assistant.delta` incrementally while a run is active (partial text appears before stream completion).
-- Builder workspace sends prior user/assistant turns as `messages` on each new `/coding-agent/runs` request so follow-up prompts remain contextual.
+- Builder workspace uses server-persisted chat sessions as the conversation source of truth (`chat_session_id`), and resumes the same thread on follow-up sends.
 - Builder workspace shows per-run model selector options (`Auto` + active chat models) and sends `model_id` on run creation.
 - Builder workspace supports changing model selection between messages and uses the new selection for the next run payload.
 - Builder workspace surfaces actionable model availability errors when backend returns `CODING_AGENT_MODEL_UNAVAILABLE`.
-- Builder workspace shows per-run execution-engine selector (`Native` default, `OpenCode` optional) and sends `engine` on run creation.
+- Builder workspace no longer renders an execution-engine selector and sends env-resolved engine (`NEXT_PUBLIC_APPS_CODING_AGENT_ENGINE`, default `opencode`) on run creation.
 - Builder workspace surfaces actionable engine-availability errors when backend returns `CODING_AGENT_ENGINE_UNAVAILABLE` / `CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME`.
+- Builder workspace chat history dialog loads real sessions from API, hydrates persisted user/assistant turns, and reuses loaded `chat_session_id`.
 - Builder workspace per-message revert action restores attached coding-agent checkpoints via `/coding-agent/checkpoints/{checkpoint_id}/restore`.
 - Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
 - Builder code tab auto-expands ancestor folders when the selected file is nested.
@@ -135,6 +136,12 @@ Frontend coverage for:
 - Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
 - Date: 2026-02-18 12:54 UTC
 - Result: PASS (1 suite, 29 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-19 18:43 UTC
+- Result: PASS (1 suite, 30 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
+- Date: 2026-02-19 18:43 UTC
+- Result: PASS (5 suites, 35 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for app detail publish/unpublish actions.

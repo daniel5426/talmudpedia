@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, desc
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -69,6 +69,11 @@ class BuilderCheckpointType(str, enum.Enum):
     auto_run = "auto_run"
     undo = "undo"
     file_revert = "file_revert"
+
+
+class PublishedAppCodingChatMessageRole(str, enum.Enum):
+    user = "user"
+    assistant = "assistant"
 
 
 class PublishedAppUserMembershipStatus(str, enum.Enum):
@@ -140,6 +145,11 @@ class PublishedApp(Base):
     )
     publish_jobs = relationship(
         "PublishedAppPublishJob",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+    )
+    coding_chat_sessions = relationship(
+        "PublishedAppCodingChatSession",
         back_populates="published_app",
         cascade="all, delete-orphan",
     )
@@ -222,6 +232,77 @@ class PublishedAppSession(Base):
 
     __table_args__ = (
         Index("ix_published_app_sessions_app_user", "published_app_id", "user_id"),
+    )
+
+
+class PublishedAppCodingChatSession(Base):
+    __tablename__ = "published_app_coding_chat_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title = Column(String(255), nullable=False, default="New Chat")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    last_message_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    published_app = relationship("PublishedApp", back_populates="coding_chat_sessions")
+    user = relationship("User")
+    messages = relationship(
+        "PublishedAppCodingChatMessage",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_published_app_coding_chat_sessions_scope_last_message",
+            "published_app_id",
+            "user_id",
+            desc("last_message_at"),
+        ),
+    )
+
+
+class PublishedAppCodingChatMessage(Base):
+    __tablename__ = "published_app_coding_chat_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_coding_chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role = Column(
+        SQLEnum(PublishedAppCodingChatMessageRole, values_callable=_enum_values),
+        nullable=False,
+    )
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    session = relationship("PublishedAppCodingChatSession", back_populates="messages")
+    run = relationship("AgentRun")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "role", name="uq_published_app_coding_chat_messages_run_role"),
+        Index("ix_published_app_coding_chat_messages_session_created_at", "session_id", "created_at"),
     )
 
 

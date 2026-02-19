@@ -27,6 +27,7 @@ from app.db.postgres.models.published_apps import (
 )
 from app.services.published_app_coding_agent_profile import ensure_coding_agent_profile, resolve_coding_agent_chat_model_id
 from app.services.published_app_coding_run_sandbox_service import PublishedAppCodingRunSandboxService
+from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.services.published_app_coding_agent_engines.base import EngineRunContext, PublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
@@ -76,7 +77,20 @@ class PublishedAppCodingAgentRuntimeService:
             "sandbox_id": str(context.get("coding_run_sandbox_id") or "") or None,
             "sandbox_status": str(context.get("coding_run_sandbox_status") or "") or None,
             "sandbox_started_at": context.get("coding_run_sandbox_started_at"),
+            "chat_session_id": str(context.get("chat_session_id") or "") or None,
         }
+
+    @staticmethod
+    def _default_execution_engine() -> str:
+        value = str(os.getenv("APPS_CODING_AGENT_DEFAULT_ENGINE", CODING_AGENT_ENGINE_OPENCODE) or "").strip().lower()
+        if value == CODING_AGENT_ENGINE_NATIVE:
+            return CODING_AGENT_ENGINE_NATIVE
+        return CODING_AGENT_ENGINE_OPENCODE
+
+    @staticmethod
+    def _native_engine_enabled() -> bool:
+        value = str(os.getenv("APPS_CODING_AGENT_NATIVE_ENABLED", "0") or "").strip().lower()
+        return value in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _model_unavailable_error(message: str) -> HTTPException:
@@ -188,7 +202,7 @@ class PublishedAppCodingAgentRuntimeService:
 
     @staticmethod
     def _normalize_execution_engine(value: str | None) -> str:
-        engine = str(value or CODING_AGENT_ENGINE_NATIVE).strip().lower()
+        engine = str(value or PublishedAppCodingAgentRuntimeService._default_execution_engine()).strip().lower()
         if engine == CODING_AGENT_ENGINE_OPENCODE:
             return CODING_AGENT_ENGINE_OPENCODE
         return CODING_AGENT_ENGINE_NATIVE
@@ -402,13 +416,18 @@ class PublishedAppCodingAgentRuntimeService:
         messages: list[dict[str, str]] | None = None,
         requested_scopes: list[str] | None = None,
         requested_model_id: UUID | None = None,
-        execution_engine: str = CODING_AGENT_ENGINE_NATIVE,
+        execution_engine: str | None = None,
+        chat_session_id: UUID | None = None,
     ) -> AgentRun:
         requested_model_id, resolved_model_id = await self._resolve_run_model_ids(
             tenant_id=app.tenant_id,
             requested_model_id=requested_model_id,
         )
         normalized_engine = self._normalize_execution_engine(execution_engine)
+        if normalized_engine == CODING_AGENT_ENGINE_NATIVE and not self._native_engine_enabled():
+            raise self._engine_unavailable_error(
+                "Native engine is disabled by policy. Set APPS_CODING_AGENT_NATIVE_ENABLED=1 to enable it."
+            )
         opencode_model_id: str | None = None
         if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
             self._assert_opencode_sandbox_mode_available()
@@ -451,6 +470,7 @@ class PublishedAppCodingAgentRuntimeService:
                 "resolved_model_id": str(resolved_model_id),
                 "execution_engine": normalized_engine,
                 "opencode_model_id": opencode_model_id,
+                "chat_session_id": str(chat_session_id) if chat_session_id else None,
             },
         }
 
@@ -856,6 +876,37 @@ class PublishedAppCodingAgentRuntimeService:
             )
         return "I can help with code changes, debugging, and verification in this app workspace. Tell me your goal."
 
+    @staticmethod
+    def _extract_chat_session_id(run: AgentRun) -> UUID | None:
+        input_params = run.input_params if isinstance(run.input_params, dict) else {}
+        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        raw = str(context.get("chat_session_id") or "").strip()
+        if not raw:
+            return None
+        try:
+            return UUID(raw)
+        except Exception:
+            return None
+
+    async def _persist_assistant_chat_message_if_needed(
+        self,
+        *,
+        run: AgentRun,
+        assistant_text: str,
+    ) -> None:
+        session_id = self._extract_chat_session_id(run)
+        if session_id is None:
+            return
+        text = str(assistant_text or "").strip()
+        if not text:
+            return
+        history_service = PublishedAppCodingChatHistoryService(self.db)
+        await history_service.persist_assistant_message(
+            session_id=session_id,
+            run_id=run.id,
+            content=text,
+        )
+
     async def stream_run_events(
         self,
         *,
@@ -870,6 +921,8 @@ class PublishedAppCodingAgentRuntimeService:
 
         seq = 1
         assistant_delta_emitted = False
+        assistant_chunks: list[str] = []
+        assistant_message_persisted = False
 
         def emit(
             event: str,
@@ -889,6 +942,20 @@ class PublishedAppCodingAgentRuntimeService:
             )
             seq += 1
             return envelope
+
+        async def persist_assistant_message_for_terminal(default_text: str | None = None) -> None:
+            nonlocal assistant_message_persisted
+            if assistant_message_persisted:
+                return
+            text = "".join(assistant_chunks).strip()
+            if not text:
+                text = str(default_text or "").strip()
+            if not text:
+                text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
+            if not text:
+                return
+            await self._persist_assistant_chat_message_if_needed(run=run, assistant_text=text)
+            assistant_message_persisted = True
 
         async def finalize_sandbox(reason: PublishedAppCodingRunSandboxStatus) -> None:
             sandbox_session = await self._run_sandbox_service.stop_session_for_run(
@@ -919,10 +986,13 @@ class PublishedAppCodingAgentRuntimeService:
             if terminal_status == RunStatus.completed.value:
                 await finalize_sandbox(PublishedAppCodingRunSandboxStatus.stopped)
                 assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
+                assistant_chunks.append(assistant_text)
                 yield emit("assistant.delta", "assistant", {"content": assistant_text})
+                await persist_assistant_message_for_terminal(assistant_text)
                 yield emit("run.completed", "run", self.serialize_run(run))
             else:
                 await finalize_sandbox(PublishedAppCodingRunSandboxStatus.error)
+                await persist_assistant_message_for_terminal(run.error_message or f"run {terminal_status}")
                 yield emit(
                     "run.failed",
                     "run",
@@ -942,6 +1012,7 @@ class PublishedAppCodingAgentRuntimeService:
             run.error_message = sandbox_error or "Run sandbox session is required before execution."
             run.completed_at = datetime.now(timezone.utc)
             await self.db.commit()
+            await persist_assistant_message_for_terminal(run.error_message)
             yield emit(
                 "run.failed",
                 "run",
@@ -964,9 +1035,10 @@ class PublishedAppCodingAgentRuntimeService:
                 payload = raw_event.payload
                 diagnostics = raw_event.diagnostics
                 if mapped_event == "assistant.delta":
-                    content = str((payload or {}).get("content") or "").strip()
-                    if content:
+                    raw_content = str((payload or {}).get("content") or "")
+                    if raw_content.strip():
                         assistant_delta_emitted = True
+                        assistant_chunks.append(raw_content)
                 yield emit(mapped_event, stage, payload, diagnostics)
 
             run = await self.db.get(AgentRun, run_id) or run
@@ -994,12 +1066,15 @@ class PublishedAppCodingAgentRuntimeService:
                     )
                 if not assistant_delta_emitted:
                     assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
+                    assistant_chunks.append(assistant_text)
                     yield emit("assistant.delta", "assistant", {"content": assistant_text})
+                await persist_assistant_message_for_terminal()
                 yield emit("run.completed", "run", self.serialize_run(run))
                 return
 
             if status == RunStatus.cancelled.value:
                 await finalize_sandbox(PublishedAppCodingRunSandboxStatus.stopped)
+                await persist_assistant_message_for_terminal("Run cancelled.")
                 yield emit(
                     "run.failed",
                     "run",
@@ -1010,10 +1085,12 @@ class PublishedAppCodingAgentRuntimeService:
 
             if status == RunStatus.paused.value:
                 await finalize_sandbox(PublishedAppCodingRunSandboxStatus.stopped)
+                await persist_assistant_message_for_terminal("Run paused.")
                 yield emit("run.completed", "run", self.serialize_run(run))
                 return
 
             await finalize_sandbox(PublishedAppCodingRunSandboxStatus.error)
+            await persist_assistant_message_for_terminal(run.error_message or "run failed")
             yield emit(
                 "run.failed",
                 "run",
@@ -1039,6 +1116,7 @@ class PublishedAppCodingAgentRuntimeService:
                     )
                 await self.db.commit()
                 run = failed_run
+            await persist_assistant_message_for_terminal(str(exc))
             yield emit(
                 "run.failed",
                 "run",

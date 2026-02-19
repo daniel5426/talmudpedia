@@ -115,12 +115,14 @@ backend/app/services/published_app_draft_dev_local_runtime.py
 backend/app/services/published_app_draft_dev_runtime_client.py
 backend/app/services/published_app_draft_dev_patching.py
 backend/app/services/published_app_coding_run_sandbox_service.py
+backend/app/services/published_app_coding_chat_history_service.py
 backend/app/services/published_app_coding_agent_tools.py
 backend/app/services/published_app_coding_agent_profile.py
 backend/app/services/published_app_coding_agent_runtime.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/native_engine.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
+backend/app/services/published_app_coding_agent_engines/prompt_history.py
 backend/app/services/opencode_server_client.py
 backend/app/services/published_app_templates.py
 backend/app/services/published_app_auth_templates.py

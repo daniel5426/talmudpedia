@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.models.agents import RunStatus
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSessionStatus, PublishedAppRevision
+from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.db.postgres.session import get_db
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_draft_dev_runtime import (
@@ -36,7 +37,8 @@ class CodingAgentCreateRunRequest(BaseModel):
     base_revision_id: Optional[UUID] = None
     messages: Optional[List[Dict[str, str]]] = None
     model_id: Optional[UUID] = None
-    engine: Literal["native", "opencode"] = "native"
+    engine: Optional[Literal["native", "opencode"]] = None
+    chat_session_id: Optional[UUID] = None
 
 
 class CodingAgentResumeRunRequest(BaseModel):
@@ -51,6 +53,7 @@ class CodingAgentRunResponse(BaseModel):
     run_id: str
     status: str
     execution_engine: Literal["native", "opencode"]
+    chat_session_id: Optional[str] = None
     surface: Optional[str] = None
     published_app_id: Optional[str] = None
     base_revision_id: Optional[str] = None
@@ -79,6 +82,27 @@ class CodingAgentRestoreCheckpointResponse(BaseModel):
     checkpoint_id: str
     revision: PublishedAppRevisionResponse
     run_id: Optional[str] = None
+
+
+class CodingAgentChatSessionResponse(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    last_message_at: datetime
+
+
+class CodingAgentChatMessageResponse(BaseModel):
+    id: str
+    run_id: str
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: datetime
+
+
+class CodingAgentChatSessionDetailResponse(BaseModel):
+    session: CodingAgentChatSessionResponse
+    messages: List[CodingAgentChatMessageResponse] = Field(default_factory=list)
 
 
 logger = logging.getLogger(__name__)
@@ -195,6 +219,20 @@ async def create_coding_agent_run(
         if not content:
             continue
         run_messages.append({"role": role, "content": content})
+    history_service = PublishedAppCodingChatHistoryService(db)
+    chat_session_id: UUID | None = None
+    if actor_id is not None:
+        session = await history_service.resolve_or_create_session(
+            app_id=app.id,
+            user_id=actor_id,
+            user_prompt=user_prompt,
+            session_id=payload.chat_session_id,
+        )
+        chat_session_id = session.id
+        run_messages = await history_service.build_run_messages(
+            session_id=session.id,
+            current_user_prompt=user_prompt,
+        )
 
     run = await service.create_run(
         app=app,
@@ -204,8 +242,73 @@ async def create_coding_agent_run(
         messages=run_messages or None,
         requested_model_id=payload.model_id,
         execution_engine=payload.engine,
+        chat_session_id=chat_session_id,
     )
+    if chat_session_id is not None and actor_id is not None:
+        await history_service.persist_user_message(
+            session_id=chat_session_id,
+            run_id=run.id,
+            content=user_prompt,
+        )
     return _run_to_response(service, run)
+
+
+@router.get("/{app_id}/coding-agent/chat-sessions", response_model=List[CodingAgentChatSessionResponse])
+async def list_coding_agent_chat_sessions(
+    app_id: UUID,
+    request: Request,
+    limit: int = Query(default=25, ge=1, le=100),
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    actor_id = actor.id if actor else None
+    if actor_id is None:
+        return []
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    history_service = PublishedAppCodingChatHistoryService(db)
+    sessions = await history_service.list_sessions(app_id=app.id, user_id=actor_id, limit=limit)
+    return [CodingAgentChatSessionResponse(**history_service.serialize_session(session)) for session in sessions]
+
+
+@router.get(
+    "/{app_id}/coding-agent/chat-sessions/{session_id}",
+    response_model=CodingAgentChatSessionDetailResponse,
+)
+async def get_coding_agent_chat_session(
+    app_id: UUID,
+    session_id: UUID,
+    request: Request,
+    limit: int = Query(default=200, ge=1, le=400),
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    actor_id = actor.id if actor else None
+    if actor_id is None:
+        raise HTTPException(status_code=403, detail="User context is required for coding-agent chat history")
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    history_service = PublishedAppCodingChatHistoryService(db)
+    session = await history_service.get_session_for_user(
+        app_id=app.id,
+        user_id=actor_id,
+        session_id=session_id,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Coding-agent chat session not found")
+    messages = await history_service.list_messages(session_id=session.id, limit=limit)
+    return CodingAgentChatSessionDetailResponse(
+        session=CodingAgentChatSessionResponse(**history_service.serialize_session(session)),
+        messages=[CodingAgentChatMessageResponse(**history_service.serialize_message(item)) for item in messages],
+    )
 
 
 @router.get("/{app_id}/coding-agent/runs", response_model=List[CodingAgentRunResponse])

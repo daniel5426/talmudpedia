@@ -11,6 +11,7 @@ from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.services.opencode_server_client import OpenCodeServerClient
 
 from .base import EngineCancelResult, EngineRunContext, EngineStreamEvent
+from .prompt_history import build_opencode_effective_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,12 @@ class OpenCodePublishedAppCodingAgentEngine:
         context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         messages = input_params.get("messages") if isinstance(input_params.get("messages"), list) else []
         prompt = str(input_params.get("input") or "").strip()
+        prompt_history_budget_chars = int(os.getenv("APPS_CODING_AGENT_OPENCODE_PROMPT_HISTORY_BUDGET_CHARS", "14000"))
+        effective_prompt = build_opencode_effective_prompt(
+            current_user_prompt=prompt,
+            messages=[item for item in messages if isinstance(item, dict)],
+            max_chars=prompt_history_budget_chars,
+        )
         resolved_model_id = str(context.get("resolved_model_id") or "").strip()
         opencode_model_id = str(context.get("opencode_model_id") or "").strip()
         workspace_path = str(
@@ -53,7 +60,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                 sandbox_id=sandbox_id,
                 workspace_path=workspace_path,
                 model_id=opencode_model_id or resolved_model_id,
-                prompt=prompt,
+                prompt=effective_prompt,
                 messages=[item for item in messages if isinstance(item, dict)],
             )
 

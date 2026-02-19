@@ -3,12 +3,16 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionEvent
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppCodingChatMessage,
+    PublishedAppCodingChatMessageRole,
+    PublishedAppCodingChatSession,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
     PublishedAppRevision,
@@ -23,6 +27,7 @@ from app.db.postgres.models.registry import (
 from app.services.published_app_coding_agent_engines.base import EngineCancelResult
 from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
+from app.services.published_app_coding_agent_engines.prompt_history import build_opencode_effective_prompt
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_run_sandbox_service import PublishedAppCodingRunSandboxService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClient
@@ -50,12 +55,18 @@ def _mock_run_sandbox_context(monkeypatch):
     )
 
 
-async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_id: str) -> tuple[str, str]:
+async def _create_app_and_draft_revision(
+    client,
+    headers: dict[str, str],
+    agent_id: str,
+    *,
+    app_name: str | None = None,
+) -> tuple[str, str]:
     create_resp = await client.post(
         "/admin/apps",
         headers=headers,
         json={
-            "name": "Coding Agent API App",
+            "name": app_name or "Coding Agent API App",
             "agent_id": agent_id,
             "template_key": "chat-classic",
             "auth_enabled": True,
@@ -164,6 +175,7 @@ async def test_coding_agent_create_run_list_and_get(client, db_session, monkeypa
         requested_scopes=None,
         requested_model_id=None,
         execution_engine="native",
+        chat_session_id=None,
     ):
         normalized_messages = list(messages or [])
         if not normalized_messages or normalized_messages[-1].get("content") != user_prompt:
@@ -228,9 +240,8 @@ async def test_coding_agent_create_run_list_and_get(client, db_session, monkeypa
     assert run_row is not None
     run_messages = run_row.input_params.get("messages") if isinstance(run_row.input_params, dict) else None
     assert isinstance(run_messages, list)
-    assert run_messages[0]["content"] == "hi"
-    assert run_messages[1]["content"] == "hello"
-    assert run_messages[-1]["content"] == "Update the hero title"
+    assert run_messages[0]["role"] == "user"
+    assert run_messages[0]["content"] == "Update the hero title"
 
 
 @pytest.mark.asyncio
@@ -274,6 +285,7 @@ async def test_coding_agent_create_run_uses_active_builder_sandbox_snapshot(clie
         requested_scopes=None,
         requested_model_id=None,
         execution_engine="native",
+        chat_session_id=None,
     ):
         run = AgentRun(
             tenant_id=app.tenant_id,
@@ -669,6 +681,302 @@ async def test_coding_agent_run_keeps_pinned_resolved_model_after_defaults_chang
     persisted = await db_session.get(AgentRun, run_id)
     assert persisted is not None
     assert str(persisted.resolved_model_id) == str(first_model.id)
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_create_run_defaults_to_opencode_engine(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    await _insert_chat_model(
+        db_session,
+        tenant_id=tenant.id,
+        name="Tenant Chat Default OpenCode",
+        is_default=True,
+    )
+
+    resolved_model_id = uuid4()
+
+    async def _fake_resolve_model(self, *, tenant_id, requested_model_id):
+        return None, resolved_model_id
+
+    async def _fake_resolve_opencode_model(self, *, tenant_id, resolved_model_id):
+        return "openai/gpt-5-mini"
+
+    async def _healthy(self, *, force=False):
+        return None
+
+    async def _fake_start_run(self, agent_id, input_params, user_id=None, background=False, mode=None, requested_scopes=None, **kwargs):
+        profile = await self.db.get(Agent, agent_id)
+        assert profile is not None
+        run = AgentRun(
+            tenant_id=profile.tenant_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            initiator_user_id=user_id,
+            status=RunStatus.queued,
+            input_params=input_params,
+        )
+        self.db.add(run)
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run.id
+
+    monkeypatch.setenv("APPS_CODING_AGENT_DEFAULT_ENGINE", "opencode")
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_run_model_ids", _fake_resolve_model)
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_opencode_model_id", _fake_resolve_opencode_model)
+    monkeypatch.setattr("app.services.opencode_server_client.OpenCodeServerClient.ensure_healthy", _healthy)
+    monkeypatch.setattr(AgentExecutorService, "start_run", _fake_start_run)
+
+    response = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/runs",
+        headers=headers,
+        json={
+            "input": "Use the default coding engine",
+            "base_revision_id": draft_revision_id,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["execution_engine"] == "opencode"
+    assert payload["chat_session_id"]
+
+    run_row = await db_session.get(AgentRun, UUID(payload["run_id"]))
+    assert run_row is not None
+    assert run_row.execution_engine == "opencode"
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_create_run_rejects_native_when_native_engine_disabled(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    async def _fake_resolve_model(self, *, tenant_id, requested_model_id):
+        return None, uuid4()
+
+    monkeypatch.setenv("APPS_CODING_AGENT_NATIVE_ENABLED", "0")
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_run_model_ids", _fake_resolve_model)
+
+    response = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/runs",
+        headers=headers,
+        json={
+            "input": "Try native engine",
+            "base_revision_id": draft_revision_id,
+            "engine": "native",
+        },
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "CODING_AGENT_ENGINE_UNAVAILABLE"
+    assert detail["field"] == "engine"
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_create_run_allows_native_when_native_engine_enabled(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    await _insert_chat_model(
+        db_session,
+        tenant_id=tenant.id,
+        name="Tenant Chat Native Enabled",
+        is_default=True,
+    )
+
+    async def _fake_resolve_model(self, *, tenant_id, requested_model_id):
+        return None, uuid4()
+
+    async def _fake_start_run(self, agent_id, input_params, user_id=None, background=False, mode=None, requested_scopes=None, **kwargs):
+        profile = await self.db.get(Agent, agent_id)
+        assert profile is not None
+        run = AgentRun(
+            tenant_id=profile.tenant_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            initiator_user_id=user_id,
+            status=RunStatus.queued,
+            input_params=input_params,
+        )
+        self.db.add(run)
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run.id
+
+    monkeypatch.setenv("APPS_CODING_AGENT_NATIVE_ENABLED", "1")
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_run_model_ids", _fake_resolve_model)
+    monkeypatch.setattr(AgentExecutorService, "start_run", _fake_start_run)
+
+    response = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/runs",
+        headers=headers,
+        json={
+            "input": "Use native",
+            "base_revision_id": draft_revision_id,
+            "engine": "native",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["execution_engine"] == "native"
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_create_run_builds_history_from_owned_chat_session(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    existing_run = await _insert_coding_agent_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+        status=RunStatus.completed,
+    )
+    session = PublishedAppCodingChatSession(
+        published_app_id=UUID(app_id),
+        user_id=user.id,
+        title="Existing thread",
+        last_message_at=datetime.now(timezone.utc),
+    )
+    db_session.add(session)
+    await db_session.commit()
+    await db_session.refresh(session)
+
+    db_session.add_all(
+        [
+            PublishedAppCodingChatMessage(
+                session_id=session.id,
+                run_id=existing_run.id,
+                role=PublishedAppCodingChatMessageRole.user,
+                content="Earlier prompt",
+            ),
+            PublishedAppCodingChatMessage(
+                session_id=session.id,
+                run_id=existing_run.id,
+                role=PublishedAppCodingChatMessageRole.assistant,
+                content="Earlier answer",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    captured: dict[str, object] = {}
+
+    async def _fake_create_run(
+        self,
+        *,
+        app,
+        base_revision,
+        actor_id,
+        user_prompt,
+        messages=None,
+        requested_scopes=None,
+        requested_model_id=None,
+        execution_engine="native",
+        chat_session_id=None,
+    ):
+        captured["messages"] = list(messages or [])
+        captured["chat_session_id"] = chat_session_id
+        run = AgentRun(
+            tenant_id=app.tenant_id,
+            agent_id=app.agent_id,
+            user_id=actor_id,
+            initiator_user_id=actor_id,
+            status=RunStatus.queued,
+            input_params={
+                "input": user_prompt,
+                "messages": list(messages or []),
+                "context": {"chat_session_id": str(chat_session_id) if chat_session_id else None},
+            },
+            surface=CODING_AGENT_SURFACE,
+            published_app_id=app.id,
+            base_revision_id=base_revision.id,
+            execution_engine=execution_engine,
+        )
+        self.db.add(run)
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run
+
+    monkeypatch.setenv("APPS_CODING_AGENT_NATIVE_ENABLED", "1")
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "create_run", _fake_create_run)
+
+    response = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/runs",
+        headers=headers,
+        json={
+            "input": "Continue this thread",
+            "base_revision_id": draft_revision_id,
+            "engine": "native",
+            "chat_session_id": str(session.id),
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["chat_session_id"] == str(session.id)
+    assert str(captured.get("chat_session_id")) == str(session.id)
+
+    run_messages = captured.get("messages")
+    assert isinstance(run_messages, list)
+    assert run_messages[0] == {"role": "user", "content": "Earlier prompt"}
+    assert run_messages[1] == {"role": "assistant", "content": "Earlier answer"}
+    assert run_messages[-1] == {"role": "user", "content": "Continue this thread"}
+
+    created_run_id = UUID(payload["run_id"])
+    persisted_user_message = (
+        await db_session.execute(
+            select(PublishedAppCodingChatMessage).where(
+                PublishedAppCodingChatMessage.run_id == created_run_id,
+                PublishedAppCodingChatMessage.role == PublishedAppCodingChatMessageRole.user,
+            )
+        )
+    ).scalar_one_or_none()
+    assert persisted_user_message is not None
+    assert persisted_user_message.content == "Continue this thread"
+    assert persisted_user_message.session_id == session.id
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_create_run_rejects_chat_session_not_owned_by_app_scope(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    other_app_id, _ = await _create_app_and_draft_revision(
+        client,
+        headers,
+        str(agent.id),
+        app_name="Coding Agent API App 2",
+    )
+
+    foreign_session = PublishedAppCodingChatSession(
+        published_app_id=UUID(other_app_id),
+        user_id=user.id,
+        title="Other app thread",
+        last_message_at=datetime.now(timezone.utc),
+    )
+    db_session.add(foreign_session)
+    await db_session.commit()
+    await db_session.refresh(foreign_session)
+
+    monkeypatch.setenv("APPS_CODING_AGENT_NATIVE_ENABLED", "1")
+
+    response = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/runs",
+        headers=headers,
+        json={
+            "input": "Use chat session from another app",
+            "base_revision_id": draft_revision_id,
+            "engine": "native",
+            "chat_session_id": str(foreign_session.id),
+        },
+    )
+    assert response.status_code == 404
+    assert "chat session" in str(response.json()["detail"]).lower()
 
 
 @pytest.mark.asyncio
@@ -1109,6 +1417,47 @@ async def test_opencode_engine_allows_recovered_apply_patch_failures(db_session)
     assert any(item.event == "tool.failed" for item in events)
     assert any(item.event == "tool.completed" for item in events)
     assert run.status == RunStatus.completed
+
+
+def test_build_opencode_effective_prompt_includes_prior_turns() -> None:
+    prompt = build_opencode_effective_prompt(
+        current_user_prompt="Please continue from there",
+        messages=[
+            {"role": "user", "content": "Build a profile page."},
+            {"role": "assistant", "content": "Done, what should I change next?"},
+        ],
+        max_chars=2000,
+    )
+    assert "Conversation context:" in prompt
+    assert "User: Build a profile page." in prompt
+    assert "Assistant: Done, what should I change next?" in prompt
+    assert prompt.endswith("Please continue from there")
+
+
+def test_build_opencode_effective_prompt_budget_truncation_is_deterministic() -> None:
+    messages = [
+        {"role": "user", "content": "first " + ("a" * 280)},
+        {"role": "assistant", "content": "second " + ("b" * 280)},
+        {"role": "user", "content": "third " + ("c" * 280)},
+        {"role": "assistant", "content": "fourth " + ("d" * 280)},
+        {"role": "user", "content": "fifth " + ("e" * 280)},
+    ]
+
+    prompt_a = build_opencode_effective_prompt(
+        current_user_prompt="current request",
+        messages=messages,
+        max_chars=1024,
+    )
+    prompt_b = build_opencode_effective_prompt(
+        current_user_prompt="current request",
+        messages=messages,
+        max_chars=1024,
+    )
+
+    assert prompt_a == prompt_b
+    assert "current request" in prompt_a
+    assert "fifth " in prompt_a
+    assert "first " not in prompt_a
 
 
 @pytest.mark.asyncio
