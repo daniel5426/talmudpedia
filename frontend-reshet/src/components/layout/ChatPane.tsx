@@ -953,7 +953,7 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
     chatController.messages.length === 0 && !chatController.isLoading && !chatController.streamingContent && !chatController.isLoadingHistory && !isVoiceModeActive;
 
   // Construct WebSocket URL
-  const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL || "";
   const wsBackendUrl = backendUrl.replace(/^http/, 'ws');
   const token = useAuthStore((state) => state.token);
   // API path in backend/main.py is mounted at /api/voice/session (via include_router prefix=/api/voice)

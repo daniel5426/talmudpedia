@@ -75,6 +75,15 @@ describe("Apps admin page", () => {
         style_tokens: {},
       },
       {
+        key: "fresh-start",
+        name: "Fresh Start",
+        description: "Minimal starter",
+        thumbnail: "fresh",
+        tags: ["minimal"],
+        entry_file: "src/main.tsx",
+        style_tokens: {},
+      },
+      {
         key: "chat-neon",
         name: "Neon Console",
         description: "Neon",
@@ -145,5 +154,26 @@ describe("Apps admin page", () => {
       );
     });
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/admin/apps/app-new"));
+  });
+
+  it("supports selecting fresh-start template on create", async () => {
+    render(<AppsPage />);
+
+    await waitFor(() => expect(publishedAppsService.list).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /add new/i }));
+    fireEvent.change(screen.getByLabelText("App Name"), { target: { value: "Fresh App" } });
+    fireEvent.click(screen.getByRole("button", { name: /fresh start/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Create App" }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Fresh App",
+          template_key: "fresh-start",
+          auth_template_key: "auth-classic",
+          agent_id: "agent-1",
+        })
+      );
+    });
   });
 });

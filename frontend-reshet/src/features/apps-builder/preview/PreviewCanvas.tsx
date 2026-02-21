@@ -23,7 +23,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
           ref={ref}
           title="App Preview"
           className="h-full w-full"
-          sandbox="allow-same-origin allow-scripts"
+          sandbox="allow-same-origin allow-scripts allow-forms"
           src={previewUrl || "about:blank"}
         />
 

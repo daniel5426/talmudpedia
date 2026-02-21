@@ -30,10 +30,13 @@ async def test_builder_state_and_revision_workflow(client, db_session):
     templates_resp = await client.get("/admin/apps/templates", headers=headers)
     assert templates_resp.status_code == 200
     templates_payload = templates_resp.json()
-    assert len(templates_payload) >= 5
+    assert len(templates_payload) >= 6
     premium_template = next((template for template in templates_payload if template["key"] == "chat-grid"), None)
     assert premium_template is not None
     assert premium_template["name"] == "Layout Shell Premium"
+    fresh_template = next((template for template in templates_payload if template["key"] == "fresh-start"), None)
+    assert fresh_template is not None
+    assert fresh_template["entry_file"] == "src/main.tsx"
 
     builder_state = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert builder_state.status_code == 200
@@ -41,6 +44,15 @@ async def test_builder_state_and_revision_workflow(client, db_session):
     assert state_payload["app"]["id"] == app_id
     assert state_payload["current_draft_revision"]["id"]
     assert state_payload["preview_token"]
+    assert ".opencode/package.json" in state_payload["current_draft_revision"]["files"]
+    assert (
+        ".opencode/tools/coding_agent_get_agent_integration_contract.ts"
+        in state_payload["current_draft_revision"]["files"]
+    )
+    assert (
+        ".opencode/tools/coding_agent_describe_selected_agent_contract.ts"
+        in state_payload["current_draft_revision"]["files"]
+    )
     draft_revision_id = state_payload["current_draft_revision"]["id"]
 
     conflict_resp = await client.post(
@@ -94,6 +106,18 @@ async def test_builder_state_and_revision_workflow(client, db_session):
     assert "src/components/layout/ChatPane.tsx" in reset_payload["files"]
     assert "src/components/layout/SourceListPane.tsx" in reset_payload["files"]
     assert "src/components/layout/SourceViewerPane.tsx" in reset_payload["files"]
+
+    fresh_reset_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/template-reset",
+        headers=headers,
+        json={"template_key": "fresh-start"},
+    )
+    assert fresh_reset_resp.status_code == 200
+    fresh_reset_payload = fresh_reset_resp.json()
+    assert fresh_reset_payload["template_key"] == "fresh-start"
+    assert "src/main.tsx" in fresh_reset_payload["files"]
+    assert "src/runtime-sdk.ts" in fresh_reset_payload["files"]
+    assert ".opencode/package.json" in fresh_reset_payload["files"]
 
     _, publish_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
     assert publish_status["status"] == "succeeded"
@@ -154,7 +178,7 @@ async def test_builder_revision_rejects_path_traversal(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_builder_revision_rejects_unsupported_package_import(client, db_session):
+async def test_builder_revision_allows_unrestricted_package_imports(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     create_resp = await client.post(
@@ -189,10 +213,9 @@ async def test_builder_revision_rejects_unsupported_package_import(client, db_se
             ],
         },
     )
-    assert revision_resp.status_code == 422
-    detail = revision_resp.json()["detail"]
-    assert detail["code"] == "BUILDER_COMPILE_FAILED"
-    assert any("Unsupported package import: axios" in item["message"] for item in detail["diagnostics"])
+    assert revision_resp.status_code == 200
+    payload = revision_resp.json()
+    assert "src/BadImport.tsx" in payload["files"]
 
 
 @pytest.mark.asyncio

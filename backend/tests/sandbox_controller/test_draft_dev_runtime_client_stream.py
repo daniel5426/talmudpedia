@@ -104,3 +104,84 @@ async def test_stream_opencode_events_reports_exception_class_when_message_empty
     with pytest.raises(PublishedAppDraftDevRuntimeClientError) as exc_info:
         _ = [item async for item in client.stream_opencode_events(sandbox_id="sandbox-1", run_ref="run-ref-1")]
     assert "SilentStreamError" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_start_opencode_run_uses_dedicated_start_timeout(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        status_code = 200
+        reason_phrase = "OK"
+        text = ""
+
+        def json(self):
+            return {"run_ref": "run-ref-1"}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, json=None):
+            captured["method"] = method
+            captured["url"] = url
+            return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_START_TIMEOUT_SECONDS", "42")
+
+    client = _client()
+    result = await client.start_opencode_run(
+        sandbox_id="sandbox-1",
+        run_id="run-1",
+        app_id="app-1",
+        workspace_path="/workspace",
+        model_id="openai/gpt-5",
+        prompt="hello",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+    assert result["run_ref"] == "run-ref-1"
+    timeout = captured.get("timeout")
+    assert isinstance(timeout, httpx.Timeout)
+    assert timeout.read == 42
+
+
+@pytest.mark.asyncio
+async def test_start_opencode_run_reports_exception_class_when_message_empty(monkeypatch: pytest.MonkeyPatch):
+    class _SilentStartError(Exception):
+        def __str__(self) -> str:
+            return ""
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, json=None):
+            raise _SilentStartError()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    client = _client()
+    with pytest.raises(PublishedAppDraftDevRuntimeClientError) as exc_info:
+        await client.start_opencode_run(
+            sandbox_id="sandbox-1",
+            run_id="run-1",
+            app_id="app-1",
+            workspace_path="/workspace",
+            model_id="openai/gpt-5",
+            prompt="hello",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+    assert "SilentStartError" in str(exc_info.value)

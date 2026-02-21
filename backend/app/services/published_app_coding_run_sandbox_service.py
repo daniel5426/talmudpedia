@@ -95,9 +95,12 @@ class PublishedAppCodingRunSandboxService:
         app: PublishedApp,
         revision: PublishedAppRevision,
         actor_id: UUID | None,
+        controller_session_id: str | None = None,
     ) -> PublishedAppCodingRunSandboxSession:
+        await self.reap_expired_sessions(limit=20)
         now = self._now()
         session = await self.get_session_for_run(run_id=run.id)
+        effective_controller_session_id = str(controller_session_id or run.id).strip() or str(run.id)
 
         if session is None:
             session = PublishedAppCodingRunSandboxSession(
@@ -145,12 +148,12 @@ class PublishedAppCodingRunSandboxService:
             tenant_id=str(app.tenant_id),
             app_id=str(app.id),
             user_id=str(actor_id or run.id),
-            session_id=str(run.id),
+            session_id=effective_controller_session_id,
         )
 
         try:
             started = await self.client.start_session(
-                session_id=str(run.id),
+                session_id=effective_controller_session_id,
                 tenant_id=str(app.tenant_id),
                 app_id=str(app.id),
                 user_id=str(actor_id or run.id),
@@ -168,7 +171,7 @@ class PublishedAppCodingRunSandboxService:
             session.expires_at = now
             return session
 
-        sandbox_id = str(started.get("sandbox_id") or run.id)
+        sandbox_id = str(started.get("sandbox_id") or effective_controller_session_id)
         session.status = PublishedAppCodingRunSandboxStatus.running
         session.sandbox_id = sandbox_id
         session.preview_url = str(started.get("preview_url") or "")
@@ -186,6 +189,69 @@ class PublishedAppCodingRunSandboxService:
             workspace_path = str(await self.client.resolve_local_workspace_path(sandbox_id=sandbox_id) or "").strip()
         session.workspace_path = workspace_path or session.workspace_path or "/workspace"
         return session
+
+    async def keep_session_warm_for_run(
+        self,
+        *,
+        run_id: UUID,
+    ) -> PublishedAppCodingRunSandboxSession | None:
+        session = await self.get_session_for_run(run_id=run_id)
+        if session is None:
+            return None
+        now = self._now()
+        if session.sandbox_id:
+            try:
+                await self.client.heartbeat_session(
+                    sandbox_id=session.sandbox_id,
+                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                )
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                session.status = PublishedAppCodingRunSandboxStatus.error
+                session.last_error = str(exc)
+                session.last_activity_at = now
+                session.expires_at = now
+                return session
+        session.status = PublishedAppCodingRunSandboxStatus.running
+        session.stopped_at = None
+        session.last_activity_at = now
+        session.expires_at = self._expires_at(now)
+        session.last_error = None
+        return session
+
+    async def reap_expired_sessions(self, *, limit: int = 20) -> int:
+        now = self._now()
+        result = await self.db.execute(
+            select(PublishedAppCodingRunSandboxSession)
+            .where(
+                and_(
+                    PublishedAppCodingRunSandboxSession.status == PublishedAppCodingRunSandboxStatus.running,
+                    PublishedAppCodingRunSandboxSession.expires_at.is_not(None),
+                    PublishedAppCodingRunSandboxSession.expires_at <= now,
+                    PublishedAppCodingRunSandboxSession.sandbox_id.is_not(None),
+                )
+            )
+            .order_by(PublishedAppCodingRunSandboxSession.expires_at.asc())
+            .limit(max(1, int(limit)))
+        )
+        sessions = list(result.scalars().all())
+        reaped = 0
+        for session in sessions:
+            if session.sandbox_id:
+                try:
+                    await self.client.stop_session(sandbox_id=session.sandbox_id)
+                except PublishedAppDraftDevRuntimeClientError as exc:
+                    session.status = PublishedAppCodingRunSandboxStatus.error
+                    session.last_error = str(exc)
+                    session.last_activity_at = now
+                    session.expires_at = now
+                    continue
+            session.status = PublishedAppCodingRunSandboxStatus.expired
+            session.stopped_at = now
+            session.last_activity_at = now
+            session.expires_at = now
+            session.last_error = None
+            reaped += 1
+        return reaped
 
     async def stop_session_for_run(
         self,

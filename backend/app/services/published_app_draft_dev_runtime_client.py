@@ -451,6 +451,17 @@ class PublishedAppDraftDevRuntimeClient:
             raise PublishedAppDraftDevRuntimeClientError(
                 "OpenCode sandbox run requires APPS_SANDBOX_CONTROLLER_URL or APPS_DRAFT_DEV_CONTROLLER_URL"
             )
+        start_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_START_TIMEOUT_SECONDS") or "").strip()
+        start_timeout_seconds: float | None = None
+        if start_timeout_raw:
+            try:
+                parsed = float(start_timeout_raw)
+                if parsed > 0:
+                    start_timeout_seconds = parsed
+            except Exception:
+                start_timeout_seconds = None
+        if start_timeout_seconds is None:
+            start_timeout_seconds = max(float(self._config.request_timeout_seconds), 30.0)
         payload = {
             "run_id": run_id,
             "app_id": app_id,
@@ -459,7 +470,12 @@ class PublishedAppDraftDevRuntimeClient:
             "prompt": prompt,
             "messages": messages,
         }
-        return await self._request("POST", f"/sessions/{sandbox_id}/opencode/start", json=payload)
+        return await self._request(
+            "POST",
+            f"/sessions/{sandbox_id}/opencode/start",
+            json=payload,
+            timeout_seconds=start_timeout_seconds,
+        )
 
     async def stream_opencode_events(
         self,
@@ -526,7 +542,14 @@ class PublishedAppDraftDevRuntimeClient:
         payload = {"run_ref": run_ref}
         return await self._request("POST", f"/sessions/{sandbox_id}/opencode/cancel", json=payload)
 
-    async def _request(self, method: str, path: str, *, json: Dict[str, Any]) -> Dict[str, Any]:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Dict[str, Any],
+        timeout_seconds: float | None = None,
+    ) -> Dict[str, Any]:
         if not self._config.controller_url:
             raise PublishedAppDraftDevRuntimeClientError("Draft dev controller URL is not configured")
         base_url = self._config.controller_url.rstrip("/")
@@ -535,12 +558,18 @@ class PublishedAppDraftDevRuntimeClient:
         if self._config.controller_token:
             headers["Authorization"] = f"Bearer {self._config.controller_token}"
 
-        timeout = httpx.Timeout(self._config.request_timeout_seconds)
+        effective_timeout = float(timeout_seconds) if timeout_seconds is not None else float(self._config.request_timeout_seconds)
+        if effective_timeout <= 0:
+            effective_timeout = float(self._config.request_timeout_seconds)
+        timeout = httpx.Timeout(effective_timeout)
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.request(method, url, headers=headers, json=json)
         except Exception as exc:
-            raise PublishedAppDraftDevRuntimeClientError(f"Draft dev controller request failed: {exc}") from exc
+            detail = str(exc).strip()
+            if not detail:
+                detail = exc.__class__.__name__
+            raise PublishedAppDraftDevRuntimeClientError(f"Draft dev controller request failed: {detail}") from exc
 
         if response.status_code >= 400:
             body = response.text.strip()

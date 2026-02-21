@@ -27,12 +27,45 @@ const getRuntimeContext = (): RuntimeContext => {
   return candidate || {};
 };
 
+const safeEncodeSegment = (value: string): string => {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "";
+  try {
+    return encodeURIComponent(decodeURIComponent(trimmed));
+  } catch {
+    return encodeURIComponent(trimmed);
+  }
+};
+
+const deriveBasePathFromLocation = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const pathname = window.location.pathname || "";
+
+  const previewMatch = pathname.match(/\/public\/apps\/preview\/revisions\/([^/]+)\/assets(?:\/.*)?$/);
+  if (previewMatch?.[1]) {
+    const revisionId = safeEncodeSegment(previewMatch[1]);
+    if (revisionId) {
+      return `/api/py/public/apps/preview/revisions/${revisionId}`;
+    }
+  }
+
+  const publishedMatch = pathname.match(/\/public\/apps\/([^/]+)\/assets(?:\/.*)?$/);
+  if (publishedMatch?.[1]) {
+    const appSlug = safeEncodeSegment(publishedMatch[1]);
+    if (appSlug) {
+      return `/api/py/public/apps/${appSlug}`;
+    }
+  }
+
+  return null;
+};
+
 const resolveBasePath = (basePath?: string): string | null => {
   const ctx = getRuntimeContext();
   if (basePath) return basePath;
   if (ctx.basePath) return ctx.basePath;
   if (ctx.appSlug) return `/api/py/public/apps/${encodeURIComponent(ctx.appSlug)}`;
-  return null;
+  return deriveBasePathFromLocation();
 };
 
 const resolveToken = (): string | null => {
@@ -42,18 +75,24 @@ const resolveToken = (): string | null => {
   return window.localStorage.getItem(`${TOKEN_PREFIX}:${ctx.appSlug}`);
 };
 
+const resolvePreviewToken = (): string | null => {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("preview_token");
+};
+
+const buildStreamUrl = (resolvedBasePath: string): string => {
+  const base = `${resolvedBasePath}/chat/stream`;
+  const previewToken = resolvePreviewToken();
+  if (!previewToken || !resolvedBasePath.includes("/preview/revisions/")) {
+    return base;
+  }
+  const connector = base.includes("?") ? "&" : "?";
+  return `${base}${connector}preview_token=${encodeURIComponent(previewToken)}`;
+};
+
 export const createRuntimeClient = (basePath?: string) => {
   return {
     async stream(input: RuntimeInput, onEvent: (event: RuntimeEvent) => void): Promise<{ chatId: string | null }> {
-      const ctx = getRuntimeContext();
-      if (ctx.mode === "builder-preview") {
-        onEvent({
-          type: "error",
-          content: "Live runtime is unavailable in builder preview. Publish the app to test real agent responses.",
-        });
-        return { chatId: null };
-      }
-
       const resolvedBasePath = resolveBasePath(basePath);
       if (!resolvedBasePath) {
         throw new Error("Runtime context is missing app slug/base path.");
@@ -65,7 +104,7 @@ export const createRuntimeClient = (basePath?: string) => {
         headers.Authorization = `Bearer ${token}`;
       }
 
-      const response = await fetch(`${resolvedBasePath}/chat/stream`, {
+      const response = await fetch(buildStreamUrl(resolvedBasePath), {
         method: "POST",
         headers,
         body: JSON.stringify(input),

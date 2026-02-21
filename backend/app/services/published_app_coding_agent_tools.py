@@ -24,6 +24,9 @@ from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraftDevSessionStatus, PublishedAppRevision, PublishedAppRevisionBuildStatus, PublishedAppRevisionKind
 from app.db.postgres.models.registry import ToolDefinitionScope, ToolImplementationType, ToolRegistry, ToolStatus
+from app.services.published_app_agent_integration_contract import (
+    build_published_app_agent_integration_contract,
+)
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.tool_function_registry import register_tool_function
 
@@ -907,6 +910,105 @@ async def coding_agent_collect_context(payload: Any) -> dict[str, Any]:
         }
 
 
+@register_tool_function("coding_agent_get_agent_integration_contract")
+async def coding_agent_get_agent_integration_contract(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    async with get_session() as db:
+        ctx = await _resolve_run_tool_context(db, tool_payload)
+        contract = await build_published_app_agent_integration_contract(db=db, app=ctx.app)
+        await db.commit()
+        return contract
+
+
+def _summarize_contract_schema(schema: Any, *, max_properties: int) -> dict[str, Any]:
+    if not isinstance(schema, dict):
+        return {"type": "unknown", "required": [], "properties": [], "property_count": 0}
+    properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    required = schema.get("required") if isinstance(schema.get("required"), list) else []
+    entries: list[dict[str, Any]] = []
+    for index, (name, raw_spec) in enumerate(properties.items()):
+        if index >= max_properties:
+            break
+        spec = raw_spec if isinstance(raw_spec, dict) else {}
+        entry: dict[str, Any] = {"name": str(name), "type": str(spec.get("type") or "unknown")}
+        description = str(spec.get("description") or "").strip()
+        if description:
+            entry["description"] = description
+        enum_values = spec.get("enum")
+        if isinstance(enum_values, list) and enum_values:
+            entry["enum"] = [str(item) for item in enum_values[:8]]
+        entries.append(entry)
+    return {
+        "type": str(schema.get("type") or "object"),
+        "required": [str(item) for item in required[:40]],
+        "properties": entries,
+        "property_count": len(properties),
+        "truncated_properties": len(properties) > max_properties,
+    }
+
+
+@register_tool_function("coding_agent_describe_selected_agent_contract")
+async def coding_agent_describe_selected_agent_contract(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    max_tools = _resolve_int_arg(tool_payload, ("max_tools", "maxTools"), default=12) or 12
+    max_props = _resolve_int_arg(
+        tool_payload,
+        ("max_properties_per_schema", "maxPropertiesPerSchema"),
+        default=20,
+    ) or 20
+    if max_tools < 1:
+        max_tools = 1
+    if max_tools > 50:
+        max_tools = 50
+    if max_props < 1:
+        max_props = 1
+    if max_props > 120:
+        max_props = 120
+    include_unresolved = _resolve_bool_arg(
+        tool_payload,
+        ("include_unresolved", "includeUnresolved"),
+        default=True,
+    )
+
+    async with get_session() as db:
+        ctx = await _resolve_run_tool_context(db, tool_payload)
+        contract = await build_published_app_agent_integration_contract(db=db, app=ctx.app)
+        tools = contract.get("tools") if isinstance(contract.get("tools"), list) else []
+        tool_summaries: list[dict[str, Any]] = []
+        for tool in tools[:max_tools]:
+            if not isinstance(tool, dict):
+                continue
+            tool_summaries.append(
+                {
+                    "id": str(tool.get("id") or ""),
+                    "slug": str(tool.get("slug") or ""),
+                    "name": str(tool.get("name") or ""),
+                    "description": str(tool.get("description") or "") or None,
+                    "runtime_readiness": tool.get("runtime_readiness") if isinstance(tool.get("runtime_readiness"), dict) else {"ready": False},
+                    "ui_hints": tool.get("ui_hints"),
+                    "input_schema": _summarize_contract_schema(tool.get("input_schema"), max_properties=max_props),
+                    "output_schema": _summarize_contract_schema(tool.get("output_schema"), max_properties=max_props),
+                }
+            )
+
+        unresolved = contract.get("unresolved_tool_references")
+        unresolved_payload = unresolved if include_unresolved and isinstance(unresolved, list) else []
+
+        result = {
+            "app_id": str(contract.get("app_id") or ""),
+            "agent_id": str(contract.get("agent_id") or ""),
+            "agent": contract.get("agent") if isinstance(contract.get("agent"), dict) else {},
+            "ui_hint_standard": contract.get("ui_hint_standard") if isinstance(contract.get("ui_hint_standard"), dict) else {},
+            "resolved_tool_count": int(contract.get("resolved_tool_count") or 0),
+            "returned_tool_count": len(tool_summaries),
+            "truncated_tools": len(tools) > max_tools,
+            "tools": tool_summaries,
+            "unresolved_tool_references": unresolved_payload,
+        }
+        await db.commit()
+        return result
+
+
 @register_tool_function("coding_agent_apply_patch")
 async def coding_agent_apply_patch(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
@@ -1361,6 +1463,44 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
                     "max_results": {"type": "integer", "minimum": 1, "maximum": 200},
                 },
                 "required": ["query"],
+                "additionalProperties": True,
+            },
+            "output": {"type": "object", "additionalProperties": True},
+        },
+    },
+    {
+        "name": "Get Agent Integration Contract",
+        "slug": "agent_integration_contract",
+        "function_name": "coding_agent_get_agent_integration_contract",
+        "description": (
+            "Return selected runtime-agent contract (resolved tools, input/output schemas, "
+            "and optional x-ui hints) for the current published app."
+        ),
+        "timeout_s": 20,
+        "is_pure": True,
+        "schema": {
+            "input": {"type": "object", "additionalProperties": True},
+            "output": {"type": "object", "additionalProperties": True},
+        },
+    },
+    {
+        "name": "Describe Selected Agent Contract",
+        "slug": "describe_selected_agent_contract",
+        "function_name": "coding_agent_describe_selected_agent_contract",
+        "description": (
+            "Return a compact summary of the selected app-agent contract "
+            "(tools, runtime readiness, schema fields, and optional x-ui hints)."
+        ),
+        "timeout_s": 20,
+        "is_pure": True,
+        "schema": {
+            "input": {
+                "type": "object",
+                "properties": {
+                    "max_tools": {"type": "integer", "minimum": 1, "maximum": 50},
+                    "max_properties_per_schema": {"type": "integer", "minimum": 1, "maximum": 120},
+                    "include_unresolved": {"type": "boolean"},
+                },
                 "additionalProperties": True,
             },
             "output": {"type": "object", "additionalProperties": True},

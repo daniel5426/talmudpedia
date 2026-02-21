@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-19
+Last Updated: 2026-02-21
 
 ## Scope
 Frontend coverage for:
@@ -21,6 +21,7 @@ Frontend coverage for:
 
 ## Key Scenarios Covered
 - Apps admin page loads existing apps and submits create payload.
+- Apps admin page supports selecting `fresh-start` template and sends `template_key: fresh-start` in create payload.
 - Apps admin create modal supports frontend template + auth template selection and builder-route redirect on create.
 - Builder workspace renders tabs, persists draft revision saves, confirms template overwrite, and applies streamed patch ops to revision save.
 - Builder workspace supports `Config` section navigation (`Overview | Users | Domains | Code`).
@@ -30,8 +31,12 @@ Frontend coverage for:
 - Builder workspace renders assistant chat replies from coding-agent SSE while suppressing lifecycle/status noise cards (`run.accepted`, `run.completed`, `revision.created`, `checkpoint.created`).
 - Builder workspace keeps the editor/workspace mounted during post-run state refresh (no full-page loading fallback after each reply).
 - Builder workspace renders tool calls as dedicated rows (no raw JSON payload blocks), with running shimmer state and persisted completed/failed visual states.
+- Builder workspace renders tool calls via AI Elements `Task` rows, including normalized intent labels and file-path chips extracted from tool payloads.
 - Builder workspace coding-agent panel uses Cursor-style composer placeholder contract (`Plan, @ for context, / for commands`) with run submission preserved.
 - Builder workspace coding-agent panel now uses AI elements `Conversation` scrolling model + `ConversationScrollButton`, with minimal/no-card event presentation and lightweight shimmering `Thinking...` text.
+- Builder workspace shows FIFO queued prompts via AI Elements `Queue` when user submits during active runs, with per-item remove action.
+- Builder workspace stop flow calls coding-agent cancel endpoint and preserves queue progression to the next pending prompt.
+- Builder workspace loads coding-agent capabilities once to hydrate engine/policy context for coding runs.
 - Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
 - Builder workspace shell now enforces viewport-bounded layout (`h-dvh` + `min-h-0` + overflow clamps) so chat scroll stays internal and the page does not grow with timeline length.
 - Builder workspace creates coding-agent runs through `/coding-agent/runs`, then streams via `/coding-agent/runs/{run_id}/stream`.
@@ -58,6 +63,9 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_admin_page.test.tsx --runInBand`
+- Date: 2026-02-21
+- Result: PASS (1 suite, 2 tests)
 - Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
 - Date: 2026-02-14 17:29 UTC
 - Result: PASS (1 suite, 6 tests)
@@ -142,6 +150,15 @@ Frontend coverage for:
 - Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
 - Date: 2026-02-19 18:43 UTC
 - Result: PASS (5 suites, 35 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-19 20:10 UTC
+- Result: PASS (1 suite, 33 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
+- Date: 2026-02-19 20:13 UTC
+- Result: PASS (5 suites, 38 tests)
+- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_admin_page.test.tsx src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
+- Date: 2026-02-21
+- Result: PASS (2 suites, 35 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for app detail publish/unpublish actions.

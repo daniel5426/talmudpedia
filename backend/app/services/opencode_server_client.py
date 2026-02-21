@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, AsyncGenerator
 from uuid import uuid4
 
@@ -15,10 +17,17 @@ from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientError,
 )
+from app.services.published_app_templates import (
+    OPENCODE_BOOTSTRAP_CONTEXT_PATH,
+    build_opencode_bootstrap_files,
+)
 
 
 class OpenCodeServerClientError(Exception):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -123,10 +132,18 @@ class OpenCodeServerClient:
         model_id: str,
         prompt: str,
         messages: list[dict[str, str]],
+        selected_agent_contract: dict[str, Any] | None = None,
     ) -> str:
         if self._sandbox_controller_mode_enabled():
             if not sandbox_id:
                 raise OpenCodeServerClientError("OpenCode sandbox mode requires sandbox_id.")
+            await self._seed_custom_tools_and_context(
+                run_id=run_id,
+                app_id=app_id,
+                sandbox_id=sandbox_id,
+                workspace_path=workspace_path,
+                selected_agent_contract=selected_agent_contract,
+            )
             try:
                 response = await self._sandbox_runtime_client.start_opencode_run(
                     sandbox_id=sandbox_id,
@@ -144,6 +161,14 @@ class OpenCodeServerClient:
                 raise OpenCodeServerClientError("OpenCode sandbox start response is missing run_ref.")
             self._sandbox_run_ref_to_sandbox_id[run_ref] = sandbox_id
             return run_ref
+
+        await self._seed_custom_tools_and_context(
+            run_id=run_id,
+            app_id=app_id,
+            sandbox_id=sandbox_id,
+            workspace_path=workspace_path,
+            selected_agent_contract=selected_agent_contract,
+        )
 
         mode = await self._ensure_api_mode()
         if mode == "official":
@@ -283,7 +308,14 @@ class OpenCodeServerClient:
         if not session_id:
             raise OpenCodeServerClientError("OpenCode server returned invalid session response (missing id).")
 
-        text_prompt = self._build_prompt(prompt=prompt, messages=messages, workspace_path=workspace_path, sandbox_id=sandbox_id)
+        text_prompt = self._build_prompt(
+            run_id=run_id,
+            app_id=app_id,
+            prompt=prompt,
+            messages=messages,
+            workspace_path=workspace_path,
+            sandbox_id=sandbox_id,
+        )
         message_id = f"msg-{run_id}-{uuid4().hex[:10]}"
         message_payload: dict[str, Any] = {
             "messageID": message_id,
@@ -888,6 +920,8 @@ class OpenCodeServerClient:
     @staticmethod
     def _build_prompt(
         *,
+        run_id: str,
+        app_id: str,
         prompt: str,
         messages: list[dict[str, str]],
         workspace_path: str,
@@ -908,13 +942,119 @@ class OpenCodeServerClient:
         return (
             f"{text}\n\n"
             f"[Execution context]\n"
+            f"- run_id: {run_id or 'unknown'}\n"
+            f"- app_id: {app_id or 'unknown'}\n"
             f"- sandbox_id: {sandbox_id or 'unknown'}\n"
             f"- workspace_path: {workspace_path or 'unknown'}\n"
             f"- editing_rules: use coding-agent tools only for file changes; never claim success if a tool reports error/non-zero exit code.\n"
+            f"- contract_tool: use `coding_agent_get_agent_integration_contract` when you need selected app-agent tool schemas/UI hints.\n"
+            f"- contract_tool_input: call contract tools with arguments containing current `run_id`.\n"
             f"- recovery_rules: on apply_patch/context mismatch, read current file range and retry with refreshed patch.\n"
             f"- verification_rules: after edits, run recommended verification/build commands and fix failures before final response.\n"
             f"- output: respond with coding-agent updates and edits."
         )
+
+    @staticmethod
+    def _build_selected_agent_contract_context_content(
+        *,
+        run_id: str,
+        app_id: str,
+        selected_agent_contract: dict[str, Any] | None,
+    ) -> str:
+        payload = {
+            "run_id": str(run_id or "").strip(),
+            "app_id": str(app_id or "").strip(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "selected_agent_contract": (
+                dict(selected_agent_contract)
+                if isinstance(selected_agent_contract, dict)
+                else {}
+            ),
+        }
+        return json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+
+    async def _seed_custom_tools_and_context(
+        self,
+        *,
+        run_id: str,
+        app_id: str,
+        sandbox_id: str,
+        workspace_path: str,
+        selected_agent_contract: dict[str, Any] | None,
+    ) -> None:
+        try:
+            files_to_seed = build_opencode_bootstrap_files()
+        except Exception as exc:
+            raise OpenCodeServerClientError(
+                f"Failed to load OpenCode custom-tool bootstrap files: {exc}"
+            ) from exc
+
+        files_to_seed[OPENCODE_BOOTSTRAP_CONTEXT_PATH] = self._build_selected_agent_contract_context_content(
+            run_id=run_id,
+            app_id=app_id,
+            selected_agent_contract=selected_agent_contract,
+        )
+
+        if self._sandbox_controller_mode_enabled():
+            if not sandbox_id:
+                raise OpenCodeServerClientError(
+                    "OpenCode sandbox mode requires sandbox_id for custom-tool bootstrap."
+                )
+            for path, content in sorted(files_to_seed.items()):
+                try:
+                    await self._sandbox_runtime_client.write_file(
+                        sandbox_id=sandbox_id,
+                        path=path,
+                        content=content,
+                    )
+                except PublishedAppDraftDevRuntimeClientError as exc:
+                    raise OpenCodeServerClientError(
+                        f"Failed to seed OpenCode custom tools in sandbox `{sandbox_id}` at `{path}`: {exc}"
+                    ) from exc
+            return
+
+        workspace_root_raw = str(workspace_path or "").strip()
+        if not workspace_root_raw:
+            raise OpenCodeServerClientError(
+                "OpenCode host mode requires a local workspace_path for custom-tool bootstrap."
+            )
+        workspace_root_path = Path(workspace_root_raw).expanduser()
+        if not workspace_root_path.is_absolute():
+            raise OpenCodeServerClientError(
+                f"OpenCode host-mode workspace_path must be absolute: {workspace_root_raw}"
+            )
+        try:
+            workspace_root_path.mkdir(parents=True, exist_ok=True)
+            workspace_root = workspace_root_path.resolve()
+        except Exception as exc:
+            raise OpenCodeServerClientError(
+                f"Failed to initialize OpenCode workspace path `{workspace_root_raw}`: {exc}"
+            ) from exc
+
+        for path, content in sorted(files_to_seed.items()):
+            normalized = str(path or "").replace("\\", "/").lstrip("/")
+            if not normalized or ".." in normalized.split("/"):
+                raise OpenCodeServerClientError(f"Invalid OpenCode bootstrap path: {path}")
+            target = (workspace_root / normalized).resolve()
+            try:
+                target.relative_to(workspace_root)
+            except Exception as exc:
+                raise OpenCodeServerClientError(
+                    f"OpenCode bootstrap path escapes workspace root: {normalized}"
+                ) from exc
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+            except Exception as exc:
+                raise OpenCodeServerClientError(
+                    f"Failed to write OpenCode bootstrap file `{normalized}`: {exc}"
+                ) from exc
 
     @staticmethod
     def _extract_text_from_message_payload(payload: dict[str, Any]) -> str:

@@ -10,6 +10,8 @@ export type TimelineItem = {
   tone?: TimelineTone;
   toolCallId?: string;
   toolStatus?: ToolRunStatus;
+  toolName?: string;
+  toolPath?: string;
   assistantStreamId?: string;
   checkpointId?: string;
 };
@@ -34,6 +36,48 @@ export function describeToolIntent(toolName: string): string {
   if (normalized.includes("run_targeted_tests")) return "Running tests";
   if (normalized.includes("build_worker_precheck")) return "Running build precheck";
   return `Running ${toolName || "tool"}`;
+}
+
+function pickString(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return trimmed;
+}
+
+export function extractPrimaryToolPath(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  const directPath =
+    pickString(source.path) ||
+    pickString(source.filePath) ||
+    pickString(source.from_path) ||
+    pickString(source.to_path) ||
+    pickString(source.fromPath) ||
+    pickString(source.toPath);
+  if (directPath) return directPath;
+
+  const nestedInput = source.input;
+  if (nestedInput && typeof nestedInput === "object") {
+    const nested = nestedInput as Record<string, unknown>;
+    const nestedPath =
+      pickString(nested.path) ||
+      pickString(nested.filePath) ||
+      pickString(nested.from_path) ||
+      pickString(nested.to_path) ||
+      pickString(nested.fromPath) ||
+      pickString(nested.toPath);
+    if (nestedPath) return nestedPath;
+  }
+  return null;
+}
+
+export function formatToolPathLabel(path: string): string {
+  const normalized = String(path || "").trim();
+  if (!normalized) return "";
+  const tokens = normalized.split("/").filter(Boolean);
+  if (tokens.length === 0) return normalized;
+  if (tokens.length === 1) return tokens[0];
+  return `${tokens[tokens.length - 2]}/${tokens[tokens.length - 1]}`;
 }
 
 export function isUserTimelineItem(item: TimelineItem): boolean {

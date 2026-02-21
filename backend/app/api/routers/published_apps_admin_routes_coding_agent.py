@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+import time
 from typing import Any, Dict, List, Optional, Literal
 from uuid import UUID
 
@@ -15,6 +16,9 @@ from app.db.postgres.models.published_apps import PublishedAppDraftDevSessionSta
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.db.postgres.session import get_db
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
+from app.services.published_app_coding_agent_capabilities import (
+    build_published_app_coding_agent_capabilities,
+)
 from app.services.published_app_draft_dev_runtime import (
     PublishedAppDraftDevRuntimeDisabled,
     PublishedAppDraftDevRuntimeService,
@@ -105,6 +109,28 @@ class CodingAgentChatSessionDetailResponse(BaseModel):
     messages: List[CodingAgentChatMessageResponse] = Field(default_factory=list)
 
 
+class CodingAgentCapabilityToolResponse(BaseModel):
+    name: str
+    slug: str
+    function_name: str
+
+
+class CodingAgentOpenCodePolicyResponse(BaseModel):
+    tooling_mode: str
+    repo_tool_allowlist_configured: bool
+    workspace_permission_model: str
+    summary: str
+
+
+class CodingAgentCapabilitiesResponse(BaseModel):
+    app_id: str
+    default_engine: Literal["native", "opencode"]
+    native_enabled: bool
+    native_tool_count: int
+    native_tools: List[CodingAgentCapabilityToolResponse] = Field(default_factory=list)
+    opencode_policy: CodingAgentOpenCodePolicyResponse
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -178,6 +204,7 @@ async def create_coding_agent_run(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
+    create_run_api_started_at = time.monotonic()
     ctx = await _resolve_tenant_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
 
@@ -244,12 +271,31 @@ async def create_coding_agent_run(
         execution_engine=payload.engine,
         chat_session_id=chat_session_id,
     )
+    create_run_api_ms = max(0, int((time.monotonic() - create_run_api_started_at) * 1000))
+    run_input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
+    raw_run_context = run_input_params.get("context")
+    run_context = dict(raw_run_context) if isinstance(raw_run_context, dict) else {}
+    timing_metrics = run_context.get("timing_metrics_ms")
+    if not isinstance(timing_metrics, dict):
+        timing_metrics = {}
+        run_context["timing_metrics_ms"] = timing_metrics
+    timing_metrics["create_run_api"] = create_run_api_ms
+    run_input_params["context"] = run_context
+    run.input_params = run_input_params
+    logger.info(
+        "CODING_AGENT_TIMING run_id=%s app_id=%s phase=create_run_api duration_ms=%s",
+        run.id,
+        app.id,
+        create_run_api_ms,
+    )
     if chat_session_id is not None and actor_id is not None:
         await history_service.persist_user_message(
             session_id=chat_session_id,
             run_id=run.id,
             content=user_prompt,
         )
+    else:
+        await db.commit()
     return _run_to_response(service, run)
 
 
@@ -309,6 +355,25 @@ async def get_coding_agent_chat_session(
         session=CodingAgentChatSessionResponse(**history_service.serialize_session(session)),
         messages=[CodingAgentChatMessageResponse(**history_service.serialize_message(item)) for item in messages],
     )
+
+
+@router.get(
+    "/{app_id}/coding-agent/capabilities",
+    response_model=CodingAgentCapabilitiesResponse,
+)
+async def get_coding_agent_capabilities(
+    app_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    payload = build_published_app_coding_agent_capabilities()
+    payload["app_id"] = str(app.id)
+    return CodingAgentCapabilitiesResponse(**payload)
 
 
 @router.get("/{app_id}/coding-agent/runs", response_model=List[CodingAgentRunResponse])

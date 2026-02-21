@@ -18,6 +18,9 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionKind,
 )
 from app.db.postgres.session import get_db
+from app.services.published_app_agent_integration_contract import (
+    build_published_app_agent_integration_contract,
+)
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 
@@ -107,6 +110,23 @@ async def get_builder_state(
         preview_token=preview_token,
         draft_dev=_draft_dev_session_to_response(draft_dev_session) if draft_dev_session else None,
     )
+
+
+@router.get("/{app_id}/builder/agent-contract")
+async def get_builder_agent_contract(
+    app_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    try:
+        return await build_published_app_agent_integration_contract(db=db, app=app)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.post("/{app_id}/builder/revisions/{revision_id}/preview-token")

@@ -250,6 +250,162 @@ def _chat_message_to_payload(message: Message) -> dict[str, Any]:
     }
 
 
+def _normalize_optional_user_id(raw_value: Any) -> Optional[str]:
+    if raw_value is None:
+        return None
+    text = str(raw_value).strip()
+    if not text or text.lower() in {"none", "null"}:
+        return None
+    return text
+
+
+async def _stream_chat_for_app(
+    *,
+    app: PublishedApp,
+    payload: PublicChatStreamRequest,
+    db: AsyncSession,
+    principal: Optional[Dict[str, Any]],
+    enforce_app_auth: bool,
+    allow_chat_persistence: bool,
+    request_user_id: Optional[str] = None,
+    extra_context: Optional[Dict[str, Any]] = None,
+) -> StreamingResponse:
+    if enforce_app_auth:
+        if app.auth_enabled and principal is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        if principal is not None and principal["app_id"] != str(app.id):
+            raise HTTPException(status_code=403, detail="Token does not belong to this app")
+
+    user_uuid: Optional[UUID] = None
+    chat: Optional[Chat] = None
+    existing_count = 0
+    run_messages: List[dict[str, Any]] = []
+    can_persist_chat = (
+        allow_chat_persistence
+        and app.auth_enabled
+        and principal is not None
+        and bool(principal.get("user_id"))
+    )
+
+    if can_persist_chat:
+        user_uuid = UUID(str(principal["user_id"]))
+        if payload.chat_id:
+            chat_result = await db.execute(
+                select(Chat).where(
+                    and_(
+                        Chat.id == payload.chat_id,
+                        Chat.published_app_id == app.id,
+                        Chat.user_id == user_uuid,
+                    )
+                ).limit(1)
+            )
+            chat = chat_result.scalar_one_or_none()
+            if chat is None:
+                raise HTTPException(status_code=404, detail="Chat not found")
+            message_result = await db.execute(
+                select(Message).where(Message.chat_id == chat.id).order_by(Message.index.asc())
+            )
+            existing_messages = message_result.scalars().all()
+            existing_count = len(existing_messages)
+            run_messages.extend(
+                [{"role": m.role.value if hasattr(m.role, "value") else str(m.role), "content": m.content} for m in existing_messages]
+            )
+        else:
+            title_source = payload.input or (payload.messages[0].get("content") if payload.messages else "New chat")
+            chat = Chat(
+                tenant_id=app.tenant_id,
+                user_id=user_uuid,
+                published_app_id=app.id,
+                title=(title_source or "New chat")[:60],
+            )
+            db.add(chat)
+            await db.flush()
+
+        if payload.messages:
+            run_messages.extend(payload.messages)
+        if payload.input:
+            run_messages.append({"role": "user", "content": payload.input})
+            user_message = Message(
+                chat_id=chat.id,  # type: ignore[arg-type]
+                role=MessageRole.USER,
+                content=payload.input,
+                index=existing_count,
+            )
+            db.add(user_message)
+            chat.updated_at = datetime.now(timezone.utc)  # type: ignore[union-attr]
+            await db.commit()
+    else:
+        run_messages.extend(payload.messages or [])
+        if payload.input:
+            run_messages.append({"role": "user", "content": payload.input})
+
+    executor = AgentExecutorService(db=db)
+    request_context = dict(payload.context or {})
+    request_context.setdefault("tenant_id", str(app.tenant_id))
+    request_context.setdefault("user_id", str(user_uuid) if user_uuid else _normalize_optional_user_id(request_user_id))
+    request_context.setdefault("published_app_id", str(app.id))
+    request_context.setdefault("published_app_slug", app.slug)
+    if extra_context:
+        for key, value in extra_context.items():
+            request_context.setdefault(key, value)
+
+    run_id = await executor.start_run(
+        app.agent_id,
+        {
+            "messages": run_messages,
+            "input": payload.input,
+            "context": request_context,
+        },
+        user_id=user_uuid,
+        background=False,
+        mode=ExecutionMode.PRODUCTION,
+    )
+
+    async def event_generator():
+        assistant_text_parts: List[str] = []
+        raw_stream = executor.run_and_stream(run_id, db, mode=ExecutionMode.PRODUCTION)
+        filtered_stream = StreamAdapter.filter_stream(raw_stream, ExecutionMode.PRODUCTION)
+        yield ": " + (" " * 2048) + "\n\n"
+        yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
+
+        try:
+            async for event_dict in filtered_stream:
+                if (
+                    event_dict.get("event") == "token"
+                    and isinstance(event_dict.get("data"), dict)
+                    and event_dict["data"].get("content")
+                ):
+                    assistant_text_parts.append(str(event_dict["data"]["content"]))
+                elif event_dict.get("type") == "token" and event_dict.get("content"):
+                    assistant_text_parts.append(str(event_dict["content"]))
+                yield f"data: {json.dumps(event_dict, default=str)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        finally:
+            if can_persist_chat and chat is not None:
+                assistant_text = "".join(assistant_text_parts).strip()
+                if assistant_text:
+                    count_result = await db.execute(
+                        select(Message).where(Message.chat_id == chat.id).order_by(Message.index.desc()).limit(1)
+                    )
+                    last = count_result.scalar_one_or_none()
+                    next_index = (last.index + 1) if last is not None else 0
+                    db.add(
+                        Message(
+                            chat_id=chat.id,
+                            role=MessageRole.ASSISTANT,
+                            content=assistant_text,
+                            index=next_index,
+                        )
+                    )
+                    chat.updated_at = datetime.now(timezone.utc)
+                    await db.commit()
+
+    headers = {"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
+    if chat is not None:
+        headers["X-Chat-ID"] = str(chat.id)
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
+
 @router.get("/resolve")
 async def resolve_app_by_host(
     request: Request,
@@ -449,7 +605,7 @@ async def get_preview_asset(
             httponly=True,
             secure=request.url.scheme == "https",
             samesite="lax",
-            path=f"/public/apps/preview/revisions/{revision_id}/assets",
+            path=f"/public/apps/preview/revisions/{revision_id}",
         )
     return response
 
@@ -493,6 +649,36 @@ async def get_preview_runtime(
         preview_url=preview_url,
         asset_base_url=asset_base_url,
         api_base_path="/api/py",
+    )
+
+
+@router.post("/preview/revisions/{revision_id}/chat/stream")
+async def preview_chat_stream(
+    revision_id: UUID,
+    payload: PublicChatStreamRequest,
+    principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_enabled("PUBLISHED_APPS_ENABLED", "1"):
+        raise HTTPException(status_code=404, detail="Published apps are disabled")
+
+    app, _ = await _get_preview_revision_for_principal(
+        db=db,
+        revision_id=revision_id,
+        principal=principal,
+    )
+    return await _stream_chat_for_app(
+        app=app,
+        payload=payload,
+        db=db,
+        principal=None,
+        enforce_app_auth=False,
+        allow_chat_persistence=False,
+        request_user_id=_normalize_optional_user_id(principal.get("user_id")),
+        extra_context={
+            "published_app_preview_revision_id": str(revision_id),
+            "published_app_preview": True,
+        },
     )
 
 
@@ -778,127 +964,12 @@ async def chat_stream(
         raise HTTPException(status_code=404, detail="Published apps are disabled")
 
     app = await _assert_published(db, app_slug)
-    if app.auth_enabled and principal is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    if principal is not None and principal["app_id"] != str(app.id):
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-
-    user_uuid: Optional[UUID] = None
-    chat: Optional[Chat] = None
-    existing_count = 0
-    run_messages: List[dict[str, Any]] = []
-
-    if app.auth_enabled and principal is not None:
-        user_uuid = UUID(principal["user_id"])
-        if payload.chat_id:
-            chat_result = await db.execute(
-                select(Chat).where(
-                    and_(
-                        Chat.id == payload.chat_id,
-                        Chat.published_app_id == app.id,
-                        Chat.user_id == user_uuid,
-                    )
-                ).limit(1)
-            )
-            chat = chat_result.scalar_one_or_none()
-            if chat is None:
-                raise HTTPException(status_code=404, detail="Chat not found")
-            message_result = await db.execute(
-                select(Message).where(Message.chat_id == chat.id).order_by(Message.index.asc())
-            )
-            existing_messages = message_result.scalars().all()
-            existing_count = len(existing_messages)
-            run_messages.extend(
-                [{"role": m.role.value if hasattr(m.role, "value") else str(m.role), "content": m.content} for m in existing_messages]
-            )
-        else:
-            title_source = payload.input or (payload.messages[0].get("content") if payload.messages else "New chat")
-            chat = Chat(
-                tenant_id=app.tenant_id,
-                user_id=user_uuid,
-                published_app_id=app.id,
-                title=(title_source or "New chat")[:60],
-            )
-            db.add(chat)
-            await db.flush()
-
-        if payload.messages:
-            run_messages.extend(payload.messages)
-        if payload.input:
-            run_messages.append({"role": "user", "content": payload.input})
-            user_message = Message(
-                chat_id=chat.id,  # type: ignore[arg-type]
-                role=MessageRole.USER,
-                content=payload.input,
-                index=existing_count,
-            )
-            db.add(user_message)
-            chat.updated_at = datetime.now(timezone.utc)  # type: ignore[union-attr]
-            await db.commit()
-    else:
-        run_messages.extend(payload.messages or [])
-        if payload.input:
-            run_messages.append({"role": "user", "content": payload.input})
-
-    executor = AgentExecutorService(db=db)
-    request_context = dict(payload.context or {})
-    request_context.setdefault("tenant_id", str(app.tenant_id))
-    request_context.setdefault("user_id", str(user_uuid) if user_uuid else None)
-    request_context.setdefault("published_app_id", str(app.id))
-    request_context.setdefault("published_app_slug", app.slug)
-
-    run_id = await executor.start_run(
-        app.agent_id,
-        {
-            "messages": run_messages,
-            "input": payload.input,
-            "context": request_context,
-        },
-        user_id=user_uuid,
-        background=False,
-        mode=ExecutionMode.PRODUCTION,
+    return await _stream_chat_for_app(
+        app=app,
+        payload=payload,
+        db=db,
+        principal=principal,
+        enforce_app_auth=True,
+        allow_chat_persistence=True,
+        request_user_id=_normalize_optional_user_id(principal.get("user_id")) if principal else None,
     )
-
-    async def event_generator():
-        assistant_text_parts: List[str] = []
-        raw_stream = executor.run_and_stream(run_id, db, mode=ExecutionMode.PRODUCTION)
-        filtered_stream = StreamAdapter.filter_stream(raw_stream, ExecutionMode.PRODUCTION)
-        yield ": " + (" " * 2048) + "\n\n"
-        yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
-
-        try:
-            async for event_dict in filtered_stream:
-                if (
-                    event_dict.get("event") == "token"
-                    and isinstance(event_dict.get("data"), dict)
-                    and event_dict["data"].get("content")
-                ):
-                    assistant_text_parts.append(str(event_dict["data"]["content"]))
-                elif event_dict.get("type") == "token" and event_dict.get("content"):
-                    assistant_text_parts.append(str(event_dict["content"]))
-                yield f"data: {json.dumps(event_dict, default=str)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        finally:
-            if app.auth_enabled and chat is not None:
-                assistant_text = "".join(assistant_text_parts).strip()
-                if assistant_text:
-                    count_result = await db.execute(
-                        select(Message).where(Message.chat_id == chat.id).order_by(Message.index.desc()).limit(1)
-                    )
-                    last = count_result.scalar_one_or_none()
-                    next_index = (last.index + 1) if last is not None else 0
-                    db.add(
-                        Message(
-                            chat_id=chat.id,
-                            role=MessageRole.ASSISTANT,
-                            content=assistant_text,
-                            index=next_index,
-                        )
-                    )
-                    chat.updated_at = datetime.now(timezone.utc)
-                    await db.commit()
-
-    headers = {"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
-    if chat is not None:
-        headers["X-Chat-ID"] = str(chat.id)
-    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)

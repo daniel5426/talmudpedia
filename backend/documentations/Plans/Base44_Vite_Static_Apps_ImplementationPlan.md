@@ -1,6 +1,6 @@
 # Base44-Style Option A Implementation Plan (Vite Static Apps + Shared Backend)
 
-Last Updated: 2026-02-15
+Last Updated: 2026-02-19
 
 ## Summary
 Move Apps Builder to a dual-mode architecture:
@@ -24,7 +24,7 @@ This plan previously stated that publish promotes existing draft artifacts witho
 Implemented:
 - Filesystem-backed template packs under `backend/app/templates/published_apps/` with manifest loading and Vite `base: "./"` validation.
 - Revision build lifecycle schema/model fields (`build_status`, `build_seq`, `build_error`, timing fields, `dist_storage_prefix`, `dist_manifest`, `template_runtime`) with Alembic migration.
-- Curated dependency policy module and admin validator integration (Vite root file policy + pinned package validation).
+- Builder dependency validation module integrated with Vite root file policy and import security checks (package allowlist restrictions removed).
 - Admin build status/retry endpoints:
   - `GET /admin/apps/{app_id}/builder/revisions/{revision_id}/build`
   - `POST /admin/apps/{app_id}/builder/revisions/{revision_id}/build/retry`
@@ -58,7 +58,7 @@ Pending:
 Locked choices:
 - Build engine: Celery queue + dedicated Node build worker image.
 - Asset storage/serving: object storage + CDN.
-- Dependency policy: curated semi-open package set.
+- Dependency policy: package declarations/imports are unrestricted; only import security checks are enforced.
 - Build trigger: Draft mode uses persistent sandbox dev sessions; Publish mode always rebuilds from latest saved snapshot.
 - Draft access: backend proxy with preview token.
 - Rollout: big-bang switch.
@@ -70,7 +70,7 @@ Locked choices:
 - Build queue semantics: one active build per app; stale worker completions ignored via monotonic `build_seq`.
 
 ## Current-State Grounding (from repo)
-- Builder policy now enforces Vite project + curated dependency rules in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_admin.py`.
+- Builder policy now enforces Vite project validation + import security checks in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/apps_builder_dependency_policy.py`.
 - Builder preview now uses draft-dev sandbox session lifecycle in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/AppsBuilderWorkspace.tsx`.
 - Published runtime page now uses static-only redirect behavior in `/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/published/[appSlug]/page.tsx`.
 - Public runtime API now includes runtime descriptor and preview asset proxy endpoints in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_public.py`.
@@ -103,15 +103,12 @@ Status: Implemented (except deprecated column removal follow-up).
 - Keep existing `files` and `entry_file` as source-of-truth project files.
 - Keep `compiled_bundle` as deprecated/unused field for migration compatibility, then remove in follow-up migration.
 
-## 3) Curated semi-open dependency policy
-Status: Implemented.
+## 3) Builder Dependency Validation Policy
+Status: Implemented (updated 2026-02-19).
 - Add policy module `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/apps_builder_dependency_policy.py`.
-- Add curated allowlist catalog (package -> pinned allowed versions).
 - Validation rules:
 - `package.json` required in project root.
-- Bare imports must be declared in `dependencies`/`devDependencies`.
-- Declared packages must exist in curated catalog.
-- Declared versions must match allowed pinned versions.
+- No package allowlist enforcement on declarations/imports.
 - URL imports and absolute filesystem imports remain forbidden.
 - Local/relative imports allowed per Vite resolution.
 - Allow root files needed for Vite (`index.html`, `package.json`, `vite.config.ts`, `tsconfig*.json`, `postcss.config.*`, `tailwind.config.*`, `src/**`, `public/**`).
@@ -122,7 +119,7 @@ Status: Partially implemented.
 - `build_published_app_revision_task(revision_id, tenant_id, app_id, slug, build_kind)`
 - Task flow:
 - Load revision files from DB.
-- Validate project + dependency policy.
+- Validate project + import security policy.
 - Materialize project to temp dir.
 - Run `npm ci` (with cached npm directory) + `npm run build`.
 - Enforce per-job isolation/hard limits: dedicated temp dir, no host mounts, bounded CPU/memory, timeout, and restricted outbound network policy.
@@ -178,7 +175,7 @@ Status: Implemented.
 - Publish jobs are tracked via `GET /admin/apps/{app_id}/publish/jobs/{job_id}`.
 - Publish no longer gates on draft revision `build_status`; determinism is enforced by full publish build.
 - Remove React-only import allowlist enforcement in project validator.
-- Replace with Vite project + dependency policy validation.
+- Replace with Vite project validation + import security validation.
 ## 7) Public runtime API contract updates
 Status: Implemented.
 - In `/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_public.py`:
@@ -225,8 +222,8 @@ Status: Pending.
 - For all existing `published_app_revisions`:
 - inject required Vite root files if missing.
 - preserve existing `src/**` and `public/**`.
-- ensure valid `package.json` with curated dependencies.
-- ensure `package-lock.json` exists and matches curated dependency pins (generate lockfile during migration when missing).
+- ensure valid `package.json`.
+- ensure `package-lock.json` exists (generate lockfile during migration when missing).
 - mark revisions `build_status=queued`.
 - increment `build_seq` before enqueue.
 - enqueue builds for all current published revisions first, then draft revisions.
@@ -334,7 +331,7 @@ Scope:
 - no host filesystem mounts
 - restricted egress policy for build workers.
 - Dependency governance:
-- curated allowlist + pinned versions
+- no curated package allowlist restrictions
 - no arbitrary package install from chat.
 - Draft preview security:
 - backend proxy with preview-token validation.
@@ -349,7 +346,7 @@ Scope:
 - `/Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/published_apps/`:
 - create app seeds full Vite file baseline.
 - builder revision save does not enqueue heavy draft build.
-- unsupported package in `package.json` fails validation.
+- package declarations/imports are unrestricted by builder policy (security import checks still apply).
 - build success writes `dist_manifest` + storage prefix.
 - stale build completion (older `build_seq`) is discarded and does not overwrite newer status/artifacts.
 - publish enqueues async full-build job and tracks lifecycle (`queued/running/succeeded/failed`).
@@ -393,7 +390,7 @@ Status:
 - Ensure every edited `.md` includes `Last Updated: 2026-02-15`.
 
 ## Documentation contradiction alert
-- Current compile-policy section in `/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/Plans/AppsBuilderV1Plan.md` (React-only import allowlist) conflicts with this approved Option A architecture (full Vite project + curated semi-open deps). This must be explicitly replaced, not appended.
+- Resolved on 2026-02-19: `/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/Plans/AppsBuilderV1Plan.md` was updated to match this Option A architecture (full Vite project + unrestricted package declarations/imports + import security checks).
 
 ## Assumptions and defaults
 - Package manager is npm (`package-lock.json`) for build workers.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 import os
+import time
 from typing import Any, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,25 @@ from .prompt_history import build_opencode_effective_prompt
 
 
 logger = logging.getLogger(__name__)
+
+RECOVERY_EDIT_TOOL_HINTS = (
+    "write",
+    "edit",
+    "replace",
+    "insert",
+    "append",
+    "prepend",
+    "rename",
+    "move",
+    "delete",
+    "remove",
+    "mkdir",
+    "touch",
+    "create",
+    "mv",
+    "rm",
+    "cp",
+)
 
 
 class OpenCodePublishedAppCodingAgentEngine:
@@ -29,8 +49,11 @@ class OpenCodePublishedAppCodingAgentEngine:
 
     async def stream(self, ctx: EngineRunContext) -> AsyncGenerator[EngineStreamEvent, None]:
         run = ctx.run
-        input_params = run.input_params if isinstance(run.input_params, dict) else {}
-        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
+        raw_context = input_params.get("context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        input_params["context"] = context
+        run.input_params = input_params
         messages = input_params.get("messages") if isinstance(input_params.get("messages"), list) else []
         prompt = str(input_params.get("input") or "").strip()
         prompt_history_budget_chars = int(os.getenv("APPS_CODING_AGENT_OPENCODE_PROMPT_HISTORY_BUDGET_CHARS", "14000"))
@@ -54,6 +77,7 @@ class OpenCodePublishedAppCodingAgentEngine:
         workspace_root = os.path.realpath(os.path.abspath(workspace_path)) if workspace_path else ""
 
         if not run.engine_run_ref:
+            opencode_start_started_at = time.monotonic()
             run.engine_run_ref = await self._client.start_run(
                 run_id=str(run.id),
                 app_id=str(ctx.app.id),
@@ -62,6 +86,23 @@ class OpenCodePublishedAppCodingAgentEngine:
                 model_id=opencode_model_id or resolved_model_id,
                 prompt=effective_prompt,
                 messages=[item for item in messages if isinstance(item, dict)],
+                selected_agent_contract=(
+                    dict(context.get("selected_agent_contract"))
+                    if isinstance(context.get("selected_agent_contract"), dict)
+                    else None
+                ),
+            )
+            opencode_start_ms = max(0, int((time.monotonic() - opencode_start_started_at) * 1000))
+            timings = context.get("timing_metrics_ms")
+            if not isinstance(timings, dict):
+                timings = {}
+                context["timing_metrics_ms"] = timings
+            timings["opencode_start"] = opencode_start_ms
+            logger.info(
+                "CODING_AGENT_TIMING run_id=%s app_id=%s phase=opencode_start duration_ms=%s",
+                run.id,
+                ctx.app.id,
+                opencode_start_ms,
             )
 
         run.status = RunStatus.running
@@ -75,6 +116,10 @@ class OpenCodePublishedAppCodingAgentEngine:
         failure_message = "OpenCode run failed"
         saw_apply_patch_failure = False
         saw_apply_patch_success = False
+        saw_recovery_edit_success = False
+        fail_on_unrecovered_apply_patch = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH", "1")
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
         async for raw in self._client.stream_run_events(run_ref=str(run.engine_run_ref)):
             mapped = self._translate_event(raw)
@@ -82,8 +127,12 @@ class OpenCodePublishedAppCodingAgentEngine:
                 continue
             if mapped.event == "tool.failed" and self._is_apply_patch_tool(mapped.payload):
                 saw_apply_patch_failure = True
-            elif mapped.event == "tool.completed" and self._is_successful_apply_patch(mapped.payload):
-                saw_apply_patch_success = True
+            elif mapped.event == "tool.completed":
+                if self._is_successful_apply_patch(mapped.payload):
+                    saw_apply_patch_success = True
+                    saw_recovery_edit_success = True
+                elif self._is_recovery_edit_tool(mapped.payload):
+                    saw_recovery_edit_success = True
             workspace_violations = self._extract_workspace_violations(
                 payload=mapped.payload or {},
                 workspace_root=workspace_root,
@@ -136,10 +185,17 @@ class OpenCodePublishedAppCodingAgentEngine:
             yield mapped
 
         persisted = await self._db.get(AgentRun, run.id) or run
-        if saw_terminal and not saw_failure and saw_apply_patch_failure and not saw_apply_patch_success:
+        if (
+            fail_on_unrecovered_apply_patch
+            and saw_terminal
+            and not saw_failure
+            and saw_apply_patch_failure
+            and not saw_apply_patch_success
+            and not saw_recovery_edit_success
+        ):
             saw_failure = True
             failure_message = (
-                "OpenCode run completed after apply_patch failures without a successful follow-up patch."
+                "OpenCode run completed after apply_patch failures without a successful follow-up edit."
             )
         if saw_terminal and not saw_failure:
             persisted.status = RunStatus.completed
@@ -254,12 +310,29 @@ class OpenCodePublishedAppCodingAgentEngine:
         if not cls._is_apply_patch_tool(payload):
             return False
         output = payload.get("output") if isinstance(payload, dict) else None
+        if output is None:
+            return True
         if not isinstance(output, dict):
+            return True
+        if output.get("error"):
             return False
-        if not bool(output.get("ok")):
+        if output.get("ok") is False:
             return False
-        applied_files = output.get("applied_files")
-        return isinstance(applied_files, list) and len(applied_files) > 0
+        result_payload = output.get("result") if isinstance(output.get("result"), dict) else {}
+        if result_payload.get("ok") is False:
+            return False
+        return True
+
+    @classmethod
+    def _is_recovery_edit_tool(cls, payload: dict[str, Any] | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        tool_name = str(payload.get("tool") or "").strip().lower()
+        if not tool_name:
+            return False
+        if cls._is_apply_patch_tool(payload):
+            return False
+        return any(hint in tool_name for hint in RECOVERY_EDIT_TOOL_HINTS)
 
     @staticmethod
     def _translate_event(raw: dict[str, Any]) -> EngineStreamEvent | None:

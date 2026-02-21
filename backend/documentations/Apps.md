@@ -1,6 +1,6 @@
 # Apps Feature (Published Client Web Apps)
 
-Last Updated: 2026-02-15
+Last Updated: 2026-02-19
 
 ## Purpose
 `Apps` lets each tenant publish a production app bound to one of their published agents, with a builder flow for custom UI templates, revisions, and published snapshots.
@@ -23,6 +23,8 @@ Last Updated: 2026-02-15
 - App owners can set app visibility (`public` or `private`); private apps are not reachable via public runtime endpoints.
 - When auth is enabled, chat history is persisted and scoped by `published_app_id` + user.
 - When auth is disabled, runtime supports public ephemeral chat mode (non-persistent in v1).
+- Builder preview runtime now supports real agent streaming through a preview-scoped public endpoint (`POST /public/apps/preview/revisions/{revision_id}/chat/stream`).
+- Preview chat execution is intentionally ephemeral (no `chats`/`messages` persistence), while published authenticated runtime keeps persisted chat behavior.
 - App create now accepts `template_key`; `slug` is optional and auto-generated if omitted.
 - App create/update now supports `description`, `logo_url`, `visibility`, and `auth_template_key`.
 - `chat-grid` now maps to a premium multi-file LayoutShell-style workspace template (sidebar + chat + source list + resizable source viewer + mobile overlays) with generic placeholder source data.
@@ -36,7 +38,7 @@ Last Updated: 2026-02-15
   - Composition entrypoint; routes split across `published_apps_admin_routes_apps.py`, `published_apps_admin_routes_publish.py`, `published_apps_admin_routes_builder.py`, `published_apps_admin_routes_chat.py`.
   - Supports CRUD + templates + auth templates + users + domains + builder state/revision/template-reset + builder SSE + conversation replay + revision build status/retry + publish snapshot.
 - Public runtime API router: `backend/app/api/routers/published_apps_public.py`
-  - host resolve, runtime config, runtime descriptors, auth flows, chat runtime endpoints, published UI snapshot endpoints, and preview asset proxy endpoints.
+  - host resolve, runtime config, runtime descriptors, auth flows, chat runtime endpoints, published UI snapshot endpoints, preview asset proxy endpoints, and preview chat stream endpoint.
 - Auth domain service: `backend/app/services/published_app_auth_service.py`
   - signup/login, memberships, session issuance/revocation, OAuth callbacks.
 - Template service: `backend/app/services/published_app_templates.py`
@@ -97,6 +99,7 @@ Migration:
 - Cross-app access is prevented by filtering all app runtime reads/writes with app scope.
 - Membership model enforces which users can access authenticated app data.
 - Builder preview uses short-lived preview tokens and revision/app/tenant claims.
+- Preview token cookie path is revision-scoped (`/public/apps/preview/revisions/{revision_id}`) so preview assets and preview chat stream can share auth context.
 - Public source-UI endpoint is removed; `/public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED` and runtime consumers must use `/public/apps/{slug}/runtime`.
 - Publish artifact promotion copies built dist assets from draft revision prefix to published revision prefix; copy failures return `500 BUILD_ARTIFACT_COPY_FAILED` and leave app publish pointer unchanged.
 

@@ -1,5 +1,5 @@
 # Apps Builder V1 (Vite Static Runtime, Big-Bang)
-Last Updated: 2026-02-14
+Last Updated: 2026-02-19
 
 ## Summary
 This plan supersedes the older "virtual React files compiled in-browser" V1 assumptions.
@@ -15,7 +15,7 @@ V1 is now defined as:
 ## Locked Architecture Decisions
 1. Build engine: Celery + dedicated Node-capable build workers.
 2. Asset serving: object storage + CDN.
-3. Dependency policy: curated semi-open allowlist with pinned versions.
+3. Dependency policy: unrestricted package declarations/imports with import security checks.
 4. Build trigger: draft-dev sandbox sync on save/edit; async full clean build on publish.
 5. Draft preview: backend proxy with preview token.
 6. Rollout: big-bang runtime switch.
@@ -53,14 +53,13 @@ V1 is now defined as:
 
 3. Store full project source in revision files (including root build/config files as policy allows), not only `src/**` assumptions.
 
-### Milestone 2: Dependency Policy + Build Queue Pipeline
-1. Add dependency governance module:
+### Milestone 2: Dependency Validation + Build Queue Pipeline
+1. Add dependency validation module:
 - `backend/app/services/apps_builder_dependency_policy.py`
 
-2. Enforce project/dependency rules:
+2. Enforce project/import-security rules:
 - `package.json` required,
-- bare imports must be declared,
-- packages/versions must match curated allowlist pins,
+- package declarations/imports unrestricted,
 - network URL imports and absolute filesystem imports forbidden.
 
 3. Queue build task on revision save/reset and update build lifecycle fields.
@@ -109,7 +108,7 @@ V1 is now defined as:
 
 ## Security and Governance
 1. Build workers run in isolated temp directories per job.
-2. Dependency installs constrained by curated allowlist policy.
+2. Dependency installs are unrestricted by policy; import security checks remain enforced.
 3. Preview assets require valid preview token scoped to revision.
 4. Static runtime calls backend through same-origin `/api/py` gateway.
 
@@ -122,7 +121,7 @@ V1 is now defined as:
 ### In Progress
 1. Worker-backed Vite build lifecycle on publish path.
 2. Runtime descriptor/public static serving contracts and `/ui` cutover behavior.
-3. Curated dependency governance module and full Vite root file policy.
+3. Dependency validation module (no package allowlist restrictions) and full Vite root file policy.
 
 ### Deferred
 1. Removal of deprecated `compiled_bundle` column in follow-up migration.

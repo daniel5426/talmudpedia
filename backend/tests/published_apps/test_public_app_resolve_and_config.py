@@ -176,7 +176,9 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     assert asset_resp.status_code == 200
     assert asset_resp.headers["content-type"].startswith("application/javascript")
     assert "console.log('ok');" in asset_resp.text
-    assert "published_app_preview_token=" in (asset_resp.headers.get("set-cookie") or "")
+    set_cookie_header = asset_resp.headers.get("set-cookie") or ""
+    assert "published_app_preview_token=" in set_cookie_header
+    assert f"Path=/public/apps/preview/revisions/{draft_revision_id}" in set_cookie_header
 
     cookie_asset_resp = await client.get(asset_path)
     assert cookie_asset_resp.status_code == 200

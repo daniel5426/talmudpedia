@@ -1,4 +1,4 @@
-Last Updated: 2026-02-19
+Last Updated: 2026-02-21
 
 ## Scope
 - OpenCode server client transport compatibility for coding-agent engine runs.
@@ -11,6 +11,10 @@ Last Updated: 2026-02-19
 
 ## Key Scenarios Covered
 - Official mode unwraps `{success,data}` and supports `prompt_async` with fallback to `POST /session/{id}/message`.
+- Official mode never calls OpenCode MCP registration (`/mcp`) for selected-agent contract access.
+- OpenCode run startup seeds project-local custom tools into workspace `.opencode/tools/*` and seeds run-scoped contract context in `.cache/opencode/selected_agent_contract.json`.
+- Sandbox-controller mode seeds custom tools via sandbox file APIs before OpenCode start and fails closed on seed-write failures.
+- Host mode fails closed when `workspace_path` is missing/invalid for custom-tool bootstrap.
 - Global event stream translation emits incremental `assistant.delta` tokens and tool lifecycle events (`tool.started` / `tool.completed` / `tool.failed`).
 - Global event parsing preserves early tool events even before assistant message-role metadata lands.
 - Reasoning parts are filtered out from user-visible assistant deltas.
@@ -22,6 +26,18 @@ Last Updated: 2026-02-19
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-02-21
+- Result: Pass (23 passed, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py tests/sandbox_controller/test_draft_dev_runtime_client_stream.py`
+- Date/Time: 2026-02-19 22:35 UTC
+- Result: Pass (25 passed, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-02-19 22:17 UTC
+- Result: Pass (21 passed, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-02-19 22:01 UTC
+- Result: Pass (20 passed, 1 warning)
 - Command: `cd backend && PYTHONPATH=. pytest tests/opencode_server_client -q`
 - Date/Time: 2026-02-19 00:19:21 EET
 - Result: Pass (19 passed, 2 skipped, 1 warning)

@@ -10,6 +10,13 @@ from typing import Dict, List, Tuple
 TEMPLATE_MANIFEST_NAME = "template.manifest.json"
 VITE_BASE_PATTERN = re.compile(r"base\s*:\s*['\"]\./['\"]")
 TEMPLATE_PACKS_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_apps"
+OPENCODE_BOOTSTRAP_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_app_bootstrap" / "opencode"
+OPENCODE_BOOTSTRAP_CONTEXT_PATH = ".cache/opencode/selected_agent_contract.json"
+OPENCODE_BOOTSTRAP_REQUIRED_FILES = (
+    ".opencode/package.json",
+    ".opencode/tools/coding_agent_get_agent_integration_contract.ts",
+    ".opencode/tools/coding_agent_describe_selected_agent_contract.ts",
+)
 IGNORED_TEMPLATE_DIRS = {"node_modules", "dist", "build", "__pycache__"}
 IGNORED_TEMPLATE_FILE_NAMES = {"vite.config.js", "vite.config.d.ts"}
 IGNORED_TEMPLATE_FILE_SUFFIXES = {".tsbuildinfo"}
@@ -99,6 +106,28 @@ def _load_template_files(pack_dir: Path) -> Dict[str, str]:
     return files
 
 
+def _load_opencode_bootstrap_files(pack_dir: Path) -> Dict[str, str]:
+    if not pack_dir.exists() or not pack_dir.is_dir():
+        raise ValueError(f"OpenCode bootstrap root not found: {pack_dir}")
+
+    files: Dict[str, str] = {}
+    for path in sorted(pack_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_path = _normalize_file_path(pack_dir, path)
+        # Keep this loader narrowly scoped to reserved OpenCode bootstrap paths.
+        if not rel_path.startswith(".opencode/"):
+            continue
+        files[rel_path] = path.read_text(encoding="utf-8")
+
+    for required in OPENCODE_BOOTSTRAP_REQUIRED_FILES:
+        if required not in files:
+            raise ValueError(
+                f"OpenCode bootstrap is missing required file `{required}` under: {pack_dir}"
+            )
+    return files
+
+
 def _validate_vite_base(pack_dir: Path, files: Dict[str, str]) -> None:
     vite_config_path = "vite.config.ts"
     if vite_config_path not in files:
@@ -156,5 +185,11 @@ def get_template(template_key: str) -> PublishedAppTemplate:
 def build_template_files(template_key: str) -> Dict[str, str]:
     for pack in _load_all_packs():
         if pack.template.key == template_key:
-            return dict(pack.files)
+            merged = dict(pack.files)
+            merged.update(build_opencode_bootstrap_files())
+            return merged
     raise KeyError(template_key)
+
+
+def build_opencode_bootstrap_files() -> Dict[str, str]:
+    return _load_opencode_bootstrap_files(OPENCODE_BOOTSTRAP_ROOT)

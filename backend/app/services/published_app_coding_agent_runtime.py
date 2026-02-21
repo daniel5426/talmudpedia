@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import time
 from hashlib import sha256
 from typing import Any, AsyncGenerator
 from uuid import UUID
@@ -33,6 +34,7 @@ from app.services.published_app_coding_agent_engines.native_engine import Native
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
+from app.services.published_app_agent_integration_contract import build_published_app_agent_integration_contract
 from app.services.opencode_server_client import OpenCodeServerClient
 from app.api.routers.published_apps_admin_files import _filter_builder_snapshot_files, _validate_builder_project_or_raise
 
@@ -171,6 +173,24 @@ class PublishedAppCodingAgentRuntimeService:
             )
         return compacted
 
+    @staticmethod
+    def _build_selected_agent_contract_message(contract: dict[str, Any] | None) -> str | None:
+        if not isinstance(contract, dict) or not contract:
+            return None
+        max_chars = int(os.getenv("APPS_CODING_AGENT_CONTRACT_CONTEXT_MAX_CHARS", "16000") or 16000)
+        if max_chars < 1024:
+            max_chars = 1024
+        try:
+            rendered = json.dumps(contract, sort_keys=True, default=str)
+        except Exception:
+            rendered = str(contract)
+        if len(rendered) > max_chars:
+            rendered = rendered[:max_chars] + "... [truncated]"
+        return (
+            "Selected app agent integration contract (source of truth for tools/schemas/UI hints):\n"
+            f"{rendered}"
+        )
+
     async def _resolve_run_model_ids(
         self,
         *,
@@ -285,11 +305,61 @@ class PublishedAppCodingAgentRuntimeService:
 
     @staticmethod
     def _run_context(run: AgentRun) -> dict[str, Any]:
-        input_params = run.input_params if isinstance(run.input_params, dict) else {}
-        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
+        raw_context = input_params.get("context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
         input_params["context"] = context
         run.input_params = input_params
         return context
+
+    @staticmethod
+    def _timing_metrics_for_run(run: AgentRun) -> dict[str, int]:
+        context = PublishedAppCodingAgentRuntimeService._run_context(run)
+        metrics = context.get("timing_metrics_ms")
+        if not isinstance(metrics, dict):
+            metrics = {}
+            context["timing_metrics_ms"] = metrics
+        return metrics
+
+    @staticmethod
+    def _record_timing_metric(run: AgentRun, *, phase: str, started_at: float) -> int:
+        duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+        metrics = PublishedAppCodingAgentRuntimeService._timing_metrics_for_run(run)
+        metrics[str(phase)] = duration_ms
+        return duration_ms
+
+    @staticmethod
+    def _chat_sandbox_reuse_enabled() -> bool:
+        raw = str(os.getenv("APPS_CODING_AGENT_CHAT_SANDBOX_REUSE_ENABLED", "1") or "").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _chat_sandbox_scope_for_chat_session(cls, chat_session_id: UUID | str | None) -> str | None:
+        if not cls._chat_sandbox_reuse_enabled() or not chat_session_id:
+            return None
+        raw = str(chat_session_id).strip()
+        if not raw:
+            return None
+        return f"chat-{raw}"
+
+    @classmethod
+    def _chat_sandbox_scope_for_run(cls, run: AgentRun) -> str | None:
+        context = cls._run_context(run)
+        explicit = str(context.get("sandbox_scope_key") or "").strip()
+        if explicit:
+            return explicit
+        return cls._chat_sandbox_scope_for_chat_session(context.get("chat_session_id"))
+
+    @classmethod
+    def _should_keep_sandbox_warm(
+        cls,
+        *,
+        run: AgentRun,
+        reason: PublishedAppCodingRunSandboxStatus,
+    ) -> bool:
+        if reason == PublishedAppCodingRunSandboxStatus.error:
+            return False
+        return bool(cls._chat_sandbox_scope_for_run(run))
 
     def _assert_opencode_sandbox_mode_available(self) -> None:
         if not self._run_sandbox_service.settings.required:
@@ -309,11 +379,13 @@ class PublishedAppCodingAgentRuntimeService:
         base_revision: PublishedAppRevision,
         actor_id: UUID | None,
     ) -> dict[str, str]:
+        scope_key = self._chat_sandbox_scope_for_run(run)
         session = await self._run_sandbox_service.ensure_session(
             run=run,
             app=app,
             revision=base_revision,
             actor_id=actor_id,
+            controller_session_id=scope_key,
         )
         status = session.status.value if hasattr(session.status, "value") else str(session.status)
         if session.status == PublishedAppCodingRunSandboxStatus.error or not session.sandbox_id:
@@ -328,6 +400,7 @@ class PublishedAppCodingAgentRuntimeService:
             session.started_at.isoformat() if isinstance(session.started_at, datetime) else None
         )
         context["coding_run_sandbox_workspace_path"] = workspace_path
+        context["sandbox_scope_key"] = scope_key
         return {
             "opencode_sandbox_id": str(session.sandbox_id),
             "opencode_workspace_path": workspace_path,
@@ -419,6 +492,7 @@ class PublishedAppCodingAgentRuntimeService:
         execution_engine: str | None = None,
         chat_session_id: UUID | None = None,
     ) -> AgentRun:
+        create_run_started_at = time.monotonic()
         requested_model_id, resolved_model_id = await self._resolve_run_model_ids(
             tenant_id=app.tenant_id,
             requested_model_id=requested_model_id,
@@ -459,6 +533,25 @@ class PublishedAppCodingAgentRuntimeService:
         message_budget_chars = int(os.getenv("APPS_CODING_AGENT_MESSAGE_BUDGET_CHARS", "28000"))
         normalized_messages = self._compact_messages_for_budget(normalized_messages, message_budget_chars)
 
+        include_agent_contract = str(
+            os.getenv("APPS_CODING_AGENT_INCLUDE_AGENT_CONTRACT", "1") or "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        selected_agent_contract: dict[str, Any] | None = None
+        if include_agent_contract:
+            try:
+                selected_agent_contract = await build_published_app_agent_integration_contract(
+                    db=self.db,
+                    app=app,
+                )
+            except Exception as exc:
+                selected_agent_contract = {
+                    "error": str(exc) or "Failed to resolve selected agent contract",
+                }
+        contract_message = self._build_selected_agent_contract_message(selected_agent_contract)
+        if contract_message:
+            normalized_messages.insert(0, {"role": "system", "content": contract_message})
+        sandbox_scope_key = self._chat_sandbox_scope_for_chat_session(chat_session_id)
+
         input_params = {
             "input": user_prompt,
             "messages": normalized_messages,
@@ -471,6 +564,8 @@ class PublishedAppCodingAgentRuntimeService:
                 "execution_engine": normalized_engine,
                 "opencode_model_id": opencode_model_id,
                 "chat_session_id": str(chat_session_id) if chat_session_id else None,
+                "sandbox_scope_key": sandbox_scope_key,
+                "selected_agent_contract": selected_agent_contract,
             },
         }
 
@@ -497,6 +592,7 @@ class PublishedAppCodingAgentRuntimeService:
         run.execution_engine = normalized_engine
         run.engine_run_ref = None
 
+        sandbox_start_started_at = time.monotonic()
         try:
             sandbox_context = await self._ensure_run_sandbox_context(
                 run=run,
@@ -522,6 +618,23 @@ class PublishedAppCodingAgentRuntimeService:
         context = self._run_context(run)
         if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
             context.update(sandbox_context)
+        sandbox_start_ms = self._record_timing_metric(
+            run,
+            phase="sandbox_start",
+            started_at=sandbox_start_started_at,
+        )
+        create_run_ms = self._record_timing_metric(
+            run,
+            phase="create_run",
+            started_at=create_run_started_at,
+        )
+        logger.info(
+            "CODING_AGENT_TIMING run_id=%s app_id=%s phase=create_run duration_ms=%s sandbox_start_ms=%s",
+            run.id,
+            app.id,
+            create_run_ms,
+            sandbox_start_ms,
+        )
 
         await self.db.commit()
         await self.db.refresh(run)
@@ -578,7 +691,25 @@ class PublishedAppCodingAgentRuntimeService:
         else:
             run.status = RunStatus.cancelled
 
-        sandbox_session = await self._run_sandbox_service.stop_session_for_run(run_id=run.id)
+        keep_warm = (
+            run.status != RunStatus.failed
+            and self._should_keep_sandbox_warm(
+                run=run,
+                reason=PublishedAppCodingRunSandboxStatus.stopped,
+            )
+        )
+        if keep_warm:
+            sandbox_session = await self._run_sandbox_service.keep_session_warm_for_run(run_id=run.id)
+        else:
+            stop_reason = (
+                PublishedAppCodingRunSandboxStatus.error
+                if run.status == RunStatus.failed
+                else PublishedAppCodingRunSandboxStatus.stopped
+            )
+            sandbox_session = await self._run_sandbox_service.stop_session_for_run(
+                run_id=run.id,
+                reason=stop_reason,
+            )
         if sandbox_session is not None:
             context = self._run_context(run)
             context["coding_run_sandbox_status"] = (
@@ -923,6 +1054,8 @@ class PublishedAppCodingAgentRuntimeService:
         assistant_delta_emitted = False
         assistant_chunks: list[str] = []
         assistant_message_persisted = False
+        first_token_recorded = False
+        stream_started_at = time.monotonic()
 
         def emit(
             event: str,
@@ -958,10 +1091,13 @@ class PublishedAppCodingAgentRuntimeService:
             assistant_message_persisted = True
 
         async def finalize_sandbox(reason: PublishedAppCodingRunSandboxStatus) -> None:
-            sandbox_session = await self._run_sandbox_service.stop_session_for_run(
-                run_id=run.id,
-                reason=reason,
-            )
+            if self._should_keep_sandbox_warm(run=run, reason=reason):
+                sandbox_session = await self._run_sandbox_service.keep_session_warm_for_run(run_id=run.id)
+            else:
+                sandbox_session = await self._run_sandbox_service.stop_session_for_run(
+                    run_id=run.id,
+                    reason=reason,
+                )
             if sandbox_session is None:
                 return
             context = self._run_context(run)
@@ -1039,6 +1175,20 @@ class PublishedAppCodingAgentRuntimeService:
                     if raw_content.strip():
                         assistant_delta_emitted = True
                         assistant_chunks.append(raw_content)
+                        if not first_token_recorded:
+                            first_token_recorded = True
+                            first_token_ms = self._record_timing_metric(
+                                run,
+                                phase="first_token",
+                                started_at=stream_started_at,
+                            )
+                            logger.info(
+                                "CODING_AGENT_TIMING run_id=%s app_id=%s phase=first_token duration_ms=%s",
+                                run.id,
+                                app.id,
+                                first_token_ms,
+                            )
+                            await self.db.commit()
                 yield emit(mapped_event, stage, payload, diagnostics)
 
             run = await self.db.get(AgentRun, run_id) or run

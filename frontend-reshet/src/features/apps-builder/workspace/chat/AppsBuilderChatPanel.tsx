@@ -6,6 +6,7 @@ import {
   Sparkles,
   Square,
   Undo2,
+  X,
 } from "lucide-react";
 
 import {
@@ -32,17 +33,34 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
+import {
+  Queue,
+  QueueItem,
+  QueueItemAction,
+  QueueItemActions,
+  QueueItemContent,
+  QueueItemIndicator,
+  QueueList,
+  QueueSection,
+  QueueSectionContent,
+  QueueSectionLabel,
+  QueueSectionTrigger,
+} from "@/components/ai-elements/queue";
+import { Shimmer } from "@/components/ai-elements/shimmer";
+import { Task, TaskItem, TaskItemFile } from "@/components/ai-elements/task";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { CodingAgentChatSession, LogicalModel } from "@/services";
+import type { CodingAgentCapabilities, CodingAgentChatSession, LogicalModel } from "@/services";
 
 import {
   TimelineItem,
+  formatToolPathLabel,
   isAssistantTimelineItem,
   isToolTimelineItem,
   isUserTimelineItem,
 } from "./chat-model";
+import type { QueuedPrompt } from "./useAppsBuilderChat";
 
 type AppsBuilderChatPanelProps = {
   isOpen: boolean;
@@ -62,6 +80,9 @@ type AppsBuilderChatPanelProps = {
   isModelSelectorOpen: boolean;
   onModelSelectorOpenChange: (next: boolean) => void;
   onSelectModelId: (modelId: string | null) => void;
+  queuedPrompts: QueuedPrompt[];
+  onRemoveQueuedPrompt: (promptId: string) => void;
+  capabilities: CodingAgentCapabilities | null;
 };
 
 export function AppsBuilderChatPanel({
@@ -82,6 +103,9 @@ export function AppsBuilderChatPanel({
   isModelSelectorOpen,
   onModelSelectorOpenChange,
   onSelectModelId,
+  queuedPrompts,
+  onRemoveQueuedPrompt,
+  capabilities,
 }: AppsBuilderChatPanelProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
@@ -98,13 +122,9 @@ export function AppsBuilderChatPanel({
       );
     }
 
-    const rendered: JSX.Element[] = [];
-    let i = 0;
-    while (i < timeline.length) {
-      const item = timeline[i];
-
+    return timeline.map((item) => {
       if (isUserTimelineItem(item)) {
-        rendered.push(
+        return (
           <Message key={item.id} from="user" className="group/usermsg max-w-full">
             <MessageContent className="relative">
               <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
@@ -122,14 +142,12 @@ export function AppsBuilderChatPanel({
                 </button>
               )}
             </MessageContent>
-          </Message>,
+          </Message>
         );
-        i++;
-        continue;
       }
 
       if (isAssistantTimelineItem(item)) {
-        rendered.push(
+        return (
           <Message key={item.id} from="assistant" className="max-w-full">
             <MessageContent className="bg-transparent px-0 py-0">
               <MessageResponse>
@@ -137,93 +155,48 @@ export function AppsBuilderChatPanel({
                   "I can help with code changes in this app workspace. Tell me what you want to change."}
               </MessageResponse>
             </MessageContent>
-          </Message>,
+          </Message>
         );
-        i++;
-        continue;
       }
 
       if (isToolTimelineItem(item)) {
-        if (item.title === "Reading file") {
-          const groupStart = i;
-          let readCount = 0;
-          let hasRunning = false;
-          while (i < timeline.length && isToolTimelineItem(timeline[i]) && timeline[i].title === "Reading file") {
-            readCount++;
-            if (timeline[i].toolStatus === "running") hasRunning = true;
-            i++;
-          }
-          rendered.push(
-            <Message key={timeline[groupStart].id} from="assistant" className="max-w-full">
-              <MessageContent className="bg-transparent px-0 py-0 text-xs">
-                <div className="inline-flex items-center gap-2 rounded-md px-1 py-0.5">
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full",
-                      hasRunning ? "animate-pulse bg-foreground/70" : "bg-emerald-500",
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      "text-xs",
-                      hasRunning ? "animate-pulse text-foreground/75" : "text-muted-foreground",
-                    )}
-                  >
-                    Explored {readCount} {readCount === 1 ? "file" : "files"}
-                  </span>
-                </div>
-              </MessageContent>
-            </Message>,
-          );
-          continue;
-        }
-
         const status = item.toolStatus || "completed";
-        rendered.push(
+        const titleNode = status === "running" ? (
+          <Shimmer className="text-sm">{item.title}</Shimmer>
+        ) : (
+          <span>{item.title}</span>
+        );
+
+        return (
           <Message key={item.id} from="assistant" className="max-w-full">
-            <MessageContent className="bg-transparent px-0 py-0 text-xs">
-              <div className="inline-flex items-center gap-2 rounded-md px-1 py-0.5">
-                <span
+            <MessageContent className="bg-transparent px-0 py-0 text-sm">
+              <Task defaultOpen className="w-full">
+                <TaskItem
                   className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    status === "running"
-                      ? "animate-pulse bg-foreground/70"
-                      : status === "failed"
-                        ? "bg-destructive"
-                        : "bg-emerald-500",
-                  )}
-                />
-                <span
-                  className={cn(
-                    "text-xs",
-                    status === "running"
-                      ? "animate-pulse text-foreground/75"
-                      : status === "failed"
-                        ? "text-destructive"
-                        : "text-muted-foreground",
+                    "flex items-center gap-2 text-sm",
+                    status === "failed" ? "text-destructive" : "text-muted-foreground",
                   )}
                 >
-                  {item.title}
-                </span>
-              </div>
+                  {titleNode}
+                  {item.toolPath ? <TaskItemFile>{formatToolPathLabel(item.toolPath)}</TaskItemFile> : null}
+                </TaskItem>
+              </Task>
             </MessageContent>
-          </Message>,
+          </Message>
         );
-        i++;
-        continue;
       }
 
-      rendered.push(
+      return (
         <Message key={item.id} from="assistant" className="max-w-full">
           <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
-            <div>{item.title}{item.description ? ` ${item.description}` : ""}</div>
+            <div>
+              {item.title}
+              {item.description ? ` ${item.description}` : ""}
+            </div>
           </MessageContent>
-        </Message>,
+        </Message>
       );
-      i++;
-    }
-
-    return rendered;
+    });
   }, [isUndoing, onRevertToCheckpoint, timeline]);
 
   if (!isOpen) {
@@ -273,7 +246,6 @@ export function AppsBuilderChatPanel({
           <PanelRightClose className="h-3.5 w-3.5" />
         </Button>
       </div>
-
       <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
         <Conversation className="flex min-h-0 flex-1 flex-col">
           <ConversationContent className="gap-2 px-0 py-0 pb-3">
@@ -281,9 +253,9 @@ export function AppsBuilderChatPanel({
             {isSending && !timeline.some((item) => item.kind === "assistant" && item.assistantStreamId) ? (
               <Message from="assistant" className="max-w-full">
                 <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
-                  <span className="animate-pulse">
-                    Thinking... {activeThinkingSummary && activeThinkingSummary !== "Thinking..." ? activeThinkingSummary : ""}
-                  </span>
+                  <Shimmer>
+                    {`Thinking...${activeThinkingSummary && activeThinkingSummary !== "Thinking..." ? ` ${activeThinkingSummary}` : ""}`}
+                  </Shimmer>
                 </MessageContent>
               </Message>
             ) : null}
@@ -291,13 +263,40 @@ export function AppsBuilderChatPanel({
           <ConversationScrollButton />
         </Conversation>
 
+        {queuedPrompts.length > 0 ? (
+          <Queue className="mb-2">
+            <QueueSection defaultOpen>
+              <QueueSectionTrigger>
+                <QueueSectionLabel count={queuedPrompts.length} label="queued prompts" />
+              </QueueSectionTrigger>
+              <QueueSectionContent>
+                <QueueList>
+                  {queuedPrompts.map((prompt) => (
+                    <QueueItem key={prompt.id}>
+                      <div className="flex items-start gap-2">
+                        <QueueItemIndicator />
+                        <QueueItemContent>{prompt.text}</QueueItemContent>
+                        <QueueItemActions>
+                          <QueueItemAction
+                            aria-label="Remove queued prompt"
+                            onClick={() => onRemoveQueuedPrompt(prompt.id)}
+                            title="Remove"
+                          >
+                            <X className="h-3 w-3" />
+                          </QueueItemAction>
+                        </QueueItemActions>
+                      </div>
+                    </QueueItem>
+                  ))}
+                </QueueList>
+              </QueueSectionContent>
+            </QueueSection>
+          </Queue>
+        ) : null}
+
         <div className="shrink-0 pt-1">
           <PromptInput
             onSubmit={async (message) => {
-              if (isSending) {
-                onStopRun();
-                return;
-              }
               await onSendMessage(message.text);
             }}
             className="rounded-xl border border-border/40 bg-muted/30 shadow-none"

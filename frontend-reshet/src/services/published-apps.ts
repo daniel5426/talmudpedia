@@ -296,6 +296,28 @@ export interface CodingAgentRestoreCheckpointResponse {
   run_id?: string | null;
 }
 
+export interface CodingAgentCapabilityTool {
+  name: string;
+  slug: string;
+  function_name: string;
+}
+
+export interface CodingAgentOpenCodePolicy {
+  tooling_mode: string;
+  repo_tool_allowlist_configured: boolean;
+  workspace_permission_model: string;
+  summary: string;
+}
+
+export interface CodingAgentCapabilities {
+  app_id: string;
+  default_engine: CodingAgentExecutionEngine;
+  native_enabled: boolean;
+  native_tool_count: number;
+  native_tools: CodingAgentCapabilityTool[];
+  opencode_policy: CodingAgentOpenCodePolicy;
+}
+
 export const publishedAppsService = {
   async list(): Promise<PublishedApp[]> {
     return httpClient.get<PublishedApp[]>("/admin/apps");
@@ -447,6 +469,14 @@ export const publishedAppsService = {
         Accept: "text/event-stream",
       },
     });
+  },
+
+  async cancelCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {
+    return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs/${runId}/cancel`, {});
+  },
+
+  async getCodingAgentCapabilities(appId: string): Promise<CodingAgentCapabilities> {
+    return httpClient.get<CodingAgentCapabilities>(`/admin/apps/${appId}/coding-agent/capabilities`);
   },
 
   async listCodingAgentCheckpoints(appId: string, limit = 25): Promise<CodingAgentCheckpoint[]> {

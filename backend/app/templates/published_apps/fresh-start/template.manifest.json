@@ -1,0 +1,23 @@
+{
+  "key": "fresh-start",
+  "name": "Fresh Start",
+  "description": "Minimal Vite + React baseline with runtime SDK wiring.",
+  "thumbnail": "fresh",
+  "tags": [
+    "chat",
+    "minimal",
+    "blank"
+  ],
+  "entry_file": "src/main.tsx",
+  "style_tokens": {
+    "fontDisplay": "'Space Grotesk', sans-serif",
+    "fontBody": "'Inter', sans-serif",
+    "bg": "#f7f9fc",
+    "panel": "#ffffff",
+    "border": "#dbe2ee",
+    "accent": "#1f6feb",
+    "accentSoft": "#dce8ff",
+    "text": "#122132",
+    "muted": "#5f728a"
+  }
+}

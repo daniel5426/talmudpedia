@@ -1,11 +1,15 @@
 # Templates
 
-Last Updated: 2026-02-12
+Last Updated: 2026-02-21
 
 ## Current State Summary
 - Template packs root: `backend/app/templates/published_apps/`
-- Active templates: `chat-classic`, `chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`
+- Active templates: `chat-classic`, `chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`, `fresh-start`
 - Loader behavior: templates are loaded from disk on each call (no in-memory `lru_cache`), so file edits are picked up without restarting just for template file reads.
+- Template bootstrap overlay now injects canonical OpenCode custom tools into every template output:
+  - `.opencode/package.json`
+  - `.opencode/tools/coding_agent_get_agent_integration_contract.ts`
+  - `.opencode/tools/coding_agent_describe_selected_agent_contract.ts`
 - Strategy currently implemented: clean implementation only (no legacy fallback paths kept).
 
 ## Fast-Create Direction (Current Planning Scope)
@@ -27,6 +31,7 @@ Last Updated: 2026-02-12
 | `chat-editorial` | Editorial Stack | High-contrast editorial style for premium assistants. | `chat`, `editorial` | `src/main.tsx` |
 | `chat-neon` | Neon Console | Dark neon style with bold contrast and sharp edges. | `chat`, `dark` | `src/main.tsx` |
 | `chat-soft` | Soft Product | Rounded, calm interface for customer-facing support flows. | `chat`, `friendly` | `src/main.tsx` |
+| `fresh-start` | Fresh Start | Minimal Vite + React baseline with runtime SDK wiring. | `chat`, `minimal`, `blank` | `src/main.tsx` |
 
 ## What Is Special Right Now
 - `chat-classic` is the advanced template and currently includes the largest component set, including:
@@ -38,14 +43,14 @@ Last Updated: 2026-02-12
 
 ## Dependency Policy (Builder Validation)
 - Enforced by: `backend/app/services/apps_builder_dependency_policy.py`
-- Only allowlisted packages are valid; declared versions must exactly match pinned versions.
+- Policy currently validates project/package shape and import safety (not curated package allowlisting).
 - Import rules currently enforced:
   - local relative imports (`./`, `../`) allowed
   - alias imports (`@/...`) allowed
   - `node:` imports allowed
   - network imports (`http(s)://`) blocked
-  - undeclared/unsupported packages blocked
-- `chat-classic` now validates under policy with expanded allowlist (Radix packages, `ai`, `cmdk`, `clsx`, `class-variance-authority`, `lucide-react`, `nanoid`, `streamdown`, `tailwind-merge`, plus Tailwind/PostCSS toolchain).
+  - absolute imports (`/foo/bar`) blocked
+  - package imports are not allowlist-restricted by this validator.
 
 ## Runtime/Preview State Relevant To Templates
 - Preview runtime now returns preview URL based on built manifest entry HTML (`.../assets/{entry_html}`) and appends a preview token.
@@ -54,6 +59,9 @@ Last Updated: 2026-02-12
   - `preview_token` query param
   - `published_app_preview_token` cookie
 - Result: built template previews can load `index.html` + JS assets when opened from builder preview flow.
+- Template `runtime-sdk.ts` now allows live streaming in preview mode (the builder-preview hard-stop is removed).
+- Template runtime SDK now auto-derives runtime base path from the current preview/published asset URL when explicit runtime context is absent.
+- Template runtime SDK forwards `preview_token` to preview chat stream calls to keep preview auth intact.
 - Planned addition for `chat-classic` pilot:
   - runtime config endpoint consumption at template startup so app-specific values are injected at runtime, not build time.
 
@@ -104,5 +112,6 @@ Last Updated: 2026-02-12
 - Template loader: `backend/app/services/published_app_templates.py`
 - Dependency policy: `backend/app/services/apps_builder_dependency_policy.py`
 - Template packs: `backend/app/templates/published_apps/*`
+- OpenCode bootstrap source: `backend/app/templates/published_app_bootstrap/opencode/.opencode/*`
 - Plan tracking: `backend/documentations/Plans/Base44_Vite_Static_Apps_ImplementationPlan.md`
 - Fast-create pilot scope: `chat-classic` only until rollout criteria are met.

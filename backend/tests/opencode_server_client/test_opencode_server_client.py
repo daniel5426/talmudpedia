@@ -8,6 +8,8 @@ from app.services.opencode_server_client import (
     OpenCodeServerClientConfig,
     OpenCodeServerClientError,
 )
+from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
+from app.services.published_app_templates import OPENCODE_BOOTSTRAP_CONTEXT_PATH
 
 
 def _client() -> OpenCodeServerClient:
@@ -24,11 +26,10 @@ def _client() -> OpenCodeServerClient:
 
 
 def _patch_async_client(monkeypatch: pytest.MonkeyPatch, handler):
-    transport = httpx.MockTransport(handler)
     real_client = httpx.AsyncClient
 
     def client_factory(*args, **kwargs):
-        kwargs["transport"] = transport
+        kwargs["transport"] = httpx.MockTransport(handler)
         return real_client(*args, **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", client_factory)
@@ -45,6 +46,58 @@ def test_build_official_session_permission_rules_includes_workspace_patterns():
     patterns = {str(item.get("pattern") or "") for item in rules}
     assert "/tmp/workspace-a" in patterns
     assert "/tmp/workspace-a/*" in patterns
+
+
+@pytest.mark.asyncio
+async def test_official_mode_seeds_custom_tools_before_start(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    workspace_path = str(tmp_path / "workspace")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": "sess-seed"}})
+        if request.url.path == "/session/sess-seed/prompt_async":
+            return httpx.Response(404, json={"error": "unsupported"})
+        if request.url.path == "/session/sess-seed/message":
+            payload = json.loads(request.content.decode("utf-8"))
+            text = str((payload.get("parts") or [{}])[0].get("text") or "")
+            assert "run_id: run-mcp" in text
+            assert "app_id: app-mcp" in text
+            assert "coding_agent_get_agent_integration_contract" in text
+            return httpx.Response(200, json={"success": True, "data": {"parts": [{"type": "text", "text": "OK"}]}})
+        if request.url.path == "/mcp":
+            raise AssertionError("OpenCode MCP should not be called after custom-tool cutover.")
+        raise AssertionError(f"Unexpected request path: {request.url.path}")
+
+    _patch_async_client(monkeypatch, handler)
+    client = _client()
+
+    run_ref = await client.start_run(
+        run_id="run-mcp",
+        app_id="app-mcp",
+        sandbox_id="sandbox-1",
+        workspace_path=workspace_path,
+        model_id="",
+        prompt="use tools",
+        messages=[{"role": "user", "content": "use tools"}],
+        selected_agent_contract={"agent": {"id": "agent-1"}},
+    )
+    assert run_ref == "sess-seed"
+    assert (tmp_path / "workspace" / ".opencode" / "package.json").exists()
+    assert (
+        tmp_path
+        / "workspace"
+        / ".opencode"
+        / "tools"
+        / "coding_agent_get_agent_integration_contract.ts"
+    ).exists()
+    context_file = tmp_path / "workspace" / OPENCODE_BOOTSTRAP_CONTEXT_PATH
+    assert context_file.exists()
+    context_payload = json.loads(context_file.read_text(encoding="utf-8"))
+    assert context_payload["run_id"] == "run-mcp"
+    assert context_payload["app_id"] == "app-mcp"
+    assert context_payload["selected_agent_contract"]["agent"]["id"] == "agent-1"
 
 
 @pytest.mark.asyncio
@@ -92,6 +145,91 @@ async def test_official_mode_start_run_buffers_assistant_events(monkeypatch: pyt
     assert "Applied the requested change." in delta_text
     assert "Build is clean." in delta_text
     assert any(item.get("event") == "run.completed" for item in events)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.MonkeyPatch):
+    class SandboxClientStub:
+        is_remote_enabled = True
+
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, str]] = []
+            self.start_calls = 0
+
+        async def write_file(self, *, sandbox_id: str, path: str, content: str):
+            self.writes.append((path, content))
+            return {"sandbox_id": sandbox_id, "path": path, "status": "written"}
+
+        async def start_opencode_run(self, **kwargs):
+            self.start_calls += 1
+            return {"run_ref": "sandbox-run-1"}
+
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
+    stub = SandboxClientStub()
+    client = _client()
+    client._sandbox_runtime_client = stub
+
+    run_ref = await client.start_run(
+        run_id="run-sandbox-seed",
+        app_id="app-1",
+        sandbox_id="sandbox-seed",
+        workspace_path="/workspace",
+        model_id="",
+        prompt="seed",
+        messages=[{"role": "user", "content": "seed"}],
+        selected_agent_contract={"agent": {"id": "agent-1"}},
+    )
+    assert run_ref == "sandbox-run-1"
+    assert stub.start_calls == 1
+    seeded_paths = {path for path, _ in stub.writes}
+    assert ".opencode/package.json" in seeded_paths
+    assert ".opencode/tools/coding_agent_get_agent_integration_contract.ts" in seeded_paths
+    assert ".opencode/tools/coding_agent_describe_selected_agent_contract.ts" in seeded_paths
+    assert OPENCODE_BOOTSTRAP_CONTEXT_PATH in seeded_paths
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_fails_closed_when_seed_write_fails(monkeypatch: pytest.MonkeyPatch):
+    class FailingSandboxClientStub:
+        is_remote_enabled = True
+
+        async def write_file(self, *, sandbox_id: str, path: str, content: str):
+            raise PublishedAppDraftDevRuntimeClientError("write failed")
+
+        async def start_opencode_run(self, **kwargs):
+            raise AssertionError("start_opencode_run should not be called when seeding fails")
+
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
+    client = _client()
+    client._sandbox_runtime_client = FailingSandboxClientStub()
+
+    with pytest.raises(OpenCodeServerClientError) as exc:
+        await client.start_run(
+            run_id="run-seed-fail",
+            app_id="app-1",
+            sandbox_id="sandbox-fail",
+            workspace_path="/workspace",
+            model_id="",
+            prompt="seed",
+            messages=[{"role": "user", "content": "seed"}],
+        )
+    assert "Failed to seed OpenCode custom tools in sandbox" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_official_mode_fails_closed_when_workspace_path_is_invalid():
+    client = _client()
+    with pytest.raises(OpenCodeServerClientError) as exc:
+        await client.start_run(
+            run_id="run-invalid-workspace",
+            app_id="app-1",
+            sandbox_id="sandbox-1",
+            workspace_path="relative/path",
+            model_id="",
+            prompt="reply",
+            messages=[{"role": "user", "content": "reply"}],
+        )
+    assert "workspace_path must be absolute" in str(exc.value)
 
 
 @pytest.mark.asyncio
