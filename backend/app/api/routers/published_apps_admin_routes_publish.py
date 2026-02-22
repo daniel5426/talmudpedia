@@ -43,6 +43,8 @@ from .published_apps_admin_shared import (
     _build_published_url,
     _publish_job_to_response,
     _validate_auth_template_key,
+    _validate_allowed_origins,
+    _validate_external_auth_oidc,
     _validate_providers,
     _validate_visibility,
     router,
@@ -86,6 +88,10 @@ async def update_published_app(
         app.auth_providers = _validate_providers(payload.auth_providers)
     if payload.auth_template_key is not None:
         app.auth_template_key = _validate_auth_template_key(payload.auth_template_key)
+    if payload.allowed_origins is not None:
+        app.allowed_origins = _validate_allowed_origins(payload.allowed_origins)
+    if payload.external_auth_oidc is not None:
+        app.external_auth_oidc = _validate_external_auth_oidc(payload.external_auth_oidc)
     if payload.status is not None:
         try:
             app.status = PublishedAppStatus(payload.status)

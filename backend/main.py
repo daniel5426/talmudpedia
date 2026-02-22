@@ -748,6 +748,7 @@ app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 # Add Middlewares
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from app.middleware import PublishedAppsCORSMiddleware
 
 # app.add_middleware(GZipMiddleware, minimum_size=500)
 
@@ -778,6 +779,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Chat-ID"],
 )
+# App-level CORS allowlist for /public/apps/{slug} endpoints.
+# This middleware is registered after CORSMiddleware so it runs first.
+app.add_middleware(PublishedAppsCORSMiddleware)
 
 from app.api.routers import auth, chat, general, search, stt, texts, library, admin, tts, rag_admin, agent
 from app.api.routers.agents import router as agents_router

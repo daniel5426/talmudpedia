@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -167,6 +168,8 @@ class PublishedAppResponse(BaseModel):
     auth_enabled: bool
     auth_providers: List[str]
     auth_template_key: str
+    allowed_origins: List[str] = Field(default_factory=list)
+    external_auth_oidc: Optional[Dict[str, Any]] = None
     template_key: str
     current_draft_revision_id: Optional[str] = None
     current_published_revision_id: Optional[str] = None
@@ -269,6 +272,8 @@ class CreatePublishedAppRequest(BaseModel):
     auth_enabled: bool = True
     auth_providers: List[str] = Field(default_factory=lambda: ["password"])
     auth_template_key: str = "auth-classic"
+    allowed_origins: List[str] = Field(default_factory=list)
+    external_auth_oidc: Optional[Dict[str, Any]] = None
 
 
 class UpdatePublishedAppRequest(BaseModel):
@@ -281,6 +286,8 @@ class UpdatePublishedAppRequest(BaseModel):
     auth_enabled: Optional[bool] = None
     auth_providers: Optional[List[str]] = None
     auth_template_key: Optional[str] = None
+    allowed_origins: Optional[List[str]] = None
+    external_auth_oidc: Optional[Dict[str, Any]] = None
     status: Optional[str] = None
 
 
@@ -514,6 +521,56 @@ def _validate_providers(providers: List[str]) -> List[str]:
     return sorted(set(normalized))
 
 
+def _normalize_allowed_origin(origin: str) -> str:
+    value = (origin or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="Allowed origin cannot be empty")
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail=f"Invalid allowed origin: {value}")
+    normalized = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    return normalized.rstrip("/")
+
+
+def _validate_allowed_origins(origins: List[str]) -> List[str]:
+    normalized = [_normalize_allowed_origin(item) for item in origins]
+    return sorted(set(normalized))
+
+
+def _validate_external_auth_oidc(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if config is None:
+        return None
+    if not isinstance(config, dict):
+        raise HTTPException(status_code=400, detail="external_auth_oidc must be an object")
+
+    issuer = str(config.get("issuer") or "").strip().rstrip("/")
+    audience = str(config.get("audience") or "").strip()
+    jwks_uri = str(config.get("jwks_uri") or "").strip()
+    email_claim = str(config.get("email_claim") or "email").strip() or "email"
+    name_claim = str(config.get("name_claim") or "name").strip() or "name"
+
+    if not issuer or not audience or not jwks_uri:
+        raise HTTPException(
+            status_code=400,
+            detail="external_auth_oidc must include issuer, audience, and jwks_uri",
+        )
+
+    issuer_origin = urlparse(issuer)
+    jwks_origin = urlparse(jwks_uri)
+    if issuer_origin.scheme != "https" or not issuer_origin.netloc:
+        raise HTTPException(status_code=400, detail="external_auth_oidc.issuer must be an https URL")
+    if jwks_origin.scheme != "https" or not jwks_origin.netloc:
+        raise HTTPException(status_code=400, detail="external_auth_oidc.jwks_uri must be an https URL")
+
+    return {
+        "issuer": issuer,
+        "audience": audience,
+        "jwks_uri": jwks_uri,
+        "email_claim": email_claim,
+        "name_claim": name_claim,
+    }
+
+
 def _normalize_domain_host(host: str) -> str:
     normalized = (host or "").strip().lower().rstrip(".")
     if not normalized:
@@ -537,6 +594,8 @@ def _app_to_response(app: PublishedApp) -> PublishedAppResponse:
         auth_enabled=bool(app.auth_enabled),
         auth_providers=list(app.auth_providers or []),
         auth_template_key=app.auth_template_key or "auth-classic",
+        allowed_origins=list(app.allowed_origins or []),
+        external_auth_oidc=dict(app.external_auth_oidc or {}) if app.external_auth_oidc else None,
         template_key=app.template_key or "chat-classic",
         current_draft_revision_id=str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
         current_published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,

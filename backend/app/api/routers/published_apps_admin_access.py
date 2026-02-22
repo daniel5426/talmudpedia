@@ -224,7 +224,14 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
     if draft is not None:
         return draft
 
-    files = build_template_files(app.template_key or "chat-classic")
+    files = build_template_files(
+        app.template_key or "chat-classic",
+        runtime_context={
+            "app_id": str(app.id),
+            "app_slug": app.slug,
+            "agent_id": str(app.agent_id),
+        },
+    )
     revision_store = PublishedAppRevisionStore(db)
     manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
     created = PublishedAppRevision(

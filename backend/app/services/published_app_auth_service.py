@@ -7,6 +7,7 @@ from typing import Any, Optional
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
+import jwt
 import requests
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -17,6 +18,7 @@ from app.core.security import create_published_app_session_token, get_password_h
 from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppExternalIdentity,
     PublishedAppSession,
     PublishedAppUserMembership,
     PublishedAppUserMembershipStatus,
@@ -109,6 +111,140 @@ class PublishedAppAuthService:
         )
         await self.db.commit()
         return AuthResult(token=token, user=user, session=session)
+
+    def verify_external_oidc_token(self, *, token: str, config: dict[str, Any]) -> dict[str, Any]:
+        issuer = str(config.get("issuer") or "").strip().rstrip("/")
+        audience = str(config.get("audience") or "").strip()
+        jwks_uri = str(config.get("jwks_uri") or "").strip()
+        if not issuer or not audience or not jwks_uri:
+            raise PublishedAppAuthError("OIDC configuration is incomplete")
+
+        algorithms = config.get("algorithms")
+        if not isinstance(algorithms, list) or not algorithms:
+            algorithms = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
+
+        try:
+            jwks_client = jwt.PyJWKClient(jwks_uri)
+            signing_key = jwks_client.get_signing_key_from_jwt(token).key
+            payload = jwt.decode(
+                token,
+                signing_key,
+                algorithms=algorithms,
+                audience=audience,
+                issuer=issuer,
+            )
+            if not isinstance(payload, dict):
+                raise PublishedAppAuthError("OIDC token payload is invalid")
+            return payload
+        except PublishedAppAuthError:
+            raise
+        except Exception as exc:
+            raise PublishedAppAuthError(f"Failed to verify external OIDC token: {exc}") from exc
+
+    async def _get_or_create_external_identity_user(
+        self,
+        *,
+        app: PublishedApp,
+        provider: str,
+        issuer: str,
+        subject: str,
+        email: Optional[str],
+        full_name: Optional[str],
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> User:
+        result = await self.db.execute(
+            select(PublishedAppExternalIdentity).where(
+                and_(
+                    PublishedAppExternalIdentity.published_app_id == app.id,
+                    PublishedAppExternalIdentity.provider == provider,
+                    PublishedAppExternalIdentity.issuer == issuer,
+                    PublishedAppExternalIdentity.subject == subject,
+                )
+            ).limit(1)
+        )
+        identity = result.scalar_one_or_none()
+        if identity is not None:
+            user = await self.db.get(User, identity.user_id)
+            if user is None:
+                raise PublishedAppAuthError("External identity is linked to a missing user")
+            if email:
+                identity.email = email
+            if metadata:
+                identity.metadata_ = dict(metadata)
+            await self.db.flush()
+            return user
+
+        resolved_email = (email or "").strip().lower()
+        user: Optional[User] = None
+        if resolved_email:
+            user_result = await self.db.execute(select(User).where(User.email == resolved_email).limit(1))
+            user = user_result.scalar_one_or_none()
+
+        if user is None:
+            synthetic_email = resolved_email or f"oidc-{uuid4().hex}@external.local"
+            user = User(
+                email=synthetic_email,
+                full_name=full_name,
+                role="user",
+                avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or synthetic_email}",
+            )
+            self.db.add(user)
+            await self.db.flush()
+
+        identity = PublishedAppExternalIdentity(
+            published_app_id=app.id,
+            user_id=user.id,
+            provider=provider,
+            issuer=issuer,
+            subject=subject,
+            email=resolved_email or None,
+            metadata_=dict(metadata or {}),
+        )
+        self.db.add(identity)
+        await self.db.flush()
+        return user
+
+    async def exchange_external_oidc(self, *, app: PublishedApp, token: str) -> AuthResult:
+        config = app.external_auth_oidc or {}
+        if not isinstance(config, dict) or not config:
+            raise PublishedAppAuthError("External OIDC auth is not configured for this app")
+
+        payload = self.verify_external_oidc_token(token=token, config=config)
+        issuer = str(config.get("issuer") or "").strip().rstrip("/")
+        subject = str(payload.get("sub") or "").strip()
+        if not subject:
+            raise PublishedAppAuthError("OIDC token is missing subject claim")
+
+        email_claim = str(config.get("email_claim") or "email").strip() or "email"
+        name_claim = str(config.get("name_claim") or "name").strip() or "name"
+        email_raw = payload.get(email_claim)
+        name_raw = payload.get(name_claim)
+        email = str(email_raw).strip().lower() if isinstance(email_raw, str) else None
+        full_name = str(name_raw).strip() if isinstance(name_raw, str) else None
+
+        identity_metadata = {
+            "issuer": issuer,
+            "subject": subject,
+            "audience": str(config.get("audience") or ""),
+            "email_claim": email_claim,
+            "name_claim": name_claim,
+        }
+
+        user = await self._get_or_create_external_identity_user(
+            app=app,
+            provider="oidc",
+            issuer=issuer,
+            subject=subject,
+            email=email,
+            full_name=full_name,
+            metadata=identity_metadata,
+        )
+        return await self.issue_auth_result(
+            app=app,
+            user=user,
+            provider="oidc",
+            metadata=identity_metadata,
+        )
 
     async def signup_with_password(self, app: PublishedApp, email: str, password: str, full_name: Optional[str] = None) -> AuthResult:
         if len(password) < 6:

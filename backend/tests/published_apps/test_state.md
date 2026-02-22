@@ -15,6 +15,7 @@ Last Updated: 2026-02-22
 - `backend/tests/published_apps/test_builder_agent_integration_contract.py`
 - `backend/tests/published_apps/test_builder_revisions.py`
 - `backend/tests/published_apps/test_public_app_resolve_and_config.py`
+- `backend/tests/published_apps/test_public_auth_oidc_exchange.py`
 - `backend/tests/published_apps/test_public_auth_email_password.py`
 - `backend/tests/published_apps/test_public_auth_google_oauth.py`
 - `backend/tests/published_apps/test_public_chat_scope_and_persistence.py`
@@ -51,15 +52,22 @@ Last Updated: 2026-02-22
 - Draft-dev session APIs support ensure/sync/heartbeat/read/stop lifecycle per `(app_id, user_id)`.
 - Draft-dev ensure response decorates `preview_url` with runtime context query fields (`runtime_mode`, `runtime_base_path`, `preview_token`, `runtime_preview_token`) for template runtime SDK preview chat.
 - Public runtime descriptor and preview runtime/asset endpoints are covered.
+- Runtime bootstrap endpoints are covered for both published and preview revisions.
+- Runtime HTML injection of `window.__APP_RUNTIME_CONTEXT` is covered on runtime HTML responses.
+- Per-app public endpoint CORS allowlist behavior is covered (allowed and blocked origins).
 - Preview chat stream endpoint is covered (`POST /public/apps/preview/revisions/{revision_id}/chat/stream`), including preview-token auth requirement and ephemeral execution semantics.
 - Published runtime static asset proxy is covered (`GET /public/apps/{slug}/assets/{asset_path}`), including SPA route fallback to `index.html`.
 - Public `/public/apps/{slug}/ui` is permanently removed and returns `410 UI_SOURCE_MODE_REMOVED`.
 - Hostname resolve and app config retrieval for public runtime are covered.
 - Signup/login/logout/auth-me and Google OAuth callback paths are covered.
+- External OIDC auth exchange endpoint is covered (`POST /public/apps/{slug}/auth/exchange`) for success + validation failure paths.
 - Public chat persists messages only when auth is enabled; public mode chat is ephemeral.
 - Legacy builder chat endpoints (`/builder/chat/stream`, `/builder/checkpoints`, `/builder/undo`, `/builder/revert-file`) are intentionally removed and are no longer part of this suite.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps`
+- Date: 2026-02-22
+- Result: PASS (45 passed)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_builder_revisions.py`
 - Date: 2026-02-22
 - Result: PASS (10 passed)

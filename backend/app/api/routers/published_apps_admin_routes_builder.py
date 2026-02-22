@@ -83,7 +83,17 @@ def _resolve_runtime_api_base_url(request: Request) -> str:
         return explicit.rstrip("/")
     parsed = urlparse(str(request.base_url))
     origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-    api_prefix = (os.getenv("APPS_DRAFT_DEV_RUNTIME_API_PREFIX") or "/api/py").strip() or "/api/py"
+    prefix_env = os.getenv("APPS_DRAFT_DEV_RUNTIME_API_PREFIX")
+    if prefix_env is not None:
+        api_prefix = (prefix_env or "").strip()
+    else:
+        api_prefix = str(request.scope.get("root_path") or "").strip()
+        if not api_prefix:
+            api_prefix = (request.headers.get("x-forwarded-prefix") or "").strip()
+        if not api_prefix and str(request.url.path).startswith("/api/py/"):
+            api_prefix = "/api/py"
+    if not api_prefix:
+        return origin
     if not api_prefix.startswith("/"):
         api_prefix = f"/{api_prefix}"
     return f"{origin}{api_prefix.rstrip('/')}"
@@ -650,7 +660,14 @@ async def reset_builder_template(
 
     template_key = _validate_template_key(payload.template_key)
     template = get_template(template_key)
-    files = build_template_files(template_key)
+    files = build_template_files(
+        template_key,
+        runtime_context={
+            "app_id": str(app.id),
+            "app_slug": app.slug,
+            "agent_id": str(app.agent_id),
+        },
+    )
     revision_store = PublishedAppRevisionStore(db)
     manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
     revision = PublishedAppRevision(

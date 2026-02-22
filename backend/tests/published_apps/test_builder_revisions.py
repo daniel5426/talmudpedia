@@ -55,6 +55,11 @@ async def test_builder_state_and_revision_workflow(client, db_session):
         ".opencode/tools/read_agent_context.ts"
         in state_payload["current_draft_revision"]["files"]
     )
+    assert "runtime-sdk/package.json" in state_payload["current_draft_revision"]["files"]
+    assert "runtime-sdk/src/index.ts" in state_payload["current_draft_revision"]["files"]
+    assert "src/runtime-config.json" in state_payload["current_draft_revision"]["files"]
+    seeded_package_json = state_payload["current_draft_revision"]["files"]["package.json"]
+    assert "\"@talmudpedia/runtime-sdk\": \"file:runtime-sdk\"" in seeded_package_json
     draft_revision_id = state_payload["current_draft_revision"]["id"]
 
     conflict_resp = await client.post(
@@ -119,6 +124,8 @@ async def test_builder_state_and_revision_workflow(client, db_session):
     assert fresh_reset_payload["template_key"] == "fresh-start"
     assert "src/main.tsx" in fresh_reset_payload["files"]
     assert "src/runtime-sdk.ts" in fresh_reset_payload["files"]
+    assert "src/runtime-config.json" in fresh_reset_payload["files"]
+    assert "runtime-sdk/package.json" in fresh_reset_payload["files"]
     assert ".opencode/package.json" in fresh_reset_payload["files"]
 
     _, publish_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
@@ -191,7 +198,7 @@ async def test_draft_dev_session_preview_url_includes_runtime_context(client, db
     query = parse_qs(parsed.query)
     assert query["runtime_mode"] == ["builder-preview"]
     runtime_base_path = query["runtime_base_path"][0]
-    assert runtime_base_path.endswith(f"/api/py/public/apps/preview/revisions/{draft_revision_id}")
+    assert runtime_base_path.endswith(f"/public/apps/preview/revisions/{draft_revision_id}")
     assert query["preview_token"][0]
     assert query["runtime_preview_token"][0]
 

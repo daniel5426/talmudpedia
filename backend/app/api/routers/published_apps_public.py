@@ -83,10 +83,34 @@ class PreviewAppRuntimeResponse(BaseModel):
     api_base_path: str = "/api/py"
 
 
+class RuntimeBootstrapAuthResponse(BaseModel):
+    enabled: bool
+    providers: List[str]
+    exchange_enabled: bool = False
+
+
+class RuntimeBootstrapResponse(BaseModel):
+    version: str = "runtime-bootstrap.v1"
+    app_id: str
+    slug: str
+    revision_id: Optional[str] = None
+    mode: str
+    api_base_path: str
+    api_base_url: str
+    chat_stream_path: str
+    chat_stream_url: str
+    auth: RuntimeBootstrapAuthResponse
+    preview_token: Optional[str] = None
+
+
 class PublicAuthRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: Optional[str] = None
+
+
+class PublicAuthExchangeRequest(BaseModel):
+    token: str
 
 
 class PublicChatStreamRequest(BaseModel):
@@ -216,6 +240,104 @@ def _append_query(url: str, params: dict[str, str]) -> str:
     current.update(params)
     updated = parsed._replace(query=urlencode(current))
     return urlunparse(updated)
+
+
+def _resolve_runtime_api_base_url(request: Request) -> str:
+    explicit = (os.getenv("APPS_DRAFT_DEV_RUNTIME_API_BASE_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    parsed = urlparse(str(request.base_url))
+    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    prefix_env = os.getenv("APPS_DRAFT_DEV_RUNTIME_API_PREFIX")
+    if prefix_env is not None:
+        api_prefix = (prefix_env or "").strip()
+    else:
+        api_prefix = str(request.scope.get("root_path") or "").strip()
+        if not api_prefix:
+            api_prefix = (request.headers.get("x-forwarded-prefix") or "").strip()
+        if not api_prefix and str(request.url.path).startswith("/api/py/"):
+            api_prefix = "/api/py"
+    if not api_prefix:
+        return origin
+    if not api_prefix.startswith("/"):
+        api_prefix = f"/{api_prefix}"
+    return f"{origin}{api_prefix.rstrip('/')}"
+
+
+def _build_published_bootstrap(
+    *,
+    request: Request,
+    app: PublishedApp,
+    revision: PublishedAppRevision,
+) -> RuntimeBootstrapResponse:
+    runtime_api_base = _resolve_runtime_api_base_url(request)
+    runtime_api_parsed = urlparse(runtime_api_base)
+    api_base_path = runtime_api_parsed.path or ""
+    stream_suffix = f"/public/apps/{app.slug}/chat/stream"
+    stream_path = f"{api_base_path}{stream_suffix}" if api_base_path else stream_suffix
+    stream_url = f"{runtime_api_base}{stream_suffix}"
+    return RuntimeBootstrapResponse(
+        app_id=str(app.id),
+        slug=app.slug,
+        revision_id=str(revision.id),
+        mode="published-runtime",
+        api_base_path=api_base_path or "/",
+        api_base_url=runtime_api_base,
+        chat_stream_path=stream_path,
+        chat_stream_url=stream_url,
+        auth=RuntimeBootstrapAuthResponse(
+            enabled=bool(app.auth_enabled),
+            providers=list(app.auth_providers or []),
+            exchange_enabled=bool(app.external_auth_oidc),
+        ),
+    )
+
+
+def _build_preview_bootstrap(
+    *,
+    request: Request,
+    app: PublishedApp,
+    revision: PublishedAppRevision,
+    preview_token: Optional[str],
+) -> RuntimeBootstrapResponse:
+    runtime_api_base = _resolve_runtime_api_base_url(request)
+    runtime_api_parsed = urlparse(runtime_api_base)
+    api_base_path = runtime_api_parsed.path or ""
+    stream_suffix = f"/public/apps/preview/revisions/{revision.id}/chat/stream"
+    stream_path = f"{api_base_path}{stream_suffix}" if api_base_path else stream_suffix
+    stream_url = f"{runtime_api_base}{stream_suffix}"
+    if preview_token:
+        connector = "&" if "?" in stream_url else "?"
+        stream_url = f"{stream_url}{connector}{PREVIEW_TOKEN_QUERY_PARAM}={preview_token}"
+    return RuntimeBootstrapResponse(
+        app_id=str(app.id),
+        slug=app.slug,
+        revision_id=str(revision.id),
+        mode="builder-preview",
+        api_base_path=api_base_path or "/",
+        api_base_url=runtime_api_base,
+        chat_stream_path=stream_path,
+        chat_stream_url=stream_url,
+        auth=RuntimeBootstrapAuthResponse(
+            enabled=bool(app.auth_enabled),
+            providers=list(app.auth_providers or []),
+            exchange_enabled=False,
+        ),
+        preview_token=preview_token or None,
+    )
+
+
+def _inject_runtime_context_into_html(html: str, context: RuntimeBootstrapResponse) -> str:
+    if not html:
+        return html
+
+    context_json = context.model_dump_json(exclude_none=True)
+    script = f'<script>window.__APP_RUNTIME_CONTEXT={context_json};</script>'
+    lowered = html.lower()
+    head_idx = lowered.find("</head>")
+    if head_idx >= 0:
+        return f"{html[:head_idx]}{script}{html[head_idx:]}"
+    return f"{script}{html}"
 
 
 def _inject_preview_token_into_html_assets(html: str, token: str) -> str:
@@ -458,8 +580,20 @@ async def get_published_runtime(
     )
 
 
+@router.get("/{app_slug}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
+async def get_published_runtime_bootstrap(
+    app_slug: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    app = await _assert_published(db, app_slug)
+    revision = await _get_published_ui_revision(db, app)
+    return _build_published_bootstrap(request=request, app=app, revision=revision)
+
+
 @router.get("/{app_slug}/assets/{asset_path:path}")
 async def get_published_asset(
+    request: Request,
     app_slug: str,
     asset_path: str,
     db: AsyncSession = Depends(get_db),
@@ -514,6 +648,15 @@ async def get_published_asset(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    if content_type.startswith("text/html"):
+        try:
+            html = payload.decode("utf-8")
+            bootstrap = _build_published_bootstrap(request=request, app=app, revision=revision)
+            html = _inject_runtime_context_into_html(html, bootstrap)
+            payload = html.encode("utf-8")
+        except Exception:
+            pass
+
     return Response(
         content=payload,
         media_type=content_type,
@@ -558,7 +701,7 @@ async def get_preview_asset(
     principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    _, revision = await _get_preview_revision_for_principal(
+    app, revision = await _get_preview_revision_for_principal(
         db=db,
         revision_id=revision_id,
         principal=principal,
@@ -591,6 +734,21 @@ async def get_preview_asset(
             payload = html.encode("utf-8")
         except Exception:
             # If rewriting fails, return original payload.
+            pass
+
+    if content_type.startswith("text/html"):
+        try:
+            html = payload.decode("utf-8")
+            preview_token = query_token or (principal.get("auth_token") or "").strip()
+            bootstrap = _build_preview_bootstrap(
+                request=request,
+                app=app,
+                revision=revision,
+                preview_token=preview_token or None,
+            )
+            html = _inject_runtime_context_into_html(html, bootstrap)
+            payload = html.encode("utf-8")
+        except Exception:
             pass
 
     response = Response(
@@ -649,6 +807,27 @@ async def get_preview_runtime(
         preview_url=preview_url,
         asset_base_url=asset_base_url,
         api_base_path="/api/py",
+    )
+
+
+@router.get("/preview/revisions/{revision_id}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
+async def get_preview_runtime_bootstrap(
+    request: Request,
+    revision_id: UUID,
+    principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    app, revision = await _get_preview_revision_for_principal(
+        db=db,
+        revision_id=revision_id,
+        principal=principal,
+    )
+    preview_token = (principal.get("auth_token") or "").strip() or None
+    return _build_preview_bootstrap(
+        request=request,
+        app=app,
+        revision=revision,
+        preview_token=preview_token,
     )
 
 
@@ -737,6 +916,32 @@ async def login(
             email=payload.email.lower(),
             password=payload.password,
         )
+    except PublishedAppAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "token": result.token,
+        "token_type": "bearer",
+        "user": {
+            "id": str(result.user.id),
+            "email": result.user.email,
+            "full_name": result.user.full_name,
+            "avatar": result.user.avatar,
+        },
+    }
+
+
+@router.post("/{app_slug}/auth/exchange")
+async def exchange_auth_token(
+    app_slug: str,
+    payload: PublicAuthExchangeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    app = await _assert_published(db, app_slug)
+    if not app.auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
+    auth_service = PublishedAppAuthService(db)
+    try:
+        result = await auth_service.exchange_external_oidc(app=app, token=payload.token)
     except PublishedAppAuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {

@@ -134,6 +134,9 @@ backend/app/services/stt/
 backend/app/services/text/
 backend/app/services/voice/
 
+backend/app/middleware/
+backend/app/middleware/published_apps_cors.py
+
 backend/app/workers/
 backend/app/workers/celery_app.py
 backend/app/workers/tasks.py

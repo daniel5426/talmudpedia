@@ -294,6 +294,8 @@ async def test_preview_asset_html_rewrites_relative_assets_with_preview_token(cl
     text = resp.text
     assert f"./assets/main.css?preview_token={preview_token}" in text
     assert f"./assets/main.js?preview_token={preview_token}" in text
+    assert "window.__APP_RUNTIME_CONTEXT=" in text
+    assert "\"mode\":\"builder-preview\"" in text
 
 
 @pytest.mark.asyncio
@@ -386,3 +388,171 @@ async def test_published_asset_proxy_falls_back_to_index_for_spa_routes(client, 
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "Published SPA" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_published_runtime_bootstrap_contract(client, db_session):
+    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        user.id,
+        slug="runtime-bootstrap-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+    app.external_auth_oidc = {
+        "issuer": "https://issuer.example.com",
+        "audience": "runtime-bootstrap-app",
+        "jwks_uri": "https://issuer.example.com/.well-known/jwks.json",
+    }
+    await db_session.commit()
+
+    revision = PublishedAppRevision(
+        published_app_id=app.id,
+        kind=PublishedAppRevisionKind.published,
+        template_key="chat-classic",
+        template_runtime="vite_static",
+        files={"src/main.tsx": "export default {};"},
+        dist_storage_prefix="apps/t/a/revisions/runtime-bootstrap/dist",
+        dist_manifest={"entry_html": "index.html"},
+        created_by=user.id,
+    )
+    db_session.add(revision)
+    await db_session.flush()
+    app.current_published_revision_id = revision.id
+    await db_session.commit()
+
+    resp = await client.get(f"/public/apps/{app.slug}/runtime/bootstrap")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["version"] == "runtime-bootstrap.v1"
+    assert payload["mode"] == "published-runtime"
+    assert payload["slug"] == app.slug
+    assert payload["revision_id"] == str(revision.id)
+    assert payload["chat_stream_path"].endswith(f"/public/apps/{app.slug}/chat/stream")
+    assert payload["chat_stream_url"].endswith(f"/public/apps/{app.slug}/chat/stream")
+    assert payload["auth"]["enabled"] is True
+    assert payload["auth"]["exchange_enabled"] is True
+    assert payload["auth"]["providers"] == ["password"]
+
+
+@pytest.mark.asyncio
+async def test_preview_runtime_bootstrap_contract(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Preview Bootstrap App",
+            "slug": "preview-bootstrap-app",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    state_payload = state_resp.json()
+    draft_revision_id = state_payload["current_draft_revision"]["id"]
+    preview_token = state_payload["preview_token"]
+    assert preview_token
+
+    bootstrap_resp = await client.get(
+        f"/public/apps/preview/revisions/{draft_revision_id}/runtime/bootstrap?preview_token={preview_token}"
+    )
+    assert bootstrap_resp.status_code == 200
+    payload = bootstrap_resp.json()
+    assert payload["version"] == "runtime-bootstrap.v1"
+    assert payload["mode"] == "builder-preview"
+    assert payload["revision_id"] == draft_revision_id
+    assert payload["preview_token"] == preview_token
+    assert payload["chat_stream_path"].endswith(f"/public/apps/preview/revisions/{draft_revision_id}/chat/stream")
+
+
+@pytest.mark.asyncio
+async def test_published_asset_html_injects_runtime_context(client, db_session, monkeypatch):
+    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        user.id,
+        slug="published-inject-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    revision = PublishedAppRevision(
+        published_app_id=app.id,
+        kind=PublishedAppRevisionKind.published,
+        template_key="chat-classic",
+        template_runtime="vite_static",
+        files={"src/main.tsx": "export default {};"},
+        dist_storage_prefix="apps/t/a/revisions/published-inject/dist",
+        dist_manifest={"entry_html": "index.html"},
+        created_by=user.id,
+    )
+    db_session.add(revision)
+    await db_session.flush()
+    app.current_published_revision_id = revision.id
+    await db_session.commit()
+
+    class _Storage:
+        def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str):
+            assert dist_storage_prefix == "apps/t/a/revisions/published-inject/dist"
+            assert asset_path == "index.html"
+            return b"<!doctype html><html><head></head><body>ok</body></html>", "text/html"
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_public.PublishedAppBundleStorage.from_env",
+        staticmethod(lambda: _Storage()),
+    )
+
+    resp = await client.get(f"/public/apps/{app.slug}/assets/index.html")
+    assert resp.status_code == 200
+    assert "window.__APP_RUNTIME_CONTEXT=" in resp.text
+    assert "\"mode\":\"published-runtime\"" in resp.text
+    assert f"\"slug\":\"{app.slug}\"" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_public_app_cors_allowlist_enforced(client, db_session):
+    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        user.id,
+        slug="cors-enforced-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+    app.allowed_origins = ["https://client.example.com"]
+    await db_session.commit()
+
+    preflight_ok = await client.options(
+        f"/public/apps/{app.slug}/runtime/bootstrap",
+        headers={
+            "Origin": "https://client.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert preflight_ok.status_code == 204
+    assert preflight_ok.headers.get("access-control-allow-origin") == "https://client.example.com"
+
+    preflight_blocked = await client.options(
+        f"/public/apps/{app.slug}/runtime/bootstrap",
+        headers={
+            "Origin": "https://blocked.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert preflight_blocked.status_code == 403

@@ -36,6 +36,16 @@ export const inferLanguage = (path: string): string => {
   return "plaintext";
 };
 
+const fileIconColor = (name: string): string => {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".tsx") || lower.endsWith(".ts")) return "text-blue-500";
+  if (lower.endsWith(".jsx") || lower.endsWith(".js")) return "text-yellow-500";
+  if (lower.endsWith(".css")) return "text-purple-500";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text-orange-500";
+  if (lower.endsWith(".json")) return "text-amber-400";
+  return "text-muted-foreground";
+};
+
 type MutableDirectory = {
   name: string;
   path: string;
@@ -146,83 +156,112 @@ export function FileTree({
   const treeNodes = useMemo(() => buildFileTree(sortedPaths), [sortedPaths]);
   const directoryPaths = useMemo(() => collectDirectoryPaths(treeNodes), [treeNodes]);
   const activePath = selectedFile && files[selectedFile] !== undefined ? selectedFile : sortedPaths[0] || null;
-  const [manualExpandedDirectories, setManualExpandedDirectories] = useState<Set<string>>(new Set());
+
+  // Track directories the user has explicitly expanded or collapsed.
+  // `manualCollapsed` takes priority over auto-expansion of active-file ancestors.
+  const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
+  const [manualCollapsed, setManualCollapsed] = useState<Set<string>>(new Set());
+
   const expandedDirectories = useMemo(() => {
     const next = new Set<string>();
-    manualExpandedDirectories.forEach((directoryPath) => {
+    // Auto-expand ancestors of the active file (unless user manually collapsed them)
+    if (activePath) {
+      ancestorDirectories(activePath).forEach((directoryPath) => {
+        if (!manualCollapsed.has(directoryPath)) {
+          next.add(directoryPath);
+        }
+      });
+    }
+    // Add all manually expanded directories (that still exist)
+    manualExpanded.forEach((directoryPath) => {
       if (directoryPaths.has(directoryPath)) {
         next.add(directoryPath);
       }
     });
-    if (activePath) {
-      ancestorDirectories(activePath).forEach((directoryPath) => next.add(directoryPath));
-    }
     return next;
-  }, [activePath, directoryPaths, manualExpandedDirectories]);
+  }, [activePath, directoryPaths, manualExpanded, manualCollapsed]);
 
   const toggleDirectory = (path: string) => {
-    setManualExpandedDirectories((previous) => {
-      const next = new Set(previous);
-      Array.from(next).forEach((directoryPath) => {
-        if (!directoryPaths.has(directoryPath)) {
-          next.delete(directoryPath);
-        }
-      });
-      if (next.has(path)) {
+    if (expandedDirectories.has(path)) {
+      // Collapse: add to manualCollapsed, remove from manualExpanded
+      setManualCollapsed((prev) => new Set(prev).add(path));
+      setManualExpanded((prev) => {
+        const next = new Set(prev);
         next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
+        return next;
+      });
+    } else {
+      // Expand: add to manualExpanded, remove from manualCollapsed
+      setManualExpanded((prev) => new Set(prev).add(path));
+      setManualCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+    }
   };
 
   const renderTreeNode = (node: TreeNode, depth: number): React.JSX.Element => {
     if (node.type === "directory") {
       const isExpanded = expandedDirectories.has(node.path);
       return (
-        <div key={node.path} className="space-y-1">
+        <div key={node.path}>
           <button
             type="button"
             onClick={() => toggleDirectory(node.path)}
-            className="flex w-full items-center gap-1 rounded-md py-1.5 pr-2 text-left text-xs transition-colors hover:bg-muted"
-            style={{ paddingLeft: `${depth * 14 + 8}px` }}
+            className="flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-left text-xs transition-colors hover:bg-muted"
+            style={{ paddingLeft: `${depth * 16 + 8}px` }}
           >
             <ChevronRight
-              className={cn("h-3.5 w-3.5 shrink-0 transition-transform", isExpanded && "rotate-90")}
+              className={cn(
+                "h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150",
+                isExpanded && "rotate-90",
+              )}
               aria-hidden="true"
             />
-            {isExpanded ? <FolderOpen className="h-3.5 w-3.5 shrink-0" /> : <Folder className="h-3.5 w-3.5 shrink-0" />}
-            <span className="truncate">{node.name}</span>
+            {isExpanded ? (
+              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span className="truncate font-medium">{node.name}</span>
           </button>
-          {isExpanded && node.children.map((child) => renderTreeNode(child, depth + 1))}
+          {isExpanded && (
+            <div className="relative">
+              <div
+                className="absolute bottom-0 top-0 border-l border-border/40"
+                style={{ left: `${depth * 16 + 16}px` }}
+              />
+              {node.children.map((child) => renderTreeNode(child, depth + 1))}
+            </div>
+          )}
         </div>
       );
     }
 
     const isActive = node.path === activePath;
     return (
-      <div key={node.path} className="group flex items-center gap-1">
+      <div key={node.path} className="group flex items-center">
         <button
           type="button"
           onClick={() => onSelectFile(node.path)}
           className={cn(
             "flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 text-left text-xs transition-colors",
-            isActive ? "bg-primary/10 text-primary" : "hover:bg-muted",
+            isActive ? "bg-primary/10 text-primary font-medium" : "text-foreground/80 hover:bg-muted",
           )}
-          style={{ paddingLeft: `${depth * 14 + 8}px` }}
+          style={{ paddingLeft: `${depth * 16 + 8}px` }}
         >
-          <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+          <FileCode2 className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-primary" : fileIconColor(node.name))} />
           <span className="truncate">{node.name}</span>
         </button>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="h-6 w-6 opacity-0 group-hover:opacity-100"
+          className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
           onClick={() => onDeleteFile(node.path)}
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
         </Button>
       </div>
     );
@@ -231,9 +270,9 @@ export function FileTree({
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="p-2">
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           {treeNodes.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-muted-foreground">No files yet.</p>
+            <p className="px-2 py-4 text-center text-xs text-muted-foreground">No files yet.</p>
           ) : (
             treeNodes.map((node) => renderTreeNode(node, 0))
           )}

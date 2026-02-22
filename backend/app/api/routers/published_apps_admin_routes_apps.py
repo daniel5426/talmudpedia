@@ -51,6 +51,8 @@ from .published_apps_admin_shared import (
     _normalize_domain_host,
     _template_to_response,
     _validate_auth_template_key,
+    _validate_allowed_origins,
+    _validate_external_auth_oidc,
     _validate_providers,
     _validate_template_key,
     _validate_visibility,
@@ -111,6 +113,8 @@ async def create_published_app(
         slug = await _generate_unique_slug(db, payload.name)
 
     providers = _validate_providers(payload.auth_providers)
+    allowed_origins = _validate_allowed_origins(payload.allowed_origins)
+    external_auth_oidc = _validate_external_auth_oidc(payload.external_auth_oidc)
     await _validate_agent(db, ctx["tenant_id"], payload.agent_id)
 
     app = PublishedApp(
@@ -125,6 +129,8 @@ async def create_published_app(
         auth_enabled=payload.auth_enabled,
         auth_providers=providers,
         auth_template_key=auth_template_key,
+        allowed_origins=allowed_origins,
+        external_auth_oidc=external_auth_oidc,
         created_by=ctx["user"].id if ctx["user"] else None,
         status=PublishedAppStatus.draft,
     )
@@ -133,7 +139,14 @@ async def create_published_app(
         await db.flush()
 
         template = get_template(template_key)
-        files = build_template_files(template_key)
+        files = build_template_files(
+            template_key,
+            runtime_context={
+                "app_id": str(app.id),
+                "app_slug": app.slug,
+                "agent_id": str(app.agent_id),
+            },
+        )
         revision_store = PublishedAppRevisionStore(db)
         manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
         revision = PublishedAppRevision(

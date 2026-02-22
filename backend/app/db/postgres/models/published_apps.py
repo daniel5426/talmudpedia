@@ -104,6 +104,8 @@ class PublishedApp(Base):
     auth_enabled = Column(Boolean, nullable=False, default=True)
     auth_providers = Column(JSONB, nullable=False, default=lambda: ["password"])
     auth_template_key = Column(String, nullable=False, default="auth-classic")
+    allowed_origins = Column(JSONB, nullable=False, default=list)
+    external_auth_oidc = Column(JSONB, nullable=True)
     published_url = Column(String, nullable=True)
     template_key = Column(String, nullable=False, default="chat-classic")
     current_draft_revision_id = Column(UUID(as_uuid=True), nullable=True, index=True)
@@ -119,6 +121,11 @@ class PublishedApp(Base):
     creator = relationship("User")
     memberships = relationship("PublishedAppUserMembership", back_populates="published_app", cascade="all, delete-orphan")
     sessions = relationship("PublishedAppSession", back_populates="published_app", cascade="all, delete-orphan")
+    external_identities = relationship(
+        "PublishedAppExternalIdentity",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+    )
     revisions = relationship("PublishedAppRevision", back_populates="published_app", cascade="all, delete-orphan")
     custom_domains = relationship(
         "PublishedAppCustomDomain",
@@ -224,6 +231,44 @@ class PublishedAppSession(Base):
 
     __table_args__ = (
         Index("ix_published_app_sessions_app_user", "published_app_id", "user_id"),
+    )
+
+
+class PublishedAppExternalIdentity(Base):
+    __tablename__ = "published_app_external_identities"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider = Column(String, nullable=False, default="oidc")
+    issuer = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    metadata_ = Column(JSONB, nullable=False, default=dict, name="metadata")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="external_identities")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "published_app_id",
+            "provider",
+            "issuer",
+            "subject",
+            name="uq_published_app_external_identity_subject",
+        ),
     )
 
 

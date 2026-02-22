@@ -54,7 +54,10 @@ Current template catalog includes:
 
 Behavior today:
 - Builder create/reset uses template manifests + file maps.
-- Canonical OpenCode bootstrap overlay is injected into all templates:
+- Canonical runtime/common + OpenCode bootstrap overlays are injected into all templates:
+  - `src/runtime-sdk.ts` wrapper
+  - `src/runtime-config.json` app-context payload
+  - `runtime-sdk/*` package payload (`@talmudpedia/runtime-sdk`)
   - `.opencode/package.json`
   - `.opencode/tools/read_agent_context.ts`
 - OpenCode run startup also self-heals these bootstrap files for legacy drafts.
@@ -73,9 +76,9 @@ Important runtime behavior:
 - Persistent dev server in sandbox for fast feedback/HMR during editing.
 - Sync path avoids unnecessary rewrites to reduce no-op restarts.
 - Builder preview iframe uses sandbox preview URL with preview-token bridge.
-- Draft-dev preview URLs are now decorated with runtime context query params so template runtime clients can resolve chat base path in preview:
+- Draft-dev preview URLs are decorated with runtime context query params so template runtime clients can resolve chat base path in preview:
   - `runtime_mode=builder-preview`
-  - `runtime_base_path=/api/py/public/apps/preview/revisions/{revision_id}`
+  - `runtime_base_path={resolved_runtime_api_base}/public/apps/preview/revisions/{revision_id}`
   - `runtime_preview_token` / `preview_token` for preview chat auth.
 
 ## Coding-Agent Runtime (Current)
@@ -144,12 +147,20 @@ Worker/runtime plumbing:
 - Celery app and tasks are under `backend/app/workers/`.
 
 ## Public Runtime Delivery
-Published runtime is static-only delivery with runtime descriptor APIs.
+Published runtime is static-only delivery with runtime descriptor APIs and a canonical runtime bootstrap contract.
 
 Public endpoints:
 - `GET /public/apps/{slug}/runtime`
+- `GET /public/apps/{slug}/runtime/bootstrap`
 - `GET /public/apps/preview/revisions/{revision_id}/runtime`
+- `GET /public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
 - `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
+- `POST /public/apps/{slug}/auth/exchange` (external OIDC JWT -> platform session token)
+
+Runtime delivery behavior:
+- HTML runtime responses inject `window.__APP_RUNTIME_CONTEXT` using the same bootstrap payload schema as `/runtime/bootstrap`.
+- Published public runtime endpoints now enforce per-app CORS allowlist (`allowed_origins`, plus published URL).
+- Preview runtime keeps existing trusted-origin preview token behavior.
 
 Removed path behavior:
 - `GET /public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED`.

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Copy,
   ExternalLink,
   Layers,
   Loader2,
@@ -11,15 +12,20 @@ import {
   RefreshCw,
   Rocket,
   Save,
+  Shield,
   Smartphone,
+  Trash2,
   X,
 } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -824,7 +830,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
   if (!state) {
     return (
-      <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="flex h-full w-full min-h-0 flex-col items-center justify-center gap-3 p-6 text-center">
         <div className="text-sm text-destructive">Builder state unavailable.</div>
         <Button
           variant="outline"
@@ -1052,110 +1058,148 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
                   <section className={cn("min-w-0 flex-1", configSection === "code" ? "overflow-hidden" : "overflow-auto")}>
                     {configSection === "overview" && (
-                      <div className="mx-auto max-w-3xl space-y-4 p-4">
-                        <h3 className="text-lg font-semibold">Overview</h3>
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label>App Name</Label>
-                            <Input
-                              value={state.app.name}
-                              onChange={(event) => updateLocalApp({ name: event.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>App Logo URL</Label>
-                            <Input
-                              value={state.app.logo_url || ""}
-                              onChange={(event) => updateLocalApp({ logo_url: event.target.value })}
-                              placeholder="https://..."
-                            />
-                          </div>
-                          <div className="space-y-2 md:col-span-2">
-                            <Label>Description</Label>
-                            <textarea
-                              className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                              value={state.app.description || ""}
-                              onChange={(event) => updateLocalApp({ description: event.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Visibility</Label>
-                            <Select
-                              value={state.app.visibility}
-                              onValueChange={(value) => updateLocalApp({ visibility: value })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Visibility" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="public">Public</SelectItem>
-                                <SelectItem value="private">Private</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Auth Template</Label>
-                            {isAuthTemplatesLoading && authTemplates.length === 0 ? (
-                              <Skeleton className="h-10 w-full" />
-                            ) : (
-                              <Select
-                                value={state.app.auth_template_key}
-                                onValueChange={(value) => updateLocalApp({ auth_template_key: value })}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Auth template" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {authTemplates.map((item) => (
-                                    <SelectItem key={item.key} value={item.key}>
-                                      {item.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            )}
-                          </div>
+                      <div className="mx-auto max-w-2xl space-y-5 p-6">
+                        <div>
+                          <h3 className="text-lg font-semibold tracking-tight">Overview</h3>
+                          <p className="text-sm text-muted-foreground">Configure your app&apos;s identity and settings.</p>
                         </div>
 
-                        <div className="rounded-md border border-border/60 p-3">
-                          <label className="flex items-center justify-between gap-3">
-                            <span className="text-sm">Require login for public app</span>
-                            <Checkbox
-                              checked={state.app.auth_enabled}
-                              onCheckedChange={(checked) => updateLocalApp({ auth_enabled: checked === true })}
-                            />
-                          </label>
-                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                            <label className="flex items-center justify-between rounded border border-border/60 px-3 py-2 text-sm">
-                              Password provider
-                              <Checkbox
-                                checked={(state.app.auth_providers || []).includes("password")}
-                                onCheckedChange={(checked) => {
-                                  const current = new Set(state.app.auth_providers || []);
-                                  if (checked) current.add("password");
-                                  else current.delete("password");
-                                  updateLocalApp({ auth_providers: Array.from(current) });
-                                }}
+                        <Card className="shadow-none">
+                          <CardHeader className="pb-0">
+                            <CardTitle className="text-sm">General</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">App Name</Label>
+                                <Input
+                                  value={state.app.name}
+                                  onChange={(event) => updateLocalApp({ name: event.target.value })}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">Logo URL</Label>
+                                <Input
+                                  value={state.app.logo_url || ""}
+                                  onChange={(event) => updateLocalApp({ logo_url: event.target.value })}
+                                  placeholder="https://..."
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-xs text-muted-foreground">Description</Label>
+                              <Textarea
+                                className="min-h-20 resize-none"
+                                value={state.app.description || ""}
+                                onChange={(event) => updateLocalApp({ description: event.target.value })}
+                                placeholder="Describe what your app does..."
                               />
-                            </label>
-                            <label className="flex items-center justify-between rounded border border-border/60 px-3 py-2 text-sm">
-                              Google provider
-                              <Checkbox
-                                checked={(state.app.auth_providers || []).includes("google")}
-                                onCheckedChange={(checked) => {
-                                  const current = new Set(state.app.auth_providers || []);
-                                  if (checked) current.add("google");
-                                  else current.delete("google");
-                                  updateLocalApp({ auth_providers: Array.from(current) });
-                                }}
-                              />
-                            </label>
-                          </div>
-                        </div>
+                            </div>
+                          </CardContent>
+                        </Card>
 
-                        <Button onClick={saveOverview} disabled={isSavingOverview}>
-                          {isSavingOverview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                          Save Overview
+                        <Card className="shadow-none">
+                          <CardHeader className="pb-0">
+                            <CardTitle className="text-sm">Access</CardTitle>
+                            <CardDescription>Control who can see and use your app.</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">Visibility</Label>
+                                <Select
+                                  value={state.app.visibility}
+                                  onValueChange={(value) => updateLocalApp({ visibility: value })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Visibility" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="public">Public</SelectItem>
+                                    <SelectItem value="private">Private</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">Auth Template</Label>
+                                {isAuthTemplatesLoading && authTemplates.length === 0 ? (
+                                  <Skeleton className="h-10 w-full" />
+                                ) : (
+                                  <Select
+                                    value={state.app.auth_template_key}
+                                    onValueChange={(value) => updateLocalApp({ auth_template_key: value })}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Auth template" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {authTemplates.map((item) => (
+                                        <SelectItem key={item.key} value={item.key}>
+                                          {item.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )}
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        <Card className="shadow-none">
+                          <CardHeader className="pb-0">
+                            <div className="flex items-center gap-2">
+                              <Shield className="h-4 w-4 text-muted-foreground" />
+                              <CardTitle className="text-sm">Authentication</CardTitle>
+                            </div>
+                            <CardDescription>Require users to sign in before accessing the app.</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border/60 px-4 py-3 transition-colors hover:bg-muted/50">
+                              <div>
+                                <div className="text-sm font-medium">Require login</div>
+                                <div className="text-xs text-muted-foreground">Users must sign in to access this app</div>
+                              </div>
+                              <Checkbox
+                                checked={state.app.auth_enabled}
+                                onCheckedChange={(checked) => updateLocalApp({ auth_enabled: checked === true })}
+                              />
+                            </label>
+                            <div className="space-y-2">
+                              <Label className="text-xs text-muted-foreground">Providers</Label>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border/60 px-4 py-3 text-sm transition-colors hover:bg-muted/50">
+                                  Password
+                                  <Checkbox
+                                    checked={(state.app.auth_providers || []).includes("password")}
+                                    onCheckedChange={(checked) => {
+                                      const current = new Set(state.app.auth_providers || []);
+                                      if (checked) current.add("password");
+                                      else current.delete("password");
+                                      updateLocalApp({ auth_providers: Array.from(current) });
+                                    }}
+                                  />
+                                </label>
+                                <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border/60 px-4 py-3 text-sm transition-colors hover:bg-muted/50">
+                                  Google
+                                  <Checkbox
+                                    checked={(state.app.auth_providers || []).includes("google")}
+                                    onCheckedChange={(checked) => {
+                                      const current = new Set(state.app.auth_providers || []);
+                                      if (checked) current.add("google");
+                                      else current.delete("google");
+                                      updateLocalApp({ auth_providers: Array.from(current) });
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        <Button className="w-full" onClick={saveOverview} disabled={isSavingOverview}>
+                          {isSavingOverview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                          Save Changes
                         </Button>
                       </div>
                     )}
@@ -1192,56 +1236,124 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     )}
 
                     {configSection === "domains" && (
-                      <div className="space-y-3 p-4">
-                        <h3 className="text-lg font-semibold">Domains</h3>
-                        <div className="rounded-md border border-border/60 p-3 text-sm">
-                          Platform Domain
-                          <div className="font-mono text-xs text-muted-foreground">{platformDomain}</div>
-                        </div>
-                        <div className="rounded-md border border-border/60 p-3">
-                          <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
-                            <Input
-                              value={domainHostInput}
-                              onChange={(event) => setDomainHostInput(event.target.value)}
-                              placeholder="app.example.com"
-                            />
-                            <Input
-                              value={domainNotesInput}
-                              onChange={(event) => setDomainNotesInput(event.target.value)}
-                              placeholder="Notes (optional)"
-                            />
-                            <Button onClick={addDomain} disabled={isAddingDomain || !domainHostInput.trim()}>
-                              {isAddingDomain ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add Domain"}
-                            </Button>
-                          </div>
+                      <div className="mx-auto max-w-2xl space-y-5 p-6">
+                        <div>
+                          <h3 className="text-lg font-semibold tracking-tight">Domains</h3>
+                          <p className="text-sm text-muted-foreground">Manage your app&apos;s domain configuration.</p>
                         </div>
 
-                        {isDomainsLoading && domains.length === 0 ? <DomainsListSkeleton /> : null}
-                        <div className={cn("space-y-2", isDomainsLoading && domains.length === 0 ? "hidden" : "")}>
-                          {domains.map((domain) => (
-                            <div key={domain.id} className="flex items-center justify-between rounded-md border border-border/60 p-3">
-                              <div>
-                                <div className="text-sm font-medium">{domain.host}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  status:{domain.status}{domain.notes ? ` · ${domain.notes}` : ""}
-                                </div>
+                        <Card className="shadow-none">
+                          <CardHeader className="pb-0">
+                            <div className="flex items-center justify-between">
+                              <div className="space-y-1">
+                                <CardTitle className="text-sm">Platform Domain</CardTitle>
+                                <CardDescription>Your app&apos;s default address.</CardDescription>
                               </div>
-                              {domain.status === "pending" ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => removeDomain(domain.id)}
-                                  disabled={pendingDomainDeleteId === domain.id}
-                                >
-                                  {pendingDomainDeleteId === domain.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Remove"}
-                                </Button>
-                              ) : null}
+                              <Badge variant="secondary">Default</Badge>
                             </div>
-                          ))}
-                          {!isDomainsLoading && domains.length === 0 ? (
-                            <div className="text-sm text-muted-foreground">No custom domains requested.</div>
-                          ) : null}
-                        </div>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-3">
+                              <code className="flex-1 text-sm">{platformDomain}</code>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0"
+                                onClick={() => navigator.clipboard.writeText(platformDomain)}
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        <Card className="shadow-none">
+                          <CardHeader className="pb-0">
+                            <CardTitle className="text-sm">Add Custom Domain</CardTitle>
+                            <CardDescription>Point your own domain to this app.</CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs text-muted-foreground">Host</Label>
+                                <Input
+                                  value={domainHostInput}
+                                  onChange={(event) => setDomainHostInput(event.target.value)}
+                                  placeholder="app.example.com"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs text-muted-foreground">Notes</Label>
+                                <Input
+                                  value={domainNotesInput}
+                                  onChange={(event) => setDomainNotesInput(event.target.value)}
+                                  placeholder="Optional"
+                                />
+                              </div>
+                              <div className="flex items-end">
+                                <Button onClick={addDomain} disabled={isAddingDomain || !domainHostInput.trim()}>
+                                  {isAddingDomain ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                  Add
+                                </Button>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        {isDomainsLoading && domains.length === 0 ? <DomainsListSkeleton /> : null}
+                        {!isDomainsLoading && domains.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-sm text-muted-foreground">
+                            No custom domains added yet.
+                          </div>
+                        ) : null}
+                        {domains.length > 0 && (
+                          <Card className="shadow-none">
+                            <CardHeader className="pb-0">
+                              <CardTitle className="text-sm">Custom Domains</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="divide-y divide-border/60">
+                                {domains.map((domain) => (
+                                  <div key={domain.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="truncate text-sm font-medium">{domain.host}</span>
+                                        <Badge
+                                          variant={domain.status === "active" ? "default" : "secondary"}
+                                          className={cn(
+                                            "text-[10px]",
+                                            domain.status === "active" && "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
+                                            domain.status === "pending" && "bg-amber-500/15 text-amber-600 border-amber-500/20",
+                                          )}
+                                        >
+                                          {domain.status}
+                                        </Badge>
+                                      </div>
+                                      {domain.notes && (
+                                        <p className="mt-0.5 truncate text-xs text-muted-foreground">{domain.notes}</p>
+                                      )}
+                                    </div>
+                                    {domain.status === "pending" && (
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                        onClick={() => removeDomain(domain.id)}
+                                        disabled={pendingDomainDeleteId === domain.id}
+                                      >
+                                        {pendingDomainDeleteId === domain.id ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        )}
+                                      </Button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
                       </div>
                     )}
 
