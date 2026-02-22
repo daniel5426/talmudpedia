@@ -478,14 +478,75 @@ class LocalDraftDevRuntimeManager:
     async def snapshot_files(self, *, sandbox_id: str) -> Dict[str, object]:
         async with self._lock:
             state = self._require_running_session_locked(sandbox_id)
-            files: Dict[str, str] = {}
-            for rel_path in self._collect_project_files(state.project_dir):
-                files[rel_path] = (state.project_dir / rel_path).read_text(encoding="utf-8", errors="replace")
+            files = self._collect_workspace_files_from_root(state.project_dir)
             return {
                 "sandbox_id": sandbox_id,
                 "files": files,
                 "file_count": len(files),
                 "revision_token": self._current_revision_token(state),
+            }
+
+    async def prepare_stage_workspace(self, *, sandbox_id: str, run_id: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            stage_workspace = self._stage_workspace_dir(project_dir=state.project_dir, run_id=run_id)
+            live_files = self._collect_workspace_files_from_root(state.project_dir)
+            await self._sync_files_locked(stage_workspace, live_files)
+            return {
+                "sandbox_id": sandbox_id,
+                "run_id": str(run_id),
+                "live_workspace_path": str(state.project_dir),
+                "stage_workspace_path": str(stage_workspace),
+                "workspace_path": str(stage_workspace),
+                "file_count": len(live_files),
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def snapshot_workspace(
+        self,
+        *,
+        sandbox_id: str,
+        workspace: str = "live",
+        run_id: str | None = None,
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            workspace_key = str(workspace or "live").strip().lower() or "live"
+            workspace_root = state.project_dir
+            if workspace_key == "stage":
+                if not run_id:
+                    raise LocalDraftDevRuntimeError("run_id is required for stage workspace snapshot")
+                workspace_root = self._stage_workspace_dir(project_dir=state.project_dir, run_id=run_id)
+                if not workspace_root.exists() or not workspace_root.is_dir():
+                    raise LocalDraftDevRuntimeError("Stage workspace is not prepared")
+            elif workspace_key != "live":
+                raise LocalDraftDevRuntimeError(f"Unsupported workspace scope: {workspace}")
+            files = self._collect_workspace_files_from_root(workspace_root)
+            return {
+                "sandbox_id": sandbox_id,
+                "run_id": str(run_id or ""),
+                "workspace": workspace_key,
+                "workspace_path": str(workspace_root),
+                "files": files,
+                "file_count": len(files),
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def promote_stage_workspace(self, *, sandbox_id: str, run_id: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            stage_workspace = self._stage_workspace_dir(project_dir=state.project_dir, run_id=run_id)
+            if not stage_workspace.exists() or not stage_workspace.is_dir():
+                raise LocalDraftDevRuntimeError("Stage workspace is not prepared")
+            stage_files = self._collect_workspace_files_from_root(stage_workspace)
+            await self._sync_files_locked(state.project_dir, stage_files)
+            return {
+                "sandbox_id": sandbox_id,
+                "run_id": str(run_id),
+                "live_workspace_path": str(state.project_dir),
+                "stage_workspace_path": str(stage_workspace),
+                "promoted_file_count": len(stage_files),
+                "revision_token": self._bump_revision_token(state),
             }
 
     async def run_command(
@@ -533,6 +594,28 @@ class LocalDraftDevRuntimeManager:
     def _preview_url(self, port: int, draft_dev_token: str) -> str:
         return f"http://{self._host}:{port}/?draft_dev_token={draft_dev_token}"
 
+    def _stage_workspace_dir(self, *, project_dir: Path, run_id: str) -> Path:
+        raw_run_id = str(run_id or "").strip()
+        if not raw_run_id:
+            raise LocalDraftDevRuntimeError("run_id is required")
+        safe_run_id = re.sub(r"[^A-Za-z0-9._-]+", "-", raw_run_id).strip("-")
+        if not safe_run_id:
+            raise LocalDraftDevRuntimeError("run_id is invalid")
+        return project_dir / ".talmudpedia" / "stage" / safe_run_id / "workspace"
+
+    def _collect_workspace_files_from_root(self, workspace_root: Path) -> Dict[str, str]:
+        files: Dict[str, str] = {}
+        if not workspace_root.exists() or not workspace_root.is_dir():
+            return files
+        for existing in sorted(workspace_root.rglob("*")):
+            if not existing.is_file():
+                continue
+            relative = existing.relative_to(workspace_root).as_posix()
+            if self._is_runtime_ignored_artifact_path(relative):
+                continue
+            files[relative] = existing.read_text(encoding="utf-8", errors="replace")
+        return files
+
     def _normalize_runtime_path(self, raw_path: str) -> str:
         cleaned = (raw_path or "").replace("\\", "/").strip().lstrip("/")
         if not cleaned:
@@ -547,9 +630,33 @@ class LocalDraftDevRuntimeManager:
         normalized = "/".join(parts)
         if not normalized:
             raise LocalDraftDevRuntimeError("File path is required")
-        if normalized.startswith("node_modules/") or normalized in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+        segments = [segment for segment in normalized.split("/") if segment]
+        if (
+            "node_modules" in segments
+            or normalized.startswith(".talmudpedia/")
+            or normalized == ".talmudpedia"
+            or normalized.startswith(".opencode/.bun/")
+            or normalized == ".opencode/.bun"
+            or normalized in {".draft-dev.log", ".draft-dev-dependency-hash"}
+        ):
             raise LocalDraftDevRuntimeError(f"Path is not editable: {normalized}")
         return normalized
+
+    @staticmethod
+    def _is_runtime_ignored_artifact_path(path: str) -> bool:
+        normalized = str(path or "").replace("\\", "/").strip().lstrip("/")
+        if not normalized:
+            return True
+        if normalized in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+            return True
+        if normalized.startswith(".talmudpedia/") or normalized == ".talmudpedia":
+            return True
+        segments = [segment for segment in normalized.split("/") if segment]
+        if "node_modules" in segments:
+            return True
+        if normalized.startswith(".opencode/.bun/") or normalized == ".opencode/.bun":
+            return True
+        return False
 
     def _collect_project_files(self, project_dir: Path) -> list[str]:
         paths: list[str] = []
@@ -557,9 +664,7 @@ class LocalDraftDevRuntimeManager:
             if not existing.is_file():
                 continue
             relative = existing.relative_to(project_dir).as_posix()
-            if relative.startswith("node_modules/") or relative == "node_modules":
-                continue
-            if relative in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+            if self._is_runtime_ignored_artifact_path(relative):
                 continue
             paths.append(relative)
         return paths
@@ -741,9 +846,7 @@ class LocalDraftDevRuntimeManager:
 
         for existing in sorted(project_dir.rglob("*"), reverse=True):
             relative = existing.relative_to(project_dir).as_posix()
-            if relative.startswith("node_modules/") or relative == "node_modules":
-                continue
-            if relative in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+            if self._is_runtime_ignored_artifact_path(relative):
                 continue
             if existing.is_file() and relative not in normalized:
                 existing.unlink(missing_ok=True)

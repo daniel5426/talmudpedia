@@ -1,6 +1,12 @@
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
+from uuid import UUID, uuid4
+
 import pytest
 
 from app.api.routers.published_apps_admin import BUILDER_MAX_FILE_BYTES
+from app.db.postgres.models.published_apps import PublishedAppDraftDevSession, PublishedAppDraftDevSessionStatus
+from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 
 from ._helpers import admin_headers, seed_admin_tenant_and_agent, start_publish_and_wait
 
@@ -46,11 +52,7 @@ async def test_builder_state_and_revision_workflow(client, db_session):
     assert state_payload["preview_token"]
     assert ".opencode/package.json" in state_payload["current_draft_revision"]["files"]
     assert (
-        ".opencode/tools/coding_agent_get_agent_integration_contract.ts"
-        in state_payload["current_draft_revision"]["files"]
-    )
-    assert (
-        ".opencode/tools/coding_agent_describe_selected_agent_contract.ts"
+        ".opencode/tools/read_agent_context.ts"
         in state_payload["current_draft_revision"]["files"]
     )
     draft_revision_id = state_payload["current_draft_revision"]["id"]
@@ -134,6 +136,64 @@ async def test_builder_state_and_revision_workflow(client, db_session):
     runtime_payload = runtime_resp.json()
     assert runtime_payload["revision_id"] == published["current_published_revision_id"]
     assert runtime_payload["runtime_mode"] == "vite_static"
+
+
+@pytest.mark.asyncio
+async def test_draft_dev_session_preview_url_includes_runtime_context(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Draft Dev Runtime Context App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    async def fake_ensure_session(self, *, app, revision, user_id, files=None, entry_file=None):
+        _ = (self, files, entry_file)
+        return PublishedAppDraftDevSession(
+            id=uuid4(),
+            published_app_id=UUID(app_id),
+            user_id=user.id,
+            revision_id=UUID(draft_revision_id),
+            status=PublishedAppDraftDevSessionStatus.running,
+            sandbox_id="sandbox-test-1",
+            preview_url="https://preview.local/sandbox/sandbox-test-1/?draft_dev_token=draft-dev-token",
+            idle_timeout_seconds=180,
+            last_activity_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+            last_error=None,
+        )
+
+    monkeypatch.setattr(PublishedAppDraftDevRuntimeService, "ensure_session", fake_ensure_session)
+
+    ensure_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/draft-dev/session/ensure",
+        headers=headers,
+        json={},
+    )
+    assert ensure_resp.status_code == 200
+    payload = ensure_resp.json()
+    preview_url = payload["preview_url"]
+    parsed = urlparse(preview_url)
+    query = parse_qs(parsed.query)
+    assert query["runtime_mode"] == ["builder-preview"]
+    runtime_base_path = query["runtime_base_path"][0]
+    assert runtime_base_path.endswith(f"/api/py/public/apps/preview/revisions/{draft_revision_id}")
+    assert query["preview_token"][0]
+    assert query["runtime_preview_token"][0]
 
 
 @pytest.mark.asyncio

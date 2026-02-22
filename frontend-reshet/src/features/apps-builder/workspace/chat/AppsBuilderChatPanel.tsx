@@ -47,7 +47,7 @@ import {
   QueueSectionTrigger,
 } from "@/components/ai-elements/queue";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { Task, TaskItem, TaskItemFile } from "@/components/ai-elements/task";
+import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "@/components/ai-elements/task";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -56,6 +56,7 @@ import type { CodingAgentCapabilities, CodingAgentChatSession, LogicalModel } fr
 import {
   TimelineItem,
   formatToolPathLabel,
+  formatToolReadPath,
   isAssistantTimelineItem,
   isToolTimelineItem,
   isUserTimelineItem,
@@ -108,23 +109,74 @@ export function AppsBuilderChatPanel({
   capabilities,
 }: AppsBuilderChatPanelProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const hasRunningTool = useMemo(
+    () => timeline.some((item) => isToolTimelineItem(item) && item.toolStatus === "running"),
+    [timeline],
+  );
+  const lastUserIndex = useMemo(() => {
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+      if (isUserTimelineItem(timeline[index])) {
+        return index;
+      }
+    }
+    return -1;
+  }, [timeline]);
+  const hasCurrentRunAssistantStream = useMemo(() => {
+    if (lastUserIndex < 0) {
+      return false;
+    }
+    for (let index = lastUserIndex + 1; index < timeline.length; index += 1) {
+      const item = timeline[index];
+      if (isAssistantTimelineItem(item) && item.assistantStreamId) {
+        return true;
+      }
+    }
+    return false;
+  }, [lastUserIndex, timeline]);
 
   const renderedTimeline = useMemo(() => {
-    if (timeline.length === 0) {
+
+    const isReadTool = (toolName?: string) => {
+      const normalized = String(toolName || "").trim().toLowerCase();
+      return normalized === "read" || normalized.includes("read_file");
+    };
+    const renderStandardToolRow = (item: TimelineItem) => {
+      const status = item.toolStatus || "completed";
       return (
-        <Message from="assistant" className="max-w-full">
-          <MessageContent className="bg-transparent px-0 py-0 text-sm text-muted-foreground">
-            <MessageResponse>
-              Ask for a code change to start a live run. You will see tool calls and assistant responses here.
-            </MessageResponse>
+        <Message key={item.id} from="assistant" className="max-w-full">
+          <MessageContent className="bg-transparent px-0 py-0 text-sm">
+            <Task defaultOpen className="w-full">
+              <TaskItem
+                className={cn(
+                  "flex items-center gap-2 text-sm",
+                  status === "failed" ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {status === "running" ? (
+                  <Shimmer className="flex items-center gap-2 text-sm">
+                    <span>{item.title}</span>
+                    {item.toolPath ? <TaskItemFile>{formatToolPathLabel(item.toolPath)}</TaskItemFile> : null}
+                  </Shimmer>
+                ) : (
+                  <>
+                    <span>{item.title}</span>
+                    {item.toolPath ? <TaskItemFile>{formatToolPathLabel(item.toolPath)}</TaskItemFile> : null}
+                  </>
+                )}
+              </TaskItem>
+            </Task>
           </MessageContent>
         </Message>
       );
-    }
+    };
 
-    return timeline.map((item) => {
+    const renderedItems: JSX.Element[] = [];
+    let index = 0;
+
+    while (index < timeline.length) {
+      const item = timeline[index];
       if (isUserTimelineItem(item)) {
-        return (
+        renderedItems.push(
           <Message key={item.id} from="user" className="group/usermsg max-w-full">
             <MessageContent className="relative">
               <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
@@ -144,10 +196,12 @@ export function AppsBuilderChatPanel({
             </MessageContent>
           </Message>
         );
+        index += 1;
+        continue;
       }
 
       if (isAssistantTimelineItem(item)) {
-        return (
+        renderedItems.push(
           <Message key={item.id} from="assistant" className="max-w-full">
             <MessageContent className="bg-transparent px-0 py-0">
               <MessageResponse>
@@ -157,36 +211,74 @@ export function AppsBuilderChatPanel({
             </MessageContent>
           </Message>
         );
+        index += 1;
+        continue;
       }
 
       if (isToolTimelineItem(item)) {
-        const status = item.toolStatus || "completed";
-        const titleNode = status === "running" ? (
-          <Shimmer className="text-sm">{item.title}</Shimmer>
-        ) : (
-          <span>{item.title}</span>
-        );
+        if (isReadTool(item.toolName)) {
+          const readStreak: TimelineItem[] = [];
+          while (index < timeline.length) {
+            const maybeRead = timeline[index];
+            if (!isToolTimelineItem(maybeRead) || !isReadTool(maybeRead.toolName)) {
+              break;
+            }
+            readStreak.push(maybeRead);
+            index += 1;
+          }
 
-        return (
-          <Message key={item.id} from="assistant" className="max-w-full">
-            <MessageContent className="bg-transparent px-0 py-0 text-sm">
-              <Task defaultOpen className="w-full">
-                <TaskItem
-                  className={cn(
-                    "flex items-center gap-2 text-sm",
-                    status === "failed" ? "text-destructive" : "text-muted-foreground",
-                  )}
-                >
-                  {titleNode}
-                  {item.toolPath ? <TaskItemFile>{formatToolPathLabel(item.toolPath)}</TaskItemFile> : null}
-                </TaskItem>
-              </Task>
-            </MessageContent>
-          </Message>
-        );
+          const readCount = readStreak.length;
+          const hasRunningRead = readStreak.some((entry) => (entry.toolStatus || "completed") === "running");
+          const headerText = `Researching ${readCount} ${readCount === 1 ? "file" : "files"}`;
+
+          renderedItems.push(
+            <Message key={`read-group-${readStreak[0].id}`} from="assistant" className="max-w-full">
+              <MessageContent className="bg-transparent px-0 py-0 text-sm">
+                <Task defaultOpen={false} className="w-full">
+                  <TaskTrigger asChild title={headerText}>
+                    <button
+                      type="button"
+                      className="group flex w-full items-center justify-between gap-2 rounded-md px-0 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      {hasRunningRead ? (
+                        <Shimmer className="text-sm">{headerText}</Shimmer>
+                      ) : (
+                        <span className="text-sm">{headerText}</span>
+                      )}
+                    </button>
+                  </TaskTrigger>
+                  <TaskContent className="mt-1">
+                    {readStreak.map((readEntry) => {
+                      const readStatus = readEntry.toolStatus || "completed";
+                      const readPath = formatToolReadPath(String(readEntry.toolPath || ""));
+                      const readTitle = readPath ? `Reading file ${readPath}` : "Reading file";
+                      return (
+                        <TaskItem
+                          key={readEntry.id}
+                          className={cn("flex items-center gap-2 text-sm", readStatus === "failed" ? "text-destructive" : "text-muted-foreground")}
+                        >
+                          {readStatus === "running" ? (
+                            <Shimmer className="text-sm">{readTitle}</Shimmer>
+                          ) : (
+                            <span>{readTitle}</span>
+                          )}
+                        </TaskItem>
+                      );
+                    })}
+                  </TaskContent>
+                </Task>
+              </MessageContent>
+            </Message>,
+          );
+          continue;
+        }
+
+        renderedItems.push(renderStandardToolRow(item));
+        index += 1;
+        continue;
       }
 
-      return (
+      renderedItems.push(
         <Message key={item.id} from="assistant" className="max-w-full">
           <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
             <div>
@@ -196,7 +288,10 @@ export function AppsBuilderChatPanel({
           </MessageContent>
         </Message>
       );
-    });
+      index += 1;
+    }
+
+    return renderedItems;
   }, [isUndoing, onRevertToCheckpoint, timeline]);
 
   if (!isOpen) {
@@ -250,11 +345,11 @@ export function AppsBuilderChatPanel({
         <Conversation className="flex min-h-0 flex-1 flex-col">
           <ConversationContent className="gap-2 px-0 py-0 pb-3">
             {renderedTimeline}
-            {isSending && !timeline.some((item) => item.kind === "assistant" && item.assistantStreamId) ? (
+            {isSending && !hasRunningTool && !hasCurrentRunAssistantStream ? (
               <Message from="assistant" className="max-w-full">
-                <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
-                  <Shimmer>
-                    {`Thinking...${activeThinkingSummary && activeThinkingSummary !== "Thinking..." ? ` ${activeThinkingSummary}` : ""}`}
+                <MessageContent className="bg-transparent px-0 py-0 text-sm text-muted-foreground">
+                  <Shimmer className="text-sm">
+                    {`Reasoning...${activeThinkingSummary && activeThinkingSummary !== "Thinking..." ? ` ${activeThinkingSummary}` : ""}`}
                   </Shimmer>
                 </MessageContent>
               </Message>
@@ -375,31 +470,35 @@ export function AppsBuilderChatPanel({
       </div>
 
       <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Chat History</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-1 py-2">
-            {chatSessions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No previous chats yet.</p>
-            ) : (
-              chatSessions.map((session) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  className="rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-                  onClick={() => {
-                    void onLoadChatSession(session.id);
-                    setIsHistoryOpen(false);
-                  }}
-                >
-                  <div className="truncate">{session.title}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {new Date(session.last_message_at).toLocaleDateString()}
-                  </div>
-                </button>
-              ))
-            )}
+        <DialogContent className="w-[min(44rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-2xl">
+          <div className="flex max-h-[75vh] min-h-0 flex-col p-6">
+            <DialogHeader className="shrink-0 pr-8">
+              <DialogTitle>Chat History</DialogTitle>
+            </DialogHeader>
+            <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+              <div className="flex flex-col gap-1 pb-1">
+                {chatSessions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No previous chats yet.</p>
+                ) : (
+                  chatSessions.map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      className="w-full overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                      onClick={() => {
+                        void onLoadChatSession(session.id);
+                        setIsHistoryOpen(false);
+                      }}
+                    >
+                      <div className="whitespace-normal text-sm leading-snug [overflow-wrap:anywhere]">{session.title}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {new Date(session.last_message_at).toLocaleDateString()}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

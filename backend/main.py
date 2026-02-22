@@ -766,7 +766,13 @@ cors_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_origin_regex=r"^https?://([a-z0-9-]+\.)*apps\.localhost(?::\d+)?$",
+    allow_origin_regex=(
+        r"^https?://("
+        r"(localhost|127\.0\.0\.1)(:\d+)?|"
+        r"([a-z0-9-]+\.)*apps\.localhost(?::\d+)?|"
+        r"([a-z0-9-]+\.)*preview\.local(?::\d+)?"
+        r")$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

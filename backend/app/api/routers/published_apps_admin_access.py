@@ -16,10 +16,11 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
 )
+from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_templates import build_template_files, get_template
 
 from .published_apps_admin_builder_core import _next_build_seq
-from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify, json, sha256
+from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify
 
 async def _resolve_tenant_admin_context(
     request: Request,
@@ -224,12 +225,15 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
         return draft
 
     files = build_template_files(app.template_key or "chat-classic")
+    revision_store = PublishedAppRevisionStore(db)
+    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
     created = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key or "chat-classic",
         entry_file=get_template(app.template_key or "chat-classic").entry_file,
         files=files,
+        manifest_json=manifest_json,
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=1,
         build_error=None,
@@ -239,7 +243,7 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
         dist_manifest=None,
         template_runtime="vite_static",
         compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+        bundle_hash=bundle_hash,
         source_revision_id=None,
         created_by=actor_id,
     )
@@ -258,12 +262,15 @@ async def _create_draft_revision_snapshot(
     files: Dict[str, str],
     entry_file: str,
 ) -> PublishedAppRevision:
+    revision_store = PublishedAppRevisionStore(db)
+    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
     revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
         files=files,
+        manifest_json=manifest_json,
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=_next_build_seq(current),
         build_error=None,
@@ -273,7 +280,7 @@ async def _create_draft_revision_snapshot(
         dist_manifest=None,
         template_runtime="vite_static",
         compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+        bundle_hash=bundle_hash,
         source_revision_id=current.id,
         created_by=actor_id,
     )

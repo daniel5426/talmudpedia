@@ -24,10 +24,10 @@ from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_a
 def _mock_run_sandbox_context(monkeypatch):
     async def _fake_ensure_run_sandbox_context(self, *, run, app, base_revision, actor_id):
         context = self._run_context(run)
-        context["coding_run_sandbox_id"] = "sandbox-test"
-        context["coding_run_sandbox_status"] = "running"
-        context["coding_run_sandbox_started_at"] = datetime.now(timezone.utc).isoformat()
-        context["coding_run_sandbox_workspace_path"] = "/workspace"
+        context["preview_sandbox_id"] = "sandbox-test"
+        context["preview_sandbox_status"] = "running"
+        context["preview_sandbox_started_at"] = datetime.now(timezone.utc).isoformat()
+        context["preview_workspace_stage_path"] = "/workspace"
         return {
             "opencode_sandbox_id": "sandbox-test",
             "opencode_workspace_path": "/workspace",
@@ -182,8 +182,7 @@ async def test_create_run_injects_selected_agent_contract_in_context(client, db_
     system_messages = [
         item for item in run_messages if isinstance(item, dict) and item.get("role") == "system"
     ]
-    assert system_messages
-    assert any(
+    assert not any(
         "Selected app agent integration contract" in str(item.get("content") or "")
         for item in system_messages
     )
@@ -289,6 +288,9 @@ async def test_describe_selected_agent_contract_tool_returns_compact_summary(cli
         status = "running"
         sandbox_id = "sandbox-test"
         last_error = None
+        active_coding_run_id = None
+        active_coding_run_locked_at = None
+        active_coding_run_client_message_id = None
 
     async def _fake_ensure_active_session(self, *, app, revision, user_id):
         return _FakeDraftDevSession()

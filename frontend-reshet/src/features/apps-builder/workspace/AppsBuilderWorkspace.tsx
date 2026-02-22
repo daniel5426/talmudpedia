@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -51,11 +52,19 @@ import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
+import { isDraftSandboxNotRunningError } from "@/features/apps-builder/workspace/draftDevErrors";
+import {
+  AppsBuilderWorkspaceBootSkeleton,
+  DomainsListSkeleton,
+  UsersListSkeleton,
+} from "@/features/apps-builder/workspace/WorkspaceLoadingSkeletons";
 import { AppsBuilderChatPanel } from "@/features/apps-builder/workspace/chat/AppsBuilderChatPanel";
 import { useAppsBuilderChat } from "@/features/apps-builder/workspace/chat/useAppsBuilderChat";
 
 const DRAFT_DEV_SYNC_DEBOUNCE_MS = 800;
 const DRAFT_DEV_HEARTBEAT_MS = 45_000;
+const DRAFT_DEV_RECOVERY_ATTEMPTS = 3;
+const DRAFT_DEV_RECOVERY_BACKOFF_MS = 700;
 const PUBLISH_POLL_INTERVAL_MS = 2_000;
 const PUBLISH_POLL_TIMEOUT_MS = 15 * 60_000;
 
@@ -120,6 +129,26 @@ function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, s
   });
 }
 
+function buildPreviewFrameUrl(baseUrl: string, route: string, reloadToken: number): string {
+  try {
+    const parsed = new URL(baseUrl);
+    if (route !== "/") {
+      const basePath = parsed.pathname.endsWith("/") ? parsed.pathname.slice(0, -1) : parsed.pathname;
+      parsed.pathname = `${basePath}${route}`;
+    }
+    if (reloadToken > 0) {
+      parsed.searchParams.set("__reload", String(reloadToken));
+    }
+    return parsed.toString();
+  } catch {
+    const normalizedRoute = route === "/" ? "" : route;
+    const normalizedBase = route === "/" ? baseUrl : baseUrl.replace(/\/+$/, "");
+    const separator = normalizedBase.includes("?") ? "&" : "?";
+    const suffix = reloadToken > 0 ? `${separator}__reload=${reloadToken}` : "";
+    return `${normalizedBase}${normalizedRoute}${suffix}`;
+  }
+}
+
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const { setOpen } = useSidebar();
   const [state, setState] = useState<BuilderStateResponse | null>(null);
@@ -135,12 +164,15 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [draftDevError, setDraftDevError] = useState<string | null>(null);
   const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isAuthTemplatesLoading, setIsAuthTemplatesLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingOverview, setIsSavingOverview] = useState(false);
   const [authTemplates, setAuthTemplates] = useState<PublishedAppAuthTemplate[]>([]);
   const [users, setUsers] = useState<PublishedAppUser[]>([]);
   const [domains, setDomains] = useState<PublishedAppDomain[]>([]);
+  const [hasLoadedUsers, setHasLoadedUsers] = useState(false);
+  const [hasLoadedDomains, setHasLoadedDomains] = useState(false);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [isDomainsLoading, setIsDomainsLoading] = useState(false);
   const [isAddingDomain, setIsAddingDomain] = useState(false);
@@ -152,8 +184,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewRoute, setPreviewRoute] = useState("/");
+  const [previewReloadToken, setPreviewReloadToken] = useState(0);
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const syncFingerprintRef = useRef<string>("");
   const draftDevSnapshotRef = useRef<{
     sessionId: string | null;
@@ -169,34 +201,34 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setOpen(false);
   }, [setOpen]);
 
+  useEffect(() => {
+    setUsers([]);
+    setDomains([]);
+    setHasLoadedUsers(false);
+    setHasLoadedDomains(false);
+    setPreviewRoute("/");
+    setPreviewReloadToken(0);
+  }, [appId]);
+
   const appRoutes = useMemo(() => extractRoutesFromFiles(files), [files]);
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
   const platformDomain = useMemo(
     () => `${state?.app.slug || "app"}.${process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost"}`,
     [state?.app.slug],
   );
+  const previewFrameUrl = useMemo(() => {
+    if (!previewAssetUrl) {
+      return null;
+    }
+    return buildPreviewFrameUrl(previewAssetUrl, previewRoute, previewReloadToken);
+  }, [previewAssetUrl, previewReloadToken, previewRoute]);
 
   const navigatePreview = useCallback((route: string) => {
     setPreviewRoute(route);
-    const iframe = iframeRef.current;
-    if (iframe && previewAssetUrl) {
-      try {
-        const base = new URL(previewAssetUrl);
-        base.pathname = route;
-        iframe.src = base.toString();
-      } catch {
-        // Fallback: just set src directly
-        iframe.src = previewAssetUrl + (route === "/" ? "" : route);
-      }
-    }
-  }, [previewAssetUrl]);
+  }, []);
 
   const reloadPreview = useCallback(() => {
-    const iframe = iframeRef.current;
-    if (iframe) {
-      // eslint-disable-next-line no-self-assign
-      iframe.src = iframe.src;
-    }
+    setPreviewReloadToken((current) => current + 1);
   }, []);
 
   const applyDraftDevSession = useCallback((session?: DraftDevSessionResponse | null) => {
@@ -216,24 +248,36 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     syncFingerprintRef.current = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
   }, []);
 
-  const loadState = useCallback(async () => {
-    setIsLoading(true);
+  const loadState = useCallback(async ({ showInitialSkeleton = false }: { showInitialSkeleton?: boolean } = {}) => {
+    if (showInitialSkeleton) {
+      setIsInitialLoading(true);
+    }
     setError(null);
     try {
-      const [response, authTemplateList] = await Promise.all([
-        publishedAppsService.getBuilderState(appId),
-        publishedAppsService.listAuthTemplates(),
-      ]);
+      const response = await publishedAppsService.getBuilderState(appId);
       setState(response);
-      setAuthTemplates(authTemplateList);
       hydrateFromRevision(response.current_draft_revision);
       applyDraftDevSession(response.draft_dev);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load builder state");
     } finally {
-      setIsLoading(false);
+      if (showInitialSkeleton) {
+        setIsInitialLoading(false);
+      }
     }
   }, [appId, applyDraftDevSession, hydrateFromRevision]);
+
+  const loadAuthTemplates = useCallback(async () => {
+    setIsAuthTemplatesLoading(true);
+    try {
+      const authTemplateList = await publishedAppsService.listAuthTemplates();
+      setAuthTemplates(authTemplateList);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load auth templates");
+    } finally {
+      setIsAuthTemplatesLoading(false);
+    }
+  }, []);
 
   const refreshStateSilently = useCallback(async () => {
     try {
@@ -247,8 +291,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [appId, applyDraftDevSession, hydrateFromRevision]);
 
   useEffect(() => {
-    loadState();
-  }, [loadState]);
+    void loadState({ showInitialSkeleton: true });
+    void loadAuthTemplates();
+  }, [loadAuthTemplates, loadState]);
 
   const updateLocalApp = useCallback((patch: Record<string, unknown>) => {
     setState((prev) => {
@@ -264,15 +309,30 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, []);
 
   const ensureDraftDevSession = useCallback(async () => {
-    const session = await publishedAppsService.ensureDraftDevSession(appId);
-    applyDraftDevSession(session);
-    setState((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        draft_dev: session,
-      };
-    });
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < DRAFT_DEV_RECOVERY_ATTEMPTS; attempt += 1) {
+      try {
+        const session = await publishedAppsService.ensureDraftDevSession(appId);
+        applyDraftDevSession(session);
+        setState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            draft_dev: session,
+          };
+        });
+        return;
+      } catch (err) {
+        lastError = err;
+        if (!isDraftSandboxNotRunningError(err) || attempt === DRAFT_DEV_RECOVERY_ATTEMPTS - 1) {
+          throw err;
+        }
+        setDraftDevError(null);
+        setDraftDevStatus("starting");
+        await wait(DRAFT_DEV_RECOVERY_BACKOFF_MS * (attempt + 1));
+      }
+    }
+    throw (lastError instanceof Error ? lastError : new Error("Failed to recover draft dev session"));
   }, [appId, applyDraftDevSession]);
 
   const syncDraftDevSession = useCallback(async () => {
@@ -337,6 +397,16 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           syncFingerprintRef.current = fingerprint;
         })
         .catch((err) => {
+          if (isDraftSandboxNotRunningError(err)) {
+            setDraftDevError(null);
+            setDraftDevStatus("starting");
+            ensureDraftDevSession().catch((ensureErr) => {
+              setDraftDevError(ensureErr instanceof Error ? ensureErr.message : "Failed to start draft preview");
+              setDraftDevStatus("error");
+              setPreviewAssetUrl(null);
+            });
+            return;
+          }
           setDraftDevError(err instanceof Error ? err.message : "Failed to sync draft dev session");
           setDraftDevStatus("error");
         });
@@ -344,7 +414,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [activeTab, currentRevisionId, draftDevSessionId, draftDevStatus, entryFile, files, syncDraftDevSession]);
+  }, [activeTab, currentRevisionId, draftDevSessionId, draftDevStatus, ensureDraftDevSession, entryFile, files, syncDraftDevSession]);
 
   useEffect(() => {
     if (activeTab !== "preview" || !draftDevSessionId) {
@@ -370,6 +440,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     try {
       const items = await publishedAppsService.listUsers(appId);
       setUsers(items);
+      setHasLoadedUsers(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load app users");
     } finally {
@@ -382,6 +453,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     try {
       const items = await publishedAppsService.listDomains(appId);
       setDomains(items);
+      setHasLoadedDomains(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load app domains");
     } finally {
@@ -391,14 +463,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
   useEffect(() => {
     if (activeTab !== "config") return;
-    if (configSection === "users") {
+    if (configSection === "users" && !hasLoadedUsers && !isUsersLoading) {
       void loadUsers();
       return;
     }
-    if (configSection === "domains") {
+    if (configSection === "domains" && !hasLoadedDomains && !isDomainsLoading) {
       void loadDomains();
     }
-  }, [activeTab, configSection, loadDomains, loadUsers]);
+  }, [activeTab, configSection, hasLoadedDomains, hasLoadedUsers, isDomainsLoading, isUsersLoading, loadDomains, loadUsers]);
 
   const saveOverview = useCallback(async () => {
     if (!state) return;
@@ -746,17 +818,26 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setConfigSection(lastNonCodeConfigSection);
   }, [lastNonCodeConfigSection]);
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full min-h-0 items-center justify-center text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        Loading builder...
-      </div>
-    );
+  if (isInitialLoading && !state) {
+    return <AppsBuilderWorkspaceBootSkeleton previewViewport={previewViewport} />;
   }
 
   if (!state) {
-    return <div className="p-6 text-sm text-destructive">Builder state unavailable.</div>;
+    return (
+      <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-6 text-center">
+        <div className="text-sm text-destructive">Builder state unavailable.</div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void loadState({ showInitialSkeleton: true });
+            void loadAuthTemplates();
+          }}
+        >
+          Retry
+        </Button>
+      </div>
+    );
   }
 
   return (
@@ -951,8 +1032,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                       : "w-full",
                   )}>
                     <PreviewCanvas
-                      ref={iframeRef}
-                      previewUrl={previewAssetUrl}
+                      previewUrl={previewFrameUrl}
                       devStatus={draftDevStatus}
                       devError={draftDevError}
                     />
@@ -1015,21 +1095,25 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                           </div>
                           <div className="space-y-2">
                             <Label>Auth Template</Label>
-                            <Select
-                              value={state.app.auth_template_key}
-                              onValueChange={(value) => updateLocalApp({ auth_template_key: value })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Auth template" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {authTemplates.map((item) => (
-                                  <SelectItem key={item.key} value={item.key}>
-                                    {item.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            {isAuthTemplatesLoading && authTemplates.length === 0 ? (
+                              <Skeleton className="h-10 w-full" />
+                            ) : (
+                              <Select
+                                value={state.app.auth_template_key}
+                                onValueChange={(value) => updateLocalApp({ auth_template_key: value })}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Auth template" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {authTemplates.map((item) => (
+                                    <SelectItem key={item.key} value={item.key}>
+                                      {item.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
                           </div>
                         </div>
 
@@ -1079,8 +1163,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     {configSection === "users" && (
                       <div className="space-y-3 p-4">
                         <h3 className="text-lg font-semibold">Users</h3>
-                        {isUsersLoading ? <div className="text-sm text-muted-foreground">Loading users...</div> : null}
-                        <div className="space-y-2">
+                        {isUsersLoading && users.length === 0 ? <UsersListSkeleton /> : null}
+                        <div className={cn("space-y-2", isUsersLoading && users.length === 0 ? "hidden" : "")}>
                           {users.map((user) => (
                             <div key={user.user_id} className="flex items-center justify-between rounded-md border border-border/60 p-3">
                               <div>
@@ -1132,8 +1216,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                           </div>
                         </div>
 
-                        {isDomainsLoading ? <div className="text-sm text-muted-foreground">Loading domains...</div> : null}
-                        <div className="space-y-2">
+                        {isDomainsLoading && domains.length === 0 ? <DomainsListSkeleton /> : null}
+                        <div className={cn("space-y-2", isDomainsLoading && domains.length === 0 ? "hidden" : "")}>
                           {domains.map((domain) => (
                             <div key={domain.id} className="flex items-center justify-between rounded-md border border-border/60 p-3">
                               <div>

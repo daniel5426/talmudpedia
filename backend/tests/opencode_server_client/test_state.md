@@ -1,4 +1,4 @@
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 
 ## Scope
 - OpenCode server client transport compatibility for coding-agent engine runs.
@@ -13,12 +13,16 @@ Last Updated: 2026-02-21
 - Official mode unwraps `{success,data}` and supports `prompt_async` with fallback to `POST /session/{id}/message`.
 - Official mode never calls OpenCode MCP registration (`/mcp`) for selected-agent contract access.
 - OpenCode run startup seeds project-local custom tools into workspace `.opencode/tools/*` and seeds run-scoped contract context in `.cache/opencode/selected_agent_contract.json`.
+- Sandbox seeding is cached per sandbox/workspace: unchanged bootstrap files are not rewritten on every run.
+- Volatile contract metadata (`generated_at`) is ignored in context hashing so no-op runs do not rewrite context files.
+- Contract context seeding refreshes only when selected-agent contract content changes.
 - Sandbox-controller mode seeds custom tools via sandbox file APIs before OpenCode start and fails closed on seed-write failures.
 - Host mode fails closed when `workspace_path` is missing/invalid for custom-tool bootstrap.
 - Global event stream translation emits incremental `assistant.delta` tokens and tool lifecycle events (`tool.started` / `tool.completed` / `tool.failed`).
 - Global event parsing preserves early tool events even before assistant message-role metadata lands.
 - Reasoning parts are filtered out from user-visible assistant deltas.
 - Incremental text offset tracking prevents duplicate text when `/global/event` and `/session/{id}/message` overlap.
+- Official global-event streaming can settle to terminal completion without explicit `session.idle` when assistant text is complete and no tools are running.
 - Recoverable tool-step errors in earlier assistant turns no longer force terminal run failure when a later assistant turn succeeds.
 - Snapshot polling fallback remains compatible (empty response recovery, wrapped payloads, missing `parentID`, read-timeout recovery).
 - Session creation includes workspace external-directory permission rules.
@@ -26,6 +30,18 @@ Last Updated: 2026-02-21
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_terminal_stream_completion.py tests/coding_agent_api/test_opencode_apply_patch_recovery.py tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-02-22
+- Result: Pass (32 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-02-22
+- Result: Pass (26 passed, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-02-22
+- Result: Pass (25 passed, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-02-21
+- Result: Pass (24 passed, 1 warning)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py`
 - Date/Time: 2026-02-21
 - Result: Pass (23 passed, 1 warning)

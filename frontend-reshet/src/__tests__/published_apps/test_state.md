@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 
 ## Scope
 Frontend coverage for:
@@ -32,13 +32,21 @@ Frontend coverage for:
 - Builder workspace keeps the editor/workspace mounted during post-run state refresh (no full-page loading fallback after each reply).
 - Builder workspace renders tool calls as dedicated rows (no raw JSON payload blocks), with running shimmer state and persisted completed/failed visual states.
 - Builder workspace renders tool calls via AI Elements `Task` rows, including normalized intent labels and file-path chips extracted from tool payloads.
+- Builder workspace running `read_file` calls now show filename directly in the title (`Reading file <path>`) and prepend a live grouped summary (`Researching N file(s)`) across consecutive read streaks.
+- Builder workspace sanitizes read-path labels from wrapped and malformed payload text (e.g. `<path>...</path>`, `path>... </path`) and ignores package specifiers (e.g. `@radix-ui/react-slot`) so file read titles only show valid workspace paths.
 - Builder workspace coding-agent panel uses Cursor-style composer placeholder contract (`Plan, @ for context, / for commands`) with run submission preserved.
 - Builder workspace coding-agent panel now uses AI elements `Conversation` scrolling model + `ConversationScrollButton`, with minimal/no-card event presentation and lightweight shimmering `Thinking...` text.
+- Builder workspace shows `Reasoning...` fallback only when no tool is actively running; active tool rows own the shimmer state while executing.
+- Builder workspace scopes `Reasoning...` fallback to the active prompt so second/subsequent prompts still show immediate shimmer before first stream activity.
 - Builder workspace shows FIFO queued prompts via AI Elements `Queue` when user submits during active runs, with per-item remove action.
 - Builder workspace stop flow calls coding-agent cancel endpoint and preserves queue progression to the next pending prompt.
+- Builder workspace stop flow still dispatches cancel when stop is clicked before `create-run` returns `run_id` (run-id race protection).
+- Builder workspace recovers from missing terminal SSE by reconciling persisted run status (`/coding-agent/runs/{run_id}`), then dequeues and executes queued prompts.
 - Builder workspace loads coding-agent capabilities once to hydrate engine/policy context for coding runs.
 - Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
 - Builder workspace shell now enforces viewport-bounded layout (`h-dvh` + `min-h-0` + overflow clamps) so chat scroll stays internal and the page does not grow with timeline length.
+- Builder workspace renders an immediate shell skeleton during first builder-state bootstrap (no blocking full-page spinner text state).
+- Builder workspace renders section skeletons while `Users`/`Domains` API payloads are still loading.
 - Builder workspace creates coding-agent runs through `/coding-agent/runs`, then streams via `/coding-agent/runs/{run_id}/stream`.
 - Builder workspace retries coding-agent run creation once after `REVISION_CONFLICT` by refreshing state and resubmitting with `latest_revision_id`.
 - Builder workspace renders `assistant.delta` incrementally while a run is active (partial text appears before stream completion).
@@ -54,7 +62,9 @@ Frontend coverage for:
 - Builder code tab auto-expands ancestor folders when the selected file is nested.
 - Builder code tab maps `index.html` to Monaco `html` language and sets builder-only validation decoration suppression.
 - Builder workspace ensures draft-dev session on preview and uses sandbox `preview_url` for iframe rendering.
+- Builder workspace treats transient draft-dev bootstrap 400s (`Draft dev sandbox is not running`) as recoverable, retries session ensure with backoff, and keeps loading UI instead of surfacing immediate preview failure.
 - Builder workspace syncs draft files via draft-dev sync API without creating revisions per keystroke.
+- Builder preview iframe remains hidden behind a warmup overlay until the sandbox frame is ready, preventing early transient Vite error flashes.
 - Publish action uses async publish-job contract (`publish` + `getPublishJobStatus`).
 - Publish action surfaces immediate failed publish-job responses without entering status polling.
 - Open App now falls back to published-revision preview runtime proxy for local `*.apps.localhost` domains.
@@ -63,6 +73,27 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-02-22
+- Result: PASS (1 suite, 43 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-02-22
+- Result: PASS (1 suite, 42 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-02-22
+- Result: PASS (1 suite, 41 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-02-22
+- Result: PASS (1 suite, 39 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-02-22
+- Result: PASS (1 suite, 38 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-02-22
+- Result: PASS (1 suite, 37 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-02-22
+- Result: PASS (1 suite, 34 tests)
 - Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_admin_page.test.tsx --runInBand`
 - Date: 2026-02-21
 - Result: PASS (1 suite, 2 tests)

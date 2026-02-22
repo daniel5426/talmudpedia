@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from datetime import datetime, timezone
+from uuid import UUID
 
 import pytest
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision
+from app.db.postgres.models.published_apps import PublishedApp
+from app.services.published_app_coding_agent_engines.base import EngineStreamEvent
+from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
-from app.services.published_app_coding_run_sandbox_service import PublishedAppCodingRunSandboxService
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
 
@@ -33,42 +35,10 @@ async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_
 
 
 @pytest.mark.asyncio
-async def test_opencode_run_rejected_when_sandbox_required_without_controller(client, db_session, monkeypatch):
+async def test_stream_fails_closed_when_run_has_no_preview_sandbox_context(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
-
-    monkeypatch.setenv("APPS_CODING_AGENT_SANDBOX_REQUIRED", "1")
-    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_ENABLED", "1")
-    monkeypatch.delenv("APPS_SANDBOX_CONTROLLER_URL", raising=False)
-    monkeypatch.delenv("APPS_DRAFT_DEV_CONTROLLER_URL", raising=False)
-    monkeypatch.delenv("APPS_CODING_AGENT_OPENCODE_BASE_URL", raising=False)
-
-    async def _fake_resolve_model(self, *, tenant_id, requested_model_id):
-        return None, uuid4()
-
-    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_run_model_ids", _fake_resolve_model)
-
-    response = await client.post(
-        f"/admin/apps/{app_id}/coding-agent/runs",
-        headers=headers,
-        json={
-            "input": "Use OpenCode",
-            "base_revision_id": draft_revision_id,
-            "engine": "opencode",
-        },
-    )
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert detail["code"] == "CODING_AGENT_SANDBOX_REQUIRED"
-    assert detail["field"] == "engine"
-
-
-@pytest.mark.asyncio
-async def test_stream_fails_closed_when_run_has_no_sandbox_context(client, db_session, monkeypatch):
-    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    app_id, _ = await _create_app_and_draft_revision(client, headers, str(agent.id))
 
     run = AgentRun(
         tenant_id=tenant.id,
@@ -87,7 +57,7 @@ async def test_stream_fails_closed_when_run_has_no_sandbox_context(client, db_se
     await db_session.refresh(run)
 
     async def _fake_recover(self, *, run, app):
-        return None, "Run sandbox session is required before execution."
+        return None, "Preview sandbox session is required before execution."
 
     monkeypatch.setattr(
         PublishedAppCodingAgentRuntimeService,
@@ -110,15 +80,10 @@ async def test_stream_fails_closed_when_run_has_no_sandbox_context(client, db_se
 
 
 @pytest.mark.asyncio
-async def test_run_sandbox_session_uses_controller_workspace_path(client, db_session, monkeypatch):
+async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
-
-    app = await db_session.get(PublishedApp, UUID(app_id))
-    revision = await db_session.get(PublishedAppRevision, UUID(draft_revision_id))
-    assert app is not None
-    assert revision is not None
 
     run = AgentRun(
         tenant_id=tenant.id,
@@ -126,39 +91,53 @@ async def test_run_sandbox_session_uses_controller_workspace_path(client, db_ses
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.queued,
-        input_params={"input": "test"},
+        input_params={
+            "input": "test",
+            "context": {
+                "preview_sandbox_id": "preview-sandbox-1",
+                "preview_workspace_stage_path": "/workspace/.talmudpedia/stage/run/workspace",
+            },
+        },
         surface=CODING_AGENT_SURFACE,
-        published_app_id=app.id,
-        base_revision_id=revision.id,
-        execution_engine="opencode",
+        published_app_id=UUID(app_id),
+        base_revision_id=UUID(draft_revision_id),
+        execution_engine="native",
     )
     db_session.add(run)
     await db_session.commit()
     await db_session.refresh(run)
 
-    service = PublishedAppCodingRunSandboxService(db_session)
-    workspace_root = "/tmp/talmudpedia-draft-dev/sandbox-run-123"
+    async def _fail_if_bootstrap(self, *, run, app):
+        raise AssertionError("stream should not bootstrap a second sandbox when preview_sandbox_id already exists")
 
-    async def _fake_start_session(**kwargs):
-        return {
-            "sandbox_id": "sandbox-run-123",
-            "preview_url": "http://127.0.0.1:5173/sandbox/sandbox-run-123",
-            "status": "running",
-            "workspace_path": workspace_root,
-        }
+    async def _fake_stream(self, ctx):
+        yield EngineStreamEvent(
+            event="assistant.delta",
+            stage="assistant",
+            payload={"content": "Warm sandbox response"},
+            diagnostics=[],
+        )
+        ctx.run.status = RunStatus.completed
+        ctx.run.output_result = {"state": {"last_agent_output": "Warm sandbox response"}}
+        ctx.run.completed_at = datetime.now(timezone.utc)
+        await self._executor.db.commit()
+        if False:  # pragma: no cover
+            yield
 
-    async def _fake_resolve_local_workspace_path(*, sandbox_id: str):
+    async def _skip_auto_apply(self, run):
         return None
 
-    monkeypatch.setattr(service.client, "start_session", _fake_start_session)
-    monkeypatch.setattr(service.client, "resolve_local_workspace_path", _fake_resolve_local_workspace_path)
-
-    session = await service.ensure_session(
-        run=run,
-        app=app,
-        revision=revision,
-        actor_id=user.id,
+    monkeypatch.setattr(
+        PublishedAppCodingAgentRuntimeService,
+        "_recover_or_bootstrap_run_sandbox_context",
+        _fail_if_bootstrap,
     )
+    monkeypatch.setattr(NativePublishedAppCodingAgentEngine, "stream", _fake_stream)
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _skip_auto_apply)
 
-    assert session.sandbox_id == "sandbox-run-123"
-    assert session.workspace_path == workspace_root
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+    events = [event async for event in service.stream_run_events(app=app, run=run)]
+    assert events[-1]["event"] == "run.completed"

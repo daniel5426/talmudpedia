@@ -15,8 +15,8 @@ def _opencode_run() -> AgentRun:
             "input": "update app",
             "messages": [{"role": "user", "content": "update app"}],
             "context": {
-                "coding_run_sandbox_id": "sandbox-apply-fail",
-                "coding_run_sandbox_workspace_path": "/workspace/apply-fail",
+                "preview_sandbox_id": "sandbox-apply-fail",
+                "preview_workspace_stage_path": "/workspace/apply-fail",
                 "resolved_model_id": "openai/gpt-5",
             },
         },
@@ -29,7 +29,7 @@ async def test_opencode_engine_accepts_apply_patch_completion_without_applied_fi
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
             return "run-ref-apply-fail"
 
         async def stream_run_events(self, *, run_ref):
@@ -65,7 +65,7 @@ async def test_opencode_engine_allows_non_patch_edit_recovery_after_apply_patch_
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
             return "run-ref-edit-recover"
 
         async def stream_run_events(self, *, run_ref):
@@ -102,7 +102,7 @@ async def test_opencode_engine_can_disable_unrecovered_apply_patch_fail_closed(d
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
             return "run-ref-disabled-strict"
 
         async def stream_run_events(self, *, run_ref):
@@ -121,4 +121,25 @@ async def test_opencode_engine_can_disable_unrecovered_apply_patch_fail_closed(d
     events = [event async for event in engine.stream(ctx=SimpleNamespace(app=app, run=run, resume_payload=None))]
 
     assert any(item.event == "tool.failed" for item in events)
+    assert run.status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_opencode_engine_stops_consuming_stream_after_terminal_event(db_session):
+    run = _opencode_run()
+    app = SimpleNamespace(id=uuid4())
+
+    class _FakeOpenCodeClient:
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+            return "run-ref-terminal-stop"
+
+        async def stream_run_events(self, *, run_ref):
+            assert run_ref == "run-ref-terminal-stop"
+            yield {"event": "run.completed", "payload": {"status": "completed"}}
+            raise AssertionError("OpenCode stream was consumed after terminal event")
+
+    engine = OpenCodePublishedAppCodingAgentEngine(db=db_session, client=_FakeOpenCodeClient())
+    events = [event async for event in engine.stream(ctx=SimpleNamespace(app=app, run=run, resume_payload=None))]
+
+    assert events == []
     assert run.status == RunStatus.completed

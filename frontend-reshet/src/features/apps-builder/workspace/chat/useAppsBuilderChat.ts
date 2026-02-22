@@ -9,10 +9,8 @@ import type {
   CodingAgentCapabilities,
   CodingAgentChatSession,
   CodingAgentExecutionEngine,
-  CodingAgentStreamEvent,
   LogicalModel,
   PublishedAppRevision,
-  RevisionConflictResponse,
 } from "@/services";
 
 import {
@@ -23,123 +21,20 @@ import {
   extractPrimaryToolPath,
   timelineId,
 } from "./chat-model";
-
-type CodingAgentModelUnavailableDetail = {
-  code: "CODING_AGENT_MODEL_UNAVAILABLE";
-  field: "model_id";
-  message: string;
-};
-
-type CodingAgentEngineUnavailableDetail = {
-  code: "CODING_AGENT_ENGINE_UNAVAILABLE" | "CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME";
-  field: "engine";
-  message: string;
-};
+import {
+  TerminalRunStatus,
+  parseEngineUnavailableDetail,
+  parseModelUnavailableDetail,
+  parseRevisionConflict,
+  parseSse,
+  parseTerminalRunStatus,
+  resolvePositiveTimeoutMs,
+} from "./stream-parsers";
 
 export type QueuedPrompt = {
   id: string;
   text: string;
   createdAt: number;
-};
-
-const parseSse = (raw: string): CodingAgentStreamEvent | null => {
-  const dataLines = raw
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"));
-  if (dataLines.length === 0) return null;
-  const payload = dataLines.map((line) => line.slice(5).trimStart()).join("\n");
-  if (!payload || payload === "[DONE]") return null;
-  try {
-    return JSON.parse(payload) as CodingAgentStreamEvent;
-  } catch {
-    return null;
-  }
-};
-
-const parseRevisionConflict = (detail: unknown): RevisionConflictResponse | null => {
-  let parsed: unknown = detail;
-  if (typeof parsed === "string") {
-    const text = parsed.trim();
-    if (!text) return null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-  const candidate = parsed as Partial<RevisionConflictResponse>;
-  if (candidate.code !== "REVISION_CONFLICT") {
-    return null;
-  }
-  if (!candidate.latest_revision_id || !candidate.latest_updated_at) {
-    return null;
-  }
-  return {
-    code: "REVISION_CONFLICT",
-    latest_revision_id: String(candidate.latest_revision_id),
-    latest_updated_at: String(candidate.latest_updated_at),
-    message: String(candidate.message || "Draft revision is stale"),
-  };
-};
-
-const parseModelUnavailableDetail = (detail: unknown): CodingAgentModelUnavailableDetail | null => {
-  let parsed: unknown = detail;
-  if (typeof parsed === "string") {
-    const text = parsed.trim();
-    if (!text) return null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-  const candidate = parsed as Partial<CodingAgentModelUnavailableDetail>;
-  if (candidate.code !== "CODING_AGENT_MODEL_UNAVAILABLE") {
-    return null;
-  }
-  if (candidate.field !== "model_id") {
-    return null;
-  }
-  return {
-    code: "CODING_AGENT_MODEL_UNAVAILABLE",
-    field: "model_id",
-    message: String(candidate.message || "Selected model is unavailable. Pick another model and retry."),
-  };
-};
-
-const parseEngineUnavailableDetail = (detail: unknown): CodingAgentEngineUnavailableDetail | null => {
-  let parsed: unknown = detail;
-  if (typeof parsed === "string") {
-    const text = parsed.trim();
-    if (!text) return null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-  const candidate = parsed as Partial<CodingAgentEngineUnavailableDetail>;
-  if (candidate.field !== "engine") {
-    return null;
-  }
-  if (candidate.code !== "CODING_AGENT_ENGINE_UNAVAILABLE" && candidate.code !== "CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME") {
-    return null;
-  }
-  return {
-    code: candidate.code,
-    field: "engine",
-    message: String(candidate.message || "Selected engine is unavailable for this runtime."),
-  };
 };
 
 export type UseAppsBuilderChatOptions = {
@@ -204,13 +99,30 @@ export function useAppsBuilderChat({
 
   const abortReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
+  const lastKnownRunIdRef = useRef<string | null>(null);
+  const cancelInFlightRunIdRef = useRef<string | null>(null);
+  const pendingCancelRef = useRef(false);
   const intentionalAbortRef = useRef(false);
   const isSendingRef = useRef(false);
+  const isMountedRef = useRef(true);
   const executePromptRef = useRef<(promptText: string) => Promise<void>>(async () => undefined);
+  const queuedPromptsRef = useRef<QueuedPrompt[]>([]);
 
   useEffect(() => {
     isSendingRef.current = isSending;
   }, [isSending]);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      intentionalAbortRef.current = true;
+      const reader = abortReaderRef.current;
+      abortReaderRef.current = null;
+      if (reader && typeof reader.cancel === "function") {
+        void reader.cancel().catch(() => undefined);
+      }
+    };
+  }, []);
 
   const resolvedRunEngine = useMemo(() => resolveAppsCodingAgentEngine(), []);
   const selectedRunModelLabel = useMemo(() => {
@@ -298,6 +210,22 @@ export function useAppsBuilderChat({
     [],
   );
 
+  const finalizeRunningTools = useCallback((status: Extract<ToolRunStatus, "completed" | "failed">) => {
+    setTimeline((prev) => {
+      let changed = false;
+      const next = prev.map((item) => {
+        if (item.kind !== "tool" || item.toolStatus !== "running") return item;
+        changed = true;
+        return {
+          ...item,
+          toolStatus: status,
+          tone: status === "failed" ? "error" : "success",
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
   const attachCheckpointToLastUser = useCallback((checkpointId: string) => {
     setTimeline((prev) => {
       for (let i = prev.length - 1; i >= 0; i--) {
@@ -312,7 +240,8 @@ export function useAppsBuilderChat({
   }, []);
 
   const removeQueuedPrompt = useCallback((promptId: string) => {
-    setQueuedPrompts((prev) => prev.filter((item) => item.id !== promptId));
+    queuedPromptsRef.current = queuedPromptsRef.current.filter((item) => item.id !== promptId);
+    setQueuedPrompts(queuedPromptsRef.current);
   }, []);
 
   const loadChatModels = useCallback(async () => {
@@ -347,6 +276,25 @@ export function useAppsBuilderChat({
     }
   }, [appId]);
 
+  const getPersistedTerminalRun = useCallback(
+    async (runId: string): Promise<{ status: TerminalRunStatus; error: string | null } | null> => {
+      try {
+        const run = await publishedAppsService.getCodingAgentRun(appId, runId);
+        const terminalStatus = parseTerminalRunStatus(run.status);
+        if (!terminalStatus) {
+          return null;
+        }
+        return {
+          status: terminalStatus,
+          error: String(run.error || "").trim() || null,
+        };
+      } catch {
+        return null;
+      }
+    },
+    [appId],
+  );
+
   useEffect(() => {
     void loadChatModels();
     void loadChatSessions();
@@ -355,11 +303,22 @@ export function useAppsBuilderChat({
 
   const stopCurrentRun = useCallback(() => {
     intentionalAbortRef.current = true;
-    const activeRunId = activeRunIdRef.current;
-    if (activeRunId) {
-      void publishedAppsService.cancelCodingAgentRun(appId, activeRunId).catch((err) => {
+    pendingCancelRef.current = true;
+    if (isSendingRef.current) {
+      setActiveThinkingSummary("");
+      setIsSending(false);
+      isSendingRef.current = false;
+    }
+    const runIdToCancel = activeRunIdRef.current || lastKnownRunIdRef.current;
+    if (runIdToCancel && cancelInFlightRunIdRef.current !== runIdToCancel) {
+      cancelInFlightRunIdRef.current = runIdToCancel;
+      void publishedAppsService.cancelCodingAgentRun(appId, runIdToCancel).catch((err) => {
         const message = err instanceof Error ? err.message : "Failed to cancel current run";
         onError(message);
+      }).finally(() => {
+        if (cancelInFlightRunIdRef.current === runIdToCancel) {
+          cancelInFlightRunIdRef.current = null;
+        }
       });
     }
     const reader = abortReaderRef.current;
@@ -369,7 +328,6 @@ export function useAppsBuilderChat({
         void reader.cancel().catch(() => undefined);
       }
     }
-    setActiveThinkingSummary("Stopping current run...");
   }, [appId, onError]);
 
   const loadChatSession = useCallback(async (sessionId: string) => {
@@ -390,6 +348,7 @@ export function useAppsBuilderChat({
         }));
       setTimeline(restoredTimeline);
       setActiveChatSessionId(detail.session.id);
+      queuedPromptsRef.current = [];
       setQueuedPrompts([]);
       setActiveThinkingSummary("");
     } catch (err) {
@@ -413,6 +372,7 @@ export function useAppsBuilderChat({
     let shouldSuppressErrors = false;
 
     try {
+      const clientMessageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const createRun = async (baseRevisionId?: string) =>
         publishedAppsService.createCodingAgentRun(appId, {
           input,
@@ -420,6 +380,7 @@ export function useAppsBuilderChat({
           model_id: selectedRunModelId,
           engine: resolvedRunEngine,
           chat_session_id: activeChatSessionId || undefined,
+          client_message_id: clientMessageId,
         });
 
       let run;
@@ -448,8 +409,26 @@ export function useAppsBuilderChat({
       }
 
       activeRunIdRef.current = run.run_id;
+      lastKnownRunIdRef.current = run.run_id;
       if (run.chat_session_id) {
         setActiveChatSessionId(run.chat_session_id);
+      }
+      if (pendingCancelRef.current || intentionalAbortRef.current) {
+        pendingCancelRef.current = false;
+        const runIdToCancel = activeRunIdRef.current || lastKnownRunIdRef.current;
+        if (runIdToCancel && cancelInFlightRunIdRef.current !== runIdToCancel) {
+          cancelInFlightRunIdRef.current = runIdToCancel;
+          void publishedAppsService.cancelCodingAgentRun(appId, runIdToCancel).catch((err) => {
+            const message = err instanceof Error ? err.message : "Failed to cancel current run";
+            onError(message);
+          }).finally(() => {
+            if (cancelInFlightRunIdRef.current === runIdToCancel) {
+              cancelInFlightRunIdRef.current = null;
+            }
+          });
+        }
+        shouldSuppressErrors = true;
+        return;
       }
 
       const assistantStreamId = `assistant-${run.run_id}`;
@@ -484,9 +463,85 @@ export function useAppsBuilderChat({
       let latestSummary = "";
       let latestResultRevisionId = "";
       let sawRunFailure = false;
+      let sawTerminalEvent = false;
+      let sawInactivityTimeout = false;
+      let sawMaxDurationTimeout = false;
+      let resolvedMissingTerminalFromBackend = false;
+      let reconciledTerminalStatus: TerminalRunStatus | null = null;
+      let reconciledTerminalError: string | null = null;
+      const STALL_TIMEOUT_MS = resolvePositiveTimeoutMs(
+        process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS,
+        45000,
+      );
+      const MAX_RUN_DURATION_MS = resolvePositiveTimeoutMs(
+        process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_MAX_DURATION_MS,
+        240000,
+      );
+      const READ_POLL_TIMEOUT_MS = Math.min(
+        STALL_TIMEOUT_MS,
+        resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS, 2000),
+      );
+      const runStartedAt = Date.now();
+      let lastEventAt = Date.now();
+      let pendingRead:
+        | Promise<{ ok: true; result: ReadableStreamReadResult<Uint8Array> } | { ok: false; error: unknown }>
+        | null = null;
+
+      const readWithPollingTimeout = async (): Promise<ReadableStreamReadResult<Uint8Array> | null> => {
+        if (!pendingRead) {
+          pendingRead = reader
+            .read()
+            .then(
+              (result) => ({ ok: true as const, result }),
+              (error: unknown) => ({ ok: false as const, error }),
+            );
+        }
+        const timeoutToken = Symbol("coding-agent-stream-read-timeout");
+        const raced = await Promise.race<
+          { ok: true; result: ReadableStreamReadResult<Uint8Array> } | { ok: false; error: unknown } | typeof timeoutToken
+        >([
+          pendingRead,
+          new Promise<typeof timeoutToken>((resolve) => {
+            setTimeout(() => resolve(timeoutToken), READ_POLL_TIMEOUT_MS);
+          }),
+        ]);
+        if (raced === timeoutToken) {
+          return null;
+        }
+        pendingRead = null;
+        if (!raced.ok) {
+          throw raced.error;
+        }
+        return raced.result;
+      };
 
       while (true) {
-        const { done, value } = await reader.read();
+        if (intentionalAbortRef.current) {
+          sawTerminalEvent = true;
+          break;
+        }
+        const now = Date.now();
+        if (now - runStartedAt > MAX_RUN_DURATION_MS) {
+          sawMaxDurationTimeout = true;
+          sawRunFailure = true;
+          if (typeof reader.cancel === "function") {
+            void reader.cancel().catch(() => undefined);
+          }
+          break;
+        }
+        if (now - lastEventAt > STALL_TIMEOUT_MS) {
+          sawInactivityTimeout = true;
+          sawRunFailure = true;
+          if (typeof reader.cancel === "function") {
+            void reader.cancel().catch(() => undefined);
+          }
+          break;
+        }
+        const readResult = await readWithPollingTimeout();
+        if (!readResult) {
+          continue;
+        }
+        const { done, value } = readResult;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         let splitIndex = buffer.indexOf("\n\n");
@@ -498,6 +553,7 @@ export function useAppsBuilderChat({
             splitIndex = buffer.indexOf("\n\n");
             continue;
           }
+          lastEventAt = Date.now();
 
           const payload = (parsed.payload || {}) as Record<string, unknown>;
 
@@ -565,6 +621,8 @@ export function useAppsBuilderChat({
 
           if (parsed.event === "run.failed") {
             sawRunFailure = true;
+            sawTerminalEvent = true;
+            finalizeRunningTools("failed");
             const failureMessage = String(
               parsed.diagnostics?.[0]?.message || payload.error || "Coding-agent run failed",
             );
@@ -582,8 +640,59 @@ export function useAppsBuilderChat({
             }
           }
 
+          if (parsed.event === "run.completed") {
+            sawTerminalEvent = true;
+            finalizeRunningTools("completed");
+          }
+
+          if (sawTerminalEvent) {
+            if (typeof reader.cancel === "function") {
+              void reader.cancel().catch(() => undefined);
+            }
+            break;
+          }
+
           splitIndex = buffer.indexOf("\n\n");
         }
+        if (sawTerminalEvent) {
+          break;
+        }
+      }
+
+      if (!sawTerminalEvent && !intentionalAbortRef.current) {
+        const runIdToReconcile = activeRunIdRef.current || lastKnownRunIdRef.current || run.run_id;
+        if (runIdToReconcile) {
+          const persistedTerminalRun = await getPersistedTerminalRun(runIdToReconcile);
+          if (persistedTerminalRun) {
+            resolvedMissingTerminalFromBackend = true;
+            reconciledTerminalStatus = persistedTerminalRun.status;
+            reconciledTerminalError = persistedTerminalRun.error;
+            sawTerminalEvent = true;
+            sawRunFailure = persistedTerminalRun.status !== "completed" && persistedTerminalRun.status !== "paused";
+          }
+        }
+      }
+
+      if (sawMaxDurationTimeout && !intentionalAbortRef.current && !resolvedMissingTerminalFromBackend) {
+        onError("Coding-agent run exceeded maximum duration. The run was stopped to recover.");
+      } else if (sawInactivityTimeout && !intentionalAbortRef.current && !resolvedMissingTerminalFromBackend) {
+        onError("Coding-agent stream stalled before completion. The run was stopped to recover.");
+      } else if (!sawTerminalEvent && !intentionalAbortRef.current) {
+        sawRunFailure = true;
+        onError("Coding-agent stream ended before a terminal event.");
+      } else if (
+        !intentionalAbortRef.current &&
+        reconciledTerminalStatus &&
+        reconciledTerminalStatus !== "completed" &&
+        reconciledTerminalStatus !== "paused"
+      ) {
+        onError(
+          reconciledTerminalError || (reconciledTerminalStatus === "cancelled" ? "Run cancelled." : "Coding-agent run failed"),
+        );
+      }
+
+      if (!intentionalAbortRef.current) {
+        finalizeRunningTools(sawRunFailure ? "failed" : "completed");
       }
 
       if (!intentionalAbortRef.current) {
@@ -606,14 +715,31 @@ export function useAppsBuilderChat({
         }
       }
 
-      await refreshStateSilently();
-      if (activeTab === "preview") {
-        await ensureDraftDevSession();
+      const finalizeAfterRun = async () => {
+        await refreshStateSilently();
+        if (activeTab === "preview") {
+          await ensureDraftDevSession();
+        }
+        if (latestResultRevisionId) {
+          onSetCurrentRevisionId(latestResultRevisionId);
+        }
+        await loadChatSessions();
+      };
+      if (process.env.NODE_ENV === "test") {
+        try {
+          await finalizeAfterRun();
+        } catch (err) {
+          if (!intentionalAbortRef.current && isMountedRef.current) {
+            onError(err instanceof Error ? err.message : "Failed to refresh builder state after run");
+          }
+        }
+      } else {
+        void finalizeAfterRun().catch((err) => {
+          if (!intentionalAbortRef.current && isMountedRef.current) {
+            onError(err instanceof Error ? err.message : "Failed to refresh builder state after run");
+          }
+        });
       }
-      if (latestResultRevisionId) {
-        onSetCurrentRevisionId(latestResultRevisionId);
-      }
-      await loadChatSessions();
     } catch (err) {
       const isAbortError =
         typeof err === "object" &&
@@ -628,21 +754,27 @@ export function useAppsBuilderChat({
     } finally {
       abortReaderRef.current = null;
       activeRunIdRef.current = null;
+      pendingCancelRef.current = false;
+      cancelInFlightRunIdRef.current = null;
+      lastKnownRunIdRef.current = null;
       intentionalAbortRef.current = false;
+      if (!isMountedRef.current) {
+        return;
+      }
       setActiveThinkingSummary("");
       setIsSending(false);
       isSendingRef.current = false;
 
-      setQueuedPrompts((prev) => {
-        if (prev.length === 0) {
-          return prev;
-        }
-        const [nextPrompt, ...remaining] = prev;
-        setTimeout(() => {
-          void executePromptRef.current(nextPrompt.text);
-        }, shouldSuppressErrors ? 120 : 0);
-        return remaining;
-      });
+      let nextQueuedPrompt: QueuedPrompt | null = null;
+      if (queuedPromptsRef.current.length > 0) {
+        const [nextPrompt, ...remaining] = queuedPromptsRef.current;
+        nextQueuedPrompt = nextPrompt;
+        queuedPromptsRef.current = remaining;
+        setQueuedPrompts(remaining);
+      }
+      if (nextQueuedPrompt) {
+        void executePromptRef.current(nextQueuedPrompt.text);
+      }
     }
   }, [
     activeChatSessionId,
@@ -651,6 +783,7 @@ export function useAppsBuilderChat({
     attachCheckpointToLastUser,
     currentRevisionId,
     ensureDraftDevSession,
+    getPersistedTerminalRun,
     loadChatSessions,
     onError,
     onSetCurrentRevisionId,
@@ -660,6 +793,7 @@ export function useAppsBuilderChat({
     selectedRunModelId,
     upsertAssistantTimeline,
     upsertToolTimeline,
+    finalizeRunningTools,
   ]);
 
   useEffect(() => {
@@ -670,15 +804,14 @@ export function useAppsBuilderChat({
     const input = rawInput.trim();
     if (!input) return;
 
-    if (isSendingRef.current) {
-      setQueuedPrompts((prev) => [
-        ...prev,
-        {
-          id: timelineId("queued"),
-          text: input,
-          createdAt: Date.now(),
-        },
-      ]);
+    if (isSendingRef.current || pendingCancelRef.current) {
+      const nextPrompt = {
+        id: timelineId("queued"),
+        text: input,
+        createdAt: Date.now(),
+      };
+      queuedPromptsRef.current = [...queuedPromptsRef.current, nextPrompt];
+      setQueuedPrompts(queuedPromptsRef.current);
       return;
     }
 
@@ -688,6 +821,7 @@ export function useAppsBuilderChat({
   const startNewChat = useCallback(() => {
     if (isSendingRef.current) stopCurrentRun();
     setTimeline([]);
+    queuedPromptsRef.current = [];
     setQueuedPrompts([]);
     setActiveThinkingSummary("");
     setActiveChatSessionId(null);

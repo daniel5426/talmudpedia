@@ -14,8 +14,7 @@ OPENCODE_BOOTSTRAP_ROOT = Path(__file__).resolve().parent.parent / "templates" /
 OPENCODE_BOOTSTRAP_CONTEXT_PATH = ".cache/opencode/selected_agent_contract.json"
 OPENCODE_BOOTSTRAP_REQUIRED_FILES = (
     ".opencode/package.json",
-    ".opencode/tools/coding_agent_get_agent_integration_contract.ts",
-    ".opencode/tools/coding_agent_describe_selected_agent_contract.ts",
+    ".opencode/tools/read_agent_context.ts",
 )
 IGNORED_TEMPLATE_DIRS = {"node_modules", "dist", "build", "__pycache__"}
 IGNORED_TEMPLATE_FILE_NAMES = {"vite.config.js", "vite.config.d.ts"}

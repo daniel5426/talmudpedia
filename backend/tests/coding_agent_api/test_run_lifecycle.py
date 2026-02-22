@@ -10,7 +10,6 @@ from app.agent.execution.types import ExecutionEvent
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.published_apps import (
     PublishedApp,
-    PublishedAppCodingRunSandboxStatus,
     PublishedAppCodingChatMessage,
     PublishedAppCodingChatMessageRole,
     PublishedAppCodingChatSession,
@@ -26,12 +25,12 @@ from app.db.postgres.models.registry import (
     ModelRegistry,
     ModelStatus,
 )
-from app.services.published_app_coding_agent_engines.base import EngineCancelResult
+from app.services.published_app_coding_agent_engines.base import EngineCancelResult, EngineStreamEvent
 from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.prompt_history import build_opencode_effective_prompt
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
-from app.services.published_app_coding_run_sandbox_service import PublishedAppCodingRunSandboxService
+from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClient
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
@@ -41,10 +40,10 @@ from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_a
 def _mock_run_sandbox_context(monkeypatch):
     async def _fake_ensure_run_sandbox_context(self, *, run, app, base_revision, actor_id):
         context = self._run_context(run)
-        context["coding_run_sandbox_id"] = "sandbox-test"
-        context["coding_run_sandbox_status"] = "running"
-        context["coding_run_sandbox_started_at"] = datetime.now(timezone.utc).isoformat()
-        context["coding_run_sandbox_workspace_path"] = "/workspace"
+        context["preview_sandbox_id"] = "sandbox-test"
+        context["preview_sandbox_status"] = "running"
+        context["preview_sandbox_started_at"] = datetime.now(timezone.utc).isoformat()
+        context["preview_workspace_stage_path"] = "/workspace"
         return {
             "opencode_sandbox_id": "sandbox-test",
             "opencode_workspace_path": "/workspace",
@@ -104,9 +103,9 @@ async def _insert_coding_agent_run(
         input_params={
             "input": "test",
             "context": {
-                "coding_run_sandbox_id": "sandbox-test",
-                "coding_run_sandbox_status": "running",
-                "coding_run_sandbox_workspace_path": "/workspace",
+                "preview_sandbox_id": "sandbox-test",
+                "preview_sandbox_status": "running",
+                "preview_workspace_stage_path": "/workspace",
             },
         },
         surface=CODING_AGENT_SURFACE,
@@ -386,11 +385,13 @@ async def test_runtime_create_run_uses_chat_scoped_sandbox_key(db_session, monke
     captured: dict[str, str | None] = {}
 
     async def _fake_ensure_run_sandbox_context(self, *, run, app, base_revision, actor_id):
-        captured["controller_session_id"] = self._chat_sandbox_scope_for_run(run)
+        captured["chat_session_id"] = str(
+            ((run.input_params or {}).get("context") or {}).get("chat_session_id") or ""
+        )
         context = self._run_context(run)
-        context["coding_run_sandbox_id"] = "chat-scope-sandbox"
-        context["coding_run_sandbox_status"] = "running"
-        context["coding_run_sandbox_workspace_path"] = "/workspace"
+        context["preview_sandbox_id"] = "chat-scope-sandbox"
+        context["preview_sandbox_status"] = "running"
+        context["preview_workspace_stage_path"] = "/workspace"
         return {
             "opencode_sandbox_id": "chat-scope-sandbox",
             "opencode_workspace_path": "/workspace",
@@ -414,14 +415,24 @@ async def test_runtime_create_run_uses_chat_scoped_sandbox_key(db_session, monke
         execution_engine="native",
         chat_session_id=chat_session_id,
     )
-    assert captured["controller_session_id"] == f"chat-{chat_session_id}"
+    assert captured["chat_session_id"] == str(chat_session_id)
     context = run.input_params.get("context") if isinstance(run.input_params, dict) else {}
     assert isinstance(context, dict)
-    assert context.get("sandbox_scope_key") == f"chat-{chat_session_id}"
+    assert context.get("chat_session_id") == str(chat_session_id)
+    assert context.get("preview_sandbox_id") == "chat-scope-sandbox"
     timings = context.get("timing_metrics_ms")
     assert isinstance(timings, dict)
     assert int(timings.get("create_run", -1)) >= 0
-    assert int(timings.get("sandbox_start", -1)) >= 0
+    assert int(timings.get("resolve_preview_session", -1)) >= 0
+    assert int(timings.get("stage_prepare", -1)) >= 0
+    assert int(timings.get("create_run_model_resolve", -1)) >= 0
+    assert int(timings.get("create_run_profile_resolve", -1)) >= 0
+    assert int(timings.get("create_run_message_prepare", -1)) >= 0
+    assert int(timings.get("create_run_contract_build", -1)) >= 0
+    assert int(timings.get("create_run_executor_start", -1)) >= 0
+    assert int(timings.get("create_run_load_run", -1)) >= 0
+    assert int(timings.get("create_run_resolve_preview_session", -1)) >= 0
+    assert int(timings.get("create_run_profile_cache_hit", -1)) in {0, 1}
 
 
 @pytest.mark.asyncio
@@ -455,14 +466,17 @@ async def test_coding_agent_create_run_rejects_opencode_when_engine_unavailable(
     async def _fake_resolve_model(self, *, tenant_id, requested_model_id):
         return None, uuid4()
 
+    async def _disable_prewarm(self, *, app, revision, user_id):
+        raise PublishedAppDraftDevRuntimeDisabled("disabled for engine-unavailable path test")
+
     monkeypatch.delenv("APPS_SANDBOX_CONTROLLER_URL", raising=False)
     monkeypatch.delenv("APPS_DRAFT_DEV_CONTROLLER_URL", raising=False)
     monkeypatch.delenv("APPS_CODING_AGENT_OPENCODE_BASE_URL", raising=False)
     monkeypatch.delenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", raising=False)
-    monkeypatch.setenv("APPS_CODING_AGENT_SANDBOX_REQUIRED", "0")
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_ENABLED", "0")
 
     monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_run_model_ids", _fake_resolve_model)
+    monkeypatch.setattr(PublishedAppDraftDevRuntimeService, "ensure_active_session", _disable_prewarm)
 
     response = await client.post(
         f"/admin/apps/{app_id}/coding-agent/runs",
@@ -1240,9 +1254,9 @@ async def test_stream_run_events_uses_prompt_fallback_when_final_output_missing(
     run.input_params = {
         "input": "what can you do?",
         "context": {
-            "coding_run_sandbox_id": "sandbox-test",
-            "coding_run_sandbox_status": "running",
-            "coding_run_sandbox_workspace_path": "/workspace",
+            "preview_sandbox_id": "sandbox-test",
+            "preview_sandbox_status": "running",
+            "preview_workspace_stage_path": "/workspace",
         },
     }
     await db_session.commit()
@@ -1333,7 +1347,7 @@ async def test_stream_run_events_handles_detached_run_instance(
 
 
 @pytest.mark.asyncio
-async def test_stream_run_events_keeps_chat_scoped_sandbox_warm_and_records_first_token(
+async def test_stream_run_events_records_first_token_and_keeps_preview_sandbox_running(
     client,
     db_session,
     monkeypatch,
@@ -1356,7 +1370,6 @@ async def test_stream_run_events_keeps_chat_scoped_sandbox_warm_and_records_firs
         run_context = {}
     chat_session_id = str(uuid4())
     run_context["chat_session_id"] = chat_session_id
-    run_context["sandbox_scope_key"] = f"chat-{chat_session_id}"
     run.input_params = {
         **(run.input_params if isinstance(run.input_params, dict) else {}),
         "context": run_context,
@@ -1366,8 +1379,6 @@ async def test_stream_run_events_keeps_chat_scoped_sandbox_warm_and_records_firs
 
     app = await db_session.get(PublishedApp, UUID(app_id))
     assert app is not None
-
-    state = {"kept": False, "stopped": False}
 
     async def _fake_stream(self, ctx):
         yield SimpleNamespace(
@@ -1386,37 +1397,19 @@ async def test_stream_run_events_keeps_chat_scoped_sandbox_warm_and_records_firs
     async def _skip_auto_apply(self, run):
         return None
 
-    async def _fake_keep_warm(self, *, run_id):
-        state["kept"] = True
-        return SimpleNamespace(status=PublishedAppCodingRunSandboxStatus.running)
-
-    async def _fake_stop(self, *, run_id, reason):
-        state["stopped"] = True
-        return SimpleNamespace(status=reason)
-
     monkeypatch.setattr(NativePublishedAppCodingAgentEngine, "stream", _fake_stream)
     monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _skip_auto_apply)
-    monkeypatch.setattr(PublishedAppCodingRunSandboxService, "keep_session_warm_for_run", _fake_keep_warm)
-    monkeypatch.setattr(PublishedAppCodingRunSandboxService, "stop_session_for_run", _fake_stop)
-    monkeypatch.setattr(
-        PublishedAppCodingAgentRuntimeService,
-        "_should_keep_sandbox_warm",
-        classmethod(lambda cls, *, run, reason: True),
-    )
-    monkeypatch.setenv("APPS_CODING_AGENT_CHAT_SANDBOX_REUSE_ENABLED", "1")
 
     service = PublishedAppCodingAgentRuntimeService(db_session)
     events = [event async for event in service.stream_run_events(app=app, run=run)]
 
     assert events[-1]["event"] == "run.completed"
-    assert state["kept"] is True
-    assert state["stopped"] is False
 
     refreshed = await db_session.get(AgentRun, run.id)
     assert refreshed is not None
     refreshed_context = refreshed.input_params.get("context") if isinstance(refreshed.input_params, dict) else {}
     assert isinstance(refreshed_context, dict)
-    assert str(refreshed_context.get("coding_run_sandbox_status")) == "running"
+    assert str(refreshed_context.get("preview_sandbox_status")) == "running"
     timings = refreshed_context.get("timing_metrics_ms")
     assert isinstance(timings, dict)
     assert int(timings.get("first_token", -1)) >= 0
@@ -1467,7 +1460,7 @@ async def test_stream_run_events_fail_closed_when_opencode_engine_raises(
 
 
 @pytest.mark.asyncio
-async def test_opencode_engine_falls_back_to_coding_run_sandbox_context(db_session):
+async def test_opencode_engine_uses_preview_sandbox_context(db_session):
     run = AgentRun(
         id=uuid4(),
         status=RunStatus.queued,
@@ -1475,8 +1468,8 @@ async def test_opencode_engine_falls_back_to_coding_run_sandbox_context(db_sessi
             "input": "hello",
             "messages": [{"role": "user", "content": "hello"}],
             "context": {
-                "coding_run_sandbox_id": "sandbox-fallback",
-                "coding_run_sandbox_workspace_path": "/workspace/fallback",
+                "preview_sandbox_id": "sandbox-fallback",
+                "preview_workspace_stage_path": "/workspace/fallback",
                 "resolved_model_id": "openai/gpt-5",
             },
         },
@@ -1485,7 +1478,18 @@ async def test_opencode_engine_falls_back_to_coding_run_sandbox_context(db_sessi
     captured: dict[str, str] = {}
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+        async def start_run(
+            self,
+            *,
+            run_id,
+            app_id,
+            sandbox_id,
+            workspace_path,
+            model_id,
+            prompt,
+            messages,
+            selected_agent_contract=None,
+        ):
             captured["sandbox_id"] = sandbox_id
             captured["workspace_path"] = workspace_path
             return "run-ref-fallback"
@@ -1515,8 +1519,8 @@ async def test_opencode_engine_fails_when_apply_patch_failure_is_not_recovered(d
             "input": "update app",
             "messages": [{"role": "user", "content": "update app"}],
             "context": {
-                "coding_run_sandbox_id": "sandbox-apply-fail",
-                "coding_run_sandbox_workspace_path": "/workspace/apply-fail",
+                "preview_sandbox_id": "sandbox-apply-fail",
+                "preview_workspace_stage_path": "/workspace/apply-fail",
                 "resolved_model_id": "openai/gpt-5",
             },
         },
@@ -1524,7 +1528,18 @@ async def test_opencode_engine_fails_when_apply_patch_failure_is_not_recovered(d
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+        async def start_run(
+            self,
+            *,
+            run_id,
+            app_id,
+            sandbox_id,
+            workspace_path,
+            model_id,
+            prompt,
+            messages,
+            selected_agent_contract=None,
+        ):
             return "run-ref-apply-fail"
 
         async def stream_run_events(self, *, run_ref):
@@ -1554,8 +1569,8 @@ async def test_opencode_engine_allows_recovered_apply_patch_failures(db_session)
             "input": "update app",
             "messages": [{"role": "user", "content": "update app"}],
             "context": {
-                "coding_run_sandbox_id": "sandbox-apply-recover",
-                "coding_run_sandbox_workspace_path": "/workspace/apply-recover",
+                "preview_sandbox_id": "sandbox-apply-recover",
+                "preview_workspace_stage_path": "/workspace/apply-recover",
                 "resolved_model_id": "openai/gpt-5",
             },
         },
@@ -1563,7 +1578,18 @@ async def test_opencode_engine_allows_recovered_apply_patch_failures(db_session)
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+        async def start_run(
+            self,
+            *,
+            run_id,
+            app_id,
+            sandbox_id,
+            workspace_path,
+            model_id,
+            prompt,
+            messages,
+            selected_agent_contract=None,
+        ):
             return "run-ref-apply-recover"
 
         async def stream_run_events(self, *, run_ref):
@@ -1651,9 +1677,15 @@ async def test_stream_auto_apply_runs_before_sandbox_teardown(client, db_session
     app = await db_session.get(PublishedApp, UUID(app_id))
     assert app is not None
 
-    state = {"stopped": False, "auto_apply_called": False}
+    state = {"auto_apply_called": False}
 
     async def _fake_stream(self, ctx):
+        yield EngineStreamEvent(
+            event="tool.completed",
+            stage="tool",
+            payload={"tool": "write", "output": {"path": "src/App.tsx"}},
+            diagnostics=[],
+        )
         ctx.run.status = RunStatus.completed
         ctx.run.output_result = {"state": {"last_agent_output": "Done"}}
         ctx.run.completed_at = datetime.now(timezone.utc)
@@ -1662,7 +1694,6 @@ async def test_stream_auto_apply_runs_before_sandbox_teardown(client, db_session
             yield
 
     async def _fake_auto_apply(self, run):
-        assert state["stopped"] is False
         state["auto_apply_called"] = True
         return SimpleNamespace(
             id=uuid4(),
@@ -1670,20 +1701,69 @@ async def test_stream_auto_apply_runs_before_sandbox_teardown(client, db_session
             files={"src/main.tsx": "export default function App(){return null}"},
         )
 
-    async def _fake_stop(self, *, run_id, reason):
-        state["stopped"] = True
-        return SimpleNamespace(status=reason)
-
     monkeypatch.setattr(NativePublishedAppCodingAgentEngine, "stream", _fake_stream)
     monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _fake_auto_apply)
-    monkeypatch.setattr(PublishedAppCodingRunSandboxService, "stop_session_for_run", _fake_stop)
 
     service = PublishedAppCodingAgentRuntimeService(db_session)
     events = [event async for event in service.stream_run_events(app=app, run=run)]
 
     assert state["auto_apply_called"] is True
-    assert state["stopped"] is True
+    refreshed = await db_session.get(AgentRun, run.id)
+    assert refreshed is not None
+    refreshed_context = refreshed.input_params.get("context") if isinstance(refreshed.input_params, dict) else {}
+    assert isinstance(refreshed_context, dict)
+    assert str(refreshed_context.get("preview_sandbox_status")) == "running"
     assert any(item["event"] == "revision.created" for item in events)
+    assert events[-1]["event"] == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_stream_skips_auto_apply_when_no_write_tools(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = await _insert_coding_agent_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+        status=RunStatus.queued,
+        execution_engine="native",
+    )
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+
+    state = {"auto_apply_called": False}
+
+    async def _fake_stream(self, ctx):
+        yield EngineStreamEvent(
+            event="assistant.delta",
+            stage="assistant",
+            payload={"content": "No code changes required."},
+            diagnostics=[],
+        )
+        ctx.run.status = RunStatus.completed
+        ctx.run.output_result = {"state": {"last_agent_output": "No code changes required."}}
+        ctx.run.completed_at = datetime.now(timezone.utc)
+        await self._executor.db.commit()
+        if False:  # pragma: no cover
+            yield
+
+    async def _fake_auto_apply(self, run):
+        state["auto_apply_called"] = True
+        return None
+
+    monkeypatch.setattr(NativePublishedAppCodingAgentEngine, "stream", _fake_stream)
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _fake_auto_apply)
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+    events = [event async for event in service.stream_run_events(app=app, run=run)]
+
+    assert state["auto_apply_called"] is False
+    assert not any(item["event"] == "revision.created" for item in events)
     assert events[-1]["event"] == "run.completed"
 
 

@@ -1,6 +1,7 @@
-import json
-from hashlib import sha256
+import os
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, Request
@@ -9,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.core.security import create_published_app_preview_token
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import (
+    PublishedApp,
     PublishedAppBuilderConversationTurn,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
@@ -22,6 +25,7 @@ from app.services.published_app_agent_integration_contract import (
     build_published_app_agent_integration_contract,
 )
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
+from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 
 from .published_apps_admin_access import (
@@ -64,6 +68,100 @@ from .published_apps_admin_shared import (
     _validate_template_key,
     router,
 )
+
+
+def _append_query(url: str, params: dict[str, str]) -> str:
+    parsed = urlparse(url)
+    current = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    current.update({k: v for k, v in params.items() if v})
+    return urlunparse(parsed._replace(query=urlencode(current)))
+
+
+def _resolve_runtime_api_base_url(request: Request) -> str:
+    explicit = (os.getenv("APPS_DRAFT_DEV_RUNTIME_API_BASE_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    parsed = urlparse(str(request.base_url))
+    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    api_prefix = (os.getenv("APPS_DRAFT_DEV_RUNTIME_API_PREFIX") or "/api/py").strip() or "/api/py"
+    if not api_prefix.startswith("/"):
+        api_prefix = f"/{api_prefix}"
+    return f"{origin}{api_prefix.rstrip('/')}"
+
+
+def _decorate_draft_dev_session_response(
+    *,
+    request: Request,
+    session: PublishedAppDraftDevSession,
+    app: PublishedApp,
+    actor_id: UUID | None,
+    revision_id: UUID | None,
+) -> DraftDevSessionResponse:
+    response = _draft_dev_session_to_response(session)
+    if actor_id is None:
+        return response
+    preview_url = (response.preview_url or "").strip()
+    if not preview_url:
+        return response
+
+    effective_revision_id = revision_id or session.revision_id
+    if effective_revision_id is None:
+        return response
+
+    preview_token = create_published_app_preview_token(
+        subject=str(actor_id),
+        tenant_id=str(app.tenant_id),
+        app_id=str(app.id),
+        revision_id=str(effective_revision_id),
+        scopes=["apps.preview"],
+        expires_delta=timedelta(hours=2),
+    )
+    runtime_api_base = _resolve_runtime_api_base_url(request)
+    runtime_base_path = f"{runtime_api_base}/public/apps/preview/revisions/{effective_revision_id}"
+    response.preview_url = _append_query(
+        preview_url,
+        {
+            "preview_token": preview_token,
+            "runtime_mode": "builder-preview",
+            "runtime_base_path": runtime_base_path,
+            "runtime_preview_token": preview_token,
+        },
+    )
+    return response
+
+
+async def _assert_no_active_coding_run_for_scope(
+    *,
+    db: AsyncSession,
+    app_id: UUID,
+    user_id: UUID | None,
+) -> None:
+    if user_id is None:
+        return
+    session = await _get_draft_dev_session_for_scope(db, app_id=app_id, user_id=user_id)
+    if session is None or session.active_coding_run_id is None:
+        return
+    run = await db.get(AgentRun, session.active_coding_run_id)
+    if run is None:
+        session.active_coding_run_id = None
+        session.active_coding_run_locked_at = None
+        session.active_coding_run_client_message_id = None
+        return
+    run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+    if run_status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
+        session.active_coding_run_id = None
+        session.active_coding_run_locked_at = None
+        session.active_coding_run_client_message_id = None
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "CODING_AGENT_RUN_ACTIVE",
+            "message": "Builder edits are locked while a coding-agent run is active for this session.",
+            "active_run_id": str(run.id),
+        },
+    )
+
 
 @router.get("/{app_id}/builder/state", response_model=BuilderStateResponse)
 async def get_builder_state(
@@ -108,7 +206,17 @@ async def get_builder_state(
         current_draft_revision=_revision_to_response(draft) if draft else None,
         current_published_revision=_revision_to_response(published) if published else None,
         preview_token=preview_token,
-        draft_dev=_draft_dev_session_to_response(draft_dev_session) if draft_dev_session else None,
+        draft_dev=(
+            _decorate_draft_dev_session_response(
+                request=request,
+                session=draft_dev_session,
+                app=app,
+                actor_id=actor_id,
+                revision_id=draft_dev_session.revision_id if draft_dev_session else None,
+            )
+            if draft_dev_session
+            else None
+        ),
     )
 
 
@@ -169,6 +277,7 @@ async def create_builder_revision(
 
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     actor_id = ctx["user"].id if ctx["user"] else None
+    await _assert_no_active_coding_run_for_scope(db=db, app_id=app.id, user_id=actor_id)
     current = await _ensure_current_draft_revision(db, app, actor_id)
 
     if payload.base_revision_id and str(payload.base_revision_id) != str(current.id):
@@ -193,6 +302,8 @@ async def create_builder_revision(
             payload.entry_file or current.entry_file,
             payload.operations,
         )
+    revision_store = PublishedAppRevisionStore(db)
+    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(next_files)
 
     revision = PublishedAppRevision(
         published_app_id=app.id,
@@ -200,6 +311,7 @@ async def create_builder_revision(
         template_key=app.template_key,
         entry_file=next_entry,
         files=next_files,
+        manifest_json=manifest_json,
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=_next_build_seq(current),
         build_error=None,
@@ -209,7 +321,7 @@ async def create_builder_revision(
         dist_manifest=None,
         template_runtime="vite_static",
         compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(next_files, sort_keys=True).encode("utf-8")).hexdigest(),
+        bundle_hash=bundle_hash,
         source_revision_id=current.id,
         created_by=actor_id,
     )
@@ -250,7 +362,13 @@ async def get_builder_draft_dev_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Draft dev session not found")
     await db.commit()
-    return _draft_dev_session_to_response(session)
+    return _decorate_draft_dev_session_response(
+        request=request,
+        session=session,
+        app=app,
+        actor_id=actor.id,
+        revision_id=session.revision_id,
+    )
 
 
 @router.post(
@@ -269,6 +387,7 @@ async def ensure_builder_draft_dev_session(
     actor = ctx.get("user")
     if actor is None:
         raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
+    await _assert_no_active_coding_run_for_scope(db=db, app_id=app_id, user_id=actor.id)
 
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     draft = await _ensure_current_draft_revision(db, app, actor.id)
@@ -282,7 +401,13 @@ async def ensure_builder_draft_dev_session(
     except PublishedAppDraftDevRuntimeDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     await db.commit()
-    return _draft_dev_session_to_response(session)
+    return _decorate_draft_dev_session_response(
+        request=request,
+        session=session,
+        app=app,
+        actor_id=actor.id,
+        revision_id=draft.id,
+    )
 
 
 @router.patch(
@@ -323,7 +448,13 @@ async def sync_builder_draft_dev_session(
         raise HTTPException(status_code=409, detail=str(exc))
 
     await db.commit()
-    return _draft_dev_session_to_response(session)
+    return _decorate_draft_dev_session_response(
+        request=request,
+        session=session,
+        app=app,
+        actor_id=actor.id,
+        revision_id=draft.id,
+    )
 
 
 @router.post(
@@ -353,7 +484,13 @@ async def heartbeat_builder_draft_dev_session(
     except PublishedAppDraftDevRuntimeDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     await db.commit()
-    return _draft_dev_session_to_response(session)
+    return _decorate_draft_dev_session_response(
+        request=request,
+        session=session,
+        app=app,
+        actor_id=actor.id,
+        revision_id=session.revision_id,
+    )
 
 
 @router.delete(
@@ -383,7 +520,13 @@ async def delete_builder_draft_dev_session(
         reason=PublishedAppDraftDevSessionStatus.stopped,
     )
     await db.commit()
-    return _draft_dev_session_to_response(session)
+    return _decorate_draft_dev_session_response(
+        request=request,
+        session=session,
+        app=app,
+        actor_id=actor.id,
+        revision_id=session.revision_id,
+    )
 
 
 @router.get(
@@ -502,17 +645,21 @@ async def reset_builder_template(
 
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     actor_id = ctx["user"].id if ctx["user"] else None
+    await _assert_no_active_coding_run_for_scope(db=db, app_id=app.id, user_id=actor_id)
     current = await _ensure_current_draft_revision(db, app, actor_id)
 
     template_key = _validate_template_key(payload.template_key)
     template = get_template(template_key)
     files = build_template_files(template_key)
+    revision_store = PublishedAppRevisionStore(db)
+    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
     revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.draft,
         template_key=template_key,
         entry_file=template.entry_file,
         files=files,
+        manifest_json=manifest_json,
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=_next_build_seq(current),
         build_error=None,
@@ -522,7 +669,7 @@ async def reset_builder_template(
         dist_manifest=None,
         template_runtime="vite_static",
         compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+        bundle_hash=bundle_hash,
         source_revision_id=current.id,
         created_by=actor_id,
     )

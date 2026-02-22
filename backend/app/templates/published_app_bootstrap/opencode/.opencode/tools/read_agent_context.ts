@@ -80,16 +80,20 @@ function assertContextMatches(args: { run_id: string; app_id?: string }, context
 
 export default tool({
   description:
-    "Return a compact summary of the selected app-agent contract (tool readiness, schema fields, and optional x-ui hints).",
+    "Read selected app-agent context for the current run. Returns compact summary by default and can include full contract payload.",
   args: {
     run_id: tool.schema.string().describe("Current coding-agent run id."),
     app_id: tool.schema.string().optional().describe("Optional app id for context validation."),
-    max_tools: tool.schema.number().optional().describe("Maximum number of tools to include (1-50)."),
+    include_full_contract: tool.schema
+      .boolean()
+      .optional()
+      .describe("Include full selected_agent_contract payload in output."),
+    max_tools: tool.schema.number().optional().describe("Maximum tools to include in compact summary (1-50)."),
     max_properties_per_schema: tool.schema
       .number()
       .optional()
       .describe("Maximum schema properties to include per input/output schema (1-120)."),
-    include_unresolved: tool.schema.boolean().optional().describe("Include unresolved tool references."),
+    include_unresolved: tool.schema.boolean().optional().describe("Include unresolved tool references in summary."),
   },
   async execute(args) {
     const context = await readContractContext();
@@ -102,7 +106,6 @@ export default tool({
 
     const payload = contract as UnknownRecord;
     const tools = Array.isArray(payload.tools) ? payload.tools : [];
-
     const maxTools = toInteger(args.max_tools, 12, 1, 50);
     const maxProps = toInteger(args.max_properties_per_schema, 20, 1, 120);
     const includeUnresolved = args.include_unresolved !== false;
@@ -127,9 +130,8 @@ export default tool({
     });
 
     const unresolved = Array.isArray(payload.unresolved_tool_references) ? payload.unresolved_tool_references : [];
-
-    return {
-      app_id: String(payload.app_id || ""),
+    const summary = {
+      app_id: String(payload.app_id || context.app_id || ""),
       agent_id: String(payload.agent_id || ""),
       agent: payload.agent && typeof payload.agent === "object" ? payload.agent : {},
       ui_hint_standard:
@@ -140,5 +142,15 @@ export default tool({
       tools: summaries,
       unresolved_tool_references: includeUnresolved ? unresolved : [],
     };
+
+    const result: UnknownRecord = {
+      run_id: String(args.run_id || context.run_id || ""),
+      app_id: String(payload.app_id || context.app_id || ""),
+      summary,
+    };
+    if (args.include_full_contract === true) {
+      result.selected_agent_contract = contract;
+    }
+    return JSON.stringify(result, null, 2);
   },
 });

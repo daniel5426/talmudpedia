@@ -53,6 +53,17 @@ def _normalize_builder_path(path: str) -> str:
 
 
 def _assert_builder_path_allowed(path: str, *, field: str = "path") -> None:
+    segments = [segment for segment in path.lower().split("/") if segment]
+    if "node_modules" in segments:
+        raise _builder_policy_error(
+            "File path is blocked by policy: node_modules",
+            field=field,
+        )
+    if path.lower().startswith(".opencode/.bun/") or path.lower() == ".opencode/.bun":
+        raise _builder_policy_error(
+            "File path is blocked by policy: .opencode/.bun",
+            field=field,
+        )
     blocked_prefix = next(
         (
             prefix
@@ -91,6 +102,11 @@ def _assert_builder_path_allowed(path: str, *, field: str = "path") -> None:
 
 def _is_builder_snapshot_artifact_path(path: str) -> bool:
     lowered = path.lower()
+    segments = [segment for segment in lowered.split("/") if segment]
+    if "node_modules" in segments:
+        return True
+    if lowered.startswith(".opencode/.bun/") or lowered == ".opencode/.bun":
+        return True
     blocked_prefix = next(
         (
             prefix

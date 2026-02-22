@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 
 ## Scope of the feature
 - Admin control plane CRUD and publish lifecycle for tenant published apps.
@@ -49,6 +49,7 @@ Last Updated: 2026-02-21
 - Publish endpoint returns async job metadata and publish jobs move through `queued/running/succeeded/failed`.
 - Publish failures keep previous `current_published_revision_id` unchanged.
 - Draft-dev session APIs support ensure/sync/heartbeat/read/stop lifecycle per `(app_id, user_id)`.
+- Draft-dev ensure response decorates `preview_url` with runtime context query fields (`runtime_mode`, `runtime_base_path`, `preview_token`, `runtime_preview_token`) for template runtime SDK preview chat.
 - Public runtime descriptor and preview runtime/asset endpoints are covered.
 - Preview chat stream endpoint is covered (`POST /public/apps/preview/revisions/{revision_id}/chat/stream`), including preview-token auth requirement and ephemeral execution semantics.
 - Published runtime static asset proxy is covered (`GET /public/apps/{slug}/assets/{asset_path}`), including SPA route fallback to `index.html`.
@@ -59,6 +60,9 @@ Last Updated: 2026-02-21
 - Legacy builder chat endpoints (`/builder/chat/stream`, `/builder/checkpoints`, `/builder/undo`, `/builder/revert-file`) are intentionally removed and are no longer part of this suite.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_builder_revisions.py`
+- Date: 2026-02-22
+- Result: PASS (10 passed)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_builder_revisions.py`
 - Date: 2026-02-21
 - Result: PASS (9 passed)

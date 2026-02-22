@@ -445,6 +445,7 @@ export const publishedAppsService = {
       model_id?: string | null;
       engine?: CodingAgentExecutionEngine;
       chat_session_id?: string;
+      client_message_id?: string;
     },
   ): Promise<CodingAgentRun> {
     return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs`, payload);
@@ -469,6 +470,10 @@ export const publishedAppsService = {
         Accept: "text/event-stream",
       },
     });
+  },
+
+  async getCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {
+    return httpClient.get<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs/${runId}`);
   },
 
   async cancelCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {

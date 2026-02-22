@@ -66,12 +66,13 @@ class OpenCodePublishedAppCodingAgentEngine:
         opencode_model_id = str(context.get("opencode_model_id") or "").strip()
         workspace_path = str(
             context.get("opencode_workspace_path")
-            or context.get("coding_run_sandbox_workspace_path")
+            or context.get("preview_workspace_stage_path")
+            or context.get("preview_workspace_live_path")
             or ""
         ).strip()
         sandbox_id = str(
             context.get("opencode_sandbox_id")
-            or context.get("coding_run_sandbox_id")
+            or context.get("preview_sandbox_id")
             or ""
         ).strip()
         workspace_root = os.path.realpath(os.path.abspath(workspace_path)) if workspace_path else ""
@@ -155,7 +156,10 @@ class OpenCodePublishedAppCodingAgentEngine:
                 )
                 try:
                     if run.engine_run_ref:
-                        await self._client.cancel_run(run_ref=str(run.engine_run_ref))
+                        await self._client.cancel_run(
+                            run_ref=str(run.engine_run_ref),
+                            sandbox_id=sandbox_id or None,
+                        )
                 except Exception:
                     pass
                 yield EngineStreamEvent(
@@ -173,7 +177,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                 break
             if mapped.event == "run.completed":
                 saw_terminal = True
-                continue
+                break
             if mapped.event == "run.failed":
                 saw_terminal = True
                 saw_failure = True
@@ -181,7 +185,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                     failure_message = str(mapped.diagnostics[0].get("message") or failure_message)
                 else:
                     failure_message = str((mapped.payload or {}).get("error") or failure_message)
-                continue
+                break
             yield mapped
 
         persisted = await self._db.get(AgentRun, run.id) or run
@@ -215,8 +219,15 @@ class OpenCodePublishedAppCodingAgentEngine:
                 confirmed=False,
                 diagnostics=[{"code": "OPENCODE_CANCEL_UNCONFIRMED", "message": "Missing OpenCode run reference"}],
             )
+        input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
+        raw_context = input_params.get("context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        sandbox_id = str(context.get("opencode_sandbox_id") or context.get("preview_sandbox_id") or "").strip() or None
         try:
-            confirmed = await self._client.cancel_run(run_ref=str(run.engine_run_ref))
+            confirmed = await self._client.cancel_run(
+                run_ref=str(run.engine_run_ref),
+                sandbox_id=sandbox_id,
+            )
         except Exception as exc:
             return EngineCancelResult(
                 confirmed=False,

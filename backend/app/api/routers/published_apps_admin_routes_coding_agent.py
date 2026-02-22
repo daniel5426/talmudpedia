@@ -1,6 +1,7 @@
+import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 from typing import Any, Dict, List, Optional, Literal
 from uuid import UUID
@@ -43,6 +44,7 @@ class CodingAgentCreateRunRequest(BaseModel):
     model_id: Optional[UUID] = None
     engine: Optional[Literal["native", "opencode"]] = None
     chat_session_id: Optional[UUID] = None
+    client_message_id: Optional[str] = None
 
 
 class CodingAgentResumeRunRequest(BaseModel):
@@ -181,6 +183,8 @@ async def _refresh_draft_from_active_builder_sandbox(
     normalized_files = _filter_builder_snapshot_files(files_payload)
     if not normalized_files:
         return draft
+    if normalized_files == dict(draft.files or {}):
+        return draft
 
     refreshed = await _create_draft_revision_snapshot(
         db=db,
@@ -235,6 +239,52 @@ async def create_coding_agent_run(
         raise HTTPException(status_code=400, detail="input is required")
 
     service = PublishedAppCodingAgentRuntimeService(db)
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    draft_dev_session = None
+    if actor_id is not None:
+        try:
+            draft_dev_session = await runtime_service.ensure_active_session(
+                app=app,
+                revision=draft,
+                user_id=actor_id,
+            )
+        except PublishedAppDraftDevRuntimeDisabled:
+            draft_dev_session = None
+
+    client_message_id = str(payload.client_message_id or "").strip() or None
+    if draft_dev_session is not None and draft_dev_session.active_coding_run_id is not None:
+        locked_run = None
+        try:
+            locked_run = await service.get_run_for_app(
+                app_id=app.id,
+                run_id=draft_dev_session.active_coding_run_id,
+            )
+        except HTTPException:
+            draft_dev_session.active_coding_run_id = None
+            draft_dev_session.active_coding_run_locked_at = None
+            draft_dev_session.active_coding_run_client_message_id = None
+        if locked_run is None:
+            pass
+        else:
+            locked_status = locked_run.status.value if hasattr(locked_run.status, "value") else str(locked_run.status)
+            if (
+                client_message_id
+                and draft_dev_session.active_coding_run_client_message_id
+                and draft_dev_session.active_coding_run_client_message_id == client_message_id
+            ):
+                return _run_to_response(service, locked_run)
+            if locked_status not in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "CODING_AGENT_RUN_ACTIVE",
+                        "message": "A coding-agent run is already active for this preview session.",
+                        "active_run_id": str(locked_run.id),
+                    },
+                )
+            draft_dev_session.active_coding_run_id = None
+            draft_dev_session.active_coding_run_locked_at = None
+            draft_dev_session.active_coding_run_client_message_id = None
     run_messages: list[dict[str, str]] = []
     for raw_message in payload.messages or []:
         if not isinstance(raw_message, dict):
@@ -271,6 +321,10 @@ async def create_coding_agent_run(
         execution_engine=payload.engine,
         chat_session_id=chat_session_id,
     )
+    if draft_dev_session is not None:
+        draft_dev_session.active_coding_run_id = run.id
+        draft_dev_session.active_coding_run_locked_at = datetime.now(timezone.utc)
+        draft_dev_session.active_coding_run_client_message_id = client_message_id
     create_run_api_ms = max(0, int((time.monotonic() - create_run_api_started_at) * 1000))
     run_input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
     raw_run_context = run_input_params.get("context")
@@ -432,6 +486,7 @@ async def stream_coding_agent_run(
         yield ": " + (" " * 2048) + "\n\n"
         async for payload in service.stream_run_events(app=app, run=run):
             yield _sse(payload)
+            await asyncio.sleep(0)
 
     return StreamingResponse(
         event_generator(),

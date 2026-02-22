@@ -17,14 +17,33 @@ type RuntimeContext = {
   appSlug?: string;
   basePath?: string;
   token?: string | null;
+  previewToken?: string | null;
 };
 
 const TOKEN_PREFIX = "published-app-auth-token";
 
+const getRuntimeContextFromQuery = (): RuntimeContext => {
+  if (typeof window === "undefined") return {};
+  const query = new URLSearchParams(window.location.search);
+  const mode = query.get("runtime_mode");
+  const appSlug = query.get("runtime_app_slug");
+  const basePath = query.get("runtime_base_path");
+  const token = query.get("runtime_token");
+  const previewToken = query.get("runtime_preview_token") || query.get("preview_token");
+  return {
+    mode: mode === "builder-preview" || mode === "published-runtime" ? mode : undefined,
+    appSlug: appSlug || undefined,
+    basePath: basePath || undefined,
+    token: token || null,
+    previewToken: previewToken || null,
+  };
+};
+
 const getRuntimeContext = (): RuntimeContext => {
   if (typeof window === "undefined") return {};
+  const queryContext = getRuntimeContextFromQuery();
   const candidate = (window as Window & { __APP_RUNTIME_CONTEXT?: RuntimeContext }).__APP_RUNTIME_CONTEXT;
-  return candidate || {};
+  return { ...queryContext, ...(candidate || {}) };
 };
 
 const safeEncodeSegment = (value: string): string => {
@@ -76,6 +95,8 @@ const resolveToken = (): string | null => {
 };
 
 const resolvePreviewToken = (): string | null => {
+  const ctx = getRuntimeContext();
+  if (ctx.previewToken) return ctx.previewToken;
   if (typeof window === "undefined") return null;
   return new URLSearchParams(window.location.search).get("preview_token");
 };

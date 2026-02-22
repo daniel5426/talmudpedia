@@ -1,6 +1,6 @@
 # Templates
 
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 
 ## Current State Summary
 - Template packs root: `backend/app/templates/published_apps/`
@@ -8,8 +8,8 @@ Last Updated: 2026-02-21
 - Loader behavior: templates are loaded from disk on each call (no in-memory `lru_cache`), so file edits are picked up without restarting just for template file reads.
 - Template bootstrap overlay now injects canonical OpenCode custom tools into every template output:
   - `.opencode/package.json`
-  - `.opencode/tools/coding_agent_get_agent_integration_contract.ts`
-  - `.opencode/tools/coding_agent_describe_selected_agent_contract.ts`
+  - `.opencode/tools/read_agent_context.ts`
+- OpenCode run startup also self-heals `.opencode/*` bootstrap for legacy drafts before run start (fail-closed if seed fails).
 - Strategy currently implemented: clean implementation only (no legacy fallback paths kept).
 
 ## Fast-Create Direction (Current Planning Scope)
@@ -113,5 +113,5 @@ Last Updated: 2026-02-21
 - Dependency policy: `backend/app/services/apps_builder_dependency_policy.py`
 - Template packs: `backend/app/templates/published_apps/*`
 - OpenCode bootstrap source: `backend/app/templates/published_app_bootstrap/opencode/.opencode/*`
-- Plan tracking: `backend/documentations/Plans/Base44_Vite_Static_Apps_ImplementationPlan.md`
+- Current implementation overview: `backend/documentations/Plans/AppsBuilder_Current_Implementation_Overview.md`
 - Fast-create pilot scope: `chat-classic` only until rollout criteria are met.

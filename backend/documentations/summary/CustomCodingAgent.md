@@ -1,6 +1,6 @@
 # Custom Coding Agent
 
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 
 ## Source Documents Consolidated
 - Note: the historical plan files listed in this section were archived/removed from
@@ -134,18 +134,49 @@ Last Updated: 2026-02-21
   - OpenCode-specific MCP env surface was removed from active run path.
 - Introduced canonical project-local OpenCode custom-tool bootstrap source:
   - `backend/app/templates/published_app_bootstrap/opencode/.opencode/package.json`
-  - `backend/app/templates/published_app_bootstrap/opencode/.opencode/tools/coding_agent_get_agent_integration_contract.ts`
-  - `backend/app/templates/published_app_bootstrap/opencode/.opencode/tools/coding_agent_describe_selected_agent_contract.ts`
+  - `backend/app/templates/published_app_bootstrap/opencode/.opencode/tools/read_agent_context.ts`
 - Template loader now overlays bootstrap files into all template outputs (`build_template_files`) so new app drafts include custom tools by default.
 - OpenCode run startup now performs fail-closed workspace seeding before OpenCode session start:
   - seeds `.opencode/*` tool files (self-heal for legacy drafts),
   - writes run-scoped selected-agent contract context to `.cache/opencode/selected_agent_contract.json`,
   - fails run startup if bootstrap/context seeding fails (sandbox and host modes).
+- OpenCode custom-tool surface is now unified to one tool name:
+  - `read_agent_context` (replaces prior two-file OpenCode custom-tool split).
 - OpenCode prompt guidance now always includes contract-tool instructions (no MCP availability gating).
 - Added/updated OpenCode client test coverage for:
   - no `/mcp` calls in official mode start path,
   - workspace bootstrap seeding,
   - sandbox-mode fail-closed behavior on seed write failures.
+
+## Latest Single-Sandbox Staged Runs + Snapshot Revision Store (2026-02-22)
+- Hard cutover to single sandbox topology for coding runs:
+  - coding-agent runs now reuse the active draft preview sandbox session,
+  - OpenCode executes in stage workspace (`.talmudpedia/stage/<run_id>/workspace`) inside that same sandbox.
+- Stage-to-live promotion flow is now first class:
+  - run edits happen in stage workspace only,
+  - live workspace is promoted after successful run finalization and validation.
+- Builder write safety is enforced while runs are active:
+  - draft-dev session now carries active run lock metadata (`active_coding_run_id`, lock timestamps),
+  - write paths return deterministic conflict behavior when locked.
+- Run creation now supports idempotent submit keys:
+  - `client_message_id` is accepted on `POST /admin/apps/{app_id}/coding-agent/runs`,
+  - duplicate queued dispatch behavior is prevented at create-run boundary.
+- Revision persistence moved to snapshot manifest + content-addressed blobs:
+  - manifests map `path -> blob_hash`,
+  - blobs are stored under existing bundle bucket infra (`apps/revision-blobs/sha256/<hash>`),
+  - restore is direct manifest materialization (no replay chain).
+- OpenCode run-sandbox legacy path removed:
+  - deleted `published_app_coding_run_sandbox_service.py`,
+  - removed coding-run sandbox model surface and `coding_run_sandbox_*` context branches.
+
+## Latest Run-Terminal Stream Finalization Fix (2026-02-22)
+- Fixed OpenCode engine terminal handling to stop consuming upstream events immediately after first terminal event (`run.completed` or `run.failed`).
+- Root cause addressed: terminal events were detected but the engine loop continued reading provider events, which could keep runtime streams open if upstream connections did not close promptly.
+- Impact: builder coding-agent runs now finalize reliably after terminal output; UI run state can clear without requiring manual stop/cancel fallback.
+- Runtime stream loop is now also terminal-aware:
+  - when engine emits terminal events, runtime stops waiting for additional engine events and closes the engine iterator,
+  - runtime force-persists terminal status (`completed`/`failed`) if engine emitted terminal events but did not persist run status before hanging.
+- Official OpenCode `/global/event` streaming now supports settle-based completion (assistant text + no running tools) even when explicit `session.idle` is missing, reducing long-running non-terminal stream hangs.
 
 ## Latest Sandbox Start Timeout Fixes (2026-02-19)
 - Draft-dev runtime client now uses a dedicated timeout for OpenCode run bootstrap calls:
@@ -180,7 +211,8 @@ Last Updated: 2026-02-21
   - active row shimmer while tool is running.
 - Builder chat now uses AI Elements `Queue` for pending prompts and `Shimmer` for active-step rendering.
 
-## Latest Chat-Scoped Sandbox Reuse + Timing Telemetry Updates (2026-02-20)
+## Historical: Chat-Scoped Sandbox Reuse + Timing Telemetry (Superseded 2026-02-22)
+- Note: this section is preserved as historical context and is superseded by the single-sandbox staged-run model above.
 - Added chat-scoped sandbox reuse policy for coding-agent runs:
   - run context now carries `sandbox_scope_key` derived from `chat_session_id` when enabled,
   - sandbox provisioning can reuse a stable controller session id (`chat-{chat_session_id}`) across runs.

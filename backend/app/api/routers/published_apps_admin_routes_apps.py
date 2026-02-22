@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from hashlib import sha256
 from typing import Any, Dict, List
 from uuid import UUID
 
@@ -24,6 +23,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
+from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 from app.services.published_app_auth_templates import list_auth_templates
 
@@ -54,7 +54,6 @@ from .published_apps_admin_shared import (
     _validate_providers,
     _validate_template_key,
     _validate_visibility,
-    json,
     router,
 )
 
@@ -135,12 +134,15 @@ async def create_published_app(
 
         template = get_template(template_key)
         files = build_template_files(template_key)
+        revision_store = PublishedAppRevisionStore(db)
+        manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
         revision = PublishedAppRevision(
             published_app_id=app.id,
             kind=PublishedAppRevisionKind.draft,
             template_key=template_key,
             entry_file=template.entry_file,
             files=files,
+            manifest_json=manifest_json,
             build_status=PublishedAppRevisionBuildStatus.queued,
             build_seq=1,
             build_error=None,
@@ -150,7 +152,7 @@ async def create_published_app(
             dist_manifest=None,
             template_runtime="vite_static",
             compiled_bundle=None,
-            bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
+            bundle_hash=bundle_hash,
             source_revision_id=None,
             created_by=ctx["user"].id if ctx["user"] else None,
         )

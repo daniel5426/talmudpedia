@@ -1,6 +1,6 @@
 # Coding Agent API Tests
 
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 
 ## Scope of the feature
 - Admin coding-agent run lifecycle APIs under `/admin/apps/{app_id}/coding-agent/runs*`.
@@ -11,6 +11,7 @@ Last Updated: 2026-02-21
 - `backend/tests/coding_agent_api/test_capabilities_endpoint.py`
 - `backend/tests/coding_agent_api/test_run_lifecycle.py`
 - `backend/tests/coding_agent_api/test_opencode_apply_patch_recovery.py`
+- `backend/tests/coding_agent_api/test_terminal_stream_completion.py`
 
 ## Key scenarios covered
 - Run creation through new coding-agent endpoint with app/revision linkage.
@@ -32,7 +33,7 @@ Last Updated: 2026-02-21
 - Run creation with `engine=opencode` fails with deterministic `400` contract when sandbox-required mode is enabled but sandbox controller mode is unavailable (`CODING_AGENT_SANDBOX_REQUIRED`).
 - Run creation with `engine=opencode` resolves `opencode_model_id` from tenant/global provider bindings (backend-authoritative mapping) and passes it in run context.
 - Run creation injects selected runtime-agent integration contract in run context (`input_params.context.selected_agent_contract`) with resolved tool schemas and optional `x-ui` hints.
-- Run creation seeds a system message containing the selected-agent integration contract snapshot so coding-agent runs can use tool/schema/UI-hint details immediately.
+- Run creation no longer injects the full selected-agent contract snapshot into run prompt history by default; contract access is via context + custom tool (`read_agent_context`) unless explicitly enabled.
 - Contract summary tool `coding_agent_describe_selected_agent_contract` returns compact selected-agent payload (tool readiness, schema field summaries, optional `x-ui` hints).
 - Run creation response includes `chat_session_id` when session-scoped history is active.
 - Run creation snapshots files from the active builder draft sandbox (when available) and seeds coding run base revision from that live snapshot.
@@ -44,12 +45,16 @@ Last Updated: 2026-02-21
 - Stream endpoint fails closed when a run is missing sandbox context and returns `run.failed` with sandbox-required diagnostics.
 - Stream endpoint attempts sandbox-context recovery/bootstrap before failing closed on missing sandbox metadata.
 - Completed runs auto-apply/checkpoint from run sandbox before sandbox teardown, avoiding end-of-run snapshot races.
-- OpenCode engine accepts `coding_run_sandbox_*` context as fallback to avoid missing `sandbox_id` start failures.
+- Completed runs skip auto-apply/checkpoint when no write-capable tool was used (no-op/info turns avoid unnecessary snapshot + draft revision work).
+- Auto-apply path skips revision/checkpoint creation when sandbox snapshot is identical to current draft files.
+- OpenCode engine uses preview-sandbox context (`preview_sandbox_id`, `preview_workspace_live_path`, `preview_workspace_stage_path`) and no longer relies on `coding_run_sandbox_*` fallbacks.
 - OpenCode run finalization now fails when `apply_patch` fails and no later successful `apply_patch` result is observed, preventing false-positive "completed" runs.
 - OpenCode run finalization still allows recovered flows where an initial `apply_patch` failure is followed by a successful patch apply.
 - OpenCode run finalization treats broader `apply_patch` success payload shapes as recovered success (not only `ok + applied_files`).
 - OpenCode run finalization allows recovered edit flows when a non-`apply_patch` edit tool succeeds after an initial `apply_patch` failure.
 - OpenCode unrecovered-`apply_patch` fail-closed behavior is configurable via `APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH`.
+- OpenCode engine stops consuming upstream events immediately after terminal events (`run.completed`/`run.failed`) so downstream stream finalization cannot hang on non-closing provider streams.
+- Runtime stream finalizes promptly even when an engine emits a terminal event and then hangs, and it force-persists terminal status when needed (`completed`/`failed`) to avoid indefinitely running UI state.
 - Runtime stream emits `assistant.delta` from final persisted output when token streaming is empty.
 - Runtime stream emits prompt-aware assistant fallback text when final output is missing.
 - Runtime stream handles detached/non-persistent `AgentRun` instances by reloading the run row from DB before finalize/refresh paths.
@@ -58,11 +63,39 @@ Last Updated: 2026-02-21
 - Cancel endpoint transitions active runs to `cancelled`.
 - OpenCode cancellation follows fail-closed semantics: unconfirmed upstream cancellation transitions run to `failed`.
 - OpenCode stream path follows fail-closed semantics: adapter/runtime exceptions transition run to `failed` and emit `run.failed`.
-- Runtime create-run path derives chat-scoped sandbox reuse keys (`sandbox_scope_key`) from `chat_session_id` when chat sandbox reuse policy is enabled.
-- Runtime stream lifecycle supports keep-warm sandbox finalization for reusable chat-scoped sessions (non-error terminal states).
 - Runtime/OpenCode/router layers persist timing telemetry in run context (`timing_metrics_ms`) for `create_run`, `create_run_api`, `sandbox_start`, `opencode_start`, and `first_token`.
+- `create_run` telemetry includes phase-level breakdown metrics (`create_run_model_resolve`, `create_run_opencode_health`, `create_run_opencode_model_resolve`, `create_run_profile_resolve`, `create_run_message_prepare`, `create_run_contract_build`, `create_run_executor_start`, `create_run_load_run`, `create_run_resolve_preview_session`) to diagnose run creation latency.
+- `create_run` also records profile-cache hit state (`create_run_profile_cache_hit`) for tenant-level coding-agent profile caching diagnostics.
+- Runtime stream telemetry also records `terminal_event`, `checkpoint_done`, and `checkpoint_skipped_no_edit_tool`.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_terminal_stream_completion.py tests/coding_agent_api/test_opencode_apply_patch_recovery.py tests/opencode_server_client/test_opencode_server_client.py`
+- Date: 2026-02-22
+- Result: PASS (32 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api`
+- Date: 2026-02-22
+- Result: FAIL (1 failed, 44 passed) — `tests/coding_agent_api/test_run_lifecycle.py::test_coding_agent_create_run_rejects_opencode_when_engine_unavailable` failed due missing active chat model in test setup (`ValueError: No active chat model is available for coding-agent profile`)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_terminal_stream_completion.py`
+- Date: 2026-02-22
+- Result: PASS (2 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_opencode_apply_patch_recovery.py tests/coding_agent_api/test_run_lifecycle.py -k "stream_run_events or opencode_engine"`
+- Date: 2026-02-22
+- Result: PASS (13 passed, 25 deselected, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_opencode_apply_patch_recovery.py`
+- Date: 2026-02-22
+- Result: PASS (4 passed, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py -k "opencode_engine_uses_preview_sandbox_context or opencode_engine_fails_when_apply_patch_failure_is_not_recovered or opencode_engine_allows_recovered_apply_patch_failures"`
+- Date: 2026-02-22
+- Result: PASS (3 passed, 31 deselected, 2 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py -k runtime_create_run_uses_chat_scoped_sandbox_key`
+- Date: 2026-02-22
+- Result: PASS (1 passed, 33 deselected)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py tests/coding_agent_api/test_opencode_apply_patch_recovery.py tests/coding_agent_api/test_agent_integration_contract_context.py tests/opencode_server_client/test_opencode_server_client.py tests/coding_agent_sandbox_isolation/test_run_sandbox_isolation.py tests/published_apps/test_builder_revisions.py`
+- Date: 2026-02-22
+- Result: PASS (74 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py`
+- Date: 2026-02-21
+- Result: PASS (34 passed)
 - Command: `PYTHONPATH=backend pytest -q backend/tests/coding_agent_api backend/tests/coding_agent_checkpoints`
 - Date: 2026-02-16 23:11 UTC
 - Result: PASS (9 passed)

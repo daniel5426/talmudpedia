@@ -399,6 +399,60 @@ class PublishedAppDraftDevRuntimeClient:
             raise PublishedAppDraftDevRuntimeClientError("Sandbox snapshot requires embedded runtime or remote controller")
         return await self._request("GET", f"/sessions/{sandbox_id}/files/snapshot", json={})
 
+    async def prepare_stage_workspace(self, *, sandbox_id: str, run_id: str) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"run_id": str(run_id)}
+        if not self.is_remote_enabled:
+            if self._config.embedded_local_enabled:
+                manager = get_local_draft_dev_runtime_manager()
+                try:
+                    return await manager.prepare_stage_workspace(sandbox_id=sandbox_id, run_id=str(run_id))
+                except LocalDraftDevRuntimeError as exc:
+                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+            raise PublishedAppDraftDevRuntimeClientError(
+                "Sandbox stage preparation requires embedded runtime or remote controller"
+            )
+        return await self._request("POST", f"/sessions/{sandbox_id}/stage/prepare", json=payload)
+
+    async def snapshot_workspace(
+        self,
+        *,
+        sandbox_id: str,
+        workspace: str = "live",
+        run_id: str | None = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"workspace": str(workspace or "live")}
+        if run_id:
+            payload["run_id"] = str(run_id)
+        if not self.is_remote_enabled:
+            if self._config.embedded_local_enabled:
+                manager = get_local_draft_dev_runtime_manager()
+                try:
+                    return await manager.snapshot_workspace(
+                        sandbox_id=sandbox_id,
+                        workspace=str(workspace or "live"),
+                        run_id=(str(run_id) if run_id else None),
+                    )
+                except LocalDraftDevRuntimeError as exc:
+                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+            raise PublishedAppDraftDevRuntimeClientError(
+                "Sandbox workspace snapshot requires embedded runtime or remote controller"
+            )
+        return await self._request("POST", f"/sessions/{sandbox_id}/stage/snapshot", json=payload)
+
+    async def promote_stage_workspace(self, *, sandbox_id: str, run_id: str) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"run_id": str(run_id)}
+        if not self.is_remote_enabled:
+            if self._config.embedded_local_enabled:
+                manager = get_local_draft_dev_runtime_manager()
+                try:
+                    return await manager.promote_stage_workspace(sandbox_id=sandbox_id, run_id=str(run_id))
+                except LocalDraftDevRuntimeError as exc:
+                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+            raise PublishedAppDraftDevRuntimeClientError(
+                "Sandbox stage promotion requires embedded runtime or remote controller"
+            )
+        return await self._request("POST", f"/sessions/{sandbox_id}/stage/promote", json=payload)
+
     async def run_command(
         self,
         *,

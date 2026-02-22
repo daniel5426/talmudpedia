@@ -12,7 +12,7 @@ from app.services.published_app_draft_dev_runtime_client import PublishedAppDraf
 from app.services.published_app_templates import OPENCODE_BOOTSTRAP_CONTEXT_PATH
 
 
-def _client() -> OpenCodeServerClient:
+def _client(*, sandbox_controller_mode_override: bool | None = False) -> OpenCodeServerClient:
     return OpenCodeServerClient(
         OpenCodeServerClientConfig(
             enabled=True,
@@ -21,6 +21,7 @@ def _client() -> OpenCodeServerClient:
             request_timeout_seconds=10.0,
             connect_timeout_seconds=2.0,
             health_cache_seconds=5,
+            sandbox_controller_mode_override=sandbox_controller_mode_override,
         )
     )
 
@@ -64,7 +65,7 @@ async def test_official_mode_seeds_custom_tools_before_start(monkeypatch: pytest
             text = str((payload.get("parts") or [{}])[0].get("text") or "")
             assert "run_id: run-mcp" in text
             assert "app_id: app-mcp" in text
-            assert "coding_agent_get_agent_integration_contract" in text
+            assert "read_agent_context" in text
             return httpx.Response(200, json={"success": True, "data": {"parts": [{"type": "text", "text": "OK"}]}})
         if request.url.path == "/mcp":
             raise AssertionError("OpenCode MCP should not be called after custom-tool cutover.")
@@ -90,12 +91,12 @@ async def test_official_mode_seeds_custom_tools_before_start(monkeypatch: pytest
         / "workspace"
         / ".opencode"
         / "tools"
-        / "coding_agent_get_agent_integration_contract.ts"
+        / "read_agent_context.ts"
     ).exists()
     context_file = tmp_path / "workspace" / OPENCODE_BOOTSTRAP_CONTEXT_PATH
     assert context_file.exists()
     context_payload = json.loads(context_file.read_text(encoding="utf-8"))
-    assert context_payload["run_id"] == "run-mcp"
+    assert context_payload["context_version"] == "1"
     assert context_payload["app_id"] == "app-mcp"
     assert context_payload["selected_agent_contract"]["agent"]["id"] == "agent-1"
 
@@ -166,7 +167,7 @@ async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.
 
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
     stub = SandboxClientStub()
-    client = _client()
+    client = _client(sandbox_controller_mode_override=True)
     client._sandbox_runtime_client = stub
 
     run_ref = await client.start_run(
@@ -183,9 +184,113 @@ async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.
     assert stub.start_calls == 1
     seeded_paths = {path for path, _ in stub.writes}
     assert ".opencode/package.json" in seeded_paths
-    assert ".opencode/tools/coding_agent_get_agent_integration_contract.ts" in seeded_paths
-    assert ".opencode/tools/coding_agent_describe_selected_agent_contract.ts" in seeded_paths
+    assert ".opencode/tools/read_agent_context.ts" in seeded_paths
     assert OPENCODE_BOOTSTRAP_CONTEXT_PATH in seeded_paths
+
+    second_run_ref = await client.start_run(
+        run_id="run-sandbox-seed-2",
+        app_id="app-1",
+        sandbox_id="sandbox-seed",
+        workspace_path="/workspace",
+        model_id="",
+        prompt="seed again",
+        messages=[{"role": "user", "content": "seed again"}],
+        selected_agent_contract={"agent": {"id": "agent-1"}},
+    )
+    assert second_run_ref == "sandbox-run-1"
+    assert stub.start_calls == 2
+    assert len(stub.writes) == len(seeded_paths)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_refreshes_context_when_contract_changes(monkeypatch: pytest.MonkeyPatch):
+    class SandboxClientStub:
+        is_remote_enabled = True
+
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, str]] = []
+
+        async def write_file(self, *, sandbox_id: str, path: str, content: str):
+            self.writes.append((path, content))
+            return {"sandbox_id": sandbox_id, "path": path, "status": "written"}
+
+        async def start_opencode_run(self, **kwargs):
+            return {"run_ref": "sandbox-run-1"}
+
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
+    stub = SandboxClientStub()
+    client = _client(sandbox_controller_mode_override=True)
+    client._sandbox_runtime_client = stub
+
+    await client.start_run(
+        run_id="run-contract-1",
+        app_id="app-1",
+        sandbox_id="sandbox-seed",
+        workspace_path="/workspace",
+        model_id="",
+        prompt="seed",
+        messages=[{"role": "user", "content": "seed"}],
+        selected_agent_contract={"agent": {"id": "agent-1"}},
+    )
+    writes_after_first = len(stub.writes)
+    await client.start_run(
+        run_id="run-contract-2",
+        app_id="app-1",
+        sandbox_id="sandbox-seed",
+        workspace_path="/workspace",
+        model_id="",
+        prompt="seed",
+        messages=[{"role": "user", "content": "seed"}],
+        selected_agent_contract={"agent": {"id": "agent-2"}},
+    )
+    assert len(stub.writes) == writes_after_first + 1
+    assert stub.writes[-1][0] == OPENCODE_BOOTSTRAP_CONTEXT_PATH
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_ignores_generated_at_for_context_hash(monkeypatch: pytest.MonkeyPatch):
+    class SandboxClientStub:
+        is_remote_enabled = True
+
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, str]] = []
+
+        async def write_file(self, *, sandbox_id: str, path: str, content: str):
+            self.writes.append((path, content))
+            return {"sandbox_id": sandbox_id, "path": path, "status": "written"}
+
+        async def start_opencode_run(self, **kwargs):
+            return {"run_ref": "sandbox-run-1"}
+
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
+    stub = SandboxClientStub()
+    client = _client(sandbox_controller_mode_override=True)
+    client._sandbox_runtime_client = stub
+
+    await client.start_run(
+        run_id="run-generated-at-1",
+        app_id="app-1",
+        sandbox_id="sandbox-seed",
+        workspace_path="/workspace",
+        model_id="",
+        prompt="seed",
+        messages=[{"role": "user", "content": "seed"}],
+        selected_agent_contract={"agent": {"id": "agent-1"}, "generated_at": "2026-02-22T00:00:00Z"},
+    )
+    writes_after_first = len(stub.writes)
+
+    await client.start_run(
+        run_id="run-generated-at-2",
+        app_id="app-1",
+        sandbox_id="sandbox-seed",
+        workspace_path="/workspace",
+        model_id="",
+        prompt="seed",
+        messages=[{"role": "user", "content": "seed"}],
+        selected_agent_contract={"agent": {"id": "agent-1"}, "generated_at": "2026-02-22T01:00:00Z"},
+    )
+
+    assert len(stub.writes) == writes_after_first
 
 
 @pytest.mark.asyncio
@@ -200,7 +305,7 @@ async def test_sandbox_mode_fails_closed_when_seed_write_fails(monkeypatch: pyte
             raise AssertionError("start_opencode_run should not be called when seeding fails")
 
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
-    client = _client()
+    client = _client(sandbox_controller_mode_override=True)
     client._sandbox_runtime_client = FailingSandboxClientStub()
 
     with pytest.raises(OpenCodeServerClientError) as exc:
@@ -508,6 +613,81 @@ async def test_official_mode_global_event_stream_skips_reasoning_deltas(monkeypa
     assistant_chunks = [str(item.get("payload", {}).get("content") or "") for item in events if item.get("event") == "assistant.delta"]
     assert "".join(assistant_chunks) == "done"
     assert "secret-thought" not in "".join(assistant_chunks)
+    assert events[-1].get("event") == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_official_mode_global_event_stream_settles_without_session_idle(monkeypatch: pytest.MonkeyPatch):
+    session_id = "sess-global-settle"
+    assistant_message_id = "msg-assistant-settle"
+    user_message_id = "msg-user-settle"
+    text_part_id = "part-text-settle"
+
+    global_events = [
+        ("message.updated", {"info": {"id": user_message_id, "sessionID": session_id, "role": "user"}}),
+        (
+            "message.updated",
+            {"info": {"id": assistant_message_id, "sessionID": session_id, "role": "assistant", "parentID": user_message_id}},
+        ),
+        (
+            "message.part.updated",
+            {
+                "part": {
+                    "id": text_part_id,
+                    "sessionID": session_id,
+                    "messageID": assistant_message_id,
+                    "type": "text",
+                    "text": "Done",
+                }
+            },
+        ),
+        (
+            "message.part.delta",
+            {
+                "sessionID": session_id,
+                "messageID": assistant_message_id,
+                "partID": text_part_id,
+                "field": "text",
+                "delta": "!",
+            },
+        ),
+    ]
+    sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
+
+    ticks = {"value": 0.0}
+
+    def _fake_monotonic() -> float:
+        ticks["value"] += 0.3
+        return ticks["value"]
+
+    monkeypatch.setattr("app.services.opencode_server_client.time.monotonic", _fake_monotonic)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == f"/session/{session_id}/prompt_async":
+            return httpx.Response(204, text="")
+        if request.url.path == "/global/event":
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+    client = _client()
+
+    run_ref = await client.start_run(
+        run_id="run-global-settle",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="Reply with done",
+        messages=[{"role": "user", "content": "Reply with done"}],
+    )
+    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
+    assistant_text = "".join(str(item.get("payload", {}).get("content") or "") for item in events if item.get("event") == "assistant.delta")
+    assert assistant_text.startswith("Done")
     assert events[-1].get("event") == "run.completed"
 
 

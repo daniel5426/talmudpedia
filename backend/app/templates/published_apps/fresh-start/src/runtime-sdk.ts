@@ -13,17 +13,37 @@ export type RuntimeEvent = {
 };
 
 type RuntimeContext = {
+  mode?: "builder-preview" | "published-runtime";
   appSlug?: string;
   basePath?: string;
   token?: string | null;
+  previewToken?: string | null;
 };
 
 const TOKEN_PREFIX = "published-app-auth-token";
 
+const getRuntimeContextFromQuery = (): RuntimeContext => {
+  if (typeof window === "undefined") return {};
+  const query = new URLSearchParams(window.location.search);
+  const mode = query.get("runtime_mode");
+  const appSlug = query.get("runtime_app_slug");
+  const basePath = query.get("runtime_base_path");
+  const token = query.get("runtime_token");
+  const previewToken = query.get("runtime_preview_token") || query.get("preview_token");
+  return {
+    mode: mode === "builder-preview" || mode === "published-runtime" ? mode : undefined,
+    appSlug: appSlug || undefined,
+    basePath: basePath || undefined,
+    token: token || null,
+    previewToken: previewToken || null,
+  };
+};
+
 const getRuntimeContext = (): RuntimeContext => {
   if (typeof window === "undefined") return {};
+  const queryContext = getRuntimeContextFromQuery();
   const candidate = (window as Window & { __APP_RUNTIME_CONTEXT?: RuntimeContext }).__APP_RUNTIME_CONTEXT;
-  return candidate || {};
+  return { ...queryContext, ...(candidate || {}) };
 };
 
 const resolveBasePath = (): string | null => {
@@ -38,6 +58,23 @@ const resolveToken = (): string | null => {
   if (ctx.token) return ctx.token;
   if (typeof window === "undefined" || !ctx.appSlug) return null;
   return window.localStorage.getItem(`${TOKEN_PREFIX}:${ctx.appSlug}`);
+};
+
+const resolvePreviewToken = (): string | null => {
+  const ctx = getRuntimeContext();
+  if (ctx.previewToken) return ctx.previewToken;
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("preview_token");
+};
+
+const buildStreamUrl = (basePath: string): string => {
+  const base = `${basePath}/chat/stream`;
+  const previewToken = resolvePreviewToken();
+  if (!previewToken || !basePath.includes("/preview/revisions/")) {
+    return base;
+  }
+  const connector = base.includes("?") ? "&" : "?";
+  return `${base}${connector}preview_token=${encodeURIComponent(previewToken)}`;
 };
 
 export const createRuntimeClient = () => {
@@ -56,7 +93,7 @@ export const createRuntimeClient = () => {
         headers.Authorization = `Bearer ${token}`;
       }
 
-      const response = await fetch(`${basePath}/chat/stream`, {
+      const response = await fetch(buildStreamUrl(basePath), {
         method: "POST",
         headers,
         body: JSON.stringify(input),

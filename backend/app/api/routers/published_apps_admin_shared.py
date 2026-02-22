@@ -74,6 +74,7 @@ DOMAIN_HOST_PATTERN = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z
 BUILDER_ALLOWED_DIR_ROOTS = ()
 BUILDER_BLOCKED_DIR_PREFIXES = (
     "node_modules/",
+    ".talmudpedia/",
     ".git/",
     ".next/",
     ".vite/",
@@ -133,7 +134,7 @@ BUILDER_ALLOWED_EXTENSIONS = {
     ".gif",
     ".webp",
 }
-BUILDER_MAX_FILES = int(os.getenv("BUILDER_MAX_FILES", "200"))
+BUILDER_MAX_FILES = int(os.getenv("BUILDER_MAX_FILES", "400"))
 BUILDER_MAX_OPS = int(os.getenv("BUILDER_MAX_OPS", "200"))
 BUILDER_MAX_FILE_BYTES = int(os.getenv("BUILDER_MAX_FILE_BYTES", str(256 * 1024)))
 BUILDER_MAX_LOCKFILE_BYTES = int(os.getenv("BUILDER_MAX_LOCKFILE_BYTES", str(2 * 1024 * 1024)))

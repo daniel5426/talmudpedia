@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+from hashlib import sha256
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +30,11 @@ class OpenCodeServerClientError(Exception):
 
 logger = logging.getLogger(__name__)
 
+OPENCODE_DEPRECATED_TOOL_PATHS = (
+    ".opencode/tools/coding_agent_get_agent_integration_contract.ts",
+    ".opencode/tools/coding_agent_describe_selected_agent_contract.ts",
+)
+
 
 @dataclass(frozen=True)
 class OpenCodeServerClientConfig:
@@ -50,6 +56,11 @@ class OpenCodeServerClient:
         self._official_run_state: dict[str, dict[str, Any]] = {}
         self._sandbox_runtime_client = PublishedAppDraftDevRuntimeClient.from_env()
         self._sandbox_run_ref_to_sandbox_id: dict[str, str] = {}
+        self._sandbox_bootstrap_hash: dict[str, str] = {}
+        self._sandbox_context_hash: dict[str, str] = {}
+        self._host_bootstrap_hash: dict[str, str] = {}
+        self._host_context_hash: dict[str, str] = {}
+        self._bootstrap_cleanup_done_targets: set[str] = set()
 
     @classmethod
     def from_env(cls) -> "OpenCodeServerClient":
@@ -251,7 +262,26 @@ class OpenCodeServerClient:
         except Exception as exc:
             raise OpenCodeServerClientError(f"OpenCode stream request failed: {exc}") from exc
 
-    async def cancel_run(self, *, run_ref: str) -> bool:
+    async def cancel_run(self, *, run_ref: str, sandbox_id: str | None = None) -> bool:
+        resolved_sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref)) or str(sandbox_id or "").strip() or None
+        if self._sandbox_controller_mode_enabled() and resolved_sandbox_id:
+            try:
+                response = await self._sandbox_runtime_client.cancel_opencode_run(
+                    sandbox_id=resolved_sandbox_id,
+                    run_ref=str(run_ref),
+                )
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                raise OpenCodeServerClientError(f"OpenCode sandbox cancel request failed: {exc}") from exc
+            finally:
+                self._sandbox_run_ref_to_sandbox_id.pop(str(run_ref), None)
+            cancelled = response.get("cancelled")
+            if isinstance(cancelled, bool):
+                return cancelled
+            ok = response.get("ok")
+            if isinstance(ok, bool):
+                return ok
+            return True
+
         sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref))
         if sandbox_id:
             try:
@@ -332,6 +362,7 @@ class OpenCodeServerClient:
                 )
 
         initial_response: dict[str, Any] = {}
+        message_submission_task: Any | None = None
         prompt_async_payload: dict[str, Any] = {
             "messageID": message_id,
             "parts": [{"type": "text", "text": text_prompt}],
@@ -349,12 +380,43 @@ class OpenCodeServerClient:
             )
         except OpenCodeServerClientError:
             # Fallback for servers/modes where prompt_async is unavailable.
-            response = await self._request("POST", f"/session/{session_id}/message", json_payload=message_payload, retries=0)
-            embedded_error = self._extract_assistant_info_error(response)
-            if embedded_error:
-                safe_error = self._sanitize_error_message(embedded_error)
-                raise OpenCodeServerClientError(f"OpenCode assistant error: {safe_error}")
-            initial_response = response
+            import asyncio
+
+            async def _submit_message_fallback() -> dict[str, Any]:
+                response = await self._request("POST", f"/session/{session_id}/message", json_payload=message_payload, retries=0)
+                embedded_error = self._extract_assistant_info_error(response)
+                if embedded_error:
+                    safe_error = self._sanitize_error_message(embedded_error)
+                    raise OpenCodeServerClientError(f"OpenCode assistant error: {safe_error}")
+                return response
+
+            message_submission_task = asyncio.create_task(_submit_message_fallback())
+
+            # Preserve existing behavior when the server responds immediately:
+            # capture synchronous payload/errors now.
+            immediate_window_ms = float(
+                (os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_MESSAGE_IMMEDIATE_WINDOW_MS") or "50").strip()
+            )
+            immediate_window_seconds = max(0.0, immediate_window_ms) / 1000.0
+            if immediate_window_seconds > 0:
+                try:
+                    initial_response = await asyncio.wait_for(
+                        asyncio.shield(message_submission_task),
+                        timeout=immediate_window_seconds,
+                    )
+                    message_submission_task = None
+                except asyncio.TimeoutError:
+                    pass
+
+            def _consume_message_submission_result(task: Any) -> None:
+                try:
+                    task.result()
+                except Exception:
+                    # Streaming flow handles assistant/session errors from official APIs.
+                    pass
+
+            if message_submission_task is not None:
+                message_submission_task.add_done_callback(_consume_message_submission_result)
 
         assistant_message_ids: set[str] = set()
         response_info = initial_response.get("info") if isinstance(initial_response.get("info"), dict) else {}
@@ -374,6 +436,7 @@ class OpenCodeServerClient:
             "completed": False,
             "last_progress_at": time.monotonic(),
             "assistant_message_ids": assistant_message_ids,
+            "message_submission_task": message_submission_task,
         }
         return session_id
 
@@ -388,12 +451,30 @@ class OpenCodeServerClient:
                         terminal_emitted = True
                     yield event
                 if terminal_emitted:
+                    logger.info(
+                        "OPENCODE_STREAM_SOURCE session_id=%s source=official_global_event_stream",
+                        session_id,
+                    )
                     return
             except OpenCodeServerClientError:
                 raise
             except Exception:
                 # Fall back to snapshot polling if global stream is unavailable.
+                logger.info(
+                    "OPENCODE_STREAM_SOURCE session_id=%s source=official_snapshot_polling_fallback reason=global_stream_exception",
+                    session_id,
+                )
                 pass
+            else:
+                logger.info(
+                    "OPENCODE_STREAM_SOURCE session_id=%s source=official_snapshot_polling_fallback reason=no_terminal_event",
+                    session_id,
+                )
+        else:
+            logger.info(
+                "OPENCODE_STREAM_SOURCE session_id=%s source=official_snapshot_polling_only reason=global_stream_disabled",
+                session_id,
+            )
 
         async for event in self._stream_official_run_events_snapshot(session_id=session_id):
             yield event
@@ -425,6 +506,23 @@ class OpenCodeServerClient:
         global_read_timeout = max(2.0, global_read_timeout)
         saw_assistant_text = False
         terminal_event: dict[str, Any] | None = None
+        settle_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS") or "1.0").strip())
+        settle_seconds = max(0.2, settle_seconds)
+        running_statuses = {"running", "pending", "in_progress", "started"}
+
+        def _maybe_mark_settled_complete() -> bool:
+            nonlocal terminal_event
+            if terminal_event is not None or not saw_assistant_text:
+                return False
+            tool_status = state.get("tool_status") if isinstance(state.get("tool_status"), dict) else {}
+            has_running_tools = any(str(value or "").strip().lower() in running_statuses for value in tool_status.values())
+            if has_running_tools:
+                return False
+            last_progress_at = float(state.get("last_progress_at") or 0.0)
+            if (time.monotonic() - last_progress_at) < settle_seconds:
+                return False
+            terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
+            return True
 
         initial_payload = state.get("initial_payload")
         if isinstance(initial_payload, dict):
@@ -457,6 +555,8 @@ class OpenCodeServerClient:
                     )
                 async for line in response.aiter_lines():
                     if time.monotonic() >= deadline:
+                        break
+                    if _maybe_mark_settled_complete():
                         break
                     raw = (line or "").strip()
                     if not raw or raw.startswith(":"):
@@ -500,20 +600,37 @@ class OpenCodeServerClient:
                             break
                         continue
 
-                    if event_type == "message.part.delta":
-                        message_id = str(properties.get("messageID") or "").strip()
+                    if event_type in {"message.part.delta", "message_part.delta", "message.part_delta", "message.delta"}:
+                        message_id = str(
+                            properties.get("messageID")
+                            or properties.get("messageId")
+                            or properties.get("message_id")
+                            or ""
+                        ).strip()
+                        if message_id and parent_message_id and message_id == parent_message_id:
+                            continue
                         role = str(message_roles.get(message_id) or "").strip().lower()
-                        if role and role != "assistant":
+                        if role == "user":
                             continue
-                        if message_id and not role and message_id not in assistant_message_ids:
+                        field_name = str(properties.get("field") or "").strip().lower()
+                        if field_name not in {"text", "content", "value"}:
                             continue
-                        if str(properties.get("field") or "").strip() != "text":
-                            continue
-                        part_id = str(properties.get("partID") or "").strip()
+                        part_id = str(
+                            properties.get("partID")
+                            or properties.get("partId")
+                            or properties.get("part_id")
+                            or ""
+                        ).strip()
                         part_type = str(part_types.get(part_id) or "").strip().lower()
                         if self._should_skip_incremental_text_part_type(part_type):
                             continue
-                        delta = str(properties.get("delta") or "")
+                        delta = str(
+                            properties.get("delta")
+                            or properties.get("textDelta")
+                            or properties.get("text_delta")
+                            or properties.get("text")
+                            or ""
+                        )
                         if not delta:
                             continue
                         offsets = state.setdefault("text_offsets", {})
@@ -525,22 +642,32 @@ class OpenCodeServerClient:
                         yield {"event": "assistant.delta", "payload": {"content": delta}}
                         continue
 
-                    if event_type == "message.part.updated":
+                    if event_type in {
+                        "message.part.updated",
+                        "message_part.updated",
+                        "message.part_update",
+                        "message.part.created",
+                        "message.part.appended",
+                    }:
                         part = properties.get("part") if isinstance(properties.get("part"), dict) else {}
                         if not part:
                             continue
-                        message_id = str(part.get("messageID") or "").strip()
+                        message_id = str(
+                            part.get("messageID")
+                            or part.get("messageId")
+                            or part.get("message_id")
+                            or ""
+                        ).strip()
+                        if message_id and parent_message_id and message_id == parent_message_id:
+                            continue
                         role = str(message_roles.get(message_id) or "").strip().lower()
-                        if role and role != "assistant":
+                        if role == "user":
                             continue
                         part_id = str(part.get("id") or "").strip()
                         part_type = str(part.get("type") or "").strip().lower()
                         if part_id:
                             if part_type:
                                 part_types[part_id] = part_type
-                        if message_id and not role and message_id not in assistant_message_ids and part_type == "text":
-                            # Avoid echoing user prompt text before role metadata lands.
-                            continue
                         for event in self._extract_incremental_tool_events(message={"parts": [part]}, state=state):
                             state["last_progress_at"] = time.monotonic()
                             yield event
@@ -614,6 +741,8 @@ class OpenCodeServerClient:
                             }
                         break
 
+        if terminal_event is None:
+            _maybe_mark_settled_complete()
         if terminal_event is not None:
             yield terminal_event
             self._official_run_state.pop(session_id, None)
@@ -947,7 +1076,8 @@ class OpenCodeServerClient:
             f"- sandbox_id: {sandbox_id or 'unknown'}\n"
             f"- workspace_path: {workspace_path or 'unknown'}\n"
             f"- editing_rules: use coding-agent tools only for file changes; never claim success if a tool reports error/non-zero exit code.\n"
-            f"- contract_tool: use `coding_agent_get_agent_integration_contract` when you need selected app-agent tool schemas/UI hints.\n"
+            f"- contract_tool: use `read_agent_context` for selected app-agent tool schemas/UI hints.\n"
+            f"- contract_tool_mode: default output is compact summary; pass `include_full_contract=true` when full contract payload is required.\n"
             f"- contract_tool_input: call contract tools with arguments containing current `run_id`.\n"
             f"- recovery_rules: on apply_patch/context mismatch, read current file range and retry with refreshed patch.\n"
             f"- verification_rules: after edits, run recommended verification/build commands and fix failures before final response.\n"
@@ -961,15 +1091,18 @@ class OpenCodeServerClient:
         app_id: str,
         selected_agent_contract: dict[str, Any] | None,
     ) -> str:
+        _ = run_id
+        contract_payload = (
+            dict(selected_agent_contract)
+            if isinstance(selected_agent_contract, dict)
+            else {}
+        )
+        # Keep context deterministic across runs by stripping volatile metadata.
+        contract_payload.pop("generated_at", None)
         payload = {
-            "run_id": str(run_id or "").strip(),
             "app_id": str(app_id or "").strip(),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "selected_agent_contract": (
-                dict(selected_agent_contract)
-                if isinstance(selected_agent_contract, dict)
-                else {}
-            ),
+            "context_version": "1",
+            "selected_agent_contract": contract_payload,
         }
         return json.dumps(
             payload,
@@ -978,6 +1111,20 @@ class OpenCodeServerClient:
             separators=(",", ":"),
             default=str,
         )
+
+    @staticmethod
+    def _content_hash(content: str) -> str:
+        return sha256(str(content or "").encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _files_hash(files: dict[str, str]) -> str:
+        digest = sha256()
+        for path, content in sorted((files or {}).items()):
+            digest.update(str(path).encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(str(content).encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()
 
     async def _seed_custom_tools_and_context(
         self,
@@ -989,24 +1136,38 @@ class OpenCodeServerClient:
         selected_agent_contract: dict[str, Any] | None,
     ) -> None:
         try:
-            files_to_seed = build_opencode_bootstrap_files()
+            bootstrap_files = build_opencode_bootstrap_files()
         except Exception as exc:
             raise OpenCodeServerClientError(
                 f"Failed to load OpenCode custom-tool bootstrap files: {exc}"
             ) from exc
 
-        files_to_seed[OPENCODE_BOOTSTRAP_CONTEXT_PATH] = self._build_selected_agent_contract_context_content(
+        context_content = self._build_selected_agent_contract_context_content(
             run_id=run_id,
             app_id=app_id,
             selected_agent_contract=selected_agent_contract,
         )
+        bootstrap_hash = self._files_hash(bootstrap_files)
+        context_hash = self._content_hash(context_content)
 
         if self._sandbox_controller_mode_enabled():
             if not sandbox_id:
                 raise OpenCodeServerClientError(
                     "OpenCode sandbox mode requires sandbox_id for custom-tool bootstrap."
                 )
-            for path, content in sorted(files_to_seed.items()):
+            sandbox_key = str(sandbox_id).strip()
+
+            async def _sandbox_write_if_changed(path: str, content: str) -> None:
+                read_file = getattr(self._sandbox_runtime_client, "read_file", None)
+                if callable(read_file):
+                    try:
+                        current_payload = await read_file(sandbox_id=sandbox_id, path=path)
+                        current_content = current_payload.get("content") if isinstance(current_payload, dict) else None
+                        if isinstance(current_content, str) and current_content == content:
+                            return
+                    except PublishedAppDraftDevRuntimeClientError:
+                        # Missing/unreadable file should be overwritten below.
+                        pass
                 try:
                     await self._sandbox_runtime_client.write_file(
                         sandbox_id=sandbox_id,
@@ -1017,6 +1178,30 @@ class OpenCodeServerClient:
                     raise OpenCodeServerClientError(
                         f"Failed to seed OpenCode custom tools in sandbox `{sandbox_id}` at `{path}`: {exc}"
                     ) from exc
+
+            if hasattr(self._sandbox_runtime_client, "delete_file") and sandbox_key not in self._bootstrap_cleanup_done_targets:
+                for path in OPENCODE_DEPRECATED_TOOL_PATHS:
+                    try:
+                        await self._sandbox_runtime_client.delete_file(
+                            sandbox_id=sandbox_id,
+                            path=path,
+                        )
+                    except PublishedAppDraftDevRuntimeClientError:
+                        # Best-effort cleanup for older workspaces that still have superseded tool files.
+                        pass
+                self._bootstrap_cleanup_done_targets.add(sandbox_key)
+
+            should_seed_bootstrap = self._sandbox_bootstrap_hash.get(sandbox_key) != bootstrap_hash
+            should_seed_context = self._sandbox_context_hash.get(sandbox_key) != context_hash
+
+            if should_seed_bootstrap:
+                for path, content in sorted(bootstrap_files.items()):
+                    await _sandbox_write_if_changed(path, content)
+                self._sandbox_bootstrap_hash[sandbox_key] = bootstrap_hash
+
+            if should_seed_context:
+                await _sandbox_write_if_changed(OPENCODE_BOOTSTRAP_CONTEXT_PATH, context_content)
+                self._sandbox_context_hash[sandbox_key] = context_hash
             return
 
         workspace_root_raw = str(workspace_path or "").strip()
@@ -1037,7 +1222,11 @@ class OpenCodeServerClient:
                 f"Failed to initialize OpenCode workspace path `{workspace_root_raw}`: {exc}"
             ) from exc
 
-        for path, content in sorted(files_to_seed.items()):
+        workspace_key = str(workspace_root)
+        should_seed_bootstrap = self._host_bootstrap_hash.get(workspace_key) != bootstrap_hash
+        should_seed_context = self._host_context_hash.get(workspace_key) != context_hash
+
+        def write_workspace_file(path: str, content: str) -> None:
             normalized = str(path or "").replace("\\", "/").lstrip("/")
             if not normalized or ".." in normalized.split("/"):
                 raise OpenCodeServerClientError(f"Invalid OpenCode bootstrap path: {path}")
@@ -1055,6 +1244,33 @@ class OpenCodeServerClient:
                 raise OpenCodeServerClientError(
                     f"Failed to write OpenCode bootstrap file `{normalized}`: {exc}"
                 ) from exc
+
+        if should_seed_bootstrap:
+            for path, content in sorted(bootstrap_files.items()):
+                write_workspace_file(path, content)
+            self._host_bootstrap_hash[workspace_key] = bootstrap_hash
+
+        if should_seed_context:
+            write_workspace_file(OPENCODE_BOOTSTRAP_CONTEXT_PATH, context_content)
+            self._host_context_hash[workspace_key] = context_hash
+
+        if workspace_key not in self._bootstrap_cleanup_done_targets:
+            for path in OPENCODE_DEPRECATED_TOOL_PATHS:
+                normalized = str(path or "").replace("\\", "/").lstrip("/")
+                if not normalized or ".." in normalized.split("/"):
+                    continue
+                target = (workspace_root / normalized).resolve()
+                try:
+                    target.relative_to(workspace_root)
+                except Exception:
+                    continue
+                try:
+                    if target.is_file():
+                        target.unlink()
+                except Exception:
+                    # Best-effort cleanup for older local workspaces.
+                    pass
+            self._bootstrap_cleanup_done_targets.add(workspace_key)
 
     @staticmethod
     def _extract_text_from_message_payload(payload: dict[str, Any]) -> str:

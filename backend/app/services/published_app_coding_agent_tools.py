@@ -6,7 +6,6 @@ import re
 import shlex
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
@@ -28,6 +27,7 @@ from app.services.published_app_agent_integration_contract import (
     build_published_app_agent_integration_contract,
 )
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
+from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.tool_function_registry import register_tool_function
 
 CODING_AGENT_SURFACE = "published_app_coding_agent"
@@ -164,7 +164,10 @@ async def _resolve_run_tool_context(
     runtime_service = PublishedAppDraftDevRuntimeService(db)
     input_params = run.input_params if isinstance(run.input_params, dict) else {}
     run_context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
-    run_sandbox_id = str(run_context.get("coding_run_sandbox_id") or "").strip()
+    run_sandbox_id = str(
+        run_context.get("preview_sandbox_id")
+        or ""
+    ).strip()
 
     if run_sandbox_id:
         try:
@@ -213,12 +216,15 @@ async def _create_draft_revision_from_files(
 ) -> PublishedAppRevision:
     sanitized_files = _filter_builder_snapshot_files(files)
     _validate_builder_project_or_raise(sanitized_files, entry_file)
+    revision_store = PublishedAppRevisionStore(db)
+    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(sanitized_files)
     revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
         files=sanitized_files,
+        manifest_json=manifest_json,
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=int(current.build_seq or 0) + 1,
         build_error=None,
@@ -228,7 +234,7 @@ async def _create_draft_revision_from_files(
         dist_manifest=None,
         template_runtime="vite_static",
         compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(sanitized_files, sort_keys=True).encode("utf-8")).hexdigest(),
+        bundle_hash=bundle_hash,
         source_revision_id=current.id,
         created_by=actor_id,
     )
@@ -1313,8 +1319,8 @@ async def coding_agent_restore_checkpoint(payload: Any) -> dict[str, Any]:
         current = await db.get(PublishedAppRevision, ctx.app.current_draft_revision_id)
         if current is None:
             raise ValueError("Current draft revision not found")
-
-        files = dict(checkpoint_revision.files or {})
+        revision_store = PublishedAppRevisionStore(db)
+        files = await revision_store.materialize_revision_files(checkpoint_revision)
         entry_file = checkpoint_revision.entry_file
         restored = await _create_draft_revision_from_files(
             db=db,

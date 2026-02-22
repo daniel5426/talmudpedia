@@ -1,6 +1,6 @@
 # Sandbox Controller Tests
 
-Last Updated: 2026-02-19
+Last Updated: 2026-02-22
 
 ## Scope of the feature
 - Backend-to-sandbox-controller proxy behavior for OpenCode run lifecycle calls.
@@ -22,7 +22,9 @@ Last Updated: 2026-02-19
 - Dev shim `POST /sessions/start` returns controller session metadata including `workspace_path`.
 - Dev shim OpenCode start fails closed with `400` when draft sandbox is not running (no payload workspace fallback).
 - Dev shim can run OpenCode in sandbox-scoped mode (per-sandbox OpenCode server rooted at sandbox workspace) and routes OpenCode start through that scoped client.
+- Dev shim OpenCode start maps virtual `/workspace/...` paths to the resolved sandbox project root so stage workspaces are honored instead of falling back to live workspace.
 - Dev shim stops sandbox-scoped OpenCode process when draft sandbox session is stopped.
+- Dev shim cancel now supports deterministic run shutdown semantics (cancel request plus terminal stream flush behavior).
 - Draft-dev runtime client OpenCode event streaming uses SSE-friendly timeout config (no read timeout by default) to avoid mid-run stream drops.
 - Draft-dev runtime client stream errors now include a fallback exception class label when exception text is empty.
 - Draft-dev runtime client OpenCode start now supports a dedicated timeout override (`APPS_DRAFT_DEV_CONTROLLER_OPENCODE_START_TIMEOUT_SECONDS`) and defaults to a longer timeout than generic controller calls.
@@ -35,6 +37,12 @@ Last Updated: 2026-02-19
 - Command: `cd backend && PYTHONPATH=. pytest tests/sandbox_controller/test_draft_dev_runtime_client_stream.py tests/sandbox_controller/test_dev_shim.py tests/sandbox_controller/test_opencode_controller_proxy.py -q`
 - Date: 2026-02-19 03:37:58 EET
 - Result: PASS (10 passed overall, sandbox-controller suites)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/sandbox_controller/test_dev_shim.py tests/sandbox_controller/test_opencode_controller_proxy.py`
+- Date: 2026-02-22 01:52 UTC
+- Result: PASS (12 passed)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py tests/coding_agent_sandbox_isolation/test_run_sandbox_isolation.py`
+- Date: 2026-02-22 01:43 UTC
+- Result: PASS (27 passed)
 
 ## Known gaps or follow-ups
 - Add integration tests against a real sandbox-controller deployment once the controller service is live.

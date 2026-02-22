@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import os
 import pytest
 
 from app.api.routers import sandbox_controller_dev_shim as shim_router
@@ -133,9 +135,9 @@ async def test_dev_shim_opencode_start_stream_cancel(client, monkeypatch):
         async def ensure_healthy(self, *, force=False):
             return None
 
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
             assert sandbox_id == "sandbox-2"
-            assert workspace_path == "/tmp/talmudpedia-draft-dev/sandbox-2"
+            assert workspace_path == os.path.realpath("/tmp/talmudpedia-draft-dev/sandbox-2")
             return "host-run-ref-1"
 
         async def stream_run_events(self, *, run_ref):
@@ -143,7 +145,7 @@ async def test_dev_shim_opencode_start_stream_cancel(client, monkeypatch):
             yield {"event": "assistant.delta", "payload": {"content": "hello"}}
             yield {"event": "run.completed", "payload": {"status": "completed"}}
 
-        async def cancel_run(self, *, run_ref):
+        async def cancel_run(self, *, run_ref, sandbox_id=None):
             assert run_ref == "host-run-ref-1"
             return True
 
@@ -184,6 +186,169 @@ async def test_dev_shim_opencode_start_stream_cancel(client, monkeypatch):
         body = (await stream_response.aread()).decode("utf-8")
         assert "assistant.delta" in body
         assert "run.completed" in body
+
+
+@pytest.mark.asyncio
+async def test_dev_shim_opencode_start_prefers_stage_workspace_when_valid(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "1")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_PER_SANDBOX", "0")
+
+    project_dir = tmp_path / "sandbox-2"
+    stage_workspace = project_dir / ".talmudpedia" / "stage" / "run-1" / "workspace"
+    stage_workspace.mkdir(parents=True, exist_ok=True)
+
+    class _FakeManager:
+        async def resolve_project_dir(self, *, sandbox_id):
+            return str(project_dir)
+
+    class _FakeHostClient:
+        async def ensure_healthy(self, *, force=False):
+            return None
+
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+            assert sandbox_id == "sandbox-2"
+            assert workspace_path == str(stage_workspace)
+            return "host-run-ref-stage"
+
+        async def stream_run_events(self, *, run_ref):
+            assert run_ref == "host-run-ref-stage"
+            yield {"event": "run.completed", "payload": {"status": "completed"}}
+
+        async def cancel_run(self, *, run_ref, sandbox_id=None):
+            return True
+
+    monkeypatch.setattr(shim_router, "get_local_draft_dev_runtime_manager", lambda: _FakeManager())
+    monkeypatch.setattr(shim_router, "_build_host_opencode_client", lambda: _FakeHostClient())
+
+    headers = {"Authorization": "Bearer dev-token"}
+    start_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-2/opencode/start",
+        headers=headers,
+        json={
+            "run_id": "run-1",
+            "app_id": "app-1",
+            "workspace_path": str(stage_workspace),
+            "model_id": "openai/gpt-5",
+            "prompt": "hello",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["run_ref"] == "host-run-ref-stage"
+
+
+@pytest.mark.asyncio
+async def test_dev_shim_opencode_start_maps_virtual_workspace_path(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "1")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_PER_SANDBOX", "0")
+
+    project_dir = tmp_path / "sandbox-virtual"
+    stage_workspace = project_dir / ".talmudpedia" / "stage" / "run-virtual" / "workspace"
+    stage_workspace.mkdir(parents=True, exist_ok=True)
+
+    class _FakeManager:
+        async def resolve_project_dir(self, *, sandbox_id):
+            return str(project_dir)
+
+    class _FakeHostClient:
+        async def ensure_healthy(self, *, force=False):
+            return None
+
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+            assert workspace_path == str(stage_workspace)
+            return "host-run-ref-virtual"
+
+        async def stream_run_events(self, *, run_ref):
+            yield {"event": "run.completed", "payload": {"status": "completed"}}
+
+        async def cancel_run(self, *, run_ref, sandbox_id=None):
+            return True
+
+    monkeypatch.setattr(shim_router, "get_local_draft_dev_runtime_manager", lambda: _FakeManager())
+    monkeypatch.setattr(shim_router, "_build_host_opencode_client", lambda: _FakeHostClient())
+
+    headers = {"Authorization": "Bearer dev-token"}
+    start_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-virtual/opencode/start",
+        headers=headers,
+        json={
+            "run_id": "run-virtual",
+            "app_id": "app-1",
+            "workspace_path": "/workspace/.talmudpedia/stage/run-virtual/workspace",
+            "model_id": "openai/gpt-5",
+            "prompt": "hello",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["run_ref"] == "host-run-ref-virtual"
+
+
+@pytest.mark.asyncio
+async def test_dev_shim_opencode_cancel_flushes_terminal_event_for_hung_stream(client, monkeypatch):
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "1")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_PER_SANDBOX", "0")
+
+    class _FakeManager:
+        async def resolve_project_dir(self, *, sandbox_id):
+            return "/tmp/talmudpedia-draft-dev/sandbox-hung"
+
+    class _FakeHostClient:
+        async def ensure_healthy(self, *, force=False):
+            return None
+
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+            return "host-run-ref-hung"
+
+        async def stream_run_events(self, *, run_ref):
+            while True:
+                await asyncio.sleep(60)
+                if False:  # pragma: no cover - keeps this as an async generator for shim pump typing
+                    yield {"event": "noop"}
+
+        async def cancel_run(self, *, run_ref, sandbox_id=None):
+            return True
+
+    monkeypatch.setattr(shim_router, "get_local_draft_dev_runtime_manager", lambda: _FakeManager())
+    monkeypatch.setattr(shim_router, "_build_host_opencode_client", lambda: _FakeHostClient())
+
+    headers = {"Authorization": "Bearer dev-token"}
+    start_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-hung/opencode/start",
+        headers=headers,
+        json={
+            "run_id": "run-hung",
+            "app_id": "app-1",
+            "workspace_path": "/workspace",
+            "model_id": "openai/gpt-5",
+            "prompt": "hello",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["run_ref"] == "host-run-ref-hung"
+
+    cancel_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-hung/opencode/cancel",
+        headers=headers,
+        json={"run_ref": "host-run-ref-hung"},
+    )
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["cancelled"] is True
+
+    async with client.stream(
+        "GET",
+        "/internal/sandbox-controller/sessions/sandbox-hung/opencode/events",
+        headers=headers,
+        params={"run_ref": "host-run-ref-hung"},
+    ) as stream_response:
+        assert stream_response.status_code == 200
+        body = (await stream_response.aread()).decode("utf-8")
+        assert "run.failed" in body
+        assert "run cancelled" in body.lower()
 
 
 @pytest.mark.asyncio
@@ -231,7 +396,7 @@ async def test_dev_shim_opencode_start_uses_per_sandbox_client_when_enabled(clie
         async def ensure_healthy(self, *, force=False):
             return None
 
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages):
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
             captured["sandbox_id"] = sandbox_id
             captured["workspace_path"] = workspace_path
             return "sandbox-run-ref-4"
@@ -261,6 +426,6 @@ async def test_dev_shim_opencode_start_uses_per_sandbox_client_when_enabled(clie
     assert response.status_code == 200
     assert response.json()["run_ref"] == "sandbox-run-ref-4"
     assert captured["client_sandbox_id"] == "sandbox-4"
-    assert captured["client_workspace_path"] == "/tmp/talmudpedia-draft-dev/sandbox-4"
+    assert captured["client_workspace_path"] == os.path.realpath("/tmp/talmudpedia-draft-dev/sandbox-4")
     assert captured["sandbox_id"] == "sandbox-4"
-    assert captured["workspace_path"] == "/tmp/talmudpedia-draft-dev/sandbox-4"
+    assert captured["workspace_path"] == os.path.realpath("/tmp/talmudpedia-draft-dev/sandbox-4")

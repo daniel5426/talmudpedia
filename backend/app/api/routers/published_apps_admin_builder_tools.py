@@ -4,7 +4,6 @@ import os
 import tempfile
 import time
 from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -19,6 +18,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionKind,
 )
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
+from app.services.published_app_revision_store import PublishedAppRevisionStore
 
 from .published_apps_admin_builder_core import (
     _builder_chat_command_allowlist,
@@ -472,12 +472,15 @@ async def _create_draft_revision_from_files(
 ) -> PublishedAppRevision:
     sanitized_files = _filter_builder_snapshot_files(files)
     _validate_builder_project_or_raise(sanitized_files, entry_file)
+    revision_store = PublishedAppRevisionStore(db)
+    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(sanitized_files)
     revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
         files=sanitized_files,
+        manifest_json=manifest_json,
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=_next_build_seq(current),
         build_error=None,
@@ -487,7 +490,7 @@ async def _create_draft_revision_from_files(
         dist_manifest=None,
         template_runtime="vite_static",
         compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(sanitized_files, sort_keys=True).encode("utf-8")).hexdigest(),
+        bundle_hash=bundle_hash,
         source_revision_id=current.id,
         created_by=actor_id,
     )
