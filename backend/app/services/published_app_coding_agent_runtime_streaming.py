@@ -125,6 +125,22 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         return inactivity_timeout, max_duration
 
     @staticmethod
+    def _assistant_delta_coalescing_config() -> tuple[float, int]:
+        flush_ms_raw = (os.getenv("APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS") or "45").strip()
+        flush_chars_raw = (os.getenv("APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS") or "80").strip()
+        try:
+            flush_ms = float(flush_ms_raw)
+        except Exception:
+            flush_ms = 45.0
+        try:
+            flush_chars = int(flush_chars_raw)
+        except Exception:
+            flush_chars = 80
+        flush_seconds = max(0.01, flush_ms / 1000.0)
+        flush_char_threshold = max(1, flush_chars)
+        return flush_seconds, flush_char_threshold
+
+    @staticmethod
     def _extract_chat_session_id(run: AgentRun) -> UUID | None:
         input_params = run.input_params if isinstance(run.input_params, dict) else {}
         context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
@@ -135,6 +151,46 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             return UUID(raw)
         except Exception:
             return None
+
+    @staticmethod
+    def _is_generic_failure_message(message: str | None) -> bool:
+        normalized = str(message or "").strip().lower()
+        return normalized in {"", "run failed", "runtime error", "error", "failed"}
+
+    def _compose_failure_message(
+        self,
+        *,
+        run: AgentRun,
+        diagnostics: list[dict[str, Any]] | None = None,
+        payload: dict[str, Any] | None = None,
+        fallback: str | None = None,
+    ) -> str:
+        diagnostic_message = ""
+        if isinstance(diagnostics, list) and diagnostics:
+            first = diagnostics[0] if isinstance(diagnostics[0], dict) else {}
+            diagnostic_message = str(first.get("message") or "").strip()
+        payload_message = str((payload or {}).get("error") or "").strip()
+        run_message = str(run.error_message or "").strip()
+        fallback_message = str(fallback or "").strip()
+
+        for candidate in (diagnostic_message, payload_message, run_message, fallback_message):
+            if candidate and not self._is_generic_failure_message(candidate):
+                return candidate
+        for candidate in (diagnostic_message, payload_message, run_message, fallback_message):
+            if candidate:
+                return candidate
+        engine_name = self._normalize_execution_engine(str(run.execution_engine or ""))
+        return f"Coding-agent {engine_name} engine ended without a terminal status."
+
+    @staticmethod
+    def _exception_message(exc: Exception) -> str:
+        rendered = str(exc or "").strip()
+        if rendered and rendered.lower() not in {"run failed", "error", "failed"}:
+            return rendered
+        class_name = exc.__class__.__name__ if exc is not None else "RuntimeError"
+        if rendered:
+            return f"{class_name}: {rendered}"
+        return class_name
 
     async def _persist_assistant_chat_message_if_needed(
         self,
@@ -175,6 +231,10 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         stream_started_at = time.monotonic()
         saw_write_tool_event = False
         assistant_delta_events = 0
+        assistant_delta_flush_s, assistant_delta_flush_chars = self._assistant_delta_coalescing_config()
+        buffered_assistant_delta_parts: list[str] = []
+        buffered_assistant_delta_chars = 0
+        buffered_assistant_delta_started_at: float | None = None
 
         def emit(
             event: str,
@@ -194,6 +254,33 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             )
             seq += 1
             return envelope
+
+        def pending_assistant_delta_flush_wait_s() -> float | None:
+            if not buffered_assistant_delta_parts:
+                return None
+            if buffered_assistant_delta_chars >= assistant_delta_flush_chars:
+                return 0.0
+            if buffered_assistant_delta_started_at is None:
+                return assistant_delta_flush_s
+            elapsed = max(0.0, time.monotonic() - buffered_assistant_delta_started_at)
+            return max(0.0, assistant_delta_flush_s - elapsed)
+
+        def flush_buffered_assistant_delta(*, force: bool = False) -> dict[str, Any] | None:
+            nonlocal buffered_assistant_delta_parts
+            nonlocal buffered_assistant_delta_chars
+            nonlocal buffered_assistant_delta_started_at
+            if not buffered_assistant_delta_parts:
+                return None
+            wait_s = pending_assistant_delta_flush_wait_s()
+            if not force and wait_s is not None and wait_s > 0:
+                return None
+            combined = "".join(buffered_assistant_delta_parts)
+            buffered_assistant_delta_parts = []
+            buffered_assistant_delta_chars = 0
+            buffered_assistant_delta_started_at = None
+            if not combined:
+                return None
+            return emit("assistant.delta", "assistant", {"content": combined})
 
         async def persist_assistant_message_for_terminal(default_text: str | None = None) -> None:
             nonlocal assistant_message_persisted
@@ -302,13 +389,13 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     saw_write_tool_event=False,
                     revision_created=bool(run.result_revision_id),
                 )
+                await release_run_lock()
                 yield emit(
                     "run.failed",
                     "run",
                     self.serialize_run(run),
                     [{"message": run.error_message or f"run {terminal_status}"}],
                 )
-                await release_run_lock()
             return
 
         run_context = self._run_context(run)
@@ -348,10 +435,41 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             terminal_engine_diagnostics: list[dict[str, Any]] | None = None
             status_poll_timeout_s = min(2.0, max(0.5, inactivity_timeout_s / 5.0))
             last_provider_progress_at = time.monotonic()
+            pending_next_event_task: asyncio.Task[Any] | None = None
+
+            async def cancel_pending_next_event_task() -> None:
+                nonlocal pending_next_event_task
+                if pending_next_event_task is None:
+                    return
+                task = pending_next_event_task
+                pending_next_event_task = None
+                if task.done():
+                    try:
+                        _ = task.result()
+                    except StopAsyncIteration:
+                        pass
+                    except Exception:
+                        pass
+                    return
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, StopAsyncIteration):
+                    pass
+                except Exception:
+                    pass
+
             try:
                 while True:
+                    buffered_wait_s = pending_assistant_delta_flush_wait_s()
+                    if buffered_wait_s is not None and buffered_wait_s <= 0:
+                        pending_delta_event = flush_buffered_assistant_delta(force=False)
+                        if pending_delta_event is not None:
+                            yield pending_delta_event
+                            continue
                     remaining = stream_deadline - time.monotonic()
                     if remaining <= 0:
+                        await cancel_pending_next_event_task()
                         raise TimeoutError(
                             f"Coding-agent stream exceeded max duration ({int(max_stream_duration_s)}s) without terminal event."
                         )
@@ -367,17 +485,32 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                             RunStatus.paused.value,
                         }:
                             run = latest_run
+                            pending_delta_event = flush_buffered_assistant_delta(force=True)
+                            if pending_delta_event is not None:
+                                yield pending_delta_event
                             terminal_engine_event = terminal_event_for_status(latest_status)
+                            await cancel_pending_next_event_task()
                             break
+                        await cancel_pending_next_event_task()
                         raise TimeoutError(
                             f"Coding-agent stream stalled for {int(inactivity_timeout_s)}s without provider progress."
                         )
                     next_timeout = min(status_poll_timeout_s, remaining)
+                    if buffered_wait_s is not None:
+                        next_timeout = min(next_timeout, max(0.01, buffered_wait_s))
+                    if pending_next_event_task is None:
+                        pending_next_event_task = asyncio.create_task(engine_iter.__anext__())
                     try:
-                        raw_event = await asyncio.wait_for(engine_iter.__anext__(), timeout=next_timeout)
+                        raw_event = await asyncio.wait_for(asyncio.shield(pending_next_event_task), timeout=next_timeout)
+                        pending_next_event_task = None
                     except StopAsyncIteration:
+                        pending_next_event_task = None
                         break
                     except asyncio.TimeoutError:
+                        pending_delta_event = flush_buffered_assistant_delta(force=False)
+                        if pending_delta_event is not None:
+                            yield pending_delta_event
+                            continue
                         latest_run = await self.db.get(AgentRun, run_id)
                         latest_status = (
                             latest_run.status.value if hasattr(latest_run.status, "value") else str(latest_run.status)
@@ -389,15 +522,25 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                             RunStatus.paused.value,
                         }:
                             run = latest_run
+                            pending_delta_event = flush_buffered_assistant_delta(force=True)
+                            if pending_delta_event is not None:
+                                yield pending_delta_event
                             terminal_engine_event = terminal_event_for_status(latest_status)
+                            await cancel_pending_next_event_task()
                             break
                         continue
+                    except Exception:
+                        pending_next_event_task = None
+                        raise
                     last_provider_progress_at = time.monotonic()
                     mapped_event = raw_event.event
                     stage = raw_event.stage
                     payload = raw_event.payload
                     diagnostics = raw_event.diagnostics
                     if mapped_event in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
+                        pending_delta_event = flush_buffered_assistant_delta(force=True)
+                        if pending_delta_event is not None:
+                            yield pending_delta_event
                         terminal_engine_event = mapped_event
                         terminal_engine_payload = payload if isinstance(payload, dict) else {}
                         terminal_engine_diagnostics = diagnostics
@@ -413,16 +556,22 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                         RunStatus.paused.value,
                     }:
                         run = latest_run
+                        pending_delta_event = flush_buffered_assistant_delta(force=True)
+                        if pending_delta_event is not None:
+                            yield pending_delta_event
                         terminal_engine_event = terminal_event_for_status(latest_status)
+                        await cancel_pending_next_event_task()
                         break
-                    if self._is_workspace_write_tool_event(event=mapped_event, payload=payload):
-                        saw_write_tool_event = True
                     if mapped_event == "assistant.delta":
                         raw_content = str((payload or {}).get("content") or "")
                         if raw_content.strip():
                             assistant_delta_events += 1
                             assistant_delta_emitted = True
                             assistant_chunks.append(raw_content)
+                            if buffered_assistant_delta_started_at is None:
+                                buffered_assistant_delta_started_at = time.monotonic()
+                            buffered_assistant_delta_parts.append(raw_content)
+                            buffered_assistant_delta_chars += len(raw_content)
                             if not first_token_recorded:
                                 first_token_recorded = True
                                 first_token_ms = self._record_timing_metric(
@@ -437,14 +586,27 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                                     first_token_ms,
                                 )
                                 await self.db.commit()
+                            pending_delta_event = flush_buffered_assistant_delta(force=False)
+                            if pending_delta_event is not None:
+                                yield pending_delta_event
+                        continue
+                    pending_delta_event = flush_buffered_assistant_delta(force=True)
+                    if pending_delta_event is not None:
+                        yield pending_delta_event
+                    if self._is_workspace_write_tool_event(event=mapped_event, payload=payload):
+                        saw_write_tool_event = True
                     yield emit(mapped_event, stage, payload, diagnostics)
             finally:
+                await cancel_pending_next_event_task()
                 aclose = getattr(engine_iter, "aclose", None)
                 if callable(aclose):
                     try:
                         await aclose()
                     except Exception:
                         pass
+            pending_delta_event = flush_buffered_assistant_delta(force=True)
+            if pending_delta_event is not None:
+                yield pending_delta_event
 
             run = await self.db.get(AgentRun, run_id) or run
             status = run.status.value if hasattr(run.status, "value") else str(run.status)
@@ -464,10 +626,11 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     run.status = RunStatus.paused
                     run.error_message = None
                 else:
-                    failure_message = str(
-                        (terminal_engine_diagnostics or [{}])[0].get("message")
-                        or terminal_engine_payload.get("error")
-                        or "run failed"
+                    failure_message = self._compose_failure_message(
+                        run=run,
+                        diagnostics=terminal_engine_diagnostics,
+                        payload=terminal_engine_payload,
+                        fallback="run failed",
                     )
                     run.status = RunStatus.failed
                     run.error_message = failure_message
@@ -576,11 +739,11 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 yield emit("run.paused", "run", self.serialize_run(run))
                 return
 
-            failure_message = str(
-                (terminal_engine_diagnostics or [{}])[0].get("message")
-                or terminal_engine_payload.get("error")
-                or run.error_message
-                or "run failed"
+            failure_message = self._compose_failure_message(
+                run=run,
+                diagnostics=terminal_engine_diagnostics,
+                payload=terminal_engine_payload,
+                fallback="run failed",
             )
             if status != RunStatus.failed.value:
                 run.status = RunStatus.failed
@@ -598,25 +761,29 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 saw_write_tool_event=saw_write_tool_event,
                 revision_created=bool(run.result_revision_id),
             )
+            await release_run_lock()
             yield emit(
                 "run.failed",
                 "run",
                 self.serialize_run(run),
                 [{"message": failure_message}],
             )
-            await release_run_lock()
         except Exception as exc:
+            error_message = self._exception_message(exc)
             failed_run = await self.db.get(AgentRun, run_id)
             if failed_run is not None:
                 failed_run.status = RunStatus.failed
-                failed_run.error_message = str(exc)
+                failed_run.error_message = error_message
                 failed_run.completed_at = datetime.now(timezone.utc)
                 context = self._run_context(failed_run)
                 context["preview_sandbox_status"] = "running"
                 await release_run_lock()
                 await self.db.commit()
                 run = failed_run
-            await persist_assistant_message_for_terminal(str(exc))
+            pending_delta_event = flush_buffered_assistant_delta(force=True)
+            if pending_delta_event is not None:
+                yield pending_delta_event
+            await persist_assistant_message_for_terminal(error_message)
             self._append_local_telemetry_snapshot(
                 app=app,
                 run=run,
@@ -629,7 +796,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 "run.failed",
                 "run",
                 self.serialize_run(run),
-                [{"message": str(exc)}],
+                [{"message": error_message}],
             )
         finally:
             # Guard against lock leaks on cancellation/disconnect paths where terminal

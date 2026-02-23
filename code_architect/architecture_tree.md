@@ -126,6 +126,7 @@ backend/app/services/published_app_coding_agent_runtime_sandbox.py
 backend/app/services/published_app_coding_agent_runtime_checkpoints.py
 backend/app/services/published_app_coding_agent_runtime_streaming.py
 backend/app/services/published_app_coding_run_orchestrator.py
+backend/app/services/published_app_coding_run_orchestrator_queue.py
 backend/app/services/published_app_revision_store.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/native_engine.py

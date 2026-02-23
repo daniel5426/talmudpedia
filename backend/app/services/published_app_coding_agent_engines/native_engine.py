@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
 from app.agent.execution.service import AgentExecutorService
@@ -18,7 +19,14 @@ class NativePublishedAppCodingAgentEngine:
 
     async def stream(self, ctx: EngineRunContext) -> AsyncGenerator[EngineStreamEvent, None]:
         run = ctx.run
-        if run.status == RunStatus.paused and ctx.resume_payload is not None:
+        was_paused = run.status == RunStatus.paused
+        run.status = RunStatus.running
+        if not run.started_at:
+            run.started_at = datetime.now(timezone.utc)
+        run.error_message = None
+        await self._executor.db.commit()
+
+        if was_paused and ctx.resume_payload is not None:
             await self._executor.resume_run(run.id, ctx.resume_payload, background=False)
 
         async for raw in self._executor.run_and_stream(

@@ -1,6 +1,6 @@
 # Custom Coding Agent
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-23
 
 ## Source Documents Consolidated
 - Note: the historical plan files listed in this section were archived/removed from
@@ -58,6 +58,60 @@ Last Updated: 2026-02-22
 - Per-run model selection is first-class (`Auto` or explicit model) and execution is pinned to resolved model at run time.
 - OpenCode is now the default coding-agent engine; native execution is opt-in via backend/frontend env policy.
 - Chat memory continuity is now server-persisted per `(published_app_id, user_id)` chat session and reused across runs.
+
+## Latest Reliability Polish Updates (2026-02-23)
+- Root-cause fix for repeated generic `run failed` terminals in active OpenCode streams:
+  - runtime stream polling previously used `asyncio.wait_for(engine_iter.__anext__(), timeout=...)`,
+  - timeout polling could cancel in-flight provider reads every slice and induce synthetic failures.
+- Runtime stream loop is now non-destructive during polling:
+  - keeps a pending `__anext__` task,
+  - uses `asyncio.shield(...)` for status polling windows,
+  - cancels the pending read task only on terminal/exit paths.
+- Failure diagnostics hardening:
+  - runtime and orchestrator now prefer non-generic failure text from diagnostics/payload/run error fields,
+  - generic fallback (`run failed`) is used only when no better message exists.
+- Execution engine normalization hardening:
+  - engine normalization now tolerates enum-like/string variants containing `opencode`/`native` (for example `ExecutionEngine.OPENCODE`) to avoid unintended engine fallback.
+- Native engine lifecycle consistency:
+  - native stream path now sets `status=running` and `started_at` at stream start for consistent run state transitions.
+- Regression tests expanded:
+  - added coverage for slow-provider stream iteration where first event arrives after polling slice (prevents timeout-cancel regressions),
+  - added engine normalization regression assertion,
+  - updated coding-agent test state log with latest run results.
+
+## Latest Continuity + Lock Reconciliation Updates (2026-02-23)
+- Fixed terminal lock/event ordering on runtime failure paths:
+  - `run.failed` SSE is now emitted after lock clear reconciliation, matching completed/cancelled/paused terminal ordering.
+- Hardened orchestrator terminal reconciliation:
+  - when terminal event-log insertion hits `(run_id, seq)` conflicts, run row status is now reconciled from terminal event state,
+  - stale `queued` rows with persisted `run.failed` terminal events are auto-corrected to terminal run status.
+- Added terminal snapshot lock reconciliation:
+  - replay-tail terminal snapshot emission now also clears stale `active_coding_run_id` locks for already-terminal runs.
+- Added post-terminal event guard:
+  - once terminal is persisted, orchestrator ignores late provider events to prevent terminal-state mutation.
+- Stabilized stream DB/session binding:
+  - stream route detached sessions now bind to the request DB engine (not global default engine),
+  - test/request-scoped streaming path persists event-log rows directly while avoiding detached-runner DB deadlocks.
+- Frontend finalize-after-run hardening:
+  - preview re-ensure now retries transient `CODING_AGENT_RUN_ACTIVE` for the just-finished run instead of surfacing a false lock error to users.
+- Refactor for file-size guardrail:
+  - extracted queue/dispatch responsibilities into `published_app_coding_run_orchestrator_queue.py`,
+  - `published_app_coding_run_orchestrator.py` now stays below 800 lines.
+
+## Latest Detached Runner Async-Bind + Stream Reliability Fix (2026-02-23)
+- Fixed detached orchestrator/session binding bug that could bind `async_sessionmaker` to a sync SQLAlchemy `Engine`:
+  - root cause was using `.engine`/`get_bind()` outputs that can resolve to sync engine types,
+  - impact in production path: runner startup failures (`AsyncEngine expected, got Engine(...)`) and non-terminal stream closures.
+- Orchestrator now resolves detached session bind strictly from async bind types (`AsyncEngine` / `AsyncConnection`) and ignores sync binds.
+- Coding-agent stream route now resolves detached async bind via the same async-only rule and fail-safes to request-scoped streaming if async bind is unavailable.
+- Added explicit sqlite/test harness isolation:
+  - create-run route skips detached runner startup when stream execution is request-scoped (sqlite or pytest),
+  - prevents in-memory sqlite cross-test instability from detached background runner tasks while preserving production detached-run behavior.
+- Added regression tests for async-bind selection in:
+  - `backend/tests/coding_agent_api/test_orchestrator_reliability_flow.py`
+- Live Supabase reproduction after fix confirms:
+  - detached replay/tail path starts normally,
+  - terminal `run.failed` now carries concrete provider diagnostics (for example OpenCode model-not-found) instead of generic `run failed`.
 
 ## Latest OpenCode-First + Durable Chat History Updates (2026-02-19)
 - `POST /admin/apps/{app_id}/coding-agent/runs` now accepts optional `chat_session_id`; request `engine` is optional and resolves from backend policy.

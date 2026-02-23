@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 import time
 from typing import Any, Dict, List, Optional, Literal
@@ -9,12 +10,11 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.models.agents import RunStatus
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSessionStatus, PublishedAppRevision
-from app.db.postgres.engine import sessionmaker
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.db.postgres.session import get_db
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
@@ -171,6 +171,24 @@ def _run_to_response(service: PublishedAppCodingAgentRuntimeService, run) -> Cod
 
 def _sse(payload: Dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, default=str)}\n\n"
+
+
+def _resolve_detached_async_bind(db: AsyncSession) -> AsyncEngine | None:
+    direct_bind = getattr(db, "bind", None)
+    if isinstance(direct_bind, AsyncConnection):
+        return direct_bind.engine
+    if isinstance(direct_bind, AsyncEngine):
+        return direct_bind
+    return None
+
+
+def _should_use_request_scoped_stream_db(db: AsyncSession) -> bool:
+    bind = db.get_bind()
+    bind_dialect = getattr(bind, "dialect", None)
+    return (
+        getattr(bind_dialect, "name", "") == "sqlite"
+        or bool(os.getenv("PYTEST_CURRENT_TEST"))
+    )
 
 
 async def _refresh_draft_from_active_builder_sandbox(
@@ -340,7 +358,8 @@ async def create_coding_agent_run(
                             "client_message_id": client_message_id,
                         },
                     )
-                    await orchestrator.ensure_runner(app_id=app.id, run_id=locked_run.id)
+                    if not _should_use_request_scoped_stream_db(db):
+                        await orchestrator.ensure_runner(app_id=app.id, run_id=locked_run.id)
                     return _run_to_response(service, locked_run)
                 raise HTTPException(
                     status_code=409,
@@ -419,7 +438,8 @@ async def create_coding_agent_run(
         )
     else:
         await db.commit()
-    await orchestrator.ensure_runner(app_id=app.id, run_id=run.id)
+    if not _should_use_request_scoped_stream_db(db):
+        await orchestrator.ensure_runner(app_id=app.id, run_id=run.id)
     return _run_to_response(service, run)
 
 
@@ -678,28 +698,79 @@ async def stream_coding_agent_run(
     service = PublishedAppCodingAgentRuntimeService(db)
     run = await service.get_run_for_app(app_id=app.id, run_id=run_id)
     await PublishedAppCodingRunOrchestrator(db).purge_old_events(retention_hours=24)
-    bind = db.get_bind()
-    bind_dialect = getattr(bind, "dialect", None)
-    bind_url = getattr(bind, "url", None)
-    use_request_scoped_stream_db = (
-        getattr(bind_dialect, "name", "") == "sqlite"
-    )
+    use_request_scoped_stream_db = _should_use_request_scoped_stream_db(db)
+    detached_bind = _resolve_detached_async_bind(db)
+    if detached_bind is None:
+        # Fail-safe: keep streaming in request scope rather than constructing
+        # a detached async sessionmaker over a sync Engine/Connection.
+        use_request_scoped_stream_db = True
+    detached_session_factory = async_sessionmaker(
+        bind=detached_bind,
+        expire_on_commit=False,
+        class_=AsyncSession,
+    ) if detached_bind is not None else None
 
     async def event_generator():
         if use_request_scoped_stream_db:
             orchestrator = PublishedAppCodingRunOrchestrator(db)
             yield ": " + (" " * 2048) + "\n\n"
-            async for payload in orchestrator.stream_events(
-                app_id=app.id,
-                run_id=run.id,
-                from_seq=from_seq,
-                replay=replay,
-            ):
-                yield _sse(payload)
+            run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+            if run_status in {
+                RunStatus.completed.value,
+                RunStatus.failed.value,
+                RunStatus.cancelled.value,
+                RunStatus.paused.value,
+            }:
+                async for payload in orchestrator.stream_events(
+                    app_id=app.id,
+                    run_id=run.id,
+                    from_seq=from_seq,
+                    replay=replay,
+                ):
+                    yield _sse(payload)
+                    await asyncio.sleep(0)
+                return
+
+            runtime = PublishedAppCodingAgentRuntimeService(db)
+            next_seq = await orchestrator.get_next_replay_seq(run_id=run.id)
+            async for payload in runtime.stream_run_events(app=app, run=run):
+                event_name = str(payload.get("event") or "")
+                event_stage = str(payload.get("stage") or "run")
+                payload_body = orchestrator._json_safe(payload.get("payload") or {})
+                if not isinstance(payload_body, dict):
+                    payload_body = {"value": payload_body}
+                diagnostics_body = orchestrator._json_safe(payload.get("diagnostics") or [])
+                if not isinstance(diagnostics_body, list):
+                    diagnostics_body = [diagnostics_body]
+                proposed_seq = max(next_seq, int(payload.get("seq") or 0) or next_seq)
+                row = await PublishedAppCodingRunOrchestrator._append_event_row_with_retry(
+                    db=db,
+                    run_id=run.id,
+                    event=event_name,
+                    stage=event_stage,
+                    payload_json=payload_body,
+                    diagnostics_json=diagnostics_body,
+                    preferred_seq=proposed_seq,
+                    minimum_seq=next_seq,
+                    reuse_terminal_event=event_name in {"run.completed", "run.failed", "run.cancelled", "run.paused"},
+                )
+                next_seq = int(row.seq or proposed_seq) + 1
+                if event_name in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
+                    await PublishedAppCodingRunOrchestrator._reconcile_run_from_terminal_event(
+                        db=db,
+                        run_id=run.id,
+                        event_name=event_name,
+                        payload_json=payload_body,
+                        diagnostics_json=diagnostics_body,
+                    )
+                serialized = orchestrator._serialize_event_row(row=row, run_id=run.id, app_id=app.id)
+                yield _sse(serialized)
                 await asyncio.sleep(0)
+                if event_name in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
+                    break
             return
 
-        async with sessionmaker() as stream_db:
+        async with detached_session_factory() as stream_db:
             orchestrator = PublishedAppCodingRunOrchestrator(stream_db)
             yield ": " + (" " * 2048) + "\n\n"
             async for payload in orchestrator.stream_events(

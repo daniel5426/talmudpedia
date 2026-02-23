@@ -1820,6 +1820,82 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
+  it("retries draft ensure after terminal when lock clear lags and then succeeds", async () => {
+    const sessionPayload = {
+      session_id: "session-1",
+      app_id: "app-1",
+      revision_id: "rev-1",
+      status: "running",
+      preview_url: "https://preview.local/sandbox/session-1/",
+      preview_auth_token: "preview-auth-token-1",
+      preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
+      idle_timeout_seconds: 180,
+      last_activity_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 180_000).toISOString(),
+      last_error: null,
+    };
+    let ensureCalls = 0;
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockImplementation(() => {
+      ensureCalls += 1;
+      if (ensureCalls === 1) {
+        return Promise.resolve(sessionPayload);
+      }
+      if (ensureCalls === 2) {
+        return Promise.reject(
+          new Error(
+            JSON.stringify({
+              code: "CODING_AGENT_RUN_ACTIVE",
+              message: "Builder edits are locked while a coding-agent run is active for this session.",
+              active_run_id: "run-1",
+            }),
+          ),
+        );
+      }
+      return Promise.resolve(sessionPayload);
+    });
+
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"run.accepted","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"run","payload":{"status":"queued"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "ensure after terminal" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
+    });
+    await waitFor(() => {
+      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledTimes(3);
+    });
+    expect(
+      screen.queryByText("Builder edits are locked while a coding-agent run is active for this session."),
+    ).not.toBeInTheDocument();
+  });
+
   it("reuses returned chat_session_id for subsequent messages", async () => {
     (publishedAppsService.createCodingAgentRun as jest.Mock)
       .mockResolvedValueOnce({

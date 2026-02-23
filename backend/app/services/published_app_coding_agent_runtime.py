@@ -296,10 +296,17 @@ class PublishedAppCodingAgentRuntimeService(
 
     @staticmethod
     def _normalize_execution_engine(value: str | None) -> str:
-        engine = str(value or PublishedAppCodingAgentRuntimeService._default_execution_engine()).strip().lower()
-        if engine == CODING_AGENT_ENGINE_OPENCODE:
+        engine_raw = str(value or PublishedAppCodingAgentRuntimeService._default_execution_engine()).strip()
+        if not engine_raw:
             return CODING_AGENT_ENGINE_OPENCODE
-        return CODING_AGENT_ENGINE_NATIVE
+        engine = engine_raw.lower()
+
+        # Be permissive with enum-like values (for example: "ExecutionEngine.OPENCODE").
+        if engine == CODING_AGENT_ENGINE_OPENCODE or engine.endswith(".opencode") or "opencode" in engine:
+            return CODING_AGENT_ENGINE_OPENCODE
+        if engine == CODING_AGENT_ENGINE_NATIVE or engine.endswith(".native") or "native" in engine:
+            return CODING_AGENT_ENGINE_NATIVE
+        return PublishedAppCodingAgentRuntimeService._default_execution_engine()
 
     @staticmethod
     def _opencode_provider_prefix(provider: ModelProviderType | str | None) -> str | None:
@@ -439,13 +446,18 @@ class PublishedAppCodingAgentRuntimeService(
             raise self._engine_unavailable_error(
                 "Native engine is disabled by policy. Set APPS_CODING_AGENT_NATIVE_ENABLED=1 to enable it."
             )
-        opencode_health_task: asyncio.Task[int] | None = None
+        create_run_phase_metrics["create_run_opencode_health"] = 0
+        create_run_phase_metrics["create_run_opencode_model_resolve"] = 0
         if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
-            async def _probe_opencode_health() -> int:
-                probe_started_at = time.monotonic()
+            probe_started_at = time.monotonic()
+            try:
                 await self._opencode_client.ensure_healthy()
-                return max(0, int((time.monotonic() - probe_started_at) * 1000))
-            opencode_health_task = asyncio.create_task(_probe_opencode_health())
+            except Exception as exc:
+                raise self._engine_unavailable_error(f"OpenCode engine is unavailable: {exc}") from exc
+            create_run_phase_metrics["create_run_opencode_health"] = max(
+                0,
+                int((time.monotonic() - probe_started_at) * 1000),
+            )
 
         resolve_model_started_at = time.monotonic()
         requested_model_id, resolved_model_id = await self._resolve_run_model_ids(
@@ -453,8 +465,6 @@ class PublishedAppCodingAgentRuntimeService(
             requested_model_id=requested_model_id,
         )
         _record_create_run_phase_metric("create_run_model_resolve", resolve_model_started_at)
-        create_run_phase_metrics["create_run_opencode_health"] = 0
-        create_run_phase_metrics["create_run_opencode_model_resolve"] = 0
         opencode_model_id: str | None = None
         if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
             opencode_model_started_at = time.monotonic()
@@ -511,13 +521,6 @@ class PublishedAppCodingAgentRuntimeService(
             ).strip().lower() in {"1", "true", "yes", "on"}
             if include_contract_snapshot:
                 normalized_messages.insert(0, {"role": "system", "content": contract_message})
-
-        if opencode_health_task is not None:
-            try:
-                opencode_health_ms = await opencode_health_task
-            except Exception as exc:
-                raise self._engine_unavailable_error(f"OpenCode engine is unavailable: {exc}") from exc
-            create_run_phase_metrics["create_run_opencode_health"] = int(max(0, opencode_health_ms))
 
         input_params = {
             "input": user_prompt,

@@ -109,8 +109,50 @@ class _NonTerminalThenStopsEngine:
         return
 
 
+class _DelayedTerminalEngine:
+    async def stream(self, ctx):
+        await asyncio.sleep(2.2)
+        yield EngineStreamEvent(
+            event="assistant.delta",
+            stage="assistant",
+            payload={"content": "Delayed output"},
+            diagnostics=None,
+        )
+        yield EngineStreamEvent(
+            event="run.completed",
+            stage="run",
+            payload={"status": "completed"},
+            diagnostics=None,
+        )
+
+
+class _BurstAssistantDeltaEngine:
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = chunks
+
+    async def stream(self, ctx):
+        for chunk in self._chunks:
+            yield EngineStreamEvent(
+                event="assistant.delta",
+                stage="assistant",
+                payload={"content": chunk},
+                diagnostics=None,
+            )
+        yield EngineStreamEvent(
+            event="run.completed",
+            stage="run",
+            payload={"status": "completed"},
+            diagnostics=None,
+        )
+
+
 async def _collect_stream_events(service: PublishedAppCodingAgentRuntimeService, app: PublishedApp, run: AgentRun):
     return [event async for event in service.stream_run_events(app=app, run=run)]
+
+
+def test_execution_engine_normalization_accepts_enum_like_opencode_value():
+    normalized = PublishedAppCodingAgentRuntimeService._normalize_execution_engine("ExecutionEngine.OPENCODE")
+    assert normalized == "opencode"
 
 
 @pytest.mark.asyncio
@@ -208,3 +250,65 @@ async def test_runtime_stream_fail_closes_and_persists_failed_status_when_engine
     assert persisted.status == RunStatus.failed
     assert str(persisted.error_message or "").strip() != ""
     assert persisted.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_runtime_stream_polling_does_not_cancel_slow_provider_iteration(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = await _insert_coding_agent_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+        status=RunStatus.queued,
+    )
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+
+    engine = _DelayedTerminalEngine()
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_engine_for_run", lambda self, run: engine)
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+    events = await asyncio.wait_for(_collect_stream_events(service, app, run), timeout=8.0)
+
+    assert events[-1]["event"] == "run.completed"
+    persisted = await db_session.get(AgentRun, run.id)
+    assert persisted is not None
+    assert persisted.status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_runtime_stream_coalesces_assistant_delta_bursts(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = await _insert_coding_agent_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+        status=RunStatus.queued,
+    )
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+
+    monkeypatch.setenv("APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS", "3")
+    monkeypatch.setenv("APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS", "2000")
+    engine = _BurstAssistantDeltaEngine(["A", "B", "C", "D", "E", "F", "G"])
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_engine_for_run", lambda self, run: engine)
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+    events = await asyncio.wait_for(_collect_stream_events(service, app, run), timeout=4.0)
+
+    assistant_chunks = [str(item.get("payload", {}).get("content") or "") for item in events if item.get("event") == "assistant.delta"]
+    assert "".join(assistant_chunks) == "ABCDEFG"
+    assert len(assistant_chunks) <= 3
+    assert events[-1]["event"] == "run.completed"

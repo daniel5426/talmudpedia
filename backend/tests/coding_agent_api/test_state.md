@@ -12,6 +12,7 @@ Last Updated: 2026-02-23
 - `backend/tests/coding_agent_api/test_run_lifecycle.py`
 - `backend/tests/coding_agent_api/test_opencode_apply_patch_recovery.py`
 - `backend/tests/coding_agent_api/test_terminal_stream_completion.py`
+- `backend/tests/coding_agent_api/test_orchestrator_reliability_flow.py`
 
 ## Key scenarios covered
 - Run creation through new coding-agent endpoint with app/revision linkage.
@@ -57,6 +58,8 @@ Last Updated: 2026-02-23
 - OpenCode engine stops consuming upstream events immediately after terminal events (`run.completed`/`run.failed`) so downstream stream finalization cannot hang on non-closing provider streams.
 - Runtime stream finalizes promptly even when an engine emits a terminal event and then hangs, and it force-persists terminal status when needed (`completed`/`failed`) to avoid indefinitely running UI state.
 - Runtime stream fail-closes to `failed` and persists terminal run status when an engine stops without emitting any terminal event (prevents `run.failed` event with DB run row still `queued`).
+- Runtime stream coalesces assistant token bursts into short flush windows (configurable by chars/ms) to reduce event-log/write overhead without losing cumulative assistant text.
+- Runtime engine normalization accepts enum-like execution-engine strings containing `opencode` and avoids silent fallback to native.
 - Runtime stream emits `assistant.delta` from final persisted output when token streaming is empty.
 - Runtime stream emits prompt-aware assistant fallback text when final output is missing.
 - Runtime stream handles detached/non-persistent `AgentRun` instances by reloading the run row from DB before finalize/refresh paths.
@@ -66,6 +69,11 @@ Last Updated: 2026-02-23
 - Runtime stream emits `run.cancelled` as a first-class terminal SSE event for cancelled runs.
 - Stream endpoint emits a terminal snapshot event when a terminal run is streamed with `from_seq` beyond the persisted terminal row, preventing client-side non-terminal stream closures on replay-window races.
 - Orchestrator event-log persistence retries on `(run_id, seq)` uniqueness collisions and advances to the next sequence instead of failing the runner.
+- Orchestrator runner now reconciles terminal run status/lock state when terminal event-row insert collides on `(run_id, seq)` (prevents `run.failed` event with run row still `queued`).
+- Orchestrator runner appends events via the shared retry helper (no `db.add`/`db.get` interleaving inside flush) to avoid async-session provisioning race failures (`sqlalchemy ... isce`).
+- Stream terminal snapshot path reconciles stale preview run locks for already-terminal runs before returning replay-tail terminal events.
+- Detached orchestrator and stream routes now enforce async-only detached session binds (`AsyncEngine`/`AsyncConnection`) and avoid sync-engine detached binding regressions.
+- SQLite/pytest request-scoped stream mode avoids detached background runner startup on create-run (test-harness stability without changing production detached semantics).
 - OpenCode stream path follows fail-closed semantics: adapter/runtime exceptions transition run to `failed` and emit `run.failed`.
 - Runtime/OpenCode/router layers persist timing telemetry in run context (`timing_metrics_ms`) for `create_run`, `create_run_api`, `sandbox_start`, `opencode_start`, and `first_token`.
 - `create_run` telemetry includes phase-level breakdown metrics (`create_run_model_resolve`, `create_run_opencode_health`, `create_run_opencode_model_resolve`, `create_run_profile_resolve`, `create_run_message_prepare`, `create_run_contract_build`, `create_run_executor_start`, `create_run_load_run`, `create_run_resolve_preview_session`) to diagnose run creation latency.
@@ -73,9 +81,48 @@ Last Updated: 2026-02-23
 - Runtime stream telemetry also records `terminal_event`, `checkpoint_done`, and `checkpoint_skipped_no_edit_tool`.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_orchestrator_reliability_flow.py tests/coding_agent_api/test_terminal_stream_completion.py tests/coding_agent_api/test_run_lifecycle.py -k "stream or orchestrator"`
+- Date: 2026-02-23
+- Result: PASS (21 passed, 26 deselected, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_terminal_stream_completion.py`
+- Date: 2026-02-23
+- Result: PASS (6 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py -k "stream_run_events"`
+- Date: 2026-02-23
+- Result: PASS (6 passed, 31 deselected, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py`
+- Date: 2026-02-23
+- Result: PASS (37 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_orchestrator_reliability_flow.py tests/coding_agent_api/test_terminal_stream_completion.py`
+- Date: 2026-02-23
+- Result: PASS (7 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_orchestrator_reliability_flow.py`
+- Date: 2026-02-23
+- Result: PASS (4 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py tests/coding_agent_api/test_terminal_stream_completion.py`
+- Date: 2026-02-23
+- Result: PASS (42 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py::test_coding_agent_stream_returns_sse_envelopes`
+- Date: 2026-02-23
+- Result: PASS (1 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py::test_coding_agent_stream_emits_terminal_snapshot_when_replay_window_has_no_terminal_event tests/coding_agent_api/test_run_lifecycle.py::test_stream_run_events_emits_run_cancelled_for_terminal_cancelled_status tests/coding_agent_api/test_run_lifecycle.py::test_coding_agent_cancel_is_immediate_when_opencode_cancel_unconfirmed tests/coding_agent_api/test_terminal_stream_completion.py`
+- Date: 2026-02-23
+- Result: PASS (8 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py -k "stream or cancel or orchestrator_append_event_row_retries_on_seq_conflict"`
+- Date: 2026-02-23
+- Result: PASS (13 passed, 24 deselected, 6 warnings)
 - Command: `cd backend && pytest -q tests/coding_agent_api/test_terminal_stream_completion.py`
 - Date: 2026-02-23
-- Result: PASS (3 passed, 6 warnings)
+- Result: PASS (5 passed, 6 warnings)
+- Command: `cd backend && pytest -q tests/coding_agent_api/test_terminal_stream_completion.py`
+- Date: 2026-02-23
+- Result: PASS (4 passed, 6 warnings)
+- Command: `cd backend && pytest -q tests/coding_agent_api/test_run_lifecycle.py -k "persists_opencode_execution_engine or cancel_is_immediate_when_opencode_cancel_unconfirmed or stream_run_events_emits_run_cancelled_for_terminal_cancelled_status"`
+- Date: 2026-02-23
+- Result: PASS (3 passed, 34 deselected, 6 warnings)
+- Command: `cd backend && pytest -q tests/coding_agent_api/test_terminal_stream_completion.py`
+- Date: 2026-02-23
+- Result: PASS (4 passed, 6 warnings)
 - Command: `cd backend && pytest -q tests/coding_agent_api/test_run_lifecycle.py::test_orchestrator_append_event_row_retries_on_seq_conflict`
 - Date: 2026-02-23
 - Result: PASS (1 passed, 6 warnings)

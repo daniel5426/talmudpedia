@@ -15,6 +15,7 @@ Frontend coverage for:
 ## Test Files
 - `frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/published_auth_templates.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/published_runtime_gate.test.tsx`
@@ -45,6 +46,8 @@ Frontend coverage for:
 - Builder workspace stop flow still dispatches cancel when stop is clicked before `create-run` returns `run_id` (run-id race protection).
 - Builder workspace keeps queued prompt behavior server-authoritative when terminal SSE is missing (no persisted-run fallback polling path).
 - Builder workspace renders user prompt bubbles immediately on submit before `create-run` resolves, with delivery-state labels (`Sending...`, `Queued`, `Failed`).
+- Builder workspace retries `ensureDraftDevSession` after terminal SSE when backend briefly reports `CODING_AGENT_RUN_ACTIVE` for the same run, and avoids surfacing lock-conflict noise to users.
+- Coding-agent stream consumer batches assistant delta renders during token bursts while preserving incremental visibility (prevents one-render-per-token UI slowdown).
 - Builder workspace loads coding-agent capabilities once to hydrate engine/policy context for coding runs.
 - Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
 - Builder workspace shell now enforces viewport-bounded layout (`h-dvh` + `min-h-0` + overflow clamps) so chat scroll stays internal and the page does not grow with timeline length.
@@ -78,6 +81,18 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runInBand --silent src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
+- Date: 2026-02-23
+- Result: PASS (1 suite, 1 test)
+- Command: `cd frontend-reshet && npm test -- --runInBand --silent src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "streams assistant deltas incrementally instead of rendering all-at-once"`
+- Date: 2026-02-23
+- Result: PASS (1 suite, 1 test; 45 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "renders user message immediately before create-run resolves|still sends cancel when stop is clicked before create-run returns a run id|retries draft ensure after terminal when lock clear lags and then succeeds|queues a prompt while run is active and supports removing queued items|stops active run via cancel endpoint and continues with queued prompt"`
+- Date: 2026-02-23
+- Result: PASS (1 suite, 5 tests; 41 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "retries draft ensure after terminal when lock clear lags and then succeeds|renders user message immediately before create-run resolves|still sends cancel when stop is clicked before create-run returns a run id"`
+- Date: 2026-02-23
+- Result: PASS (1 suite, 3 tests; 43 skipped by `-t`)
 - Command: `cd frontend-reshet && npm test -- --runInBand --silent src/__tests__/published_apps/apps_builder_workspace.test.tsx`
 - Date: 2026-02-23
 - Result: PASS (1 suite, 45 tests)

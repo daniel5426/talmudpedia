@@ -3,7 +3,7 @@ import type { MutableRefObject } from "react";
 import { publishedAppsService } from "@/services";
 
 import { describeToolIntent, extractPrimaryToolPath, timelineId } from "./chat-model";
-import { parseSse, resolvePositiveTimeoutMs, TERMINAL_RUN_EVENTS } from "./stream-parsers";
+import { parseRunActiveDetail, parseSse, resolvePositiveTimeoutMs, TERMINAL_RUN_EVENTS } from "./stream-parsers";
 
 type TerminalStatus = "completed" | "failed" | "cancelled" | "paused";
 
@@ -155,14 +155,51 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       STALL_TIMEOUT_MS,
       resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS, 2000),
     );
+    const ASSISTANT_DELTA_FLUSH_MS = resolvePositiveTimeoutMs(
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS,
+      45,
+    );
+    const ASSISTANT_DELTA_FLUSH_CHARS = Math.max(
+      1,
+      Number.parseInt(
+        String(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS || "80"),
+        10,
+      ) || 80,
+    );
 
     const runStartedAt = Date.now();
     let lastEventAt = Date.now();
+    let lastAssistantFlushAt = Date.now();
+    let pendingAssistantDelta = "";
     let pendingRead:
       | Promise<{ ok: true; result: ReadableStreamReadResult<Uint8Array> } | { ok: false; error: unknown }>
       | null = null;
 
-    const readWithPollingTimeout = async (): Promise<ReadableStreamReadResult<Uint8Array> | null> => {
+    const flushAssistantDelta = (force = false) => {
+      if (!pendingAssistantDelta) {
+        return;
+      }
+      const now = Date.now();
+      const elapsedSinceFlush = now - lastAssistantFlushAt;
+      if (
+        !force &&
+        pendingAssistantDelta.length < ASSISTANT_DELTA_FLUSH_CHARS &&
+        elapsedSinceFlush < ASSISTANT_DELTA_FLUSH_MS
+      ) {
+        return;
+      }
+      assistantText += pendingAssistantDelta;
+      pendingAssistantDelta = "";
+      lastAssistantFlushAt = now;
+      if (assistantText.trim()) {
+        setActiveThinkingSummary("");
+        upsertAssistantTimeline(currentStreamId, assistantText);
+      }
+    };
+
+    const readWithPollingTimeout = async (
+      timeoutMs: number,
+    ): Promise<ReadableStreamReadResult<Uint8Array> | null> => {
       if (!pendingRead) {
         pendingRead = reader
           .read()
@@ -177,7 +214,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       >([
         pendingRead,
         new Promise<typeof timeoutToken>((resolve) => {
-          setTimeout(() => resolve(timeoutToken), READ_POLL_TIMEOUT_MS);
+          setTimeout(() => resolve(timeoutToken), timeoutMs);
         }),
       ]);
       if (raced === timeoutToken) {
@@ -214,8 +251,12 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         break;
       }
 
-      const readResult = await readWithPollingTimeout();
+      const pollTimeoutMs = pendingAssistantDelta
+        ? Math.max(10, Math.min(READ_POLL_TIMEOUT_MS, ASSISTANT_DELTA_FLUSH_MS))
+        : READ_POLL_TIMEOUT_MS;
+      const readResult = await readWithPollingTimeout(pollTimeoutMs);
       if (!readResult) {
+        flushAssistantDelta(false);
         continue;
       }
       const { done, value } = readResult;
@@ -246,12 +287,12 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         const payload = (parsed.payload || {}) as Record<string, unknown>;
 
         if (parsed.event === "assistant.delta" && payload.content) {
-          assistantText += String(payload.content);
-          if (assistantText.trim()) {
-            setActiveThinkingSummary("");
-            upsertAssistantTimeline(currentStreamId, assistantText);
-          }
+          pendingAssistantDelta += String(payload.content);
+          flushAssistantDelta(false);
+          splitIndex = buffer.indexOf("\n\n");
+          continue;
         }
+        flushAssistantDelta(true);
 
         if (parsed.event === "plan.updated") {
           const summary = String(payload.summary || "").trim();
@@ -354,7 +395,10 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       if (sawTerminalEvent) {
         break;
       }
+
+      flushAssistantDelta(false);
     }
+    flushAssistantDelta(true);
 
     if (sawMaxDurationTimeout && !intentionalAbortRef.current) {
       onError("Coding-agent run exceeded maximum duration. The run was stopped to recover.");
@@ -398,7 +442,29 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     const finalizeAfterRun = async () => {
       await refreshStateSilently();
       if (activeTab === "preview") {
-        await ensureDraftDevSession();
+        const maxEnsureAttempts = 6;
+        for (let attempt = 0; attempt < maxEnsureAttempts; attempt += 1) {
+          try {
+            await ensureDraftDevSession();
+            break;
+          } catch (err) {
+            const runActive = parseRunActiveDetail(err instanceof Error ? err.message : String(err || ""));
+            if (!runActive) {
+              throw err;
+            }
+            const conflictingRunId = String(runActive.active_run_id || "").trim();
+            if (conflictingRunId && conflictingRunId !== normalizedRunId) {
+              break;
+            }
+            if (attempt + 1 >= maxEnsureAttempts) {
+              throw err;
+            }
+            const retryDelayMs = 120 * (attempt + 1);
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, retryDelayMs);
+            });
+          }
+        }
       }
       if (latestResultRevisionId) {
         onSetCurrentRevisionId(latestResultRevisionId);
