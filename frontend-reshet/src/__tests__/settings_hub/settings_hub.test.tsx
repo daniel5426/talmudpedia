@@ -62,9 +62,9 @@ describe("Settings Hub", () => {
     render(<SettingsPage />)
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Tenant Profile" })).toBeInTheDocument())
-    expect(screen.getByRole("tab", { name: "Integrations" })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: "Defaults" })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: "Security & Organization" })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "General" }).length).toBeGreaterThan(0))
+    expect(screen.getAllByRole("button", { name: "Integrations" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "Defaults" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "Security" }).length).toBeGreaterThan(0)
   })
 })

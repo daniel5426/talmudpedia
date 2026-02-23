@@ -23,7 +23,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppUserMembership,
     PublishedAppUserMembershipStatus,
 )
-from app.db.postgres.models.registry import IntegrationCredential
+from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 
 
 SESSION_TTL_DAYS = 7
@@ -51,6 +51,7 @@ class PublishedAppAuthService:
         result = await self.db.execute(
             select(IntegrationCredential).where(
                 IntegrationCredential.tenant_id == tenant_id,
+                IntegrationCredential.category == IntegrationCredentialCategory.CUSTOM,
                 IntegrationCredential.provider_key == "google_oauth",
                 IntegrationCredential.is_enabled == True,
             ).limit(1)

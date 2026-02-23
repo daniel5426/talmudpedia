@@ -17,7 +17,6 @@ from app.db.postgres.models.registry import (
     ModelProviderType,
     ModelProviderBinding,
     ModelCapabilityType,
-    ProviderConfig,
     IntegrationCredentialCategory
 )
 from app.services.credentials_service import CredentialsService
@@ -63,8 +62,6 @@ class ModelResolver:
     def __init__(self, db: AsyncSession, tenant_id: UUID):
         self.db = db
         self.tenant_id = tenant_id
-        # Cache for ProviderConfigs within this session
-        self._config_cache: dict[str, ProviderConfig] = {}
 
     async def resolve(
         self,
@@ -166,9 +163,9 @@ class ModelResolver:
 
     async def _create_provider_instance(self, binding: ModelProviderBinding) -> LLMProvider:
         """
-        Create provider with merged config (ProviderConfig + Binding.config).
+        Create provider with merged config (Credentials + Binding.config).
         """
-        # 1. Resolve credentials (IntegrationCredential -> ProviderConfig -> Binding.config)
+        # 1. Resolve credentials (explicit ref -> tenant default -> platform env fallback)
         credentials_payload, api_key, provider_variant = await self._resolve_provider_credentials(
             binding,
             IntegrationCredentialCategory.LLM_PROVIDER
@@ -180,9 +177,6 @@ class ModelResolver:
         # Overlay: Binding config (runtime params like temp, max_tokens)
         # We explicitly exclude auth keys from binding config to prevent leakage/override confusion
         binding_params = binding.config or {}
-
-        if not api_key:
-            api_key = binding_params.get("api_key")
 
         if not api_key and binding.provider != ModelProviderType.LOCAL:
             raise ModelResolverError(f"Missing API Key for provider {binding.provider}")
@@ -215,45 +209,6 @@ class ModelResolver:
              # Fallback generic or error
              raise ModelResolverError(f"Provider {binding.provider} not factory-supported yet.")
 
-    async def _get_provider_config(self, provider: ModelProviderType, variant: Optional[str] = None) -> Optional[ProviderConfig]:
-        """
-        Find best ProviderConfig: Tenant > Global.
-        Matches provider + variant.
-        """
-        cache_key = f"{provider}:{variant}"
-        if cache_key in self._config_cache:
-            return self._config_cache[cache_key]
-            
-        # 1. Try Tenant
-        stmt = select(ProviderConfig).where(
-            ProviderConfig.tenant_id == self.tenant_id,
-            ProviderConfig.provider == provider,
-            ProviderConfig.provider_variant == variant,
-            ProviderConfig.is_enabled == True
-        )
-        res = await self.db.execute(stmt)
-        config = res.scalar_one_or_none()
-        
-        if config:
-            self._config_cache[cache_key] = config
-            return config
-            
-        # 2. Try Global
-        stmt = select(ProviderConfig).where(
-            ProviderConfig.tenant_id == None,
-            ProviderConfig.provider == provider,
-            ProviderConfig.provider_variant == variant,
-            ProviderConfig.is_enabled == True
-        )
-        res = await self.db.execute(stmt)
-        config = res.scalar_one_or_none()
-        
-        if config:
-            self._config_cache[cache_key] = config
-            return config
-            
-        return None
-
     async def _resolve_provider_credentials(
         self,
         binding: ModelProviderBinding,
@@ -264,39 +219,20 @@ class ModelResolver:
 
         Priority:
         1) IntegrationCredential by credentials_ref
-        2) IntegrationCredential by (provider, variant)
-        3) ProviderConfig (legacy)
-        4) Binding.config.api_key (legacy)
+        2) IntegrationCredential default (tenant scoped)
+        3) Platform environment variable fallback
         """
         provider_variant = (binding.config or {}).get("provider_variant")
         credentials_service = CredentialsService(self.db, self.tenant_id)
 
-        credential = None
-        if binding.credentials_ref:
-            credential = await credentials_service.get_by_id(binding.credentials_ref)
-        if not credential:
-            credential = await credentials_service.get_by_provider(
-                category=category,
-                provider_key=binding.provider.value,
-                provider_variant=provider_variant,
-            )
-
-        if credential and not credential.is_enabled:
-            raise ModelResolverError(
-                f"Credentials disabled for provider {binding.provider} (ref={credential.id})"
-            )
-
-        credentials_payload: dict = credential.credentials if credential else {}
+        credentials_payload = await credentials_service.resolve_backend_config(
+            base_config={},
+            credentials_ref=binding.credentials_ref,
+            category=category,
+            provider_key=binding.provider.value,
+            provider_variant=provider_variant,
+        )
         api_key = credentials_payload.get("api_key") if credentials_payload else None
-
-        if not credentials_payload:
-            provider_config = await self._get_provider_config(binding.provider, provider_variant)
-            if provider_config:
-                credentials_payload = provider_config.credentials or {}
-                api_key = credentials_payload.get("api_key")
-
-        if not api_key:
-            api_key = (binding.config or {}).get("api_key")
 
         return credentials_payload, api_key, provider_variant
 
@@ -350,7 +286,7 @@ class ModelResolver:
 
     def clear_cache(self):
         """Clear the provider cache."""
-        self._config_cache.clear()
+        return
     
     # ─────────────────────────────────────────────────────────────────────────
     # Embedding Model Resolution

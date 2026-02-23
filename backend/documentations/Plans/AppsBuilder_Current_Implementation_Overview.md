@@ -15,6 +15,14 @@ Core implementation choices in current state:
 - Coding-agent runs use the same sandbox as preview, with stage/live isolation inside that sandbox.
 - Published runtime is static artifact delivery (`vite_static`) and no longer source-UI compilation.
 
+## Credential Handling in Builder Runtime
+- Builder-generated apps and coding-agent runs do not embed provider API keys in template files.
+- Runtime credential resolution follows the platform-wide Integration Credential chain:
+  1. Explicit `credentials_ref` on the bound model/tool/store.
+  2. Tenant default provider credential.
+  3. Platform default provider env var fallback.
+- This allows zero-config out-of-box behavior for standard providers while preserving tenant override capability from Settings.
+
 ## High-Level Architecture
 ### Backend Core Areas
 - API routers for builder/admin/public runtime:

@@ -25,7 +25,7 @@ export interface AgentGraphDefinition {
 }
 
 export type ModelStatus = 'active' | 'deprecated' | 'disabled';
-export type ModelProviderType = 'openai' | 'anthropic' | 'google' | 'cohere' | 'groq' | 'mistral' | 'together' | 'local' | 'gemini' | 'huggingface' | 'custom';
+export type ModelProviderType = 'openai' | 'azure' | 'anthropic' | 'google' | 'cohere' | 'groq' | 'mistral' | 'together' | 'local' | 'gemini' | 'huggingface' | 'custom';
 export type ModelCapabilityType = 'chat' | 'completion' | 'embedding' | 'image' | 'vision' | 'audio' | 'rerank' | 'speech_to_text' | 'text_to_speech';
 
 export interface LogicalModel {

@@ -702,11 +702,33 @@ async def lifespan(app: FastAPI):
         seed_builtin_tool_templates,
         seed_platform_architect_agent,
     )
+    seed_timeout_seconds = float(os.getenv("STARTUP_SEED_TIMEOUT_SECONDS", "8"))
+
+    async def _safe_seed(seed_name: str, seed_coro, db_session) -> None:
+        try:
+            await asyncio.wait_for(seed_coro(db_session), timeout=seed_timeout_seconds)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Skipping %s during startup due timeout after %.1fs",
+                seed_name,
+                seed_timeout_seconds,
+            )
+            try:
+                await db_session.rollback()
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.warning("Skipping %s during startup due database error: %s", seed_name, exc)
+            try:
+                await db_session.rollback()
+            except Exception:
+                pass
+
     async with AsyncSessionLocal() as db:
-        await seed_global_models(db)
-        await seed_platform_sdk_tool(db)
-        await seed_builtin_tool_templates(db)
-        await seed_platform_architect_agent(db)
+        await _safe_seed("global model registry bootstrap", seed_global_models, db)
+        await _safe_seed("platform sdk tool bootstrap", seed_platform_sdk_tool, db)
+        await _safe_seed("builtin tool templates bootstrap", seed_builtin_tool_templates, db)
+        await _safe_seed("platform architect bootstrap", seed_platform_architect_agent, db)
     
     # Start LiveKit worker in separate process if credentials are configured
     # worker_process = None

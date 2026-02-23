@@ -97,6 +97,8 @@ backend/app/services/retrieval_service.py
 backend/app/services/rag_admin_service.py
 backend/app/services/model_resolver.py
 backend/app/services/credentials_service.py
+backend/app/services/integration_provider_catalog.py
+backend/app/services/registry_seeding.py
 backend/app/services/tool_function_registry.py
 backend/app/services/artifact_registry.py
 backend/app/services/builtin_tools.py

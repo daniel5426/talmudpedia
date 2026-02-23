@@ -82,7 +82,7 @@ function CreateKnowledgeStoreDialog({
     const [description, setDescription] = useState("")
     const [embeddingModelId, setEmbeddingModelId] = useState("")
     const [backend, setBackend] = useState<"pgvector" | "pinecone" | "qdrant">("pgvector")
-    const [credentialsRef, setCredentialsRef] = useState<string>("none")
+    const [credentialsRef, setCredentialsRef] = useState<string>("platform_default")
     const [retrievalPolicy, setRetrievalPolicy] = useState<"semantic_only" | "hybrid">("semantic_only")
     const [chunkSize, setChunkSize] = useState(512)
     const [chunkOverlap, setChunkOverlap] = useState(50)
@@ -94,8 +94,6 @@ function CreateKnowledgeStoreDialog({
         if (backend === "qdrant") return provider === "qdrant"
         return provider === "pgvector" || provider === "postgres" || provider === "postgresql"
     })
-    const credentialRequired = backend === "pinecone" || backend === "qdrant"
-
     const handleCreate = async () => {
         if (!name || !embeddingModelId) return
         setLoading(true)
@@ -105,7 +103,7 @@ function CreateKnowledgeStoreDialog({
                 description: description || undefined,
                 embedding_model_id: embeddingModelId,
                 backend,
-                credentials_ref: credentialsRef !== "none" ? credentialsRef : undefined,
+                credentials_ref: credentialsRef !== "platform_default" ? credentialsRef : undefined,
                 retrieval_policy: retrievalPolicy,
                 chunking_strategy: {
                     strategy: "recursive",
@@ -129,28 +127,20 @@ function CreateKnowledgeStoreDialog({
         setDescription("")
         setEmbeddingModelId("")
         setBackend("pgvector")
-        setCredentialsRef("none")
+        setCredentialsRef("platform_default")
         setRetrievalPolicy("semantic_only")
         setChunkSize(512)
         setChunkOverlap(50)
     }
 
     useEffect(() => {
-        if (credentialRequired) {
-            if (compatibleCredentials.length === 1) {
-                setCredentialsRef(compatibleCredentials[0].id)
-                return
-            }
-            if (credentialsRef !== "none" && compatibleCredentials.some((cred) => cred.id === credentialsRef)) {
-                return
-            }
-            setCredentialsRef("none")
+        if (credentialsRef === "platform_default") {
             return
         }
-        if (credentialsRef !== "none" && !compatibleCredentials.some((cred) => cred.id === credentialsRef)) {
-            setCredentialsRef("none")
+        if (!compatibleCredentials.some((cred) => cred.id === credentialsRef)) {
+            setCredentialsRef("platform_default")
         }
-    }, [backend, credentialRequired, compatibleCredentials, credentialsRef])
+    }, [compatibleCredentials, credentialsRef])
 
     return (
         <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) resetForm() }}>
@@ -243,7 +233,7 @@ function CreateKnowledgeStoreDialog({
 
                     <div className="space-y-2">
                         <Label className={isRTL ? "text-right block" : "text-left block"}>
-                            Vector Store Credential{credentialRequired ? " *" : " (optional)"}
+                            Vector Store Credential (optional)
                         </Label>
                         <Select
                             value={credentialsRef}
@@ -253,7 +243,7 @@ function CreateKnowledgeStoreDialog({
                                 <SelectValue placeholder="Select credential" />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="none">None</SelectItem>
+                                <SelectItem value="platform_default">Platform Default (ENV)</SelectItem>
                                 {compatibleCredentials.map((cred) => (
                                     <SelectItem key={cred.id} value={cred.id}>
                                         {cred.display_name}
@@ -261,9 +251,9 @@ function CreateKnowledgeStoreDialog({
                                 ))}
                             </SelectContent>
                         </Select>
-                        {credentialRequired && compatibleCredentials.length === 0 && (
-                            <p className="text-xs text-destructive">
-                                No enabled {backend} credential found. Add one in Settings - Integrations - Vector Stores.
+                        {(backend === "pinecone" || backend === "qdrant") && compatibleCredentials.length === 0 && (
+                            <p className="text-xs text-muted-foreground">
+                                No tenant {backend} credential found. Platform Default (ENV) will be used if configured.
                             </p>
                         )}
                     </div>
@@ -318,7 +308,7 @@ function CreateKnowledgeStoreDialog({
                     </Button>
                     <Button
                         onClick={handleCreate}
-                        disabled={!name || !embeddingModelId || loading || (credentialRequired && credentialsRef === "none")}
+                        disabled={!name || !embeddingModelId || loading}
                     >
                         {loading ? "Creating..." : "Create Store"}
                     </Button>

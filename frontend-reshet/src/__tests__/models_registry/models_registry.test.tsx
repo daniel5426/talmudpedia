@@ -14,6 +14,20 @@ jest.mock("@/services", () => ({
   credentialsService: {
     listCredentials: jest.fn(),
   },
+  LLM_PROVIDER_OPTIONS: [
+    { key: "openai", label: "OpenAI" },
+    { key: "anthropic", label: "Anthropic" },
+    { key: "google", label: "Google AI" },
+    { key: "gemini", label: "Google Gemini" },
+    { key: "azure", label: "Azure OpenAI" },
+    { key: "cohere", label: "Cohere" },
+    { key: "groq", label: "Groq" },
+    { key: "mistral", label: "Mistral" },
+    { key: "together", label: "Together AI" },
+    { key: "huggingface", label: "HuggingFace" },
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
+  ],
 }))
 
 jest.mock("@/contexts/TenantContext", () => ({
@@ -58,7 +72,21 @@ describe("Models Registry", () => {
       models: mockModels,
       total: 1,
     })
-    ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue([])
+    ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue([
+      {
+        id: "cred-1",
+        tenant_id: "tenant-1",
+        category: "llm_provider",
+        provider_key: "openai",
+        provider_variant: null,
+        display_name: "OpenAI Tenant",
+        credential_keys: ["api_key"],
+        is_enabled: true,
+        is_default: true,
+        created_at: "",
+        updated_at: "",
+      },
+    ])
   })
 
   afterEach(() => {
@@ -97,5 +125,12 @@ describe("Models Registry", () => {
     fireEvent.click(saveButton)
 
     await waitFor(() => expect(modelsService.updateProvider).toHaveBeenCalled())
+  })
+
+  it("shows platform default label when provider has no explicit credential", async () => {
+    render(<ModelsPage />)
+
+    await waitFor(() => expect(modelsService.listModels).toHaveBeenCalled())
+    expect(await screen.findByText(/Platform Default/)).toBeInTheDocument()
   })
 })

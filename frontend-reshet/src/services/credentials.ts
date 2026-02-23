@@ -1,16 +1,17 @@
 import { httpClient } from "./http";
 
-export type IntegrationCredentialCategory = "llm_provider" | "vector_store" | "artifact_secret" | "custom";
+export type IntegrationCredentialCategory = "llm_provider" | "vector_store" | "tool_provider" | "custom";
 
 export interface IntegrationCredential {
   id: string;
-  tenant_id: string;
+  tenant_id?: string | null;
   category: IntegrationCredentialCategory;
   provider_key: string;
   provider_variant?: string | null;
   display_name: string;
   credential_keys: string[];
   is_enabled: boolean;
+  is_default: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +23,7 @@ export interface CreateCredentialRequest {
   display_name: string;
   credentials: Record<string, unknown>;
   is_enabled?: boolean;
+  is_default?: boolean;
 }
 
 export interface UpdateCredentialRequest {
@@ -31,6 +33,7 @@ export interface UpdateCredentialRequest {
   display_name?: string;
   credentials?: Record<string, unknown>;
   is_enabled?: boolean;
+  is_default?: boolean;
 }
 
 export interface CredentialStatus {
@@ -39,7 +42,36 @@ export interface CredentialStatus {
   provider_key: string;
   provider_variant?: string | null;
   is_enabled: boolean;
+  is_default: boolean;
   updated_at: string;
+}
+
+export interface CredentialUsageModelProvider {
+  binding_id: string;
+  model_id: string;
+  model_name: string;
+  provider: string;
+  provider_model_id: string;
+}
+
+export interface CredentialUsageKnowledgeStore {
+  store_id: string;
+  store_name: string;
+  backend: string;
+}
+
+export interface CredentialUsageTool {
+  tool_id: string;
+  tool_name: string;
+  tool_slug: string;
+  implementation_type?: string | null;
+}
+
+export interface CredentialUsageResponse {
+  credential_id: string;
+  model_providers: CredentialUsageModelProvider[];
+  knowledge_stores: CredentialUsageKnowledgeStore[];
+  tools: CredentialUsageTool[];
 }
 
 export const credentialsService = {
@@ -59,8 +91,15 @@ export const credentialsService = {
     return httpClient.patch<IntegrationCredential>(`/admin/settings/credentials/${id}`, data);
   },
 
-  async deleteCredential(id: string): Promise<void> {
-    await httpClient.delete(`/admin/settings/credentials/${id}`);
+  async getCredentialUsage(id: string): Promise<CredentialUsageResponse> {
+    return httpClient.get<CredentialUsageResponse>(`/admin/settings/credentials/${id}/usage`);
+  },
+
+  async deleteCredential(id: string, opts?: { force_disconnect?: boolean }): Promise<void> {
+    const query = new URLSearchParams();
+    if (opts?.force_disconnect) query.set("force_disconnect", "true");
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    await httpClient.delete(`/admin/settings/credentials/${id}${suffix}`);
   },
 
   async listCredentialStatus(): Promise<CredentialStatus[]> {

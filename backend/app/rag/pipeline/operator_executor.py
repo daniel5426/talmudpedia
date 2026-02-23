@@ -962,6 +962,7 @@ class KnowledgeStoreSinkExecutor(OperatorExecutor):
         from uuid import UUID
         from app.rag.adapters import create_adapter, VectorRecord
         from app.db.postgres.models import KnowledgeStore
+        from app.db.postgres.models.registry import IntegrationCredentialCategory
         from app.services.credentials_service import CredentialsService
         
         config_dict = {**context.config}
@@ -985,7 +986,9 @@ class KnowledgeStoreSinkExecutor(OperatorExecutor):
         credentials_service = CredentialsService(db, store.tenant_id)
         backend_config = await credentials_service.resolve_backend_config(
             store.backend_config or {},
-            store.credentials_ref
+            store.credentials_ref,
+            category=IntegrationCredentialCategory.VECTOR_STORE,
+            provider_key=store.backend.value,
         )
         adapter = create_adapter(store.backend, backend_config)
         
@@ -1091,6 +1094,7 @@ class VectorSearchExecutor(OperatorExecutor):
             from uuid import UUID
             from app.rag.adapters import create_adapter
             from app.db.postgres.models import KnowledgeStore
+            from app.db.postgres.models.registry import IntegrationCredentialCategory
             from app.services.credentials_service import CredentialsService
             
             db = getattr(context, "db", None)
@@ -1102,7 +1106,9 @@ class VectorSearchExecutor(OperatorExecutor):
             credentials_service = CredentialsService(db, store.tenant_id)
             backend_config = await credentials_service.resolve_backend_config(
                 store.backend_config or {},
-                store.credentials_ref
+                store.credentials_ref,
+                category=IntegrationCredentialCategory.VECTOR_STORE,
+                provider_key=store.backend.value,
             )
             adapter = create_adapter(store.backend, backend_config)
             vector_store = adapter

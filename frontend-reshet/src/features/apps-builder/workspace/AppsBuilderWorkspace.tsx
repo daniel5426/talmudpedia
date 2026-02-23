@@ -4,11 +4,17 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Camera,
+  Check,
   Copy,
   ExternalLink,
+  Globe,
+  KeyRound,
   Layers,
   Loader2,
+  Lock,
   Monitor,
+  Plus,
   RefreshCw,
   Rocket,
   Save,
@@ -21,7 +27,6 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,6 +63,7 @@ import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
+import { LogoPickerDialog } from "@/features/apps-builder/workspace/LogoPickerDialog";
 import { isDraftSandboxNotRunningError } from "@/features/apps-builder/workspace/draftDevErrors";
 import {
   AppsBuilderWorkspaceBootSkeleton,
@@ -192,6 +198,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [previewRoute, setPreviewRoute] = useState("/");
   const [previewReloadToken, setPreviewReloadToken] = useState(0);
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
+  const [isLogoDialogOpen, setIsLogoDialogOpen] = useState(false);
+  const [domainCopied, setDomainCopied] = useState(false);
   const syncFingerprintRef = useRef<string>("");
   const draftDevSnapshotRef = useRef<{
     sessionId: string | null;
@@ -1034,7 +1042,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                   <div className={cn(
                     "h-full",
                     previewViewport === "mobile"
-                      ? "w-[390px] overflow-hidden rounded-xl border border-border/60 shadow-sm"
+                      ? "w-[390px] overflow-hidden rounded-md border border-border/60 shadow-sm"
                       : "w-full",
                   )}>
                     <PreviewCanvas
@@ -1058,302 +1066,396 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
                   <section className={cn("min-w-0 flex-1", configSection === "code" ? "overflow-hidden" : "overflow-auto")}>
                     {configSection === "overview" && (
-                      <div className="mx-auto max-w-2xl space-y-5 p-6">
-                        <div>
-                          <h3 className="text-lg font-semibold tracking-tight">Overview</h3>
-                          <p className="text-sm text-muted-foreground">Configure your app&apos;s identity and settings.</p>
+                      <div className="mx-auto max-w-2xl p-6 pb-10">
+                        {/* ── App Identity Hero ── */}
+                        <div className="flex items-start gap-5">
+                          <button
+                            type="button"
+                            onClick={() => setIsLogoDialogOpen(true)}
+                            className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted/40 shadow-sm transition-all hover:shadow-md"
+                          >
+                            {state.app.logo_url ? (
+                              <img src={state.app.logo_url} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <span className="flex h-full w-full items-center justify-center text-xl font-bold text-primary/60">
+                                {state.app.name?.charAt(0)?.toUpperCase() || "A"}
+                              </span>
+                            )}
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/40">
+                              <Camera className="h-4 w-4 text-white opacity-0 transition-opacity group-hover:opacity-100" />
+                            </div>
+                          </button>
+                          <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+                            <Input
+                              value={state.app.name}
+                              onChange={(event) => updateLocalApp({ name: event.target.value })}
+                              className="h-auto border-0 bg-transparent p-0 text-lg font-semibold shadow-none focus-visible:ring-0"
+                              placeholder="App name..."
+                            />
+                            <Textarea
+                              value={state.app.description || ""}
+                              onChange={(event) => updateLocalApp({ description: event.target.value })}
+                              placeholder="What does your app do?"
+                              className="min-h-0 resize-none border-0 bg-transparent p-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
+                              rows={2}
+                            />
+                          </div>
                         </div>
 
-                        <Card className="shadow-none">
-                          <CardHeader className="pb-0">
-                            <CardTitle className="text-sm">General</CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            <div className="grid gap-4 sm:grid-cols-2">
-                              <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">App Name</Label>
-                                <Input
-                                  value={state.app.name}
-                                  onChange={(event) => updateLocalApp({ name: event.target.value })}
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">Logo URL</Label>
-                                <Input
-                                  value={state.app.logo_url || ""}
-                                  onChange={(event) => updateLocalApp({ logo_url: event.target.value })}
-                                  placeholder="https://..."
-                                />
-                              </div>
-                            </div>
-                            <div className="space-y-2">
-                              <Label className="text-xs text-muted-foreground">Description</Label>
-                              <Textarea
-                                className="min-h-20 resize-none"
-                                value={state.app.description || ""}
-                                onChange={(event) => updateLocalApp({ description: event.target.value })}
-                                placeholder="Describe what your app does..."
-                              />
-                            </div>
-                          </CardContent>
-                        </Card>
+                        <LogoPickerDialog
+                          open={isLogoDialogOpen}
+                          onOpenChange={setIsLogoDialogOpen}
+                          currentUrl={state.app.logo_url || ""}
+                          onSave={(url) => updateLocalApp({ logo_url: url })}
+                        />
 
-                        <Card className="shadow-none">
-                          <CardHeader className="pb-0">
-                            <CardTitle className="text-sm">Access</CardTitle>
-                            <CardDescription>Control who can see and use your app.</CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            <div className="grid gap-4 sm:grid-cols-2">
-                              <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">Visibility</Label>
-                                <Select
-                                  value={state.app.visibility}
-                                  onValueChange={(value) => updateLocalApp({ visibility: value })}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Visibility" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="public">Public</SelectItem>
-                                    <SelectItem value="private">Private</SelectItem>
-                                  </SelectContent>
-                                </Select>
+                        {/* ── Visibility ── */}
+                        <div className="mt-8 space-y-3">
+                          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Visibility</Label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => updateLocalApp({ visibility: "public" })}
+                              className={cn(
+                                "flex items-center gap-3 rounded-md border px-4 py-3.5 text-left transition-all",
+                                state.app.visibility === "public"
+                                  ? "border-primary/30 bg-primary/5 shadow-sm ring-1 ring-primary/20"
+                                  : "border-border/60 hover:border-border hover:bg-muted/50",
+                              )}
+                            >
+                              <div className={cn(
+                                "flex h-9 w-9 items-center justify-center rounded-lg",
+                                state.app.visibility === "public" ? "bg-primary/10" : "bg-muted",
+                              )}>
+                                <Globe className={cn("h-4 w-4", state.app.visibility === "public" ? "text-primary" : "text-muted-foreground")} />
                               </div>
-                              <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">Auth Template</Label>
-                                {isAuthTemplatesLoading && authTemplates.length === 0 ? (
-                                  <Skeleton className="h-10 w-full" />
-                                ) : (
-                                  <Select
-                                    value={state.app.auth_template_key}
-                                    onValueChange={(value) => updateLocalApp({ auth_template_key: value })}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Auth template" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {authTemplates.map((item) => (
-                                        <SelectItem key={item.key} value={item.key}>
-                                          {item.name}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                )}
+                              <div>
+                                <div className="text-sm font-medium">Public</div>
+                                <div className="text-xs text-muted-foreground">Anyone with the link</div>
                               </div>
-                            </div>
-                          </CardContent>
-                        </Card>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateLocalApp({ visibility: "private" })}
+                              className={cn(
+                                "flex items-center gap-3 rounded-md border px-4 py-3.5 text-left transition-all",
+                                state.app.visibility === "private"
+                                  ? "border-primary/30 bg-primary/5 shadow-sm ring-1 ring-primary/20"
+                                  : "border-border/60 hover:border-border hover:bg-muted/50",
+                              )}
+                            >
+                              <div className={cn(
+                                "flex h-9 w-9 items-center justify-center rounded-lg",
+                                state.app.visibility === "private" ? "bg-primary/10" : "bg-muted",
+                              )}>
+                                <Lock className={cn("h-4 w-4", state.app.visibility === "private" ? "text-primary" : "text-muted-foreground")} />
+                              </div>
+                              <div>
+                                <div className="text-sm font-medium">Private</div>
+                                <div className="text-xs text-muted-foreground">Only invited users</div>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
 
-                        <Card className="shadow-none">
-                          <CardHeader className="pb-0">
-                            <div className="flex items-center gap-2">
-                              <Shield className="h-4 w-4 text-muted-foreground" />
-                              <CardTitle className="text-sm">Authentication</CardTitle>
-                            </div>
-                            <CardDescription>Require users to sign in before accessing the app.</CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border/60 px-4 py-3 transition-colors hover:bg-muted/50">
+                        {/* ── Auth Template ── */}
+                        <div className="mt-6 space-y-3">
+                          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Auth Template</Label>
+                          {isAuthTemplatesLoading && authTemplates.length === 0 ? (
+                            <Skeleton className="h-10 w-full rounded-lg" />
+                          ) : (
+                            <Select
+                              value={state.app.auth_template_key}
+                              onValueChange={(value) => updateLocalApp({ auth_template_key: value })}
+                            >
+                              <SelectTrigger className="rounded-md">
+                                <SelectValue placeholder="Select template..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {authTemplates.map((item) => (
+                                  <SelectItem key={item.key} value={item.key}>
+                                    {item.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </div>
+
+                        {/* ── Authentication ── */}
+                        <div className="mt-8 space-y-4">
+                          <div className="flex items-center gap-2">
+                            <Shield className="h-4 w-4 text-muted-foreground" />
+                            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Authentication</Label>
+                          </div>
+
+                          <label className={cn(
+                            "flex cursor-pointer items-center justify-between rounded-md border px-4 py-4 transition-all",
+                            state.app.auth_enabled
+                              ? "border-primary/30 bg-primary/5 ring-1 ring-primary/20"
+                              : "border-border/60 hover:bg-muted/30",
+                          )}>
+                            <div className="flex items-center gap-3">
+                              <div className={cn(
+                                "flex h-9 w-9 items-center justify-center rounded-lg",
+                                state.app.auth_enabled ? "bg-primary/10" : "bg-muted",
+                              )}>
+                                <Shield className={cn("h-4 w-4", state.app.auth_enabled ? "text-primary" : "text-muted-foreground")} />
+                              </div>
                               <div>
                                 <div className="text-sm font-medium">Require login</div>
                                 <div className="text-xs text-muted-foreground">Users must sign in to access this app</div>
                               </div>
-                              <Checkbox
-                                checked={state.app.auth_enabled}
-                                onCheckedChange={(checked) => updateLocalApp({ auth_enabled: checked === true })}
-                              />
-                            </label>
-                            <div className="space-y-2">
-                              <Label className="text-xs text-muted-foreground">Providers</Label>
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border/60 px-4 py-3 text-sm transition-colors hover:bg-muted/50">
-                                  Password
-                                  <Checkbox
-                                    checked={(state.app.auth_providers || []).includes("password")}
-                                    onCheckedChange={(checked) => {
-                                      const current = new Set(state.app.auth_providers || []);
-                                      if (checked) current.add("password");
-                                      else current.delete("password");
-                                      updateLocalApp({ auth_providers: Array.from(current) });
-                                    }}
-                                  />
-                                </label>
-                                <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border/60 px-4 py-3 text-sm transition-colors hover:bg-muted/50">
-                                  Google
-                                  <Checkbox
-                                    checked={(state.app.auth_providers || []).includes("google")}
-                                    onCheckedChange={(checked) => {
-                                      const current = new Set(state.app.auth_providers || []);
-                                      if (checked) current.add("google");
-                                      else current.delete("google");
-                                      updateLocalApp({ auth_providers: Array.from(current) });
-                                    }}
-                                  />
-                                </label>
-                              </div>
                             </div>
-                          </CardContent>
-                        </Card>
+                            <Checkbox
+                              checked={state.app.auth_enabled}
+                              onCheckedChange={(checked) => updateLocalApp({ auth_enabled: checked === true })}
+                            />
+                          </label>
 
-                        <Button className="w-full" onClick={saveOverview} disabled={isSavingOverview}>
-                          {isSavingOverview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                          Save Changes
-                        </Button>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = new Set(state.app.auth_providers || []);
+                                if (current.has("password")) current.delete("password");
+                                else current.add("password");
+                                updateLocalApp({ auth_providers: Array.from(current) });
+                              }}
+                              className={cn(
+                                "flex items-center gap-3 rounded-md border px-4 py-3 text-left transition-all",
+                                (state.app.auth_providers || []).includes("password")
+                                  ? "border-primary/30 bg-primary/5 ring-1 ring-primary/20"
+                                  : "border-border/60 hover:border-border hover:bg-muted/50",
+                              )}
+                            >
+                              <KeyRound className={cn(
+                                "h-4 w-4",
+                                (state.app.auth_providers || []).includes("password") ? "text-primary" : "text-muted-foreground",
+                              )} />
+                              <div>
+                                <div className="text-sm font-medium">Password</div>
+                                <div className="text-xs text-muted-foreground">Email & password</div>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = new Set(state.app.auth_providers || []);
+                                if (current.has("google")) current.delete("google");
+                                else current.add("google");
+                                updateLocalApp({ auth_providers: Array.from(current) });
+                              }}
+                              className={cn(
+                                "flex items-center gap-3 rounded-md border px-4 py-3 text-left transition-all",
+                                (state.app.auth_providers || []).includes("google")
+                                  ? "border-primary/30 bg-primary/5 ring-1 ring-primary/20"
+                                  : "border-border/60 hover:border-border hover:bg-muted/50",
+                              )}
+                            >
+                              <svg className={cn(
+                                "h-4 w-4",
+                                (state.app.auth_providers || []).includes("google") ? "text-primary" : "text-muted-foreground",
+                              )} viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
+                                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                              </svg>
+                              <div>
+                                <div className="text-sm font-medium">Google</div>
+                                <div className="text-xs text-muted-foreground">Sign in with Google</div>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* ── Save ── */}
+                        <div className="mt-8">
+                          <Button className="w-full rounded-md" size="lg" onClick={saveOverview} disabled={isSavingOverview}>
+                            {isSavingOverview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                            Save Changes
+                          </Button>
+                        </div>
                       </div>
                     )}
 
                     {configSection === "users" && (
-                      <div className="space-y-3 p-4">
-                        <h3 className="text-lg font-semibold">Users</h3>
+                      <div className="mx-auto max-w-2xl p-6">
+                        <div className="mb-5">
+                          <h3 className="text-lg font-semibold tracking-tight">Users</h3>
+                          <p className="text-sm text-muted-foreground">Manage who has access to your app.</p>
+                        </div>
                         {isUsersLoading && users.length === 0 ? <UsersListSkeleton /> : null}
                         <div className={cn("space-y-2", isUsersLoading && users.length === 0 ? "hidden" : "")}>
                           {users.map((user) => (
-                            <div key={user.user_id} className="flex items-center justify-between rounded-md border border-border/60 p-3">
-                              <div>
-                                <div className="text-sm font-medium">{user.full_name || user.email}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  {user.email} · sessions:{user.active_sessions} · status:{user.membership_status}
+                            <div key={user.user_id} className="flex items-center gap-3 rounded-md border border-border/60 px-4 py-3 transition-colors hover:bg-muted/30">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs font-semibold text-primary">
+                                {(user.full_name || user.email).charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-medium">{user.full_name || user.email}</div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span className="truncate">{user.email}</span>
+                                  <span className="shrink-0">·</span>
+                                  <span className="shrink-0">{user.active_sessions} sessions</span>
+                                  <Badge
+                                    variant="secondary"
+                                    className={cn(
+                                      "text-[10px]",
+                                      user.membership_status === "active" && "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
+                                      user.membership_status === "blocked" && "bg-red-500/15 text-red-600 border-red-500/20",
+                                    )}
+                                  >
+                                    {user.membership_status}
+                                  </Badge>
                                 </div>
                               </div>
                               <Button
                                 size="sm"
                                 variant={user.membership_status === "blocked" ? "default" : "outline"}
+                                className="shrink-0 rounded-lg"
                                 onClick={() => toggleUserBlocked(user)}
                                 disabled={pendingUserUpdateId === user.user_id}
                               >
-                                {pendingUserUpdateId === user.user_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                                {pendingUserUpdateId === user.user_id ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
                                 {user.membership_status === "blocked" ? "Unblock" : "Block"}
                               </Button>
                             </div>
                           ))}
                           {!isUsersLoading && users.length === 0 ? (
-                            <div className="text-sm text-muted-foreground">No app users yet.</div>
+                            <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-border/60 py-12 text-center">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                                <Globe className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                              <p className="text-sm text-muted-foreground">No users yet</p>
+                              <p className="text-xs text-muted-foreground/60">Users will appear here once they access your app.</p>
+                            </div>
                           ) : null}
                         </div>
                       </div>
                     )}
 
                     {configSection === "domains" && (
-                      <div className="mx-auto max-w-2xl space-y-5 p-6">
-                        <div>
+                      <div className="mx-auto max-w-2xl p-6 pb-10">
+                        <div className="mb-6">
                           <h3 className="text-lg font-semibold tracking-tight">Domains</h3>
                           <p className="text-sm text-muted-foreground">Manage your app&apos;s domain configuration.</p>
                         </div>
 
-                        <Card className="shadow-none">
-                          <CardHeader className="pb-0">
-                            <div className="flex items-center justify-between">
-                              <div className="space-y-1">
-                                <CardTitle className="text-sm">Platform Domain</CardTitle>
-                                <CardDescription>Your app&apos;s default address.</CardDescription>
-                              </div>
-                              <Badge variant="secondary">Default</Badge>
-                            </div>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-4 py-3">
-                              <code className="flex-1 text-sm">{platformDomain}</code>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 shrink-0"
-                                onClick={() => navigator.clipboard.writeText(platformDomain)}
-                              >
-                                <Copy className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-
-                        <Card className="shadow-none">
-                          <CardHeader className="pb-0">
-                            <CardTitle className="text-sm">Add Custom Domain</CardTitle>
-                            <CardDescription>Point your own domain to this app.</CardDescription>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                              <div className="space-y-1.5">
-                                <Label className="text-xs text-muted-foreground">Host</Label>
-                                <Input
-                                  value={domainHostInput}
-                                  onChange={(event) => setDomainHostInput(event.target.value)}
-                                  placeholder="app.example.com"
-                                />
-                              </div>
-                              <div className="space-y-1.5">
-                                <Label className="text-xs text-muted-foreground">Notes</Label>
-                                <Input
-                                  value={domainNotesInput}
-                                  onChange={(event) => setDomainNotesInput(event.target.value)}
-                                  placeholder="Optional"
-                                />
-                              </div>
-                              <div className="flex items-end">
-                                <Button onClick={addDomain} disabled={isAddingDomain || !domainHostInput.trim()}>
-                                  {isAddingDomain ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-                                  Add
-                                </Button>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-
-                        {isDomainsLoading && domains.length === 0 ? <DomainsListSkeleton /> : null}
-                        {!isDomainsLoading && domains.length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-sm text-muted-foreground">
-                            No custom domains added yet.
+                        {/* ── Platform Domain ── */}
+                        <div className="rounded-md border border-border/60 bg-muted/30 p-5">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Platform Domain</Label>
+                            <Badge variant="secondary" className="text-[10px]">Default</Badge>
                           </div>
-                        ) : null}
-                        {domains.length > 0 && (
-                          <Card className="shadow-none">
-                            <CardHeader className="pb-0">
-                              <CardTitle className="text-sm">Custom Domains</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="divide-y divide-border/60">
-                                {domains.map((domain) => (
-                                  <div key={domain.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="truncate text-sm font-medium">{domain.host}</span>
-                                        <Badge
-                                          variant={domain.status === "active" ? "default" : "secondary"}
-                                          className={cn(
-                                            "text-[10px]",
-                                            domain.status === "active" && "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
-                                            domain.status === "pending" && "bg-amber-500/15 text-amber-600 border-amber-500/20",
-                                          )}
-                                        >
-                                          {domain.status}
-                                        </Badge>
-                                      </div>
-                                      {domain.notes && (
-                                        <p className="mt-0.5 truncate text-xs text-muted-foreground">{domain.notes}</p>
-                                      )}
-                                    </div>
-                                    {domain.status === "pending" && (
-                                      <Button
-                                        size="icon"
-                                        variant="ghost"
-                                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                        onClick={() => removeDomain(domain.id)}
-                                        disabled={pendingDomainDeleteId === domain.id}
-                                      >
-                                        {pendingDomainDeleteId === domain.id ? (
-                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                        ) : (
-                                          <Trash2 className="h-3.5 w-3.5" />
+                          <div className="mt-3 flex items-center gap-2">
+                            <code className="flex-1 truncate text-base font-medium tracking-tight">{platformDomain}</code>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 rounded-lg"
+                              onClick={() => {
+                                navigator.clipboard.writeText(platformDomain);
+                                setDomainCopied(true);
+                                setTimeout(() => setDomainCopied(false), 2000);
+                              }}
+                            >
+                              {domainCopied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* ── Add Domain Form ── */}
+                        <div className="mt-6 rounded-md border border-border/60 p-5">
+                          <div className="flex items-center gap-2">
+                            <Plus className="h-4 w-4 text-muted-foreground" />
+                            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Add Custom Domain</Label>
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <Input
+                              value={domainHostInput}
+                              onChange={(event) => setDomainHostInput(event.target.value)}
+                              placeholder="app.example.com"
+                              className="flex-1 rounded-md"
+                            />
+                            <Input
+                              value={domainNotesInput}
+                              onChange={(event) => setDomainNotesInput(event.target.value)}
+                              placeholder="Notes (optional)"
+                              className="w-40 rounded-md"
+                            />
+                            <Button className="shrink-0 rounded-md" onClick={addDomain} disabled={isAddingDomain || !domainHostInput.trim()}>
+                              {isAddingDomain ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                              Add
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* ── Domains List ── */}
+                        <div className="mt-6">
+                          {isDomainsLoading && domains.length === 0 ? <DomainsListSkeleton /> : null}
+                          {!isDomainsLoading && domains.length === 0 ? (
+                            <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-border/60 py-12 text-center">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                                <Globe className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                              <p className="text-sm text-muted-foreground">No custom domains</p>
+                              <p className="text-xs text-muted-foreground/60">Add a custom domain to use your own branding.</p>
+                            </div>
+                          ) : null}
+                          {domains.length > 0 && (
+                            <div className="space-y-2">
+                              {domains.map((domain) => (
+                                <div key={domain.id} className="group flex items-center gap-3 rounded-md border border-border/60 px-4 py-3 transition-colors hover:bg-muted/30">
+                                  <div className={cn(
+                                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+                                    domain.status === "active" ? "bg-emerald-500/10" : "bg-amber-500/10",
+                                  )}>
+                                    <Globe className={cn(
+                                      "h-4 w-4",
+                                      domain.status === "active" ? "text-emerald-500" : "text-amber-500",
+                                    )} />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="truncate text-sm font-medium">{domain.host}</span>
+                                      <Badge
+                                        variant="secondary"
+                                        className={cn(
+                                          "text-[10px]",
+                                          domain.status === "active" && "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
+                                          domain.status === "pending" && "bg-amber-500/15 text-amber-600 border-amber-500/20",
+                                          domain.status === "rejected" && "bg-red-500/15 text-red-600 border-red-500/20",
                                         )}
-                                      </Button>
+                                      >
+                                        {domain.status}
+                                      </Badge>
+                                    </div>
+                                    {domain.notes && (
+                                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{domain.notes}</p>
                                     )}
                                   </div>
-                                ))}
-                              </div>
-                            </CardContent>
-                          </Card>
-                        )}
+                                  {domain.status === "pending" && (
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                                      onClick={() => removeDomain(domain.id)}
+                                      disabled={pendingDomainDeleteId === domain.id}
+                                    >
+                                      {pendingDomainDeleteId === domain.id ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      )}
+                                    </Button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
 

@@ -8,7 +8,7 @@ import pytest
 
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
 from app.agent.executors.tool import ToolNodeExecutor
-from app.db.postgres.models.registry import ToolStatus
+from app.db.postgres.models.registry import ToolStatus, IntegrationCredentialCategory
 
 
 class DummyDB:
@@ -199,7 +199,15 @@ async def test_web_fetch_happy_path_and_invalid_scheme(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_web_search_uses_provider_dispatch(monkeypatch):
+@pytest.mark.parametrize(
+    "provider_name,tool_api_key",
+    [
+        ("serper", "serper-key"),
+        ("tavily", "tavily-key"),
+        ("exa", "exa-key"),
+    ],
+)
+async def test_web_search_uses_provider_dispatch(monkeypatch, provider_name: str, tool_api_key: str):
     tool = _make_tool(
         implementation_type="CUSTOM",
         builtin_key="web_search",
@@ -207,8 +215,8 @@ async def test_web_search_uses_provider_dispatch(monkeypatch):
             "implementation": {
                 "type": "builtin",
                 "builtin": "web_search",
-                "provider": "serper",
-                "api_key": "test-key",
+                "provider": provider_name,
+                "api_key": tool_api_key,
             }
         },
     )
@@ -220,12 +228,13 @@ async def test_web_search_uses_provider_dispatch(monkeypatch):
         async def search(self, *, query: str, top_k: int = 5):
             return {
                 "query": query,
-                "provider": "serper",
+                "provider": provider_name,
                 "results": [{"title": "Result", "url": "https://example.com", "top_k": top_k}],
             }
 
     def fake_provider_factory(_provider, *, api_key: str, endpoint=None, timeout_s: int = 15):
-        assert api_key == "test-key"
+        assert _provider == provider_name
+        assert api_key == tool_api_key
         return FakeProvider()
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
@@ -238,7 +247,7 @@ async def test_web_search_uses_provider_dispatch(monkeypatch):
         context={"node_id": "tool-node"},
     )
 
-    assert result["context"]["provider"] == "serper"
+    assert result["context"]["provider"] == provider_name
     assert result["context"]["query"] == "latest halacha"
     assert len(result["context"]["results"]) == 1
 
@@ -308,9 +317,9 @@ async def test_web_search_uses_tenant_settings_credentials_when_tool_has_no_key(
         assert api_key == "tenant-settings-key"
         return FakeProvider()
 
-    async def fake_get_by_provider(self, *, category, provider_key: str, provider_variant=None):
-        _ = category  # enum check is covered implicitly by runtime behavior
-        if provider_key == "web_search" and provider_variant == "serper":
+    async def fake_get_default_provider_credential(self, *, category, provider_key: str, provider_variant=None):
+        assert category == IntegrationCredentialCategory.TOOL_PROVIDER
+        if provider_key == "serper" and provider_variant is None:
             return SimpleNamespace(
                 is_enabled=True,
                 credentials={"api_key": "tenant-settings-key"},
@@ -319,7 +328,10 @@ async def test_web_search_uses_tenant_settings_credentials_when_tool_has_no_key(
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr("app.agent.executors.tool.create_web_search_provider", fake_provider_factory)
-    monkeypatch.setattr("app.agent.executors.tool.CredentialsService.get_by_provider", fake_get_by_provider)
+    monkeypatch.setattr(
+        "app.agent.executors.tool.CredentialsService.get_default_provider_credential",
+        fake_get_default_provider_credential,
+    )
 
     executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
     result = await executor.execute(
@@ -333,7 +345,15 @@ async def test_web_search_uses_tenant_settings_credentials_when_tool_has_no_key(
 
 
 @pytest.mark.asyncio
-async def test_web_search_falls_back_to_env_key_when_no_tenant_credential(monkeypatch):
+@pytest.mark.parametrize(
+    "provider_name,env_var",
+    [
+        ("serper", "SERPER_API_KEY"),
+        ("tavily", "TAVILY_API_KEY"),
+        ("exa", "EXA_API_KEY"),
+    ],
+)
+async def test_web_search_falls_back_to_env_key_when_no_tenant_credential(monkeypatch, provider_name: str, env_var: str):
     tool = _make_tool(
         implementation_type="CUSTOM",
         builtin_key="web_search",
@@ -341,7 +361,7 @@ async def test_web_search_falls_back_to_env_key_when_no_tenant_credential(monkey
             "implementation": {
                 "type": "builtin",
                 "builtin": "web_search",
-                "provider": "serper",
+                "provider": provider_name,
             }
         },
     )
@@ -351,20 +371,24 @@ async def test_web_search_falls_back_to_env_key_when_no_tenant_credential(monkey
 
     class FakeProvider:
         async def search(self, *, query: str, top_k: int = 5):
-            return {"query": query, "provider": "serper", "results": [{"query": query, "top_k": top_k}]}
+            return {"query": query, "provider": provider_name, "results": [{"query": query, "top_k": top_k}]}
 
     def fake_provider_factory(_provider, *, api_key: str, endpoint=None, timeout_s: int = 15):
+        assert _provider == provider_name
         assert api_key == "env-default-key"
         return FakeProvider()
 
-    async def fake_get_by_provider(self, *, category, provider_key: str, provider_variant=None):
+    async def fake_get_default_provider_credential(self, *, category, provider_key: str, provider_variant=None):
         _ = (category, provider_key, provider_variant)
         return None
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr("app.agent.executors.tool.create_web_search_provider", fake_provider_factory)
-    monkeypatch.setattr("app.agent.executors.tool.CredentialsService.get_by_provider", fake_get_by_provider)
-    monkeypatch.setenv("SERPER_API_KEY", "env-default-key")
+    monkeypatch.setattr(
+        "app.agent.executors.tool.CredentialsService.get_default_provider_credential",
+        fake_get_default_provider_credential,
+    )
+    monkeypatch.setenv(env_var, "env-default-key")
 
     executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
     result = await executor.execute(
@@ -373,7 +397,7 @@ async def test_web_search_falls_back_to_env_key_when_no_tenant_credential(monkey
         context={"node_id": "tool-node"},
     )
 
-    assert result["context"]["provider"] == "serper"
+    assert result["context"]["provider"] == provider_name
     assert result["context"]["query"] == "daf yomi news"
 
 

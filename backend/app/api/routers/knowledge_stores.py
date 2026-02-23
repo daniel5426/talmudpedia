@@ -25,6 +25,7 @@ from app.db.postgres.models import (
     User
 )
 from app.api.routers.auth import get_current_user
+from app.services.credentials_service import CredentialsService
 
 
 router = APIRouter()
@@ -117,11 +118,19 @@ async def validate_vector_store_credential(
     credentials_ref: Optional[UUID],
 ) -> Optional[UUID]:
     if not credentials_ref:
-        if backend == StorageBackend.PINECONE:
-            raise HTTPException(
-                status_code=422,
-                detail="Pinecone knowledge stores require a tenant vector_store credential.",
+        if backend in {StorageBackend.PINECONE, StorageBackend.QDRANT}:
+            has_effective_default = await CredentialsService(db, tenant_id).has_effective_provider_credentials(
+                category=IntegrationCredentialCategory.VECTOR_STORE,
+                provider_key=backend.value,
             )
+            if not has_effective_default:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"{backend.value.capitalize()} knowledge stores require a matching tenant credential "
+                        "or platform default environment key."
+                    ),
+                )
         return None
 
     cred = await db.get(IntegrationCredential, credentials_ref)
@@ -280,7 +289,7 @@ async def update_knowledge_store(
         store.description = request.description
     if request.retrieval_policy is not None:
         store.retrieval_policy = request.retrieval_policy
-    if request.credentials_ref is not None:
+    if "credentials_ref" in request.model_fields_set:
         validated_credential_ref = await validate_vector_store_credential(
             db=db,
             tenant_id=store.tenant_id,

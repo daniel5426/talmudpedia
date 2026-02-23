@@ -4,10 +4,8 @@ import Link from "next/link"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useDirection } from "@/components/direction-provider"
@@ -31,15 +29,12 @@ import {
   ChevronRight,
   KeyRound,
   Loader2,
-  Pencil,
-  Plus,
   ShieldCheck,
   Sliders,
-  Trash2,
   User,
 } from "lucide-react"
-
-/* ───────────────────────────── Constants ───────────────────────────── */
+import { CredentialFormDialog } from "./components/CredentialFormDialog"
+import { CredentialDeleteDialog } from "./components/CredentialDeleteDialog"
 
 const CATEGORY_LABELS: Record<IntegrationCredentialCategory, { title: string; description: string }> = {
   llm_provider: {
@@ -50,9 +45,9 @@ const CATEGORY_LABELS: Record<IntegrationCredentialCategory, { title: string; de
     title: "Vector Stores",
     description: "Credentials for Pinecone, Qdrant, and other vector backends.",
   },
-  artifact_secret: {
-    title: "Artifact Secrets",
-    description: "Secrets used by custom artifacts and external integrations.",
+  tool_provider: {
+    title: "Tools",
+    description: "Credentials for web-search tool providers like Serper, Tavily, and Exa.",
   },
   custom: {
     title: "Custom Credentials",
@@ -76,167 +71,6 @@ const NAV_ITEMS: Array<{ key: SettingsSection; label: string; icon: typeof User 
   { key: "security", label: "Security", icon: ShieldCheck },
 ]
 
-const VECTOR_STORE_PROVIDERS = [
-  { key: "pinecone", label: "Pinecone" },
-  { key: "qdrant", label: "Qdrant" },
-  { key: "pgvector", label: "PGVector" },
-] as const
-
-/* ───────────────────────────── Credential Dialog ───────────────────── */
-
-function CredentialFormDialog({
-  mode,
-  category,
-  credential,
-  disabled,
-  onSaved,
-}: {
-  mode: "create" | "edit"
-  category: IntegrationCredentialCategory
-  credential?: IntegrationCredential
-  disabled?: boolean
-  onSaved: () => void
-}) {
-  const { direction } = useDirection()
-  const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [providerKey, setProviderKey] = useState(credential?.provider_key || "")
-  const [apiKey, setApiKey] = useState("")
-  const [isEnabled, setIsEnabled] = useState(credential?.is_enabled ?? true)
-  const isVectorStoreCategory = category === "vector_store"
-
-  useEffect(() => {
-    if (open) {
-      setProviderKey(credential?.provider_key || (isVectorStoreCategory ? "pinecone" : ""))
-      setApiKey("")
-      setIsEnabled(credential?.is_enabled ?? true)
-      setError(null)
-    }
-  }, [open, credential, isVectorStoreCategory])
-
-  const handleSave = async () => {
-    setLoading(true)
-    setError(null)
-    const key = apiKey.trim()
-    if (!key) {
-      setError("API key is required.")
-      setLoading(false)
-      return
-    }
-    const parsedCredentials: Record<string, unknown> = { api_key: key }
-
-    try {
-      const effectiveDisplayName =
-        providerKey.trim()
-        || VECTOR_STORE_PROVIDERS.find((provider) => provider.key === providerKey)?.label
-        || "credential"
-
-      if (mode === "create") {
-        await credentialsService.createCredential({
-          category,
-          provider_key: providerKey,
-          provider_variant: null,
-          display_name: effectiveDisplayName,
-          credentials: parsedCredentials,
-          is_enabled: isEnabled,
-        })
-      } else if (credential) {
-        await credentialsService.updateCredential(credential.id, {
-          category,
-          provider_key: providerKey,
-          provider_variant: null,
-          display_name: effectiveDisplayName,
-          credentials: parsedCredentials,
-          is_enabled: isEnabled,
-        })
-      }
-      setOpen(false)
-      onSaved()
-    } catch (err) {
-      console.error("Failed to save credential", err)
-      setError("Failed to save credential.")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        {mode === "create" ? (
-          <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" disabled={disabled}>
-            <Plus className="h-3 w-3" />
-            Add
-          </Button>
-        ) : (
-          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={disabled}>
-            <Pencil className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </DialogTrigger>
-      <DialogContent dir={direction} className="sm:max-w-[480px]">
-        <DialogHeader>
-          <DialogTitle>
-            {mode === "create" ? "Add Credential" : "Edit Credential"}
-          </DialogTitle>
-          <DialogDescription>
-            Credentials are stored securely and never shown after saving.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="space-y-2">
-            <Label className="text-xs font-medium text-muted-foreground">Provider Key</Label>
-            {isVectorStoreCategory ? (
-              <Select value={providerKey || "pinecone"} onValueChange={setProviderKey}>
-                <SelectTrigger className="h-9 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VECTOR_STORE_PROVIDERS.map((provider) => (
-                    <SelectItem key={provider.key} value={provider.key}>
-                      {provider.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <Input value={providerKey} onChange={(e) => setProviderKey(e.target.value)} className="h-9" />
-            )}
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs font-medium text-muted-foreground">API Key</Label>
-            <Input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={mode === "edit" ? "Enter new key to rotate" : "Enter API key"}
-              className="h-9 font-mono text-sm"
-            />
-            <p className="text-xs text-muted-foreground/70">
-              Stored values are write-only and are not shown after save.
-            </p>
-          </div>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <Checkbox checked={isEnabled} onCheckedChange={(v) => setIsEnabled(v === true)} />
-            <span className="text-sm">Enabled</span>
-          </label>
-          {error && <p className="text-sm text-destructive">{error}</p>}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={loading || !providerKey || !apiKey.trim()}>
-            {loading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
-            Save
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-/* ───────────────────────────── Settings Sections ──────────────────── */
-
 function SectionHeader({ title, description }: { title: string; description: string }) {
   return (
     <div className="mb-6">
@@ -259,9 +93,7 @@ function FieldRow({
     <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-6 py-4 border-b border-border/40 last:border-0">
       <div className="sm:w-48 shrink-0">
         <Label className="text-sm font-medium">{label}</Label>
-        {description && (
-          <p className="text-xs text-muted-foreground/60 mt-0.5">{description}</p>
-        )}
+        {description && <p className="text-xs text-muted-foreground/60 mt-0.5">{description}</p>}
       </div>
       <div className="flex-1 max-w-md">{children}</div>
     </div>
@@ -284,8 +116,6 @@ function LoadingSkeleton() {
     </div>
   )
 }
-
-/* ───────────────────────────── Main Component ─────────────────────── */
 
 export default function SettingsPage() {
   const { direction } = useDirection()
@@ -315,29 +145,24 @@ export default function SettingsPage() {
     default_embedding_model_id: null,
     default_retrieval_policy: null,
   })
+
   const [profileError, setProfileError] = useState<string | null>(null)
   const [defaultsError, setDefaultsError] = useState<string | null>(null)
   const [integrationsError, setIntegrationsError] = useState<string | null>(null)
-  const [serperApiKey, setSerperApiKey] = useState("")
-  const [serperSaving, setSerperSaving] = useState(false)
-  const [serperError, setSerperError] = useState<string | null>(null)
   const [profileSaving, setProfileSaving] = useState(false)
   const [defaultsSaving, setDefaultsSaving] = useState(false)
 
   const lastTenantSlugRef = useRef<string | null>(null)
   const dirtyStateRef = useRef(false)
 
-  const profileDirty = !!tenant && (
-    profileForm.name !== tenant.name ||
-    profileForm.slug !== tenant.slug ||
-    profileForm.status !== tenant.status
-  )
+  const profileDirty =
+    !!tenant &&
+    (profileForm.name !== tenant.name || profileForm.slug !== tenant.slug || profileForm.status !== tenant.status)
 
-  const defaultsDirty = (
+  const defaultsDirty =
     defaultsForm.default_chat_model_id !== tenantSettings.default_chat_model_id ||
     defaultsForm.default_embedding_model_id !== tenantSettings.default_embedding_model_id ||
     defaultsForm.default_retrieval_policy !== tenantSettings.default_retrieval_policy
-  )
 
   const hasUnsavedChanges = profileDirty || defaultsDirty
   dirtyStateRef.current = hasUnsavedChanges
@@ -393,92 +218,20 @@ export default function SettingsPage() {
   }, [currentTenant?.slug, fetchData])
 
   const grouped = useMemo(() => {
-    return credentials.reduce<Record<IntegrationCredentialCategory, IntegrationCredential[]>>((acc, cred) => {
-      acc[cred.category] = acc[cred.category] || []
-      acc[cred.category].push(cred)
-      return acc
-    }, {
-      llm_provider: [],
-      vector_store: [],
-      artifact_secret: [],
-      custom: [],
-    })
-  }, [credentials])
-
-  const isSerperWebSearchCredential = useCallback((cred: IntegrationCredential) => {
-    if (cred.category !== "custom") return false
-    const providerKey = (cred.provider_key || "").trim().toLowerCase()
-    const providerVariant = (cred.provider_variant || "").trim().toLowerCase()
-    return (
-      (providerKey === "web_search" && providerVariant === "serper")
-      || (providerKey === "web_search" && providerVariant === "")
-      || (providerKey === "serper" && providerVariant === "")
+    return credentials.reduce<Record<IntegrationCredentialCategory, IntegrationCredential[]>>(
+      (acc, cred) => {
+        acc[cred.category] = acc[cred.category] || []
+        acc[cred.category].push(cred)
+        return acc
+      },
+      {
+        llm_provider: [],
+        vector_store: [],
+        tool_provider: [],
+        custom: [],
+      }
     )
-  }, [])
-
-  const serperCredential = useMemo(
-    () => credentials.find((cred) => isSerperWebSearchCredential(cred)),
-    [credentials, isSerperWebSearchCredential]
-  )
-
-  const handleDeleteCredential = async (credential: IntegrationCredential) => {
-    if (!confirm("Delete this credential? This cannot be undone.")) return
-    setIntegrationsError(null)
-    try {
-      await credentialsService.deleteCredential(credential.id)
-      fetchData()
-    } catch (error: any) {
-      console.error("Failed to delete credential", error)
-      const detail = error?.response?.data?.detail
-      if (typeof detail === "string") {
-        setIntegrationsError(detail)
-      } else {
-        setIntegrationsError("Failed to delete credential.")
-      }
-    }
-  }
-
-  const handleSaveSerperCredential = async () => {
-    const nextKey = serperApiKey.trim()
-    if (!canEdit) return
-    if (!nextKey) {
-      setSerperError("Serper API key is required.")
-      return
-    }
-
-    setSerperSaving(true)
-    setSerperError(null)
-    setIntegrationsError(null)
-    try {
-      if (serperCredential) {
-        await credentialsService.updateCredential(serperCredential.id, {
-          category: "custom",
-          provider_key: "web_search",
-          provider_variant: "serper",
-          display_name: serperCredential.display_name || "Serper Web Search",
-          credentials: { api_key: nextKey },
-          is_enabled: true,
-        })
-      } else {
-        await credentialsService.createCredential({
-          category: "custom",
-          provider_key: "web_search",
-          provider_variant: "serper",
-          display_name: "Serper Web Search",
-          credentials: { api_key: nextKey },
-          is_enabled: true,
-        })
-      }
-      setSerperApiKey("")
-      await fetchData()
-    } catch (error: any) {
-      console.error("Failed to save Serper credential", error)
-      const detail = error?.response?.data?.detail
-      setSerperError(typeof detail === "string" ? detail : "Failed to save Serper API key.")
-    } finally {
-      setSerperSaving(false)
-    }
-  }
+  }, [credentials])
 
   const handleSaveProfile = async () => {
     if (!tenant || !currentTenant?.slug || !profileDirty) return
@@ -528,10 +281,11 @@ export default function SettingsPage() {
     }
   }
 
-  const chatDefaultMissing = !!defaultsForm.default_chat_model_id && !chatModels.find((m) => m.id === defaultsForm.default_chat_model_id)
-  const embeddingDefaultMissing = !!defaultsForm.default_embedding_model_id && !embeddingModels.find((m) => m.id === defaultsForm.default_embedding_model_id)
-
-  /* ─────────────── Render sections ─────────────── */
+  const chatDefaultMissing =
+    !!defaultsForm.default_chat_model_id && !chatModels.find((m) => m.id === defaultsForm.default_chat_model_id)
+  const embeddingDefaultMissing =
+    !!defaultsForm.default_embedding_model_id &&
+    !embeddingModels.find((m) => m.id === defaultsForm.default_embedding_model_id)
 
   function renderProfile() {
     return (
@@ -591,7 +345,9 @@ export default function SettingsPage() {
         {profileError && <p className="text-sm text-destructive mt-3">{profileError}</p>}
 
         <div className={cn("flex gap-2 mt-6 pt-4 border-t border-border/40", isRTL ? "justify-start" : "justify-end")}>
-          <Button variant="outline" size="sm" onClick={fetchData} disabled={profileSaving}>Reset</Button>
+          <Button variant="outline" size="sm" onClick={fetchData} disabled={profileSaving}>
+            Reset
+          </Button>
           <Button
             size="sm"
             onClick={handleSaveProfile}
@@ -619,79 +375,20 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="rounded-lg border border-border/50 mb-6">
-          <div className="px-4 py-3 border-b border-border/40">
-            <h3 className="text-sm font-medium">Web Search (Serper)</h3>
-            <p className="text-xs text-muted-foreground/60 mt-0.5">
-              Simple setup for web search. The saved key overrides platform default for this tenant.
-            </p>
-          </div>
-          <div className="px-4 py-3 space-y-3">
-            <div className="flex items-center gap-2 text-xs">
-              <span
-                className={cn(
-                  "h-1.5 w-1.5 rounded-full",
-                  serperCredential?.is_enabled ? "bg-emerald-500" : "bg-zinc-400"
-                )}
-              />
-              <span className="text-muted-foreground/70">
-                {serperCredential?.is_enabled ? "Configured for this tenant" : "Using platform default (if available)"}
-              </span>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Serper API Key</Label>
-              <Input
-                type="password"
-                value={serperApiKey}
-                onChange={(e) => setSerperApiKey(e.target.value)}
-                placeholder={serperCredential ? "Enter new key to rotate" : "Enter API key"}
-                disabled={!canEdit || serperSaving}
-                className="h-9 font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground/60">
-                Stored values are write-only.
-              </p>
-            </div>
-            {serperError && (
-              <p className="text-xs text-destructive">{serperError}</p>
-            )}
-            <div className={cn("flex gap-2", isRTL ? "justify-start" : "justify-end")}>
-              <Button
-                size="sm"
-                onClick={handleSaveSerperCredential}
-                disabled={!canEdit || !serperApiKey.trim() || serperSaving}
-              >
-                {serperSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
-                Save Serper Key
-              </Button>
-            </div>
-          </div>
-        </div>
-
         <div className="space-y-6">
           {(Object.keys(CATEGORY_LABELS) as IntegrationCredentialCategory[]).map((category) => {
             const categoryInfo = CATEGORY_LABELS[category]
-            const items = category === "custom"
-              ? (grouped[category] || []).filter((cred) => !isSerperWebSearchCredential(cred))
-              : (grouped[category] || [])
-
+            const items = grouped[category] || []
             return (
               <div key={category} className="rounded-lg border border-border/50">
-                {/* Category header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
                   <div>
                     <h3 className="text-sm font-medium">{categoryInfo.title}</h3>
                     <p className="text-xs text-muted-foreground/60 mt-0.5">{categoryInfo.description}</p>
                   </div>
-                  <CredentialFormDialog
-                    mode="create"
-                    category={category}
-                    disabled={!canEdit}
-                    onSaved={fetchData}
-                  />
+                  <CredentialFormDialog mode="create" category={category} disabled={!canEdit} onSaved={fetchData} />
                 </div>
 
-                {/* Credential rows */}
                 {items.length === 0 ? (
                   <div className="px-4 py-6 text-center">
                     <p className="text-xs text-muted-foreground/50">No credentials configured.</p>
@@ -699,19 +396,22 @@ export default function SettingsPage() {
                 ) : (
                   <div className="divide-y divide-border/30">
                     {items.map((cred) => (
-                        <div key={cred.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
+                      <div key={cred.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium truncate font-mono">{cred.provider_key}</span>
+                            {cred.is_default && (
+                              <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-700">
+                                Default
+                              </span>
+                            )}
                             <span className="flex items-center gap-1 shrink-0">
                               <span className={cn("h-1.5 w-1.5 rounded-full", cred.is_enabled ? "bg-emerald-500" : "bg-zinc-400")} />
-                              <span className="text-xs text-muted-foreground/60">
-                                {cred.is_enabled ? "Active" : "Disabled"}
-                              </span>
+                              <span className="text-xs text-muted-foreground/60">{cred.is_enabled ? "Active" : "Disabled"}</span>
                             </span>
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-xs text-muted-foreground/50 font-mono">{cred.provider_key}</span>
+                            <span className="text-xs text-muted-foreground/50 font-mono">{cred.display_name}</span>
                             {cred.credential_keys.length > 0 && (
                               <>
                                 <span className="text-muted-foreground/30">·</span>
@@ -730,15 +430,12 @@ export default function SettingsPage() {
                             disabled={!canEdit}
                             onSaved={fetchData}
                           />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-muted-foreground/50 hover:text-destructive"
+                          <CredentialDeleteDialog
+                            credential={cred}
                             disabled={!canEdit}
-                            onClick={() => handleDeleteCredential(cred)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
+                            onDeleted={fetchData}
+                            onError={(message) => setIntegrationsError(message || null)}
+                          />
                         </div>
                       </div>
                     ))}
@@ -772,7 +469,9 @@ export default function SettingsPage() {
             <SelectContent>
               <SelectItem value="none">None</SelectItem>
               {chatModels.map((model) => (
-                <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
+                <SelectItem key={model.id} value={model.id}>
+                  {model.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -781,7 +480,9 @@ export default function SettingsPage() {
         <FieldRow label="Embedding Model" description="Default model for vector embeddings.">
           <Select
             value={defaultsForm.default_embedding_model_id || "none"}
-            onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_embedding_model_id: value === "none" ? null : value }))}
+            onValueChange={(value) =>
+              setDefaultsForm((prev) => ({ ...prev, default_embedding_model_id: value === "none" ? null : value }))
+            }
             disabled={!canEdit}
           >
             <SelectTrigger className="h-9">
@@ -790,7 +491,9 @@ export default function SettingsPage() {
             <SelectContent>
               <SelectItem value="none">None</SelectItem>
               {embeddingModels.map((model) => (
-                <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
+                <SelectItem key={model.id} value={model.id}>
+                  {model.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -799,7 +502,12 @@ export default function SettingsPage() {
         <FieldRow label="Retrieval Policy" description="Default strategy for RAG retrieval.">
           <Select
             value={defaultsForm.default_retrieval_policy || "none"}
-            onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_retrieval_policy: value === "none" ? null : value as RetrievalPolicy }))}
+            onValueChange={(value) =>
+              setDefaultsForm((prev) => ({
+                ...prev,
+                default_retrieval_policy: value === "none" ? null : (value as RetrievalPolicy),
+              }))
+            }
             disabled={!canEdit}
           >
             <SelectTrigger className="h-9">
@@ -808,7 +516,9 @@ export default function SettingsPage() {
             <SelectContent>
               <SelectItem value="none">None</SelectItem>
               {RETRIEVAL_POLICIES.map((policy) => (
-                <SelectItem key={policy.value} value={policy.value}>{policy.label}</SelectItem>
+                <SelectItem key={policy.value} value={policy.value}>
+                  {policy.label}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -827,7 +537,9 @@ export default function SettingsPage() {
         {defaultsError && <p className="text-sm text-destructive mt-3">{defaultsError}</p>}
 
         <div className={cn("flex gap-2 mt-6 pt-4 border-t border-border/40", isRTL ? "justify-start" : "justify-end")}>
-          <Button variant="outline" size="sm" onClick={fetchData} disabled={defaultsSaving}>Reset</Button>
+          <Button variant="outline" size="sm" onClick={fetchData} disabled={defaultsSaving}>
+            Reset
+          </Button>
           <Button size="sm" onClick={handleSaveDefaults} disabled={!canEdit || !defaultsDirty || defaultsSaving}>
             {defaultsSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
             Save
@@ -885,21 +597,14 @@ export default function SettingsPage() {
     security: renderSecurity,
   }
 
-  /* ─────────────── Main layout ─────────────── */
-
   return (
     <div className="flex flex-col h-full w-full" dir={direction}>
-      {/* Header */}
       <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0 border-b border-border/40">
         <CustomBreadcrumb items={[{ label: "Settings", href: "/admin/settings", active: true }]} />
-        {hasUnsavedChanges && (
-          <span className="text-xs text-amber-600 font-medium">Unsaved changes</span>
-        )}
+        {hasUnsavedChanges && <span className="text-xs text-amber-600 font-medium">Unsaved changes</span>}
       </header>
 
-      {/* Body: sidebar nav + content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar nav */}
         <nav className="w-48 shrink-0 border-r border-border/40 p-3 overflow-y-auto hidden sm:block">
           <div className="space-y-0.5">
             {NAV_ITEMS.map((item) => {
@@ -911,9 +616,7 @@ export default function SettingsPage() {
                   onClick={() => setActiveSection(item.key)}
                   className={cn(
                     "flex items-center gap-2.5 w-full rounded-md px-2.5 py-1.5 text-sm transition-colors text-left",
-                    isActive
-                      ? "bg-muted/60 text-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                    isActive ? "bg-muted/60 text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
                   )}
                 >
                   <Icon className="h-3.5 w-3.5 shrink-0" />
@@ -924,7 +627,6 @@ export default function SettingsPage() {
           </div>
         </nav>
 
-        {/* Mobile section picker */}
         <div className="sm:hidden shrink-0 border-b border-border/40 px-4 py-2 flex gap-1 overflow-x-auto">
           {NAV_ITEMS.map((item) => (
             <button
@@ -932,9 +634,7 @@ export default function SettingsPage() {
               onClick={() => setActiveSection(item.key)}
               className={cn(
                 "px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors",
-                activeSection === item.key
-                  ? "bg-muted/60 text-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground"
+                activeSection === item.key ? "bg-muted/60 text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
               )}
             >
               {item.label}
@@ -942,22 +642,19 @@ export default function SettingsPage() {
           ))}
         </div>
 
-        {/* Content area */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-2xl p-6">
-            {fetchError && (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive mb-6">
-                {fetchError}
-              </div>
-            )}
-
+        <main className="flex-1 overflow-y-auto">
+          <div className="max-w-4xl px-4 sm:px-6 py-6">
             {loading ? (
               <LoadingSkeleton />
+            ) : fetchError ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                {fetchError}
+              </div>
             ) : (
               SECTION_RENDERERS[activeSection]()
             )}
           </div>
-        </div>
+        </main>
       </div>
     </div>
   )

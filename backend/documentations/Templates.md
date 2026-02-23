@@ -14,6 +14,7 @@ Last Updated: 2026-02-22
   - `.opencode/tools/read_agent_context.ts`
 - OpenCode run startup also self-heals `.opencode/*` bootstrap for legacy drafts before run start (fail-closed if seed fails).
 - Strategy currently implemented: clean implementation only (no legacy fallback paths kept).
+- Template outputs do not persist provider secrets; model/tool/vector credentials resolve at runtime via Integration Credentials (explicit ref -> tenant default -> platform env default).
 
 ## Fast-Create Direction (Current Planning Scope)
 - Active planning scope: `chat-classic` only.

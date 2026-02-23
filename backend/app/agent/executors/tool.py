@@ -586,39 +586,35 @@ class ToolNodeExecutor(BaseNodeExecutor):
             endpoint = endpoint or payload.get("endpoint")
 
         # Preferred tenant override path:
-        # IntegrationCredential(category=custom, provider_key="web_search", provider_variant="{provider}")
-        # For backward compatibility, also accept provider_key={provider} with no variant.
+        # IntegrationCredential(category=tool_provider, provider_key="{provider}")
         if not api_key and credentials_service:
-            provider_credential_pairs = [
-                ("web_search", provider_name),
-                ("web_search", None),
-                (provider_name, None),
-            ]
-            for provider_key, provider_variant in provider_credential_pairs:
-                credential = await credentials_service.get_by_provider(
-                    category=IntegrationCredentialCategory.CUSTOM,
-                    provider_key=provider_key,
-                    provider_variant=provider_variant,
-                )
-                if credential is None or not credential.is_enabled:
-                    continue
+            credential = await credentials_service.get_default_provider_credential(
+                category=IntegrationCredentialCategory.TOOL_PROVIDER,
+                provider_key=provider_name,
+            )
+            if credential and credential.is_enabled:
                 payload = credential.credentials or {}
-                candidate_api_key = payload.get("api_key") or payload.get("token")
-                if candidate_api_key:
-                    api_key = candidate_api_key
-                    endpoint = endpoint or payload.get("endpoint")
-                    break
+                api_key = payload.get("api_key") or payload.get("token")
+                endpoint = endpoint or payload.get("endpoint")
 
         if not api_key and provider_name == "serper":
             import os
 
             api_key = os.getenv("SERPER_API_KEY")
+        if not api_key and provider_name == "tavily":
+            import os
+
+            api_key = os.getenv("TAVILY_API_KEY")
+        if not api_key and provider_name == "exa":
+            import os
+
+            api_key = os.getenv("EXA_API_KEY")
 
         if not api_key:
             raise ValueError(
                 "web_search provider credentials are missing. "
-                "Set SERPER_API_KEY or add tenant credentials "
-                "(category=custom, provider_key=web_search, provider_variant=serper, credentials.api_key)."
+                "Set provider env key or add tenant credentials "
+                "(category=tool_provider, provider_key=<serper|tavily|exa>, credentials.api_key)."
             )
 
         provider = create_web_search_provider(

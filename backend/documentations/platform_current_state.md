@@ -1,6 +1,6 @@
 # TalmudPedia: Platform Current State & Overview
 
-Last Updated: 2026-02-15
+Last Updated: 2026-02-22
 
 TalmudPedia is a foundational **Enterprise AI Agent & RAG Platform** designed as a unified control plane for models, tools, data, and reasoning workflows. It is vendor-agnostic, modular, and enterprise-ready, supporting both API-based and self-hosted models. Data ingestion (RAG) and reasoning (Agents) are decoupled through the **Knowledge Store** bridge.
 
@@ -29,7 +29,7 @@ The platform is organized into independent domains communicating through stable 
 - **Architecture**: Service Layer (`AgentService`); single execution engine (`AgentExecutorService`) for Playground and Production.
 - **Engine**: `AgentCompiler` turns declarative GraphSpec v1 JSON into executable LangGraph workflows.
 - **Observability**: **Unified Engine, Divergent Observability** (ADR 001). `StreamAdapter` filters events by `ExecutionMode`: Debug = full firehose (inputs, tool calls, thoughts, tokens); Production = clean stream (final tokens and client-safe events only). Auth-scoped: public tokens cannot request Debug.
-- **Features**: Cyclic workflows, CEL (If/Else, While), User Approval (HITL), Transform/Set State, artifact field mapping, versioning, `AgentRun`/`AgentTrace` persistence. Tool execution: HTTP, artifact, MCP, and function tools supported. Built-in Tools v1 is live as a global built-in catalog (Core 8: retrieval_pipeline, http_request, function_call, mcp_call, web_fetch, web_search, json_transform, datetime_utils), with legacy template/instance metadata no longer used by runtime behavior. Tool invocation in agent nodes supports structured tool calls with JSON fallback (native LLM tool calling is still a roadmap item).
+- **Features**: Cyclic workflows, CEL (If/Else, While), User Approval (HITL), Transform/Set State, artifact field mapping, versioning, `AgentRun`/`AgentTrace` persistence. Tool execution: HTTP, artifact, MCP, and function tools supported. Built-in Tools v1 is live as a global built-in catalog (Core 8: retrieval_pipeline, http_request, function_call, mcp_call, web_fetch, web_search, json_transform, datetime_utils), with legacy template/instance metadata no longer used by runtime behavior. `web_search` provider dispatch now supports `serper`, `tavily`, and `exa`. Tool invocation in agent nodes supports structured tool calls with JSON fallback (native LLM tool calling is still a roadmap item).
 - **UI**: Visual Builder (xyflow, BaseNode, ConfigPanel) and Agent Playground (streaming, execution sidebar, same chat components as production). Builder Execute mode now overlays runtime topology (orchestration decisions + child runs) from SSE with periodic `/agents/runs/{run_id}/tree` reconciliation; overlay is ephemeral per run and never persisted into draft `graph_definition`. Memory: short-term active; long-term/vector in development.
 - **Platform Architect (linear staged GraphSpec v2)**: Multi-agent orchestrator seeded with sub-agents (Catalog, Planner, Builder, Coder, Tester). The current seed uses a stage-by-stage GraphSpec v2 orchestration graph (`spawn_group` + `join` per stage, then `replan`, optional replanner stage, `cancel_subtree`) and auto-seeds orchestrator policy/target allowlist rows for those sub-agents. Platform SDK tool supports draft asset creation and multi-case tests; secure internal API flows use delegated workload tokens with scope enforcement (legacy service/API-key fallback removed on migrated secure paths).
 
@@ -50,7 +50,8 @@ The platform is organized into independent domains communicating through stable 
 - **Stack**: FastAPI (async), PostgreSQL (metadata, pgvector), MongoDB (Sefaria), Redis/Celery for workers.
 - **Auth**: Hybrid (User + Tenant + OrgMembership); JWT with tenant_id/org_role; admin routes tenant-scoped; Postgres for auth/admin data.
 - **Voice**: WebSocket entry (`voice_ws.py`), provider registry, Gemini session; tool calling to RetrievalService; persistence in Chats/Messages.
-- **Settings**: Tenant-centric settings hub with tenant profile (name/slug/status), tenant default pointers (chat model, embedding model, retrieval policy in `Tenant.settings`), and tenant-scoped Integration Credentials (LLM providers, vector stores, artifact secrets, custom). Credential values are write-only; model bindings and knowledge stores reference credentials by ref.
+- **Settings**: Tenant-centric settings hub with tenant profile (name/slug/status), tenant default pointers (chat model, embedding model, retrieval policy in `Tenant.settings`), and tenant-scoped Integration Credentials (`llm_provider`, `vector_store`, `tool_provider`, `custom`). Credential values are write-only; model bindings and knowledge stores reference credentials by ref. Provider defaults are explicit (`is_default`) and runtime resolution uses: explicit ref -> tenant default -> platform env default.
+- **Platform Credential Handling**: Platform defaults are env-only in current state (no platform credential rows are seeded into `integration_credentials`).
 
 ### E. Admin & Observability
 

@@ -1,5 +1,5 @@
 # RAG Management Current State
-Last Updated: 2026-02-16
+Last Updated: 2026-02-22
 
 ## Overview
 The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pipeline orchestration engine designed to manage the full lifecycle of data ingestion, transformation, and storage for semantic search. It has evolved from a simple linear flow to a highly customizable, contract-driven architecture.
@@ -61,7 +61,7 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
 - **Centralized Retrieval Service**: The `RetrievalService` provides a clean query interface, handling embedding generation, vector search, and reranking policies (Semantic, Hybrid, Keyword) based on the store's definition.
 - **Metadata-Aware Metrics**: Tracking `document_count` and `chunk_count` per store, updated automatically during ingestion.
 - **Immutable Logic, Flexible Backend**: The embedding model and chunking strategy are locked at store creation, but properties like `retrieval_policy` can be tuned without re-ingesting data.
-- **Credential Enforcement**: Pinecone knowledge stores require tenant-scoped vector store credentials; runtime no longer relies on env-var fallback for tenant-bound Pinecone access.
+- **Credential Enforcement**: Pinecone and Qdrant stores support explicit `credentials_ref` or default provider resolution via Integration Credentials (`vector_store`) with precedence: tenant default -> platform env default.
 
 ### 7.1 Knowledge Store Segment (Current Behavior)
 - **Supported Backends**: `PGVECTOR` (default), `PINECONE`, and `QDRANT`.
@@ -71,9 +71,9 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
   - PGVector uses `collection_name` from `backend_config.collection_name` or falls back to `backend_config.index_name`.
   - Qdrant uses `collection_name` from `backend_config.collection_name` or falls back to `backend_config.index_name`.
 - **Credential Rules**:
-  - Pinecone requires a tenant credential in category `vector_store` with provider key `pinecone`.
-  - Qdrant credentials, when supplied, must be category `vector_store` with provider key `qdrant`.
-  - Pinecone runtime initialization does not use env fallback for tenant-bound access; missing API key fails fast.
+  - Explicit credentials, when supplied, must be category `vector_store` and provider-matched (`pinecone`/`qdrant`).
+  - If `credentials_ref` is omitted for Pinecone or Qdrant, the system allows creation only when a matching tenant default or platform env key exists.
+  - Runtime backend config merge resolves defaults automatically through credential service lookup.
 - **Namespace Resolution**:
   - Runtime namespace from node input has highest priority.
   - If omitted, namespace falls back to `knowledge_store.backend_config.namespace`.

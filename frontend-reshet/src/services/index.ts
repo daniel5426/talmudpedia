@@ -56,6 +56,7 @@ export { credentialsService } from "./credentials";
 export { publishedAppsService } from "./published-apps";
 export { resolveAppsCodingAgentEngine } from "./published-apps";
 export { publishedRuntimeService } from "./published-runtime";
+export { LLM_PROVIDER_OPTIONS, VECTOR_STORE_PROVIDER_OPTIONS, TOOL_PROVIDER_OPTIONS } from "./provider-catalog";
 
 export type {
   Agent,
@@ -135,6 +136,10 @@ export type {
   CreateCredentialRequest,
   UpdateCredentialRequest,
   CredentialStatus,
+  CredentialUsageModelProvider,
+  CredentialUsageKnowledgeStore,
+  CredentialUsageTool,
+  CredentialUsageResponse,
 } from "./credentials";
 
 // Knowledge Stores
