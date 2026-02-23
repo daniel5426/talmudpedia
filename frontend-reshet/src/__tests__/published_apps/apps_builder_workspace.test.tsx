@@ -50,6 +50,7 @@ jest.mock("@/services", () => ({
     heartbeatDraftDevSession: jest.fn(),
     resetTemplate: jest.fn(),
     createCodingAgentRun: jest.fn(),
+    submitCodingAgentPrompt: jest.fn(),
     streamCodingAgentRun: jest.fn(),
     getCodingAgentRun: jest.fn(),
     cancelCodingAgentRun: jest.fn(),
@@ -498,6 +499,31 @@ describe("AppsBuilderWorkspace", () => {
       started_at: null,
       completed_at: null,
     });
+    (publishedAppsService.submitCodingAgentPrompt as jest.Mock).mockImplementation(
+      async (appId: string, payload: Record<string, unknown>) => {
+        const legacyPayload = {
+          ...payload,
+          base_revision_id: "rev-1",
+          engine: "opencode",
+          enqueue_if_active: true,
+        };
+        const response = await (publishedAppsService.createCodingAgentRun as jest.Mock)(appId, legacyPayload);
+        if (response && typeof response === "object" && "submission_status" in (response as Record<string, unknown>)) {
+          return response;
+        }
+        if (response && typeof response === "object" && "active_run_id" in (response as Record<string, unknown>)) {
+          return {
+            submission_status: "queued",
+            active_run_id: String((response as Record<string, unknown>).active_run_id || ""),
+            queue_item: (response as Record<string, unknown>).queue_item,
+          };
+        }
+        return {
+          submission_status: "started",
+          run: response,
+        };
+      },
+    );
     (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValue({
       body: {
         getReader: () => {
@@ -1057,7 +1083,7 @@ describe("AppsBuilderWorkspace", () => {
     expect(screen.queryByText(/Run complete/i)).not.toBeInTheDocument();
   });
 
-  it("retries coding-agent run once after revision conflict", async () => {
+  it("surfaces revision conflict without automatic retry", async () => {
     (publishedAppsService.createCodingAgentRun as jest.Mock)
       .mockRejectedValueOnce(
         new Error(
@@ -1068,43 +1094,7 @@ describe("AppsBuilderWorkspace", () => {
             message: "Draft revision is stale",
           }),
         ),
-      )
-      .mockResolvedValueOnce({
-        run_id: "run-2",
-        status: "queued",
-        execution_engine: "opencode",
-        surface: "published_app_coding_agent",
-        published_app_id: "app-1",
-        base_revision_id: "rev-2",
-        result_revision_id: null,
-        checkpoint_revision_id: null,
-        error: null,
-        created_at: new Date().toISOString(),
-        started_at: null,
-        completed_at: null,
-      });
-
-    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
-      body: {
-        getReader: () => {
-          const chunks = [
-            'data: {"event":"assistant.delta","run_id":"run-2","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:01Z","stage":"assistant","payload":{"content":"Retry worked"},"diagnostics":[]}\n\n',
-            'data: {"event":"run.completed","run_id":"run-2","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
-          ];
-          let cursor = 0;
-          return {
-            read: async () => {
-              if (cursor >= chunks.length) return { done: true, value: undefined };
-              const next = chunks[cursor++];
-              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
-            },
-          };
-        },
-      },
-      ok: true,
-      status: 200,
-      headers: new Headers({ "content-type": "text/event-stream" }),
-    });
+      );
 
     render(<AppsBuilderWorkspace appId="app-1" />);
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
@@ -1116,19 +1106,12 @@ describe("AppsBuilderWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(2);
+      expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(1);
     });
     expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[0][1]).toEqual(
       expect.objectContaining({ base_revision_id: "rev-1" }),
     );
-    expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[1][1]).toEqual(
-      expect.objectContaining({ base_revision_id: "rev-2" }),
-    );
-    expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-2");
-
-    await waitFor(() => {
-      expect(screen.getByText("Retry worked")).toBeInTheDocument();
-    });
+    expect(publishedAppsService.streamCodingAgentRun).not.toHaveBeenCalled();
   });
 
   it("shows running read calls with researching summary + file-specific title", async () => {
@@ -1320,13 +1303,11 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
-  it("loads coding-agent capabilities for workspace policy context", async () => {
+  it("renders chat input without capabilities endpoint dependency", async () => {
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-    await waitFor(() => {
-      expect(publishedAppsService.getCodingAgentCapabilities).toHaveBeenCalledWith("app-1");
-    });
+    expect(publishedAppsService.getCodingAgentCapabilities).not.toHaveBeenCalled();
     expect(screen.getByPlaceholderText("Plan, @ for context, / for commands")).toBeInTheDocument();
   });
 

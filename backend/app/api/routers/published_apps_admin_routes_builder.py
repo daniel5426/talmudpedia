@@ -166,13 +166,11 @@ async def _assert_no_active_coding_run_for_scope(
     if run is None:
         session.active_coding_run_id = None
         session.active_coding_run_locked_at = None
-        session.active_coding_run_client_message_id = None
         return
     run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
     if run_status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value, RunStatus.paused.value}:
         session.active_coding_run_id = None
         session.active_coding_run_locked_at = None
-        session.active_coding_run_client_message_id = None
         return
     raise HTTPException(
         status_code=409,

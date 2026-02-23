@@ -361,31 +361,6 @@ class PublishedAppCodingChatMessage(Base):
     )
 
 
-class PublishedAppCodingRunEvent(Base):
-    __tablename__ = "published_app_coding_run_events"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("agent_runs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    seq = Column(Integer, nullable=False)
-    event = Column(String(128), nullable=False)
-    stage = Column(String(64), nullable=False)
-    payload_json = Column(JSONB, nullable=False, default=dict)
-    diagnostics_json = Column(JSONB, nullable=False, default=list)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
-
-    run = relationship("AgentRun")
-
-    __table_args__ = (
-        UniqueConstraint("run_id", "seq", name="uq_published_app_coding_run_events_run_seq"),
-        Index("ix_published_app_coding_run_events_run_seq", "run_id", "seq"),
-    )
-
-
 class PublishedAppCodingPromptQueue(Base):
     __tablename__ = "published_app_coding_prompt_queue"
 
@@ -428,6 +403,12 @@ class PublishedAppCodingPromptQueue(Base):
     __table_args__ = (
         Index("ix_published_app_coding_prompt_queue_session_position", "chat_session_id", "position"),
         Index("ix_published_app_coding_prompt_queue_session_status", "chat_session_id", "status"),
+        Index(
+            "ix_published_app_coding_prompt_queue_session_status_position",
+            "chat_session_id",
+            "status",
+            "position",
+        ),
         UniqueConstraint(
             "chat_session_id",
             "position",
@@ -598,7 +579,6 @@ class PublishedAppDraftDevSession(Base):
         index=True,
     )
     active_coding_run_locked_at = Column(DateTime(timezone=True), nullable=True)
-    active_coding_run_client_message_id = Column(String(128), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

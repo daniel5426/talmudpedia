@@ -21,7 +21,7 @@ from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRun
 
 logger = logging.getLogger(__name__)
 
-CODING_AGENT_ENGINE_NATIVE = "native"
+CODING_AGENT_ENGINE_OPENCODE = "opencode"
 _WORKSPACE_WRITE_TOOL_HINTS = (
     "write",
     "edit",
@@ -80,7 +80,7 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
             "ts": datetime.now(timezone.utc).isoformat(),
             "run_id": str(run.id),
             "app_id": str(app.id),
-            "engine": str(run.execution_engine or CODING_AGENT_ENGINE_NATIVE),
+            "engine": str(run.execution_engine or CODING_AGENT_ENGINE_OPENCODE),
             "status": run.status.value if hasattr(run.status, "value") else str(run.status),
             "terminal_event": terminal_event,
             "assistant_delta_events": int(max(0, assistant_delta_events)),

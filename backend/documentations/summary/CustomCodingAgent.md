@@ -2,293 +2,151 @@
 
 Last Updated: 2026-02-23
 
-## Source Documents Consolidated
-- Note: the historical plan files listed in this section were archived/removed from
-  `backend/documentations/Plans/`; this summary remains as the retained consolidated record.
-- `backend/documentations/Plans/ChatBuilderProductionRoadmap.md`
-- `backend/documentations/Plans/ChatBuilderProductionCompletionImplementationTracker.md`
-- `backend/documentations/Plans/CodingAgentRuntimeRefactorPlan.md`
-- `backend/documentations/Plans/CodingAgentRuntimeRefactorImplementationTracker.md`
-- `backend/documentations/Plans/CodingAgentHardeningAndPerRunModelSelectionPlan.md`
+## Current State: Hard Cut v2 (OpenCode-Only)
 
-## 1) ChatBuilderProductionRoadmap.md (Summary)
-- Defined the original parity target: move Builder Chat from demo-like patching into a production coding assistant.
-- Established migration to backend-built Vite/static runtime as source of truth.
-- Set quality bars: reliable multi-turn coding loop, tool-augmented repairs, safer patch policy, build/validation gating, and better observability.
-- Identified key gaps at that stage: intelligence quality, migration completeness, review UX, and operational metrics/evals.
+The coding-agent stack is now hard-cut to an OpenCode-first architecture:
+- OpenCode is the only execution engine.
+- Backend is a thin product adapter for auth, sandbox binding, queue durability, chat history, and checkpoint promotion.
+- Run lifecycle authority is based on OpenCode terminal events (`run.completed`, `run.failed`, `run.cancelled`, `run.paused`).
+- Old replay/event-log orchestration has been removed.
 
-## 2) ChatBuilderProductionCompletionImplementationTracker.md (Summary)
-- Recorded the completion of the ChatBuilder production-completion phases (checkpoints, undo/revert APIs, evented stream UX, tests).
-- Later marked itself as historical/superseded after coding-agent cutover.
-- Noted post-cutover hardening items (revision-conflict retry, broader file path policy, regression tests).
-- Main takeaway: ChatBuilder track was completed for its era, then replaced by coding-agent contracts.
+## v2 API Surface
 
-## 3) CodingAgentRuntimeRefactorPlan.md (Summary)
-- Declared hard cutover from legacy ChatBuilder runtime to platform runtime primitives.
-- Locked the new API family: `/admin/apps/{app_id}/coding-agent/*`.
-- Defined new SSE event envelope and run lifecycle model.
-- Required durable checkpoints, app/run linkage fields, and tool-runtime based coding toolpack.
-- Explicitly removed legacy builder chat endpoints/modules and old feature-flag paths.
+All coding-agent endpoints now live under:
+- `/admin/apps/{app_id}/coding-agent/v2/*`
 
-## 4) CodingAgentRuntimeRefactorImplementationTracker.md (Summary)
-- Tracks implementation status of that cutover and subsequent hardening.
-- Reports completed phases for core refactor (API/runtime/frontend migration + legacy deletion), with stabilization continuing.
-- Documents major delivered capabilities:
-  - run-level model selection/pinning (`requested_model_id`, `resolved_model_id`),
-  - strict tool input validation and normalized failure envelopes,
-  - patch-first runtime improvements,
-  - SSE framing and streaming reliability fixes,
-  - UI contract migration to coding-agent stream semantics,
-  - OpenCode-first engine path under the same external API contract, with native fallback policy controls.
-- Captures test command history and outcomes for backend/frontend suites.
+Implemented routes:
+- `POST /coding-agent/v2/prompts`
+- `GET /coding-agent/v2/runs/{run_id}`
+- `GET /coding-agent/v2/runs/{run_id}/stream`
+- `POST /coding-agent/v2/runs/{run_id}/cancel`
+- `GET /coding-agent/v2/chat-sessions`
+- `GET /coding-agent/v2/chat-sessions/{session_id}`
+- `GET /coding-agent/v2/chat-sessions/{session_id}/active-run`
+- `GET /coding-agent/v2/chat-sessions/{session_id}/queue`
+- `DELETE /coding-agent/v2/chat-sessions/{session_id}/queue/{queue_item_id}`
+- `GET /coding-agent/v2/checkpoints`
+- `POST /coding-agent/v2/checkpoints/{checkpoint_id}/restore`
 
-## 5) CodingAgentHardeningAndPerRunModelSelectionPlan.md (Summary)
-- Split hardening into two phases.
-- Phase 1 (must-ship) focused on correctness and per-run model UX:
-  - API support for `model_id`,
-  - fail-fast model-unavailable contract,
-  - run-pinned model execution,
-  - coding-agent tool required-field validation.
-- Phase 2 listed remaining depth work: runtime/event assertions, cancellation/output hardening, multi-instance durability, and visual E2E.
-- Status in the doc marks Phase 1 finished; deeper Phase 2 work remains follow-up.
+Removed from public API:
+- Non-v2 `/coding-agent/*` endpoints
+- Run `resume` endpoint
+- Capabilities endpoint
+- Stream replay query semantics (`from_seq`, `replay`)
 
-## Consolidated Current State (AI + OpenCode)
-- Current production contract is coding-agent run lifecycle + SSE events + checkpoint restore.
-- Legacy ChatBuilder chat contracts are intentionally retired.
-- Per-run model selection is first-class (`Auto` or explicit model) and execution is pinned to resolved model at run time.
-- OpenCode is now the default coding-agent engine; native execution is opt-in via backend/frontend env policy.
-- Chat memory continuity is now server-persisted per `(published_app_id, user_id)` chat session and reused across runs.
+## Prompt Submission Contract (v2)
 
-## Latest Reliability Polish Updates (2026-02-23)
-- Root-cause fix for repeated generic `run failed` terminals in active OpenCode streams:
-  - runtime stream polling previously used `asyncio.wait_for(engine_iter.__anext__(), timeout=...)`,
-  - timeout polling could cancel in-flight provider reads every slice and induce synthetic failures.
-- Runtime stream loop is now non-destructive during polling:
-  - keeps a pending `__anext__` task,
-  - uses `asyncio.shield(...)` for status polling windows,
-  - cancels the pending read task only on terminal/exit paths.
-- Failure diagnostics hardening:
-  - runtime and orchestrator now prefer non-generic failure text from diagnostics/payload/run error fields,
-  - generic fallback (`run failed`) is used only when no better message exists.
-- Execution engine normalization hardening:
-  - engine normalization now tolerates enum-like/string variants containing `opencode`/`native` (for example `ExecutionEngine.OPENCODE`) to avoid unintended engine fallback.
-- Native engine lifecycle consistency:
-  - native stream path now sets `status=running` and `started_at` at stream start for consistent run state transitions.
-- Regression tests expanded:
-  - added coverage for slow-provider stream iteration where first event arrives after polling slice (prevents timeout-cancel regressions),
-  - added engine normalization regression assertion,
-  - updated coding-agent test state log with latest run results.
+`POST /coding-agent/v2/prompts` request:
+- `input` (required)
+- `chat_session_id` (optional)
+- `model_id` (optional)
+- `client_message_id` (optional)
 
-## Latest Continuity + Lock Reconciliation Updates (2026-02-23)
-- Fixed terminal lock/event ordering on runtime failure paths:
-  - `run.failed` SSE is now emitted after lock clear reconciliation, matching completed/cancelled/paused terminal ordering.
-- Hardened orchestrator terminal reconciliation:
-  - when terminal event-log insertion hits `(run_id, seq)` conflicts, run row status is now reconciled from terminal event state,
-  - stale `queued` rows with persisted `run.failed` terminal events are auto-corrected to terminal run status.
-- Added terminal snapshot lock reconciliation:
-  - replay-tail terminal snapshot emission now also clears stale `active_coding_run_id` locks for already-terminal runs.
-- Added post-terminal event guard:
-  - once terminal is persisted, orchestrator ignores late provider events to prevent terminal-state mutation.
-- Stabilized stream DB/session binding:
-  - stream route detached sessions now bind to the request DB engine (not global default engine),
-  - test/request-scoped streaming path persists event-log rows directly while avoiding detached-runner DB deadlocks.
-- Frontend finalize-after-run hardening:
-  - preview re-ensure now retries transient `CODING_AGENT_RUN_ACTIVE` for the just-finished run instead of surfacing a false lock error to users.
-- Refactor for file-size guardrail:
-  - extracted queue/dispatch responsibilities into `published_app_coding_run_orchestrator_queue.py`,
-  - `published_app_coding_run_orchestrator.py` now stays below 800 lines.
+Response union:
+- `submission_status = "started"` with `run`
+- `submission_status = "queued"` with `active_run_id` and `queue_item`
 
-## Latest Detached Runner Async-Bind + Stream Reliability Fix (2026-02-23)
-- Fixed detached orchestrator/session binding bug that could bind `async_sessionmaker` to a sync SQLAlchemy `Engine`:
-  - root cause was using `.engine`/`get_bind()` outputs that can resolve to sync engine types,
-  - impact in production path: runner startup failures (`AsyncEngine expected, got Engine(...)`) and non-terminal stream closures.
-- Orchestrator now resolves detached session bind strictly from async bind types (`AsyncEngine` / `AsyncConnection`) and ignores sync binds.
-- Coding-agent stream route now resolves detached async bind via the same async-only rule and fail-safes to request-scoped streaming if async bind is unavailable.
-- Added explicit sqlite/test harness isolation:
-  - create-run route skips detached runner startup when stream execution is request-scoped (sqlite or pytest),
-  - prevents in-memory sqlite cross-test instability from detached background runner tasks while preserving production detached-run behavior.
-- Added regression tests for async-bind selection in:
-  - `backend/tests/coding_agent_api/test_orchestrator_reliability_flow.py`
-- Live Supabase reproduction after fix confirms:
-  - detached replay/tail path starts normally,
-  - terminal `run.failed` now carries concrete provider diagnostics (for example OpenCode model-not-found) instead of generic `run failed`.
+## Backend Runtime Architecture
 
-## Latest OpenCode-First + Durable Chat History Updates (2026-02-19)
-- `POST /admin/apps/{app_id}/coding-agent/runs` now accepts optional `chat_session_id`; request `engine` is optional and resolves from backend policy.
-- Engine policy is backend-authoritative:
-  - default: `APPS_CODING_AGENT_DEFAULT_ENGINE=opencode`,
-  - native allowed only when `APPS_CODING_AGENT_NATIVE_ENABLED=1`,
-  - explicit native requests return deterministic `400` `CODING_AGENT_ENGINE_UNAVAILABLE` when disabled.
-- New chat history APIs are available:
-  - `GET /admin/apps/{app_id}/coding-agent/chat-sessions`
-  - `GET /admin/apps/{app_id}/coding-agent/chat-sessions/{session_id}`
-- New persisted storage tables:
-  - `published_app_coding_chat_sessions`
-  - `published_app_coding_chat_messages`
-- Run creation now builds effective history from persisted turns (session-scoped), persists user messages immediately, and persists assistant messages on terminal stream events.
-- OpenCode prompt construction now includes bounded prior user/assistant turns via a dedicated prompt-history formatter so context continuity works across fresh OpenCode session bootstraps.
-- Frontend builder chat no longer exposes an engine dropdown; engine is resolved from `NEXT_PUBLIC_APPS_CODING_AGENT_ENGINE` (default `opencode`).
+### 1) Run Monitor (`published_app_coding_run_monitor.py`)
 
-## Latest OpenCode Updates (2026-02-19)
-- Official OpenCode mode now streams from `/global/event` in real time (with snapshot polling fallback), so assistant output is emitted incrementally instead of waiting for block-style completion.
-- Tool timeline translation was hardened so early tool parts are no longer dropped before assistant-role metadata arrives; `tool.started` / `tool.completed` / `tool.failed` now surface more reliably (not only occasional `glob`).
-- Incremental text handling now tracks part offsets and filters reasoning/thought parts from user-visible assistant deltas, preventing noisy or duplicated text.
-- Terminal/error handling was tightened:
-  - keep fail-closed behavior for true assistant/session failures,
-  - avoid false terminal failures from recoverable intermediate tool-step errors when a later assistant turn succeeds.
-- Official run start path prefers `POST /session/{id}/prompt_async` to avoid blocking and allow stream attachment earlier; fallback to legacy `POST /session/{id}/message` remains.
-- Live integration/test coverage was expanded:
-  - added unit tests for global-event streaming + tool events + reasoning suppression,
-  - retained and improved live roundtrip and live filesystem-edit tests.
+Responsibilities:
+- Single monitor task per run in-process
+- PostgreSQL advisory lock claim per `run_id` (when on PostgreSQL)
+- Consume OpenCode-mapped runtime events
+- Fan out mapped events to live SSE subscribers
+- Terminalize fail-closed if stream ends without terminal event
+- Dispatch next queued prompt after terminal completion
 
-## Latest Sandbox + Draft Sync Updates (2026-02-19)
-- OpenCode sandbox mode now runs against sandbox-controller-scoped sessions and supports per-sandbox OpenCode process routing in the local dev shim, aligning OpenCode workspace root with the active draft sandbox.
-- Coding run creation now refreshes from active builder sandbox state before execution, reducing stale template-base runs.
-- Snapshot-to-draft persistence now sanitizes generated artifacts so build outputs are not saved as source files.
-  - Filtered examples: `dist/`, `.vite/`, `.turbo/`, `.cache/`, `.parcel-cache/`, `.npm/`, `.pnpm-store/`, `.yarn/`, `*.tsbuildinfo`, `.eslintcache`, `.stylelintcache`.
-- Builder blocked path policy was expanded to include these generated directories, reducing accidental artifact persistence and draft file-count inflation.
-- OpenCode completion semantics now support recovered edit flows after patch mismatches:
-  - default remains fail-closed when `apply_patch` failures are not followed by a successful follow-up edit,
-  - `apply_patch` success detection is tolerant to broader successful completion payload shapes (not only `ok + applied_files`),
-  - strict fail-closed behavior is policy-tunable with `APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH` (default `1`).
-- OpenCode patch auto-verification defaults on for OpenCode runs and can fail the tool result when verification commands fail.
-- Draft-dev controller SSE stream handling is hardened by default (read timeout disabled unless explicitly configured), reducing mid-run stream disconnects.
-- Current known behavior: assistant identity text can still reflect underlying OpenCode persona unless explicitly overridden by upstream prompt/response policy.
+Design notes:
+- No DB event replay table
+- No seq conflict reconciliation layer
+- SSE `seq` is connection-local and assigned per stream response
 
-## Latest Selected-Agent Integration Contract Updates (2026-02-19)
-- Added builder endpoint:
-  - `GET /admin/apps/{app_id}/builder/agent-contract`
-- New backend contract builder now resolves the app-selected runtime agent and returns:
-  - selected agent summary,
-  - resolved tool contracts (input/output schemas),
-  - unresolved tool reference diagnostics,
-  - standardized optional UI hint metadata sourced from `x-ui` / `x_ui`.
-- UI-hint standard is explicitly optional and normalized around:
-  - `x-ui` key,
-  - supported kinds: `chart`, `table`, `stat`.
-- Coding-agent run creation now injects selected-agent contract data into run context:
-  - `input_params.context.selected_agent_contract`
-- Added coding-agent function tool:
-  - `coding_agent_get_agent_integration_contract`
-  - allows the coding runtime to fetch the latest selected-agent contract during implementation tasks.
-- Added compact contract summary tool:
-  - `coding_agent_describe_selected_agent_contract`
-  - returns a bounded summary (agent metadata, resolved tools, runtime readiness, summarized input/output schema fields, optional unresolved refs).
-- Coding-agent profile instructions now explicitly direct use of the contract tool when implementing runtime-agent integrations.
-- Removed deterministic keyword-intent contract guard from run creation.
-  - Contract retrieval is tool-driven (agent decides when to call contract tools) rather than forced by prompt keyword matching.
-  - Selected-agent contract is still injected in run context/system message as baseline context.
-- Added backend test coverage for tool-based retrieval path:
-  - `backend/tests/coding_agent_api/test_agent_integration_contract_context.py`
-  - validates compact summary output shape, schema truncation behavior, and optional unresolved-ref payload.
+### 2) Queue Service (`published_app_coding_queue_service.py`)
 
-## Latest OpenCode Custom-Tool Bootstrap Updates (2026-02-21)
-- Removed OpenCode-specific MCP contract tool registration path from runtime startup.
-  - OpenCode startup no longer posts `/mcp` for selected-agent contract tooling.
-  - OpenCode-specific MCP env surface was removed from active run path.
-- Introduced canonical project-local OpenCode custom-tool bootstrap source:
-  - `backend/app/templates/published_app_bootstrap/opencode/.opencode/package.json`
-  - `backend/app/templates/published_app_bootstrap/opencode/.opencode/tools/read_agent_context.ts`
-- Template loader now overlays bootstrap files into all template outputs (`build_template_files`) so new app drafts include custom tools by default.
-- OpenCode run startup now performs fail-closed workspace seeding before OpenCode session start:
-  - seeds `.opencode/*` tool files (self-heal for legacy drafts),
-  - writes run-scoped selected-agent contract context to `.cache/opencode/selected_agent_contract.json`,
-  - fails run startup if bootstrap/context seeding fails (sandbox and host modes).
-- OpenCode custom-tool surface is now unified to one tool name:
-  - `read_agent_context` (replaces prior two-file OpenCode custom-tool split).
-- OpenCode prompt guidance now always includes contract-tool instructions (no MCP availability gating).
-- Added/updated OpenCode client test coverage for:
-  - no `/mcp` calls in official mode start path,
-  - workspace bootstrap seeding,
-  - sandbox-mode fail-closed behavior on seed write failures.
+Responsibilities:
+- Submit prompt (start immediately if idle, queue if active)
+- List queue
+- Remove queued item
+- Dispatch next queued prompt after terminal run
 
-## Latest Single-Sandbox Staged Runs + Snapshot Revision Store (2026-02-22)
-- Hard cutover to single sandbox topology for coding runs:
-  - coding-agent runs now reuse the active draft preview sandbox session,
-  - OpenCode executes in stage workspace (`.talmudpedia/stage/<run_id>/workspace`) inside that same sandbox.
-- Stage-to-live promotion flow is now first class:
-  - run edits happen in stage workspace only,
-  - live workspace is promoted after successful run finalization and validation.
-- Builder write safety is enforced while runs are active:
-  - draft-dev session now carries active run lock metadata (`active_coding_run_id`, lock timestamps),
-  - write paths return deterministic conflict behavior when locked.
-- Run creation now supports idempotent submit keys:
-  - `client_message_id` is accepted on `POST /admin/apps/{app_id}/coding-agent/runs`,
-  - duplicate queued dispatch behavior is prevented at create-run boundary.
-- Revision persistence moved to snapshot manifest + content-addressed blobs:
-  - manifests map `path -> blob_hash`,
-  - blobs are stored under existing bundle bucket infra (`apps/revision-blobs/sha256/<hash>`),
-  - restore is direct manifest materialization (no replay chain).
-- OpenCode run-sandbox legacy path removed:
-  - deleted `published_app_coding_run_sandbox_service.py`,
-  - removed coding-run sandbox model surface and `coding_run_sandbox_*` context branches.
+Queue behavior:
+- DB durable queue table is retained (`published_app_coding_prompt_queue`)
+- Serial dispatch is scoped by chat session
 
-## Latest Run-Terminal Stream Finalization Fix (2026-02-22)
-- Fixed OpenCode engine terminal handling to stop consuming upstream events immediately after first terminal event (`run.completed` or `run.failed`).
-- Root cause addressed: terminal events were detected but the engine loop continued reading provider events, which could keep runtime streams open if upstream connections did not close promptly.
-- Impact: builder coding-agent runs now finalize reliably after terminal output; UI run state can clear without requiring manual stop/cancel fallback.
-- Runtime stream loop is now also terminal-aware:
-  - when engine emits terminal events, runtime stops waiting for additional engine events and closes the engine iterator,
-  - runtime force-persists terminal status (`completed`/`failed`) if engine emitted terminal events but did not persist run status before hanging.
-- Official OpenCode `/global/event` streaming now supports settle-based completion (assistant text + no running tools) even when explicit `session.idle` is missing, reducing long-running non-terminal stream hangs.
+### 3) Runtime (`published_app_coding_agent_runtime.py`)
 
-## Latest Sandbox Start Timeout Fixes (2026-02-19)
-- Draft-dev runtime client now uses a dedicated timeout for OpenCode run bootstrap calls:
-  - env: `APPS_DRAFT_DEV_CONTROLLER_OPENCODE_START_TIMEOUT_SECONDS`
-  - default behavior: max(`APPS_DRAFT_DEV_CONTROLLER_TIMEOUT_SECONDS`, `30s`).
-- This avoids false client-side timeout on `/internal/sandbox-controller/sessions/{sandbox_id}/opencode/start` during slower OpenCode startup phases.
-- Draft-dev runtime client now reports exception class names when timeout/transport exceptions have empty message text (prevents blank `Draft dev controller request failed:` errors).
+Key updates:
+- OpenCode-only execution (`execution_engine = "opencode"`)
+- Native engine path removed
+- Cancellation terminalizes run immediately and releases draft lock
+- Checkpoint and restore flow preserved
 
-## Latest Tool Transparency + Builder Task/Queue/Shimmer Updates (2026-02-19)
-- Added explicit coding-agent capabilities API:
-  - `GET /admin/apps/{app_id}/coding-agent/capabilities`
-- Capabilities payload is backend-policy + registry derived and read-only:
-  - `default_engine` (`native`/`opencode`) from backend policy.
-  - `native_enabled` policy flag.
-  - `native_tools` + `native_tool_count` from `CODING_AGENT_TOOL_SPECS` (`name`, `slug`, `function_name`).
-  - `opencode_policy` transparency summary:
-    - tooling delegated to upstream OpenCode,
-    - repo-local bootstrap/custom-tools configured,
-    - workspace permission model based on project-local custom tools + context file.
-- Builder chat frontend now exposes capabilities summary in-panel so users can see the effective tool-access policy without guessing.
-- Builder chat run orchestration now supports FIFO in-memory prompt queueing:
-  - prompts submitted while a run is active are queued,
-  - queued items can be removed individually,
-  - terminal run states auto-dequeue the next item.
-- Stop behavior now performs end-to-end cancellation:
-  - backend cancel endpoint call (`POST /coding-agent/runs/{run_id}/cancel`),
-  - local stream reader cancellation,
-  - queue is preserved and continues with next queued prompt.
-- Builder chat tool timeline migrated to AI Elements `Task` presentation:
-  - normalized tool intent text,
-  - path chip extraction from tool payload (`path`, `filePath`, `from_path`, `to_path`),
-  - active row shimmer while tool is running.
-- Builder chat now uses AI Elements `Queue` for pending prompts and `Shimmer` for active-step rendering.
+### 4) Streaming (`published_app_coding_agent_runtime_streaming.py`)
 
-## Historical: Chat-Scoped Sandbox Reuse + Timing Telemetry (Superseded 2026-02-22)
-- Note: this section is preserved as historical context and is superseded by the single-sandbox staged-run model above.
-- Added chat-scoped sandbox reuse policy for coding-agent runs:
-  - run context now carries `sandbox_scope_key` derived from `chat_session_id` when enabled,
-  - sandbox provisioning can reuse a stable controller session id (`chat-{chat_session_id}`) across runs.
-- Added keep-warm lifecycle behavior for reusable chat-scoped sandboxes:
-  - completed/cancelled/paused runs can refresh sandbox TTL instead of always hard-stopping the sandbox,
-  - error-terminal runs still stop/fail closed.
-- Added opportunistic TTL reaping for expired coding-run sandbox sessions during provisioning.
-- Added structured timing metrics persisted in run context under `input_params.context.timing_metrics_ms`:
-  - `create_run`,
-  - `create_run_api`,
-  - `sandbox_start`,
-  - `opencode_start`,
-  - `first_token`.
-- Added runtime timing logs (`CODING_AGENT_TIMING ...`) so slow phases can be measured in production traces.
+Key updates:
+- Assistant deltas are passed through chunk-by-chunk
+- No assistant-delta coalescing in backend stream layer
+- Terminal path persists assistant message and releases lock
+- Checkpoint promotion remains on successful terminal runs with write-tool activity
 
-## OpenCode Validation Snapshot
-- `cd backend && PYTHONPATH=. pytest tests/opencode_server_client -q` -> pass (`19 passed, 2 skipped`).
-- `cd backend && OPENCODE_LIVE_TEST=1 OPENCODE_LIVE_FULL_TASK=1 APPS_CODING_AGENT_OPENCODE_BASE_URL=http://127.0.0.1:8788 OPENCODE_LIVE_MODEL_ID=opencode/gpt-5-nano PYTHONPATH=. pytest tests/opencode_server_client/test_opencode_server_client_live.py -q` -> pass (`2 passed`).
-- `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py -q` -> pass (`24 passed`).
+## Removed Components
 
-## Decision Record Preserved by This Merge
-- Keep platform runtime primitives as source of truth.
-- Keep coding-agent API/SSE contract as the stable external interface.
-- Keep run-scoped model pinning and tool validation semantics.
-- Keep OpenCode as default, with env-gated native fallback and fail-closed execution/error contracts.
+Deleted backend modules:
+- `published_app_coding_run_orchestrator.py`
+- `published_app_coding_run_orchestrator_queue.py`
+- `published_app_coding_agent_engines/native_engine.py`
+- `published_app_coding_agent_capabilities.py`
+
+Removed DB model usage:
+- `published_app_coding_run_events` (event replay table)
+- `agent_runs` runner lease/cancel columns (`runner_owner_id`, `runner_lease_expires_at`, `runner_heartbeat_at`, `is_cancelling`)
+- `published_app_draft_dev_sessions.active_coding_run_client_message_id`
+
+## Migration
+
+Added migration:
+- `backend/alembic/versions/c2f7a9d8e1b4_coding_agent_v2_hard_cut_drop_orchestration.py`
+
+Upgrade behavior:
+- Terminalize in-flight coding-agent runs (`queued`/`running` -> `failed`)
+- Clear draft run locks
+- Drop orchestration artifacts and obsolete columns
+- Ensure queue dispatch index `(chat_session_id, status, position)`
+- Normalize coding-agent execution engine data/default to `opencode`
+
+Downgrade behavior:
+- Recreate dropped schema objects/columns (schema-only restore)
+
+## Frontend Contract Changes
+
+Implemented frontend service updates:
+- Service endpoints switched to `/coding-agent/v2/*`
+- `submitCodingAgentPrompt` now consumes started/queued union response
+- Engine resolver and engine selection path removed from send flow
+- Stream call no longer accepts replay params
+- Stream rendering now handles assistant chunks without frontend coalescing
+
+## Test Coverage (v2)
+
+Backend v2 test file:
+- `backend/tests/coding_agent_api/test_v2_api.py`
+
+Covered scenarios:
+- Prompt submission started vs queued
+- Queue dispatch after terminal run without attached stream
+- Per-chunk assistant delta emission at stream layer
+- Cancel terminalization and queue unblocking
+- Legacy route removal (`/coding-agent/runs` returns 404)
+
+Retained engine-level test file:
+- `backend/tests/coding_agent_api/test_opencode_apply_patch_recovery.py`
+
+## Operational Expectations
+
+Monitor/log focus for v2:
+- Runs stuck in non-terminal states
+- Queue entries not advancing after terminal runs
+- Draft lock not cleared after terminal paths
+- Stream disconnect/error rates

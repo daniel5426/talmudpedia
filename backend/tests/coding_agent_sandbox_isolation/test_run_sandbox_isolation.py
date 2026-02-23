@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
 from uuid import UUID
 
 import pytest
@@ -8,7 +8,7 @@ import pytest
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp
 from app.services.published_app_coding_agent_engines.base import EngineStreamEvent
-from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
+from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
@@ -50,7 +50,7 @@ async def test_stream_fails_closed_when_run_has_no_preview_sandbox_context(clien
         surface=CODING_AGENT_SURFACE,
         published_app_id=UUID(app_id),
         base_revision_id=None,
-        execution_engine="native",
+        execution_engine="opencode",
     )
     db_session.add(run)
     await db_session.commit()
@@ -67,15 +67,21 @@ async def test_stream_fails_closed_when_run_has_no_preview_sandbox_context(clien
 
     async with client.stream(
         "GET",
-        f"/admin/apps/{app_id}/coding-agent/runs/{run.id}/stream",
+        f"/admin/apps/{app_id}/coding-agent/v2/runs/{run.id}/stream",
         headers=headers,
     ) as stream_resp:
         assert stream_resp.status_code == 200
         body = (await stream_resp.aread()).decode("utf-8")
         assert "CODING_AGENT_SANDBOX_REQUIRED" in body
 
+    # Monitor terminalization happens in a detached DB session; allow a short settle window.
     persisted = await db_session.get(AgentRun, run.id)
     assert persisted is not None
+    for _ in range(20):
+        await db_session.refresh(persisted)
+        if persisted.status == RunStatus.failed:
+            break
+        await asyncio.sleep(0.05)
     assert persisted.status == RunStatus.failed
 
 
@@ -101,7 +107,7 @@ async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, 
         surface=CODING_AGENT_SURFACE,
         published_app_id=UUID(app_id),
         base_revision_id=UUID(draft_revision_id),
-        execution_engine="native",
+        execution_engine="opencode",
     )
     db_session.add(run)
     await db_session.commit()
@@ -117,12 +123,12 @@ async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, 
             payload={"content": "Warm sandbox response"},
             diagnostics=[],
         )
-        ctx.run.status = RunStatus.completed
-        ctx.run.output_result = {"state": {"last_agent_output": "Warm sandbox response"}}
-        ctx.run.completed_at = datetime.now(timezone.utc)
-        await self._executor.db.commit()
-        if False:  # pragma: no cover
-            yield
+        yield EngineStreamEvent(
+            event="run.completed",
+            stage="run",
+            payload={},
+            diagnostics=[],
+        )
 
     async def _skip_auto_apply(self, run):
         return None
@@ -132,7 +138,7 @@ async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, 
         "_recover_or_bootstrap_run_sandbox_context",
         _fail_if_bootstrap,
     )
-    monkeypatch.setattr(NativePublishedAppCodingAgentEngine, "stream", _fake_stream)
+    monkeypatch.setattr(OpenCodePublishedAppCodingAgentEngine, "stream", _fake_stream)
     monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _skip_auto_apply)
 
     app = await db_session.get(PublishedApp, UUID(app_id))

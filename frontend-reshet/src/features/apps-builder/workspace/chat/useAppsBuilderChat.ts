@@ -3,12 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   modelsService,
   publishedAppsService,
-  resolveAppsCodingAgentEngine,
 } from "@/services";
 import type {
-  CodingAgentCapabilities,
   CodingAgentChatSession,
-  CodingAgentExecutionEngine,
+  CodingAgentPromptSubmissionResponse,
   CodingAgentPromptQueueItem,
   LogicalModel,
   PublishedAppRevision,
@@ -18,7 +16,6 @@ import { TimelineItem } from "./chat-model";
 import {
   parseEngineUnavailableDetail,
   parseModelUnavailableDetail,
-  parseRevisionConflict,
   parseRunActiveDetail,
   parseTerminalRunStatus,
   type TerminalRunStatus,
@@ -31,7 +28,6 @@ export type { QueuedPrompt };
 
 export type UseAppsBuilderChatOptions = {
   appId: string;
-  currentRevisionId: string | null;
   activeTab: "preview" | "config";
   ensureDraftDevSession: () => Promise<void>;
   refreshStateSilently: () => Promise<void>;
@@ -57,10 +53,8 @@ export type UseAppsBuilderChatResult = {
   isModelSelectorOpen: boolean;
   setIsModelSelectorOpen: (next: boolean) => void;
   selectedRunModelLabel: string;
-  resolvedRunEngine: CodingAgentExecutionEngine;
   queuedPrompts: QueuedPrompt[];
   removeQueuedPrompt: (promptId: string) => void;
-  capabilities: CodingAgentCapabilities | null;
   sendBuilderChat: (rawInput: string) => Promise<void>;
   stopCurrentRun: () => void;
   startNewChat: () => void;
@@ -70,8 +64,6 @@ export type UseAppsBuilderChatResult = {
 
 type ConsumeRunOptions = {
   runId: string;
-  fromSeq?: number;
-  replay?: boolean;
 };
 
 type RestoreSessionOptions = {
@@ -93,7 +85,6 @@ function createClientMessageId(): string {
 
 export function useAppsBuilderChat({
   appId,
-  currentRevisionId,
   activeTab,
   ensureDraftDevSession,
   refreshStateSilently,
@@ -112,7 +103,6 @@ export function useAppsBuilderChat({
   const [chatModels, setChatModels] = useState<LogicalModel[]>([]);
   const [selectedRunModelId, setSelectedRunModelId] = useState<string | null>(null);
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const [capabilities, setCapabilities] = useState<CodingAgentCapabilities | null>(null);
 
   const {
     timeline,
@@ -176,7 +166,6 @@ export function useAppsBuilderChat({
     };
   }, [detachActiveStream]);
 
-  const resolvedRunEngine = useMemo(() => resolveAppsCodingAgentEngine(), []);
   const selectedRunModelLabel = useMemo(() => {
     if (!selectedRunModelId) return "Auto";
     const match = chatModels.find((model) => model.id === selectedRunModelId);
@@ -211,15 +200,6 @@ export function useAppsBuilderChat({
       return [];
     }
   }, [appId, onError]);
-
-  const loadCapabilities = useCallback(async () => {
-    try {
-      const response = await publishedAppsService.getCodingAgentCapabilities(appId);
-      setCapabilities(response);
-    } catch {
-      setCapabilities(null);
-    }
-  }, [appId]);
 
   const refreshQueue = useCallback(
     async (sessionId: string | null | undefined) => {
@@ -256,12 +236,10 @@ export function useAppsBuilderChat({
     [appId],
   );
 
-  const consumeRunStream = useCallback(async ({ runId, fromSeq = 1, replay = true }: ConsumeRunOptions) => {
+  const consumeRunStream = useCallback(async ({ runId }: ConsumeRunOptions) => {
     await consumeRunStreamImpl({
       appId,
       runId,
-      fromSeq,
-      replay,
       activeTab,
       activeChatSessionIdRef,
       setIsSending,
@@ -313,42 +291,33 @@ export function useAppsBuilderChat({
 
     const enqueuePayload = {
       input: promptText,
-      base_revision_id: currentRevisionId || undefined,
       model_id: selectedRunModelId,
-      engine: resolvedRunEngine,
       chat_session_id: sessionIdHint,
       client_message_id: clientMessageId,
-      enqueue_if_active: true,
     };
 
     try {
-      const run = await publishedAppsService.createCodingAgentRun(appId, enqueuePayload);
+      const submission = await publishedAppsService.submitCodingAgentPrompt(appId, enqueuePayload);
+      if (submission.submission_status === "queued") {
+        await refreshQueue(sessionIdHint || null);
+        if (!isSendingRef.current) {
+          seenRunEventKeysRef.current = new Set();
+          await consumeRunStream({ runId: submission.active_run_id });
+        }
+        return;
+      }
+
+      const run = submission.run;
       if (run.chat_session_id) {
         setActiveChatSessionId(run.chat_session_id);
       }
       await refreshQueue(run.chat_session_id || sessionIdHint || null);
-
       const terminal = parseTerminalRunStatus(run.status);
       if (!terminal && !isSendingRef.current) {
         seenRunEventKeysRef.current = new Set();
-        await consumeRunStream({ runId: run.run_id, fromSeq: 1, replay: true });
+        await consumeRunStream({ runId: run.run_id });
       }
     } catch (err: any) {
-      const conflict = parseRunActiveDetail(err?.message);
-      if (conflict) {
-        if (conflict.chat_session_id) {
-          setActiveChatSessionId(conflict.chat_session_id);
-        }
-        await refreshQueue(conflict.chat_session_id || sessionIdHint || null);
-        if (!isSendingRef.current) {
-          await consumeRunStream({
-            runId: conflict.active_run_id,
-            fromSeq: conflict.next_replay_seq || 1,
-            replay: true,
-          });
-        }
-        return;
-      }
       queuedTimelineByClientMessageIdRef.current.delete(clientMessageId);
       updateUserTimelineDelivery({ timelineId: userTimelineId, status: "failed" });
       onError(err instanceof Error ? err.message : "Failed to enqueue prompt");
@@ -356,10 +325,8 @@ export function useAppsBuilderChat({
   }, [
     appId,
     consumeRunStream,
-    currentRevisionId,
     onError,
     refreshQueue,
-    resolvedRunEngine,
     selectedRunModelId,
     queuedTimelineByClientMessageIdRef,
     updateUserTimelineDelivery,
@@ -427,7 +394,7 @@ export function useAppsBuilderChat({
       }
 
       seenRunEventKeysRef.current = new Set();
-      await consumeRunStream({ runId: runIdToAttach, fromSeq: 1, replay: true });
+      await consumeRunStream({ runId: runIdToAttach });
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to load coding-agent chat session");
     }
@@ -457,21 +424,18 @@ export function useAppsBuilderChat({
     setActiveThinkingSummary("Thinking...");
     let streamStarted = false;
 
-    const createRun = async (baseRevisionId?: string, enqueueIfActive = false) =>
-      publishedAppsService.createCodingAgentRun(appId, {
+    const submitPrompt = () =>
+      publishedAppsService.submitCodingAgentPrompt(appId, {
         input: promptText,
-        base_revision_id: baseRevisionId,
         model_id: selectedRunModelId,
-        engine: resolvedRunEngine,
         chat_session_id: activeChatSessionIdRef.current || undefined,
         client_message_id: clientMessageId,
-        enqueue_if_active: enqueueIfActive,
       });
 
     try {
-      let run;
+      let submission: CodingAgentPromptSubmissionResponse;
       try {
-        run = await createRun(currentRevisionId || undefined, false);
+        submission = await submitPrompt();
       } catch (err: any) {
         const engineUnavailable = parseEngineUnavailableDetail(err?.message);
         if (engineUnavailable) {
@@ -485,40 +449,21 @@ export function useAppsBuilderChat({
           onError(modelUnavailable.message);
           return;
         }
-        const revisionConflict = parseRevisionConflict(err?.message);
-        if (revisionConflict) {
-          const latestRevisionId = String(revisionConflict.latest_revision_id || "").trim();
-          setActiveThinkingSummary("Draft changed. Refreshing and retrying...");
-          await refreshStateSilently();
-          run = await createRun(latestRevisionId || undefined, false);
-          if (latestRevisionId) {
-            onSetCurrentRevisionId(latestRevisionId);
-          }
-        } else {
-          const activeConflict = parseRunActiveDetail(err?.message);
-          if (!activeConflict) {
-            throw err;
-          }
+        throw err;
+      }
 
-          await enqueuePrompt({
-            input: promptText,
-            clientMessageId,
-            userTimelineId,
-          });
+      if (submission.submission_status === "queued") {
+        updateUserTimelineDelivery({ timelineId: userTimelineId, status: "queued" });
+        await refreshQueue(activeChatSessionIdRef.current);
+        if (!isSendingRef.current) {
           seenRunEventKeysRef.current = new Set();
           streamStarted = true;
-          await consumeRunStream({
-            runId: activeConflict.active_run_id,
-            fromSeq: activeConflict.next_replay_seq || 1,
-            replay: true,
-          });
-          return;
+          await consumeRunStream({ runId: submission.active_run_id });
         }
-      }
-
-      if (!run) {
         return;
       }
+
+      const run = submission.run;
 
       if (run.chat_session_id) {
         setActiveChatSessionId(run.chat_session_id);
@@ -535,7 +480,7 @@ export function useAppsBuilderChat({
 
       seenRunEventKeysRef.current = new Set();
       streamStarted = true;
-      await consumeRunStream({ runId: run.run_id, fromSeq: 1, replay: true });
+      await consumeRunStream({ runId: run.run_id });
     } catch (err) {
       updateUserTimelineDelivery({ timelineId: userTimelineId, status: "failed" });
       onError(err instanceof Error ? err.message : "Failed to run coding agent");
@@ -551,14 +496,9 @@ export function useAppsBuilderChat({
   }, [
     appId,
     consumeRunStream,
-    currentRevisionId,
-    enqueuePrompt,
     onError,
-    onSetCurrentRevisionId,
     refreshQueue,
-    refreshStateSilently,
     requestCancelForRun,
-    resolvedRunEngine,
     selectedRunModelId,
     queuedTimelineByClientMessageIdRef,
     updateUserTimelineDelivery,
@@ -596,12 +536,11 @@ export function useAppsBuilderChat({
 
     void Promise.all([
       loadChatModels(),
-      loadCapabilities(),
       loadChatSessions(),
-    ]).then(async ([, , sessions]) => {
+    ]).then(async ([, sessions]) => {
       await restoreLastSessionIfPossible(sessions as CodingAgentChatSession[]);
     });
-  }, [loadCapabilities, loadChatModels, loadChatSessions, restoreLastSessionIfPossible]);
+  }, [loadChatModels, loadChatSessions, restoreLastSessionIfPossible]);
 
   const resumeActiveRun = useCallback(async (targetRunId: string) => {
     const runId = String(targetRunId || "").trim();
@@ -780,10 +719,8 @@ export function useAppsBuilderChat({
     isModelSelectorOpen,
     setIsModelSelectorOpen,
     selectedRunModelLabel,
-    resolvedRunEngine,
     queuedPrompts,
     removeQueuedPrompt,
-    capabilities,
     sendBuilderChat,
     stopCurrentRun,
     startNewChat,

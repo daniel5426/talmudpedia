@@ -21,6 +21,7 @@ backend/app/api/
 backend/app/api/dependencies.py
 backend/app/api/routers/
 backend/app/api/routers/sandbox_controller_dev_shim.py
+backend/app/api/routers/published_apps_admin_routes_coding_agent_v2.py
 backend/app/api/schemas/
 
 backend/app/core/
@@ -118,18 +119,16 @@ backend/app/services/published_app_draft_dev_runtime_client.py
 backend/app/services/published_app_draft_dev_patching.py
 backend/app/services/published_app_coding_chat_history_service.py
 backend/app/services/published_app_coding_agent_tools.py
-backend/app/services/published_app_coding_agent_capabilities.py
 backend/app/services/published_app_agent_integration_contract.py
 backend/app/services/published_app_coding_agent_profile.py
 backend/app/services/published_app_coding_agent_runtime.py
 backend/app/services/published_app_coding_agent_runtime_sandbox.py
 backend/app/services/published_app_coding_agent_runtime_checkpoints.py
 backend/app/services/published_app_coding_agent_runtime_streaming.py
-backend/app/services/published_app_coding_run_orchestrator.py
-backend/app/services/published_app_coding_run_orchestrator_queue.py
+backend/app/services/published_app_coding_run_monitor.py
+backend/app/services/published_app_coding_queue_service.py
 backend/app/services/published_app_revision_store.py
 backend/app/services/published_app_coding_agent_engines/base.py
-backend/app/services/published_app_coding_agent_engines/native_engine.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
 backend/app/services/published_app_coding_agent_engines/prompt_history.py
 backend/app/services/opencode_server_client.py

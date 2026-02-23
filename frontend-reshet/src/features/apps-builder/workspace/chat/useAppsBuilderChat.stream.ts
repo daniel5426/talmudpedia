@@ -10,8 +10,6 @@ type TerminalStatus = "completed" | "failed" | "cancelled" | "paused";
 type ConsumeRunStreamOptions = {
   appId: string;
   runId: string;
-  fromSeq?: number;
-  replay?: boolean;
   activeTab: "preview" | "config";
   activeChatSessionIdRef: MutableRefObject<string | null>;
   setIsSending: (next: boolean) => void;
@@ -47,14 +45,13 @@ type ConsumeRunStreamOptions = {
   ensureDraftDevSession: () => Promise<void>;
   loadChatSessions: () => Promise<unknown[]>;
   refreshQueue: (sessionId: string | null | undefined) => Promise<void>;
+  requestCancelForRun: (runId: string) => Promise<void>;
 };
 
 export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {
   const {
     appId,
     runId,
-    fromSeq = 1,
-    replay = true,
     activeTab,
     activeChatSessionIdRef,
     setIsSending,
@@ -79,6 +76,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     ensureDraftDevSession,
     loadChatSessions,
     refreshQueue,
+    requestCancelForRun,
   } = options;
 
   const normalizedRunId = String(runId || "").trim();
@@ -101,13 +99,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
   let shouldSuppressErrors = false;
 
   try {
-    const useDefaultStreamParams = fromSeq <= 1 && replay;
-    const response = useDefaultStreamParams
-      ? await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId)
-      : await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId, {
-          fromSeq,
-          replay,
-        });
+    const response = await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId);
     if (!response.ok) {
       let message = `Failed to stream coding-agent run (${response.status})`;
       try {
@@ -141,6 +133,8 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     let sawTerminalEvent = false;
     let sawInactivityTimeout = false;
     let sawMaxDurationTimeout = false;
+    let recoveryCancelAttempted = false;
+    let recoveryCancelConfirmed = false;
     let terminalStatus: TerminalStatus | null = null;
 
     const STALL_TIMEOUT_MS = resolvePositiveTimeoutMs(
@@ -155,47 +149,11 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       STALL_TIMEOUT_MS,
       resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS, 2000),
     );
-    const ASSISTANT_DELTA_FLUSH_MS = resolvePositiveTimeoutMs(
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS,
-      45,
-    );
-    const ASSISTANT_DELTA_FLUSH_CHARS = Math.max(
-      1,
-      Number.parseInt(
-        String(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS || "80"),
-        10,
-      ) || 80,
-    );
-
     const runStartedAt = Date.now();
     let lastEventAt = Date.now();
-    let lastAssistantFlushAt = Date.now();
-    let pendingAssistantDelta = "";
     let pendingRead:
       | Promise<{ ok: true; result: ReadableStreamReadResult<Uint8Array> } | { ok: false; error: unknown }>
       | null = null;
-
-    const flushAssistantDelta = (force = false) => {
-      if (!pendingAssistantDelta) {
-        return;
-      }
-      const now = Date.now();
-      const elapsedSinceFlush = now - lastAssistantFlushAt;
-      if (
-        !force &&
-        pendingAssistantDelta.length < ASSISTANT_DELTA_FLUSH_CHARS &&
-        elapsedSinceFlush < ASSISTANT_DELTA_FLUSH_MS
-      ) {
-        return;
-      }
-      assistantText += pendingAssistantDelta;
-      pendingAssistantDelta = "";
-      lastAssistantFlushAt = now;
-      if (assistantText.trim()) {
-        setActiveThinkingSummary("");
-        upsertAssistantTimeline(currentStreamId, assistantText);
-      }
-    };
 
     const readWithPollingTimeout = async (
       timeoutMs: number,
@@ -227,6 +185,23 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       return raced.result;
     };
 
+    const requestRecoveryCancel = async (): Promise<void> => {
+      if (pendingCancelRef.current || recoveryCancelAttempted) {
+        return;
+      }
+      recoveryCancelAttempted = true;
+      pendingCancelRef.current = true;
+      setIsStopping(true);
+      try {
+        await requestCancelForRun(normalizedRunId);
+        recoveryCancelConfirmed = true;
+      } catch (err) {
+        if (!intentionalAbortRef.current) {
+          onError(err instanceof Error ? err.message : "Failed to cancel stuck coding-agent run");
+        }
+      }
+    };
+
     while (true) {
       if (intentionalAbortRef.current) {
         sawTerminalEvent = true;
@@ -237,6 +212,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       if (now - runStartedAt > MAX_RUN_DURATION_MS) {
         sawMaxDurationTimeout = true;
         sawRunFailure = true;
+        await requestRecoveryCancel();
         if (typeof reader.cancel === "function") {
           void reader.cancel().catch(() => undefined);
         }
@@ -245,18 +221,15 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       if (now - lastEventAt > STALL_TIMEOUT_MS) {
         sawInactivityTimeout = true;
         sawRunFailure = true;
+        await requestRecoveryCancel();
         if (typeof reader.cancel === "function") {
           void reader.cancel().catch(() => undefined);
         }
         break;
       }
 
-      const pollTimeoutMs = pendingAssistantDelta
-        ? Math.max(10, Math.min(READ_POLL_TIMEOUT_MS, ASSISTANT_DELTA_FLUSH_MS))
-        : READ_POLL_TIMEOUT_MS;
-      const readResult = await readWithPollingTimeout(pollTimeoutMs);
+      const readResult = await readWithPollingTimeout(READ_POLL_TIMEOUT_MS);
       if (!readResult) {
-        flushAssistantDelta(false);
         continue;
       }
       const { done, value } = readResult;
@@ -287,12 +260,14 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         const payload = (parsed.payload || {}) as Record<string, unknown>;
 
         if (parsed.event === "assistant.delta" && payload.content) {
-          pendingAssistantDelta += String(payload.content);
-          flushAssistantDelta(false);
+          assistantText += String(payload.content);
+          if (assistantText.trim()) {
+            setActiveThinkingSummary("");
+            upsertAssistantTimeline(currentStreamId, assistantText);
+          }
           splitIndex = buffer.indexOf("\n\n");
           continue;
         }
-        flushAssistantDelta(true);
 
         if (parsed.event === "plan.updated") {
           const summary = String(payload.summary || "").trim();
@@ -395,15 +370,20 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       if (sawTerminalEvent) {
         break;
       }
-
-      flushAssistantDelta(false);
     }
-    flushAssistantDelta(true);
 
     if (sawMaxDurationTimeout && !intentionalAbortRef.current) {
-      onError("Coding-agent run exceeded maximum duration. The run was stopped to recover.");
+      onError(
+        recoveryCancelConfirmed
+          ? "Coding-agent run exceeded maximum duration. The run was stopped to recover."
+          : "Coding-agent run exceeded maximum duration and cancellation could not be confirmed.",
+      );
     } else if (sawInactivityTimeout && !intentionalAbortRef.current) {
-      onError("Coding-agent stream stalled before completion. The run was stopped to recover.");
+      onError(
+        recoveryCancelConfirmed
+          ? "Coding-agent stream stalled before completion. The run was stopped to recover."
+          : "Coding-agent stream stalled before completion and cancellation could not be confirmed.",
+      );
     } else if (!sawTerminalEvent && !intentionalAbortRef.current) {
       sawRunFailure = true;
       onError("Coding-agent stream ended before a terminal event.");

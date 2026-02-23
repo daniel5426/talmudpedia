@@ -51,7 +51,7 @@ import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "@/compon
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { CodingAgentCapabilities, CodingAgentChatSession, LogicalModel } from "@/services";
+import type { CodingAgentChatSession, LogicalModel } from "@/services";
 
 import {
   TimelineItem,
@@ -84,7 +84,6 @@ type AppsBuilderChatPanelProps = {
   onSelectModelId: (modelId: string | null) => void;
   queuedPrompts: QueuedPrompt[];
   onRemoveQueuedPrompt: (promptId: string) => void;
-  capabilities: CodingAgentCapabilities | null;
 };
 
 export function AppsBuilderChatPanel({
@@ -108,7 +107,6 @@ export function AppsBuilderChatPanel({
   onSelectModelId,
   queuedPrompts,
   onRemoveQueuedPrompt,
-  capabilities,
 }: AppsBuilderChatPanelProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const hasRunningTool = useMemo(

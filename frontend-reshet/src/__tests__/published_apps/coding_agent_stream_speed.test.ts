@@ -14,30 +14,12 @@ function buildSseFrame(payload: Record<string, unknown>): string {
 }
 
 describe("coding agent stream rendering speed", () => {
-  const originalFlushMs = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS;
-  const originalFlushChars = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS;
-
   beforeEach(() => {
     jest.clearAllMocks();
     (global as { TextDecoder?: typeof TextDecoder }).TextDecoder = TextDecoder;
   });
 
-  afterEach(() => {
-    if (originalFlushMs === undefined) {
-      delete process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS;
-    } else {
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS = originalFlushMs;
-    }
-    if (originalFlushChars === undefined) {
-      delete process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS;
-    } else {
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS = originalFlushChars;
-    }
-  });
-
-  it("batches assistant delta UI upserts during token bursts", async () => {
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS = "1000";
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS = "5";
+  it("renders assistant delta chunks without frontend coalescing", async () => {
 
     const sse = [
       buildSseFrame({
@@ -94,8 +76,6 @@ describe("coding agent stream rendering speed", () => {
     await consumeRunStream({
       appId: "app-1",
       runId: "run-1",
-      fromSeq: 1,
-      replay: true,
       activeTab: "config",
       activeChatSessionIdRef: { current: "session-1" },
       setIsSending: jest.fn(),
@@ -127,7 +107,7 @@ describe("coding agent stream rendering speed", () => {
       .filter((value) => typeof value === "string" && value.trim().length > 0);
     expect(nonEmptyErrors).toHaveLength(0);
     expect(upsertAssistantTimeline).toHaveBeenCalled();
-    expect(upsertAssistantTimeline.mock.calls.length).toBeLessThan(10);
+    expect(upsertAssistantTimeline.mock.calls.length).toBeGreaterThanOrEqual(10);
     const latestText = String(upsertAssistantTimeline.mock.calls.at(-1)?.[1] || "");
     expect(latestText).toBe("ABCDEFGHIJ");
   });

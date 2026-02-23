@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
-import logging
-import os
-import time
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
@@ -14,7 +10,13 @@ from app.services.published_app_coding_chat_history_service import PublishedAppC
 from app.services.published_app_coding_agent_engines.base import EngineRunContext
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 
-logger = logging.getLogger(__name__)
+_TERMINAL_EVENTS = {"run.completed", "run.failed", "run.cancelled", "run.paused"}
+_TERMINAL_RUN_STATUSES = {
+    RunStatus.completed.value,
+    RunStatus.failed.value,
+    RunStatus.cancelled.value,
+    RunStatus.paused.value,
+}
 
 
 class PublishedAppCodingAgentRuntimeStreamingMixin:
@@ -29,7 +31,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         payload: dict[str, Any] | None = None,
         diagnostics: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        data: dict[str, Any] = {
+        return {
             "event": event,
             "run_id": str(run_id),
             "app_id": str(app_id),
@@ -39,7 +41,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             "payload": payload or {},
             "diagnostics": diagnostics or [],
         }
-        return data
 
     @staticmethod
     def _coerce_assistant_text(value: Any) -> str | None:
@@ -49,23 +50,16 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         if isinstance(value, list):
             parts: list[str] = []
             for item in value:
-                if isinstance(item, str):
-                    text = item.strip()
-                    if text:
-                        parts.append(text)
-                    continue
-                if isinstance(item, dict):
-                    nested = PublishedAppCodingAgentRuntimeStreamingMixin._coerce_assistant_text(item)
-                    if nested:
-                        parts.append(nested)
+                nested = PublishedAppCodingAgentRuntimeStreamingMixin._coerce_assistant_text(item)
+                if nested:
+                    parts.append(nested)
             joined = " ".join(parts).strip()
             return joined or None
         if isinstance(value, dict):
             for key in ("content", "message", "text", "summary"):
-                candidate = value.get(key)
-                text = PublishedAppCodingAgentRuntimeStreamingMixin._coerce_assistant_text(candidate)
-                if text:
-                    return text
+                nested = PublishedAppCodingAgentRuntimeStreamingMixin._coerce_assistant_text(value.get(key))
+                if nested:
+                    return nested
         return None
 
     def _extract_assistant_text_from_output(self, output_result: Any) -> str | None:
@@ -93,7 +87,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 text = self._coerce_assistant_text(message.get("content"))
                 if text:
                     return text
-
         return None
 
     def _fallback_assistant_text(self, run: AgentRun) -> str:
@@ -107,38 +100,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 "Tell me what you want to build or fix."
             )
         return "I can help with code changes, debugging, and verification in this app workspace. Tell me your goal."
-
-    @staticmethod
-    def _stream_guardrail_seconds() -> tuple[float, float]:
-        inactivity_raw = (os.getenv("APPS_CODING_AGENT_STREAM_INACTIVITY_TIMEOUT_SECONDS") or "75").strip()
-        max_duration_raw = (os.getenv("APPS_CODING_AGENT_STREAM_MAX_DURATION_SECONDS") or "300").strip()
-        try:
-            inactivity_timeout = float(inactivity_raw)
-        except Exception:
-            inactivity_timeout = 75.0
-        try:
-            max_duration = float(max_duration_raw)
-        except Exception:
-            max_duration = 300.0
-        inactivity_timeout = max(10.0, inactivity_timeout)
-        max_duration = max(inactivity_timeout + 5.0, max_duration)
-        return inactivity_timeout, max_duration
-
-    @staticmethod
-    def _assistant_delta_coalescing_config() -> tuple[float, int]:
-        flush_ms_raw = (os.getenv("APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_MS") or "45").strip()
-        flush_chars_raw = (os.getenv("APPS_CODING_AGENT_STREAM_ASSISTANT_DELTA_FLUSH_CHARS") or "80").strip()
-        try:
-            flush_ms = float(flush_ms_raw)
-        except Exception:
-            flush_ms = 45.0
-        try:
-            flush_chars = int(flush_chars_raw)
-        except Exception:
-            flush_chars = 80
-        flush_seconds = max(0.01, flush_ms / 1000.0)
-        flush_char_threshold = max(1, flush_chars)
-        return flush_seconds, flush_char_threshold
 
     @staticmethod
     def _extract_chat_session_id(run: AgentRun) -> UUID | None:
@@ -179,8 +140,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         for candidate in (diagnostic_message, payload_message, run_message, fallback_message):
             if candidate:
                 return candidate
-        engine_name = self._normalize_execution_engine(str(run.execution_engine or ""))
-        return f"Coding-agent {engine_name} engine ended without a terminal status."
+        return "Coding-agent OpenCode engine ended without a terminal status."
 
     @staticmethod
     def _exception_message(exc: Exception) -> str:
@@ -224,17 +184,10 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             run = persistent_run
 
         seq = 1
-        assistant_delta_emitted = False
         assistant_chunks: list[str] = []
-        assistant_message_persisted = False
-        first_token_recorded = False
-        stream_started_at = time.monotonic()
-        saw_write_tool_event = False
         assistant_delta_events = 0
-        assistant_delta_flush_s, assistant_delta_flush_chars = self._assistant_delta_coalescing_config()
-        buffered_assistant_delta_parts: list[str] = []
-        buffered_assistant_delta_chars = 0
-        buffered_assistant_delta_started_at: float | None = None
+        assistant_message_persisted = False
+        saw_write_tool_event = False
 
         def emit(
             event: str,
@@ -254,33 +207,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             )
             seq += 1
             return envelope
-
-        def pending_assistant_delta_flush_wait_s() -> float | None:
-            if not buffered_assistant_delta_parts:
-                return None
-            if buffered_assistant_delta_chars >= assistant_delta_flush_chars:
-                return 0.0
-            if buffered_assistant_delta_started_at is None:
-                return assistant_delta_flush_s
-            elapsed = max(0.0, time.monotonic() - buffered_assistant_delta_started_at)
-            return max(0.0, assistant_delta_flush_s - elapsed)
-
-        def flush_buffered_assistant_delta(*, force: bool = False) -> dict[str, Any] | None:
-            nonlocal buffered_assistant_delta_parts
-            nonlocal buffered_assistant_delta_chars
-            nonlocal buffered_assistant_delta_started_at
-            if not buffered_assistant_delta_parts:
-                return None
-            wait_s = pending_assistant_delta_flush_wait_s()
-            if not force and wait_s is not None and wait_s > 0:
-                return None
-            combined = "".join(buffered_assistant_delta_parts)
-            buffered_assistant_delta_parts = []
-            buffered_assistant_delta_chars = 0
-            buffered_assistant_delta_started_at = None
-            if not combined:
-                return None
-            return emit("assistant.delta", "assistant", {"content": combined})
 
         async def persist_assistant_message_for_terminal(default_text: str | None = None) -> None:
             nonlocal assistant_message_persisted
@@ -319,16 +245,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         )
         yield emit("plan.updated", "plan", {"summary": "Coding-agent run started"})
 
-        def terminal_event_for_status(status_value: str) -> str:
-            normalized = str(status_value or "").strip().lower()
-            if normalized == RunStatus.completed.value:
-                return "run.completed"
-            if normalized == RunStatus.cancelled.value:
-                return "run.cancelled"
-            if normalized == RunStatus.paused.value:
-                return "run.paused"
-            return "run.failed"
-
         terminal_status = run.status.value if hasattr(run.status, "value") else str(run.status)
         if terminal_status in {
             RunStatus.completed.value,
@@ -337,65 +253,32 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             RunStatus.paused.value,
         }:
             if terminal_status == RunStatus.completed.value:
-                await finalize_sandbox("stopped")
                 assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
-                assistant_chunks.append(assistant_text)
-                yield emit("assistant.delta", "assistant", {"content": assistant_text})
+                if assistant_text:
+                    assistant_chunks.append(assistant_text)
+                    yield emit("assistant.delta", "assistant", {"content": assistant_text})
+                    assistant_delta_events += 1
                 await persist_assistant_message_for_terminal(assistant_text)
-                self._append_local_telemetry_snapshot(
-                    app=app,
-                    run=run,
-                    terminal_event="run.completed",
-                    assistant_delta_events=1 if assistant_text else 0,
-                    saw_write_tool_event=False,
-                    revision_created=bool(run.result_revision_id),
-                )
                 await release_run_lock()
                 yield emit("run.completed", "run", self.serialize_run(run))
-            elif terminal_status == RunStatus.cancelled.value:
-                await finalize_sandbox("stopped")
+                return
+
+            if terminal_status == RunStatus.cancelled.value:
                 await persist_assistant_message_for_terminal("Run cancelled.")
-                self._append_local_telemetry_snapshot(
-                    app=app,
-                    run=run,
-                    terminal_event="run.cancelled",
-                    assistant_delta_events=0,
-                    saw_write_tool_event=False,
-                    revision_created=bool(run.result_revision_id),
-                )
                 await release_run_lock()
                 yield emit("run.cancelled", "run", self.serialize_run(run))
-            elif terminal_status == RunStatus.paused.value:
-                await finalize_sandbox("stopped")
+                return
+
+            if terminal_status == RunStatus.paused.value:
                 await persist_assistant_message_for_terminal("Run paused.")
-                self._append_local_telemetry_snapshot(
-                    app=app,
-                    run=run,
-                    terminal_event="run.paused",
-                    assistant_delta_events=0,
-                    saw_write_tool_event=False,
-                    revision_created=bool(run.result_revision_id),
-                )
                 await release_run_lock()
                 yield emit("run.paused", "run", self.serialize_run(run))
-            else:
-                await finalize_sandbox("error")
-                await persist_assistant_message_for_terminal(run.error_message or f"run {terminal_status}")
-                self._append_local_telemetry_snapshot(
-                    app=app,
-                    run=run,
-                    terminal_event="run.failed",
-                    assistant_delta_events=0,
-                    saw_write_tool_event=False,
-                    revision_created=bool(run.result_revision_id),
-                )
-                await release_run_lock()
-                yield emit(
-                    "run.failed",
-                    "run",
-                    self.serialize_run(run),
-                    [{"message": run.error_message or f"run {terminal_status}"}],
-                )
+                return
+
+            failure_message = self._compose_failure_message(run=run, fallback="run failed")
+            await persist_assistant_message_for_terminal(failure_message)
+            await release_run_lock()
+            yield emit("run.failed", "run", self.serialize_run(run), [{"message": failure_message}])
             return
 
         run_context = self._run_context(run)
@@ -419,203 +302,46 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             )
             return
 
+        terminal_engine_event: str | None = None
+        terminal_engine_payload: dict[str, Any] = {}
+        terminal_engine_diagnostics: list[dict[str, Any]] | None = None
+
         try:
             engine = self._resolve_engine_for_run(run)
-            inactivity_timeout_s, max_stream_duration_s = self._stream_guardrail_seconds()
-            stream_deadline = time.monotonic() + max_stream_duration_s
-            engine_iter = engine.stream(
+            async for raw_event in engine.stream(
                 EngineRunContext(
                     app=app,
                     run=run,
                     resume_payload=resume_payload,
                 )
-            ).__aiter__()
-            terminal_engine_event: str | None = None
-            terminal_engine_payload: dict[str, Any] = {}
-            terminal_engine_diagnostics: list[dict[str, Any]] | None = None
-            status_poll_timeout_s = min(2.0, max(0.5, inactivity_timeout_s / 5.0))
-            last_provider_progress_at = time.monotonic()
-            pending_next_event_task: asyncio.Task[Any] | None = None
+            ):
+                mapped_event = str(raw_event.event or "")
+                stage = str(raw_event.stage or "run")
+                payload = dict(raw_event.payload or {})
+                diagnostics = list(raw_event.diagnostics or [])
 
-            async def cancel_pending_next_event_task() -> None:
-                nonlocal pending_next_event_task
-                if pending_next_event_task is None:
-                    return
-                task = pending_next_event_task
-                pending_next_event_task = None
-                if task.done():
-                    try:
-                        _ = task.result()
-                    except StopAsyncIteration:
-                        pass
-                    except Exception:
-                        pass
-                    return
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, StopAsyncIteration):
-                    pass
-                except Exception:
-                    pass
+                if mapped_event == "assistant.delta":
+                    content = str(payload.get("content") or "")
+                    if content:
+                        assistant_chunks.append(content)
+                        assistant_delta_events += 1
+                        yield emit("assistant.delta", "assistant", {"content": content})
+                    continue
 
-            try:
-                while True:
-                    buffered_wait_s = pending_assistant_delta_flush_wait_s()
-                    if buffered_wait_s is not None and buffered_wait_s <= 0:
-                        pending_delta_event = flush_buffered_assistant_delta(force=False)
-                        if pending_delta_event is not None:
-                            yield pending_delta_event
-                            continue
-                    remaining = stream_deadline - time.monotonic()
-                    if remaining <= 0:
-                        await cancel_pending_next_event_task()
-                        raise TimeoutError(
-                            f"Coding-agent stream exceeded max duration ({int(max_stream_duration_s)}s) without terminal event."
-                        )
-                    if time.monotonic() - last_provider_progress_at > inactivity_timeout_s:
-                        latest_run = await self.db.get(AgentRun, run_id)
-                        latest_status = (
-                            latest_run.status.value if hasattr(latest_run.status, "value") else str(latest_run.status)
-                        ) if latest_run is not None else ""
-                        if latest_run is not None and latest_status in {
-                            RunStatus.completed.value,
-                            RunStatus.failed.value,
-                            RunStatus.cancelled.value,
-                            RunStatus.paused.value,
-                        }:
-                            run = latest_run
-                            pending_delta_event = flush_buffered_assistant_delta(force=True)
-                            if pending_delta_event is not None:
-                                yield pending_delta_event
-                            terminal_engine_event = terminal_event_for_status(latest_status)
-                            await cancel_pending_next_event_task()
-                            break
-                        await cancel_pending_next_event_task()
-                        raise TimeoutError(
-                            f"Coding-agent stream stalled for {int(inactivity_timeout_s)}s without provider progress."
-                        )
-                    next_timeout = min(status_poll_timeout_s, remaining)
-                    if buffered_wait_s is not None:
-                        next_timeout = min(next_timeout, max(0.01, buffered_wait_s))
-                    if pending_next_event_task is None:
-                        pending_next_event_task = asyncio.create_task(engine_iter.__anext__())
-                    try:
-                        raw_event = await asyncio.wait_for(asyncio.shield(pending_next_event_task), timeout=next_timeout)
-                        pending_next_event_task = None
-                    except StopAsyncIteration:
-                        pending_next_event_task = None
-                        break
-                    except asyncio.TimeoutError:
-                        pending_delta_event = flush_buffered_assistant_delta(force=False)
-                        if pending_delta_event is not None:
-                            yield pending_delta_event
-                            continue
-                        latest_run = await self.db.get(AgentRun, run_id)
-                        latest_status = (
-                            latest_run.status.value if hasattr(latest_run.status, "value") else str(latest_run.status)
-                        ) if latest_run is not None else ""
-                        if latest_run is not None and latest_status in {
-                            RunStatus.completed.value,
-                            RunStatus.failed.value,
-                            RunStatus.cancelled.value,
-                            RunStatus.paused.value,
-                        }:
-                            run = latest_run
-                            pending_delta_event = flush_buffered_assistant_delta(force=True)
-                            if pending_delta_event is not None:
-                                yield pending_delta_event
-                            terminal_engine_event = terminal_event_for_status(latest_status)
-                            await cancel_pending_next_event_task()
-                            break
-                        continue
-                    except Exception:
-                        pending_next_event_task = None
-                        raise
-                    last_provider_progress_at = time.monotonic()
-                    mapped_event = raw_event.event
-                    stage = raw_event.stage
-                    payload = raw_event.payload
-                    diagnostics = raw_event.diagnostics
-                    if mapped_event in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
-                        pending_delta_event = flush_buffered_assistant_delta(force=True)
-                        if pending_delta_event is not None:
-                            yield pending_delta_event
-                        terminal_engine_event = mapped_event
-                        terminal_engine_payload = payload if isinstance(payload, dict) else {}
-                        terminal_engine_diagnostics = diagnostics
-                        break
-                    latest_run = await self.db.get(AgentRun, run_id)
-                    latest_status = (
-                        latest_run.status.value if hasattr(latest_run.status, "value") else str(latest_run.status)
-                    ) if latest_run is not None else ""
-                    if latest_run is not None and latest_status in {
-                        RunStatus.completed.value,
-                        RunStatus.failed.value,
-                        RunStatus.cancelled.value,
-                        RunStatus.paused.value,
-                    }:
-                        run = latest_run
-                        pending_delta_event = flush_buffered_assistant_delta(force=True)
-                        if pending_delta_event is not None:
-                            yield pending_delta_event
-                        terminal_engine_event = terminal_event_for_status(latest_status)
-                        await cancel_pending_next_event_task()
-                        break
-                    if mapped_event == "assistant.delta":
-                        raw_content = str((payload or {}).get("content") or "")
-                        if raw_content.strip():
-                            assistant_delta_events += 1
-                            assistant_delta_emitted = True
-                            assistant_chunks.append(raw_content)
-                            if buffered_assistant_delta_started_at is None:
-                                buffered_assistant_delta_started_at = time.monotonic()
-                            buffered_assistant_delta_parts.append(raw_content)
-                            buffered_assistant_delta_chars += len(raw_content)
-                            if not first_token_recorded:
-                                first_token_recorded = True
-                                first_token_ms = self._record_timing_metric(
-                                    run,
-                                    phase="first_token",
-                                    started_at=stream_started_at,
-                                )
-                                logger.info(
-                                    "CODING_AGENT_TIMING run_id=%s app_id=%s phase=first_token duration_ms=%s",
-                                    run.id,
-                                    app.id,
-                                    first_token_ms,
-                                )
-                                await self.db.commit()
-                            pending_delta_event = flush_buffered_assistant_delta(force=False)
-                            if pending_delta_event is not None:
-                                yield pending_delta_event
-                        continue
-                    pending_delta_event = flush_buffered_assistant_delta(force=True)
-                    if pending_delta_event is not None:
-                        yield pending_delta_event
-                    if self._is_workspace_write_tool_event(event=mapped_event, payload=payload):
-                        saw_write_tool_event = True
-                    yield emit(mapped_event, stage, payload, diagnostics)
-            finally:
-                await cancel_pending_next_event_task()
-                aclose = getattr(engine_iter, "aclose", None)
-                if callable(aclose):
-                    try:
-                        await aclose()
-                    except Exception:
-                        pass
-            pending_delta_event = flush_buffered_assistant_delta(force=True)
-            if pending_delta_event is not None:
-                yield pending_delta_event
+                if mapped_event in _TERMINAL_EVENTS:
+                    terminal_engine_event = mapped_event
+                    terminal_engine_payload = payload
+                    terminal_engine_diagnostics = diagnostics
+                    break
+
+                if self._is_workspace_write_tool_event(event=mapped_event, payload=payload):
+                    saw_write_tool_event = True
+                yield emit(mapped_event, stage, payload, diagnostics)
 
             run = await self.db.get(AgentRun, run_id) or run
             status = run.status.value if hasattr(run.status, "value") else str(run.status)
-            if terminal_engine_event in {"run.completed", "run.failed", "run.cancelled", "run.paused"} and status not in {
-                RunStatus.completed.value,
-                RunStatus.failed.value,
-                RunStatus.cancelled.value,
-                RunStatus.paused.value,
-            }:
+
+            if terminal_engine_event in _TERMINAL_EVENTS and status not in _TERMINAL_RUN_STATUSES:
                 if terminal_engine_event == "run.completed":
                     run.status = RunStatus.completed
                     run.error_message = None
@@ -626,54 +352,35 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     run.status = RunStatus.paused
                     run.error_message = None
                 else:
-                    failure_message = self._compose_failure_message(
+                    run.status = RunStatus.failed
+                    run.error_message = self._compose_failure_message(
                         run=run,
                         diagnostics=terminal_engine_diagnostics,
                         payload=terminal_engine_payload,
                         fallback="run failed",
                     )
-                    run.status = RunStatus.failed
-                    run.error_message = failure_message
                 run.completed_at = run.completed_at or datetime.now(timezone.utc)
                 await self.db.commit()
                 status = run.status.value if hasattr(run.status, "value") else str(run.status)
+
+            if status not in _TERMINAL_RUN_STATUSES:
+                run.status = RunStatus.failed
+                run.error_message = "OpenCode stream ended before a terminal event"
+                run.completed_at = datetime.now(timezone.utc)
+                await self.db.commit()
+                status = RunStatus.failed.value
+
             if status == RunStatus.completed.value:
-                terminal_event_ms = self._record_timing_metric(
-                    run,
-                    phase="terminal_event",
-                    started_at=stream_started_at,
-                )
-                logger.info(
-                    "CODING_AGENT_TIMING run_id=%s app_id=%s phase=terminal_event duration_ms=%s",
-                    run.id,
-                    app.id,
-                    terminal_event_ms,
-                )
-                checkpoint_started_at = time.monotonic()
                 if saw_write_tool_event:
                     revision = await self.auto_apply_and_checkpoint(run)
                     self._set_timing_metric_value(run, metric="checkpoint_skipped_no_edit_tool", value=False)
                 else:
                     revision = None
                     self._set_timing_metric_value(run, metric="checkpoint_skipped_no_edit_tool", value=True)
-                checkpoint_done_ms = self._record_timing_metric(
-                    run,
-                    phase="revision_persist",
-                    started_at=checkpoint_started_at,
-                )
-                self._set_timing_metric_value(
-                    run,
-                    metric="opencode_delta_events",
-                    value=assistant_delta_events,
-                )
-                logger.info(
-                    "CODING_AGENT_TIMING run_id=%s app_id=%s phase=revision_persist duration_ms=%s",
-                    run.id,
-                    app.id,
-                    checkpoint_done_ms,
-                )
+
                 await finalize_sandbox("stopped")
                 await self.db.commit()
+
                 if revision is not None:
                     yield emit(
                         "revision.created",
@@ -692,10 +399,14 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                             "revision_id": str(revision.id),
                         },
                     )
-                if not assistant_delta_emitted:
+
+                if assistant_delta_events == 0:
                     assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
-                    assistant_chunks.append(assistant_text)
-                    yield emit("assistant.delta", "assistant", {"content": assistant_text})
+                    if assistant_text:
+                        assistant_chunks.append(assistant_text)
+                        yield emit("assistant.delta", "assistant", {"content": assistant_text})
+                        assistant_delta_events += 1
+
                 await persist_assistant_message_for_terminal()
                 self._append_local_telemetry_snapshot(
                     app=app,
@@ -745,8 +456,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 payload=terminal_engine_payload,
                 fallback="run failed",
             )
-            if status != RunStatus.failed.value:
-                run.status = RunStatus.failed
+            run.status = RunStatus.failed
             run.error_message = failure_message
             run.completed_at = run.completed_at or datetime.now(timezone.utc)
             await self.db.commit()
@@ -762,12 +472,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 revision_created=bool(run.result_revision_id),
             )
             await release_run_lock()
-            yield emit(
-                "run.failed",
-                "run",
-                self.serialize_run(run),
-                [{"message": failure_message}],
-            )
+            yield emit("run.failed", "run", self.serialize_run(run), [{"message": failure_message}])
         except Exception as exc:
             error_message = self._exception_message(exc)
             failed_run = await self.db.get(AgentRun, run_id)
@@ -780,9 +485,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 await release_run_lock()
                 await self.db.commit()
                 run = failed_run
-            pending_delta_event = flush_buffered_assistant_delta(force=True)
-            if pending_delta_event is not None:
-                yield pending_delta_event
+
             await persist_assistant_message_for_terminal(error_message)
             self._append_local_telemetry_snapshot(
                 app=app,
@@ -792,25 +495,14 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 saw_write_tool_event=saw_write_tool_event,
                 revision_created=bool(run.result_revision_id),
             )
-            yield emit(
-                "run.failed",
-                "run",
-                self.serialize_run(run),
-                [{"message": error_message}],
-            )
+            yield emit("run.failed", "run", self.serialize_run(run), [{"message": error_message}])
         finally:
-            # Guard against lock leaks on cancellation/disconnect paths where terminal
-            # status has already been persisted but event streaming is interrupted.
+            # Guard against lock leaks on disconnect paths.
             try:
                 latest_run = await self.db.get(AgentRun, run_id)
                 if latest_run is not None:
                     latest_status = latest_run.status.value if hasattr(latest_run.status, "value") else str(latest_run.status)
-                    if latest_status in {
-                        RunStatus.completed.value,
-                        RunStatus.failed.value,
-                        RunStatus.cancelled.value,
-                        RunStatus.paused.value,
-                    }:
+                    if latest_status in _TERMINAL_RUN_STATUSES:
                         await self._clear_preview_run_lock(
                             app_id=latest_run.published_app_id,
                             actor_id=latest_run.initiator_user_id or latest_run.user_id,

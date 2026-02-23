@@ -46,7 +46,7 @@ async def _insert_run(db_session, *, tenant_id, agent_id, user_id, app_id: str, 
         surface=CODING_AGENT_SURFACE,
         published_app_id=UUID(app_id),
         base_revision_id=UUID(base_revision_id),
-        execution_engine="native",
+        execution_engine="opencode",
     )
     db_session.add(run)
     await db_session.commit()
@@ -126,7 +126,7 @@ async def test_chat_history_list_scopes_to_current_user(client, db_session):
     )
     await db_session.commit()
 
-    response = await client.get(f"/admin/apps/{app_id}/coding-agent/chat-sessions?limit=50", headers=headers)
+    response = await client.get(f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions?limit=50", headers=headers)
     assert response.status_code == 200
     payload = response.json()
     assert [item["id"] for item in payload] == [str(owner_session.id)]
@@ -187,7 +187,7 @@ async def test_chat_history_detail_returns_ordered_turns(client, db_session):
     await db_session.commit()
 
     response = await client.get(
-        f"/admin/apps/{app_id}/coding-agent/chat-sessions/{session.id}?limit=50",
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{session.id}?limit=50",
         headers=headers,
     )
     assert response.status_code == 200
@@ -228,7 +228,7 @@ async def test_chat_history_detail_blocks_cross_user_session_access(client, db_s
     await db_session.refresh(foreign_session)
 
     response = await client.get(
-        f"/admin/apps/{app_id}/coding-agent/chat-sessions/{foreign_session.id}?limit=20",
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{foreign_session.id}?limit=20",
         headers=headers,
     )
     assert response.status_code == 404

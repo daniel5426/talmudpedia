@@ -744,7 +744,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     selectedRunModelLabel,
     queuedPrompts,
     removeQueuedPrompt,
-    capabilities,
     sendBuilderChat,
     stopCurrentRun,
     startNewChat,
@@ -752,7 +751,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     loadChatSession,
   } = useAppsBuilderChat({
     appId,
-    currentRevisionId,
     activeTab,
     ensureDraftDevSession,
     refreshStateSilently,
@@ -1523,7 +1521,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             onSelectModelId={setSelectedRunModelId}
             queuedPrompts={queuedPrompts}
             onRemoveQueuedPrompt={removeQueuedPrompt}
-            capabilities={capabilities}
           />
         </div>
       </div>

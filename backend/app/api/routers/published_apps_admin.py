@@ -13,7 +13,7 @@ from .published_apps_admin_shared import (
 # Ensure route modules are imported so decorators register on `router`.
 from . import published_apps_admin_routes_apps as _routes_apps  # noqa: F401
 from . import published_apps_admin_routes_builder as _routes_builder  # noqa: F401
-from . import published_apps_admin_routes_coding_agent as _routes_coding_agent  # noqa: F401
+from . import published_apps_admin_routes_coding_agent_v2 as _routes_coding_agent_v2  # noqa: F401
 from . import published_apps_admin_routes_publish as _routes_publish  # noqa: F401
 
 from .published_apps_admin_builder_tools import (

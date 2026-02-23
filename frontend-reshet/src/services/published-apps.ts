@@ -226,12 +226,7 @@ export interface BuilderValidationResponse {
 }
 
 export type CodingAgentDiagnostics = Array<{ message?: string; [key: string]: unknown }>;
-export type CodingAgentExecutionEngine = "native" | "opencode";
-
-export const resolveAppsCodingAgentEngine = (): CodingAgentExecutionEngine => {
-  const raw = String(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_ENGINE || "opencode").trim().toLowerCase();
-  return raw === "native" ? "native" : "opencode";
-};
+export type CodingAgentExecutionEngine = "opencode";
 
 export interface CodingAgentStreamEvent {
   event: string;
@@ -300,34 +295,10 @@ export interface CodingAgentRestoreCheckpointResponse {
   run_id?: string | null;
 }
 
-export interface CodingAgentCapabilityTool {
-  name: string;
-  slug: string;
-  function_name: string;
-}
-
-export interface CodingAgentOpenCodePolicy {
-  tooling_mode: string;
-  repo_tool_allowlist_configured: boolean;
-  workspace_permission_model: string;
-  summary: string;
-}
-
-export interface CodingAgentCapabilities {
-  app_id: string;
-  default_engine: CodingAgentExecutionEngine;
-  native_enabled: boolean;
-  native_tool_count: number;
-  native_tools: CodingAgentCapabilityTool[];
-  opencode_policy: CodingAgentOpenCodePolicy;
-}
-
 export interface CodingAgentActiveRunState {
   run_id: string;
   status: string;
-  last_seq: number;
   queued_prompt_count: number;
-  is_cancelling: boolean;
 }
 
 export interface CodingAgentPromptQueueItem {
@@ -342,6 +313,21 @@ export interface CodingAgentPromptQueueItem {
   finished_at?: string | null;
   error?: string | null;
 }
+
+export interface CodingAgentPromptSubmissionStartedResponse {
+  submission_status: "started";
+  run: CodingAgentRun;
+}
+
+export interface CodingAgentPromptSubmissionQueuedResponse {
+  submission_status: "queued";
+  active_run_id: string;
+  queue_item: CodingAgentPromptQueueItem;
+}
+
+export type CodingAgentPromptSubmissionResponse =
+  | CodingAgentPromptSubmissionStartedResponse
+  | CodingAgentPromptSubmissionQueuedResponse;
 
 export const publishedAppsService = {
   async list(): Promise<PublishedApp[]> {
@@ -461,48 +447,32 @@ export const publishedAppsService = {
     });
   },
 
-  async createCodingAgentRun(
+  async submitCodingAgentPrompt(
     appId: string,
     payload: {
       input: string;
-      base_revision_id?: string;
-      messages?: Array<{ role: string; content: string }>;
       model_id?: string | null;
-      engine?: CodingAgentExecutionEngine;
       chat_session_id?: string;
       client_message_id?: string;
-      enqueue_if_active?: boolean;
     },
-  ): Promise<CodingAgentRun> {
-    return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs`, payload);
+  ): Promise<CodingAgentPromptSubmissionResponse> {
+    return httpClient.post<CodingAgentPromptSubmissionResponse>(`/admin/apps/${appId}/coding-agent/v2/prompts`, payload);
   },
 
   async listCodingAgentChatSessions(appId: string, limit = 25): Promise<CodingAgentChatSession[]> {
     return httpClient.get<CodingAgentChatSession[]>(
-      `/admin/apps/${appId}/coding-agent/chat-sessions?limit=${encodeURIComponent(String(limit))}`,
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions?limit=${encodeURIComponent(String(limit))}`,
     );
   },
 
   async getCodingAgentChatSession(appId: string, sessionId: string, limit = 200): Promise<CodingAgentChatSessionDetail> {
     return httpClient.get<CodingAgentChatSessionDetail>(
-      `/admin/apps/${appId}/coding-agent/chat-sessions/${sessionId}?limit=${encodeURIComponent(String(limit))}`,
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}?limit=${encodeURIComponent(String(limit))}`,
     );
   },
 
-  async streamCodingAgentRun(
-    appId: string,
-    runId: string,
-    options: { fromSeq?: number; replay?: boolean } = {},
-  ): Promise<Response> {
-    const params = new URLSearchParams();
-    if (options.fromSeq && options.fromSeq > 1) {
-      params.set("from_seq", String(options.fromSeq));
-    }
-    if (options.replay === false) {
-      params.set("replay", "false");
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    return httpClient.requestRaw(`/admin/apps/${appId}/coding-agent/runs/${runId}/stream${suffix}`, {
+  async streamCodingAgentRun(appId: string, runId: string): Promise<Response> {
+    return httpClient.requestRaw(`/admin/apps/${appId}/coding-agent/v2/runs/${runId}/stream`, {
       method: "GET",
       headers: {
         Accept: "text/event-stream",
@@ -511,19 +481,23 @@ export const publishedAppsService = {
   },
 
   async getCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {
-    return httpClient.get<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs/${runId}`);
+    return httpClient.get<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/v2/runs/${runId}`);
   },
 
   async cancelCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {
-    return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs/${runId}/cancel`, {});
+    return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/v2/runs/${runId}/cancel`, {});
   },
 
   async getCodingAgentChatSessionActiveRun(appId: string, sessionId: string): Promise<CodingAgentActiveRunState> {
-    return httpClient.get<CodingAgentActiveRunState>(`/admin/apps/${appId}/coding-agent/chat-sessions/${sessionId}/active-run`);
+    return httpClient.get<CodingAgentActiveRunState>(
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/active-run`,
+    );
   },
 
   async listCodingAgentChatSessionQueue(appId: string, sessionId: string): Promise<CodingAgentPromptQueueItem[]> {
-    return httpClient.get<CodingAgentPromptQueueItem[]>(`/admin/apps/${appId}/coding-agent/chat-sessions/${sessionId}/queue`);
+    return httpClient.get<CodingAgentPromptQueueItem[]>(
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/queue`,
+    );
   },
 
   async deleteCodingAgentChatSessionQueueItem(
@@ -532,17 +506,13 @@ export const publishedAppsService = {
     queueItemId: string,
   ): Promise<{ status: string; id: string }> {
     return httpClient.delete<{ status: string; id: string }>(
-      `/admin/apps/${appId}/coding-agent/chat-sessions/${sessionId}/queue/${queueItemId}`,
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/queue/${queueItemId}`,
     );
-  },
-
-  async getCodingAgentCapabilities(appId: string): Promise<CodingAgentCapabilities> {
-    return httpClient.get<CodingAgentCapabilities>(`/admin/apps/${appId}/coding-agent/capabilities`);
   },
 
   async listCodingAgentCheckpoints(appId: string, limit = 25): Promise<CodingAgentCheckpoint[]> {
     return httpClient.get<CodingAgentCheckpoint[]>(
-      `/admin/apps/${appId}/coding-agent/checkpoints?limit=${encodeURIComponent(String(limit))}`,
+      `/admin/apps/${appId}/coding-agent/v2/checkpoints?limit=${encodeURIComponent(String(limit))}`,
     );
   },
 
@@ -552,7 +522,7 @@ export const publishedAppsService = {
     payload: { run_id?: string } = {},
   ): Promise<CodingAgentRestoreCheckpointResponse> {
     return httpClient.post<CodingAgentRestoreCheckpointResponse>(
-      `/admin/apps/${appId}/coding-agent/checkpoints/${checkpointId}/restore`,
+      `/admin/apps/${appId}/coding-agent/v2/checkpoints/${checkpointId}/restore`,
       payload,
     );
   },

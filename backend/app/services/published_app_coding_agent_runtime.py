@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -31,9 +31,7 @@ from app.services.published_app_coding_agent_profile import (
     ensure_coding_agent_profile,
     resolve_coding_agent_chat_model_id,
 )
-from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
-from app.services.published_app_coding_agent_engines.base import EngineRunContext, PublishedAppCodingAgentEngine
-from app.services.published_app_coding_agent_engines.native_engine import NativePublishedAppCodingAgentEngine
+from app.services.published_app_coding_agent_engines.base import PublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
@@ -47,7 +45,6 @@ from app.services.published_app_coding_agent_runtime_streaming import PublishedA
 
 logger = logging.getLogger(__name__)
 
-CODING_AGENT_ENGINE_NATIVE = "native"
 CODING_AGENT_ENGINE_OPENCODE = "opencode"
 _WORKSPACE_WRITE_TOOL_HINTS = (
     "write",
@@ -84,7 +81,6 @@ class PublishedAppCodingAgentRuntimeService(
         self.db = db
         self.executor = AgentExecutorService(db=db)
         self._opencode_client = OpenCodeServerClient.from_env()
-        self._native_engine = NativePublishedAppCodingAgentEngine(executor=self.executor)
         self._opencode_engine = OpenCodePublishedAppCodingAgentEngine(
             db=self.db,
             client=self._opencode_client,
@@ -92,7 +88,7 @@ class PublishedAppCodingAgentRuntimeService(
 
     @staticmethod
     def serialize_run(run: AgentRun) -> dict[str, Any]:
-        execution_engine = str(run.execution_engine or CODING_AGENT_ENGINE_NATIVE).strip().lower() or CODING_AGENT_ENGINE_NATIVE
+        execution_engine = CODING_AGENT_ENGINE_OPENCODE
         input_params = run.input_params if isinstance(run.input_params, dict) else {}
         context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         return {
@@ -118,15 +114,7 @@ class PublishedAppCodingAgentRuntimeService(
 
     @staticmethod
     def _default_execution_engine() -> str:
-        value = str(os.getenv("APPS_CODING_AGENT_DEFAULT_ENGINE", CODING_AGENT_ENGINE_OPENCODE) or "").strip().lower()
-        if value == CODING_AGENT_ENGINE_NATIVE:
-            return CODING_AGENT_ENGINE_NATIVE
         return CODING_AGENT_ENGINE_OPENCODE
-
-    @staticmethod
-    def _native_engine_enabled() -> bool:
-        value = str(os.getenv("APPS_CODING_AGENT_NATIVE_ENABLED", "0") or "").strip().lower()
-        return value in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _model_unavailable_error(message: str) -> HTTPException:
@@ -296,17 +284,12 @@ class PublishedAppCodingAgentRuntimeService(
 
     @staticmethod
     def _normalize_execution_engine(value: str | None) -> str:
-        engine_raw = str(value or PublishedAppCodingAgentRuntimeService._default_execution_engine()).strip()
+        engine_raw = str(value or CODING_AGENT_ENGINE_OPENCODE).strip().lower()
         if not engine_raw:
             return CODING_AGENT_ENGINE_OPENCODE
-        engine = engine_raw.lower()
-
-        # Be permissive with enum-like values (for example: "ExecutionEngine.OPENCODE").
-        if engine == CODING_AGENT_ENGINE_OPENCODE or engine.endswith(".opencode") or "opencode" in engine:
+        if engine_raw == CODING_AGENT_ENGINE_OPENCODE or engine_raw.endswith(".opencode") or "opencode" in engine_raw:
             return CODING_AGENT_ENGINE_OPENCODE
-        if engine == CODING_AGENT_ENGINE_NATIVE or engine.endswith(".native") or "native" in engine:
-            return CODING_AGENT_ENGINE_NATIVE
-        return PublishedAppCodingAgentRuntimeService._default_execution_engine()
+        return CODING_AGENT_ENGINE_OPENCODE
 
     @staticmethod
     def _opencode_provider_prefix(provider: ModelProviderType | str | None) -> str | None:
@@ -415,10 +398,8 @@ class PublishedAppCodingAgentRuntimeService(
         metrics[str(metric)] = value
 
     def _resolve_engine_for_run(self, run: AgentRun) -> PublishedAppCodingAgentEngine:
-        engine = self._normalize_execution_engine(str(run.execution_engine or CODING_AGENT_ENGINE_NATIVE))
-        if engine == CODING_AGENT_ENGINE_OPENCODE:
-            return self._opencode_engine
-        return self._native_engine
+        _ = run
+        return self._opencode_engine
 
     async def create_run(
         self,
@@ -442,9 +423,9 @@ class PublishedAppCodingAgentRuntimeService(
             return duration_ms
 
         normalized_engine = self._normalize_execution_engine(execution_engine)
-        if normalized_engine == CODING_AGENT_ENGINE_NATIVE and not self._native_engine_enabled():
+        if execution_engine and normalized_engine != CODING_AGENT_ENGINE_OPENCODE:
             raise self._engine_unavailable_error(
-                "Native engine is disabled by policy. Set APPS_CODING_AGENT_NATIVE_ENABLED=1 to enable it."
+                "Only the OpenCode engine is supported."
             )
         create_run_phase_metrics["create_run_opencode_health"] = 0
         create_run_phase_metrics["create_run_opencode_model_resolve"] = 0
@@ -674,7 +655,6 @@ class PublishedAppCodingAgentRuntimeService(
             return
         session.active_coding_run_id = None
         session.active_coding_run_locked_at = None
-        session.active_coding_run_client_message_id = None
         logger.info(
             "CODING_AGENT_LOCK_CLEAR run_id=%s app_id=%s actor_id=%s",
             run_id,
@@ -686,9 +666,6 @@ class PublishedAppCodingAgentRuntimeService(
         status = run.status.value if hasattr(run.status, "value") else str(run.status)
         if status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
             return run
-        run.is_cancelling = True
-        run.runner_heartbeat_at = datetime.now(timezone.utc)
-        run.runner_lease_expires_at = datetime.now(timezone.utc) + timedelta(seconds=30)
         run.status = RunStatus.cancelled
         run.error_message = None
         context = self._run_context(run)
@@ -700,7 +677,6 @@ class PublishedAppCodingAgentRuntimeService(
         )
 
         run.completed_at = datetime.now(timezone.utc)
-        run.is_cancelling = False
         await self.db.commit()
         await self.db.refresh(run)
         logger.info(

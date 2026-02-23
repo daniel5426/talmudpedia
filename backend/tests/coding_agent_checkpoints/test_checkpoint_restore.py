@@ -79,7 +79,7 @@ async def test_coding_agent_checkpoints_list_and_restore(client, db_session, mon
         checkpoint_revision_id=draft_revision_id,
     )
 
-    checkpoints_resp = await client.get(f"/admin/apps/{app_id}/coding-agent/checkpoints?limit=10", headers=headers)
+    checkpoints_resp = await client.get(f"/admin/apps/{app_id}/coding-agent/v2/checkpoints?limit=10", headers=headers)
     assert checkpoints_resp.status_code == 200
     checkpoints = checkpoints_resp.json()
     assert checkpoints
@@ -88,7 +88,7 @@ async def test_coding_agent_checkpoints_list_and_restore(client, db_session, mon
     assert checkpoint["run_id"] == str(run.id)
 
     restore_resp = await client.post(
-        f"/admin/apps/{app_id}/coding-agent/checkpoints/{draft_revision_id}/restore",
+        f"/admin/apps/{app_id}/coding-agent/v2/checkpoints/{draft_revision_id}/restore",
         headers=headers,
         json={"run_id": str(run.id)},
     )
@@ -116,7 +116,7 @@ async def test_coding_agent_restore_checkpoint_not_found(client, db_session):
 
     missing_checkpoint_id = str(uuid4())
     restore_resp = await client.post(
-        f"/admin/apps/{app_id}/coding-agent/checkpoints/{missing_checkpoint_id}/restore",
+        f"/admin/apps/{app_id}/coding-agent/v2/checkpoints/{missing_checkpoint_id}/restore",
         headers=headers,
         json={},
     )

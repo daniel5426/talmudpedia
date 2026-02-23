@@ -43,7 +43,6 @@ from .published_apps import (
     PublishedAppCodingChatMessageRole,
     PublishedAppCodingPromptQueue,
     PublishedAppCodingPromptQueueStatus,
-    PublishedAppCodingRunEvent,
     PublishedAppCodingChatSession,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,
