@@ -135,6 +135,10 @@ class AgentRun(Base):
     resolved_model_id = Column(UUID(as_uuid=True), ForeignKey("model_registry.id", ondelete="SET NULL"), nullable=True, index=True)
     execution_engine = Column(String, nullable=False, default="native", server_default=text("'native'"), index=True)
     engine_run_ref = Column(String, nullable=True)
+    runner_owner_id = Column(String(128), nullable=True, index=True)
+    runner_lease_expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    runner_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    is_cancelling = Column(Boolean, nullable=False, default=False, server_default=text("false"), index=True)
 
     # Orchestration lineage and idempotency
     root_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)

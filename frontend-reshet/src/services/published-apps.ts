@@ -132,7 +132,11 @@ export interface DraftDevSessionResponse {
   app_id: string;
   revision_id?: string | null;
   status: DraftDevSessionStatus;
+  active_coding_run_id?: string | null;
+  active_coding_run_status?: string | null;
   preview_url?: string | null;
+  preview_auth_token?: string | null;
+  preview_auth_expires_at?: string | null;
   expires_at?: string | null;
   idle_timeout_seconds: number;
   last_activity_at?: string | null;
@@ -318,6 +322,27 @@ export interface CodingAgentCapabilities {
   opencode_policy: CodingAgentOpenCodePolicy;
 }
 
+export interface CodingAgentActiveRunState {
+  run_id: string;
+  status: string;
+  last_seq: number;
+  queued_prompt_count: number;
+  is_cancelling: boolean;
+}
+
+export interface CodingAgentPromptQueueItem {
+  id: string;
+  chat_session_id: string;
+  position: number;
+  status: string;
+  input: string;
+  client_message_id?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+}
+
 export const publishedAppsService = {
   async list(): Promise<PublishedApp[]> {
     return httpClient.get<PublishedApp[]>("/admin/apps");
@@ -446,6 +471,7 @@ export const publishedAppsService = {
       engine?: CodingAgentExecutionEngine;
       chat_session_id?: string;
       client_message_id?: string;
+      enqueue_if_active?: boolean;
     },
   ): Promise<CodingAgentRun> {
     return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs`, payload);
@@ -463,8 +489,20 @@ export const publishedAppsService = {
     );
   },
 
-  async streamCodingAgentRun(appId: string, runId: string): Promise<Response> {
-    return httpClient.requestRaw(`/admin/apps/${appId}/coding-agent/runs/${runId}/stream`, {
+  async streamCodingAgentRun(
+    appId: string,
+    runId: string,
+    options: { fromSeq?: number; replay?: boolean } = {},
+  ): Promise<Response> {
+    const params = new URLSearchParams();
+    if (options.fromSeq && options.fromSeq > 1) {
+      params.set("from_seq", String(options.fromSeq));
+    }
+    if (options.replay === false) {
+      params.set("replay", "false");
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return httpClient.requestRaw(`/admin/apps/${appId}/coding-agent/runs/${runId}/stream${suffix}`, {
       method: "GET",
       headers: {
         Accept: "text/event-stream",
@@ -478,6 +516,24 @@ export const publishedAppsService = {
 
   async cancelCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {
     return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/runs/${runId}/cancel`, {});
+  },
+
+  async getCodingAgentChatSessionActiveRun(appId: string, sessionId: string): Promise<CodingAgentActiveRunState> {
+    return httpClient.get<CodingAgentActiveRunState>(`/admin/apps/${appId}/coding-agent/chat-sessions/${sessionId}/active-run`);
+  },
+
+  async listCodingAgentChatSessionQueue(appId: string, sessionId: string): Promise<CodingAgentPromptQueueItem[]> {
+    return httpClient.get<CodingAgentPromptQueueItem[]>(`/admin/apps/${appId}/coding-agent/chat-sessions/${sessionId}/queue`);
+  },
+
+  async deleteCodingAgentChatSessionQueueItem(
+    appId: string,
+    sessionId: string,
+    queueItemId: string,
+  ): Promise<{ status: string; id: string }> {
+    return httpClient.delete<{ status: string; id: string }>(
+      `/admin/apps/${appId}/coding-agent/chat-sessions/${sessionId}/queue/${queueItemId}`,
+    );
   },
 
   async getCodingAgentCapabilities(appId: string): Promise<CodingAgentCapabilities> {

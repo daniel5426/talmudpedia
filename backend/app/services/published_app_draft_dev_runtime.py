@@ -9,6 +9,7 @@ from typing import Dict, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_published_app_draft_dev_token
@@ -22,6 +23,7 @@ from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientError,
 )
+from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
 
 
 LOCKFILE_PATHS = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock")
@@ -172,21 +174,21 @@ class PublishedAppDraftDevRuntimeService:
 
         now = self._now()
         await self.expire_idle_sessions(app_id=app.id, user_id=user_id)
-        files_payload = dict(files or revision.files or {})
+        runtime_context = TemplateRuntimeContext(
+            app_id=str(app.id),
+            app_slug=str(app.slug or ""),
+            agent_id=str(app.agent_id or ""),
+        )
+        files_payload = apply_runtime_bootstrap_overlay(
+            dict(files or revision.files or {}),
+            runtime_context=runtime_context,
+        )
         entry_value = entry_file or revision.entry_file
         dependency_hash = self._dependency_hash(files_payload)
         session = await self.get_session(app_id=app.id, user_id=user_id)
-        must_start = session is None or session.status in {
-            PublishedAppDraftDevSessionStatus.stopped,
-            PublishedAppDraftDevSessionStatus.expired,
-            PublishedAppDraftDevSessionStatus.error,
-        }
-        if session is not None and session.expires_at and session.expires_at <= now:
-            must_start = True
-            session.status = PublishedAppDraftDevSessionStatus.expired
 
         if session is None:
-            session = PublishedAppDraftDevSession(
+            candidate_session = PublishedAppDraftDevSession(
                 id=uuid4(),
                 published_app_id=app.id,
                 user_id=user_id,
@@ -197,8 +199,26 @@ class PublishedAppDraftDevRuntimeService:
                 expires_at=self._expires_at(now),
                 dependency_hash=dependency_hash,
             )
-            self.db.add(session)
-            await self.db.flush()
+            try:
+                # Another request can concurrently ensure the same (app_id, user_id)
+                # scope; preserve API stability by reusing the winning row.
+                async with self.db.begin_nested():
+                    self.db.add(candidate_session)
+                    await self.db.flush()
+                session = candidate_session
+            except IntegrityError:
+                session = await self.get_session(app_id=app.id, user_id=user_id)
+                if session is None:
+                    raise
+
+        must_start = session.status in {
+            PublishedAppDraftDevSessionStatus.stopped,
+            PublishedAppDraftDevSessionStatus.expired,
+            PublishedAppDraftDevSessionStatus.error,
+        }
+        if session.expires_at and session.expires_at <= now:
+            must_start = True
+            session.status = PublishedAppDraftDevSessionStatus.expired
 
         session.revision_id = revision.id
         session.idle_timeout_seconds = self.settings.idle_timeout_seconds

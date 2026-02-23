@@ -30,11 +30,9 @@ export async function fetchRuntimeBootstrap(request: RuntimeBootstrapRequest): P
 
   const base = trimTrailingSlash(request.apiBaseUrl || "/api/py");
   const path = resolveBootstrapPath(request);
-  let url = `${base}${path}`;
+  const url = `${base}${path}`;
   const headers: Record<string, string> = {};
   if (request.previewToken) {
-    const connector = url.includes("?") ? "&" : "?";
-    url = `${url}${connector}preview_token=${encodeURIComponent(request.previewToken)}`;
     headers.Authorization = `Bearer ${request.previewToken}`;
   }
 

@@ -12,7 +12,22 @@ export type CodingAgentEngineUnavailableDetail = {
   message: string;
 };
 
+export type CodingAgentRunActiveDetail = {
+  code: "CODING_AGENT_RUN_ACTIVE";
+  message: string;
+  active_run_id: string;
+  chat_session_id?: string;
+  next_replay_seq?: number;
+};
+
 export type TerminalRunStatus = "completed" | "failed" | "cancelled" | "paused";
+
+export const TERMINAL_RUN_EVENTS = new Set<string>([
+  "run.completed",
+  "run.failed",
+  "run.cancelled",
+  "run.paused",
+]);
 
 export const parseSse = (raw: string): CodingAgentStreamEvent | null => {
   const dataLines = raw
@@ -111,6 +126,42 @@ export const parseEngineUnavailableDetail = (detail: unknown): CodingAgentEngine
     code: candidate.code,
     field: "engine",
     message: String(candidate.message || "Selected engine is unavailable for this runtime."),
+  };
+};
+
+export const parseRunActiveDetail = (detail: unknown): CodingAgentRunActiveDetail | null => {
+  let parsed: unknown = detail;
+  if (typeof parsed === "string") {
+    const text = parsed.trim();
+    if (!text) return null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const candidate = parsed as Partial<CodingAgentRunActiveDetail>;
+  if (candidate.code !== "CODING_AGENT_RUN_ACTIVE") {
+    return null;
+  }
+  const runId = String(candidate.active_run_id || "").trim();
+  if (!runId) {
+    return null;
+  }
+  const nextReplaySeqRaw = Number(candidate.next_replay_seq);
+  const nextReplaySeq =
+    Number.isFinite(nextReplaySeqRaw) && nextReplaySeqRaw > 0
+      ? Math.floor(nextReplaySeqRaw)
+      : undefined;
+  return {
+    code: "CODING_AGENT_RUN_ACTIVE",
+    message: String(candidate.message || "A coding-agent run is already active for this preview session."),
+    active_run_id: runId,
+    chat_session_id: candidate.chat_session_id ? String(candidate.chat_session_id) : undefined,
+    next_replay_seq: nextReplaySeq,
   };
 };
 

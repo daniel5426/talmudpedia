@@ -13,6 +13,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppCodingChatMessage,
     PublishedAppCodingChatMessageRole,
     PublishedAppCodingChatSession,
+    PublishedAppCodingRunEvent,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
     PublishedAppRevision,
@@ -30,6 +31,7 @@ from app.services.published_app_coding_agent_engines.native_engine import Native
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.prompt_history import build_opencode_effective_prompt
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
+from app.services.published_app_coding_run_orchestrator import PublishedAppCodingRunOrchestrator
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClient
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
@@ -1138,7 +1140,8 @@ async def test_coding_agent_stream_returns_sse_envelopes(client, db_session, mon
     async def _fake_stream(self, *, app, run, resume_payload=None):
         nonlocal stream_called
         stream_called = True
-        now = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
         yield {
             "event": "run.accepted",
             "run_id": str(run.id),
@@ -1146,8 +1149,8 @@ async def test_coding_agent_stream_returns_sse_envelopes(client, db_session, mon
             "seq": 1,
             "ts": now,
             "stage": "run",
-            "payload": {"status": "queued"},
-            "diagnostics": [],
+            "payload": {"status": "queued", "started_at": now_dt},
+            "diagnostics": [{"message": "accepted", "at": now_dt}],
         }
         yield {
             "event": "run.completed",
@@ -1156,7 +1159,7 @@ async def test_coding_agent_stream_returns_sse_envelopes(client, db_session, mon
             "seq": 2,
             "ts": now,
             "stage": "run",
-            "payload": {"status": "completed"},
+            "payload": {"status": "completed", "completed_at": now_dt},
             "diagnostics": [],
         }
 
@@ -1175,6 +1178,86 @@ async def test_coding_agent_stream_returns_sse_envelopes(client, db_session, mon
         assert "\n\n" in body
 
     assert stream_called is True
+    rows = (
+        await db_session.execute(
+            select(PublishedAppCodingRunEvent)
+            .where(PublishedAppCodingRunEvent.run_id == run.id)
+            .order_by(PublishedAppCodingRunEvent.seq.asc())
+        )
+    ).scalars().all()
+    assert len(rows) == 2
+    assert isinstance((rows[0].payload_json or {}).get("started_at"), str)
+    assert isinstance((rows[0].diagnostics_json or [{}])[0].get("at"), str)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_append_event_row_retries_on_seq_conflict(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = await _insert_coding_agent_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+        status=RunStatus.failed,
+    )
+    db_session.add(
+        PublishedAppCodingRunEvent(
+            run_id=run.id,
+            seq=1,
+            event="run.accepted",
+            stage="run",
+            payload_json={"status": "queued"},
+            diagnostics_json=[],
+        )
+    )
+    await db_session.commit()
+
+    inserted = await PublishedAppCodingRunOrchestrator._append_event_row_with_retry(
+        db=db_session,
+        run_id=run.id,
+        event="run.failed",
+        stage="run",
+        payload_json={"status": "failed"},
+        diagnostics_json=[{"message": "failed"}],
+        preferred_seq=1,
+    )
+    assert int(inserted.seq or 0) == 2
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_stream_emits_terminal_snapshot_when_replay_window_has_no_terminal_event(
+    client,
+    db_session,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = await _insert_coding_agent_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+        status=RunStatus.completed,
+    )
+    run.completed_at = datetime.now(timezone.utc)
+    await db_session.commit()
+
+    async with client.stream(
+        "GET",
+        f"/admin/apps/{app_id}/coding-agent/runs/{run.id}/stream?from_seq=2&replay=true",
+        headers=headers,
+    ) as stream_resp:
+        assert stream_resp.status_code == 200
+        body = (await stream_resp.aread()).decode("utf-8")
+        assert "\"event\": \"run.completed\"" in body
 
 
 @pytest.mark.asyncio
@@ -1230,6 +1313,33 @@ async def test_stream_run_events_emits_assistant_delta_from_final_output_when_to
     assert assistant_index < run_completed_index
     assistant_payload = events[assistant_index]["payload"]
     assert assistant_payload["content"] == "Hello from final output"
+
+
+@pytest.mark.asyncio
+async def test_stream_run_events_emits_run_cancelled_for_terminal_cancelled_status(
+    client,
+    db_session,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = await _insert_coding_agent_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+        status=RunStatus.cancelled,
+    )
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+    events = [event async for event in service.stream_run_events(app=app, run=run)]
+    assert events[-1]["event"] == "run.cancelled"
+    assert events[-1]["payload"]["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -1826,7 +1936,7 @@ async def test_coding_agent_resume_and_cancel(client, db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_coding_agent_cancel_fail_closed_when_opencode_cancel_unconfirmed(client, db_session, monkeypatch):
+async def test_coding_agent_cancel_is_immediate_when_opencode_cancel_unconfirmed(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
@@ -1859,8 +1969,8 @@ async def test_coding_agent_cancel_fail_closed_when_opencode_cancel_unconfirmed(
     assert cancel_resp.status_code == 200
     payload = cancel_resp.json()
     assert payload["run_id"] == str(opencode_run.id)
-    assert payload["status"] == "failed"
-    assert "not confirmed" in str(payload["error"]).lower()
+    assert payload["status"] == "cancelled"
+    assert payload["error"] in {None, ""}
 
 
 def test_map_execution_event_includes_patch_failure_diagnostics() -> None:

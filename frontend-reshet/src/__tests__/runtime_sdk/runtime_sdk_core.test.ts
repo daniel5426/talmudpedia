@@ -1,4 +1,4 @@
-import { createRuntimeClient, normalizeRuntimeEvent } from "../../../../packages/runtime-sdk/src";
+import { createRuntimeClient, fetchRuntimeBootstrap, normalizeRuntimeEvent } from "../../../../packages/runtime-sdk/src";
 import type { RuntimeBootstrap } from "../../../../packages/runtime-sdk/src";
 import { ReadableStream } from "node:stream/web";
 import { TextDecoder, TextEncoder } from "node:util";
@@ -110,5 +110,32 @@ describe("runtime-sdk core", () => {
 
     expect(normalized.type).toBe("assistant.delta");
     expect(normalized.content).toBe("delta");
+  });
+
+  test("fetchRuntimeBootstrap sends preview auth via Authorization header only", async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      async json() {
+        return bootstrap;
+      },
+    });
+
+    await fetchRuntimeBootstrap({
+      apiBaseUrl: "https://api.example.com/api/py",
+      revisionId: "rev-1",
+      previewToken: "preview-token-123",
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchImpl.mock.calls[0];
+    expect(String(url)).toBe("https://api.example.com/api/py/public/apps/preview/revisions/rev-1/runtime/bootstrap");
+    expect(String(url)).not.toContain("preview_token=");
+    expect(options).toMatchObject({
+      method: "GET",
+      headers: { Authorization: "Bearer preview-token-123" },
+    });
   });
 });

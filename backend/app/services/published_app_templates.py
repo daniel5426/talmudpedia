@@ -321,6 +321,18 @@ def build_template_files(
     raise KeyError(template_key)
 
 
+def apply_runtime_bootstrap_overlay(
+    files: Dict[str, str],
+    runtime_context: Optional[TemplateRuntimeContext | Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    resolved_runtime_context = _coerce_runtime_context(runtime_context)
+    merged = dict(files or {})
+    merged.update(build_common_bootstrap_files())
+    merged.update(build_runtime_sdk_package_files())
+    merged.update(_build_runtime_overlay_files(resolved_runtime_context))
+    return _inject_runtime_sdk_dependency(merged)
+
+
 def build_opencode_bootstrap_files() -> Dict[str, str]:
     return _load_opencode_bootstrap_files(OPENCODE_BOOTSTRAP_ROOT)
 

@@ -1,6 +1,6 @@
 # Apps Builder Current Implementation Overview
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-23
 
 ## Purpose
 This document is the current-state overview of the Apps Builder system (not a future implementation plan). It summarizes how the builder works today across backend, frontend, runtime, coding-agent, revision persistence, and publish/runtime delivery.
@@ -69,6 +69,7 @@ Behavior today:
   - `.opencode/package.json`
   - `.opencode/tools/read_agent_context.ts`
 - OpenCode run startup also self-heals these bootstrap files for legacy drafts.
+- Canonical runtime bootstrap overlay is also re-applied during draft-dev session materialization and publish build materialization to prevent stale runtime SDK contracts.
 
 ## Draft Preview Runtime
 Draft preview uses draft-dev sandbox sessions and no longer uses browser-side compile for app-builder runtime.
@@ -83,11 +84,12 @@ Session lifecycle APIs:
 Important runtime behavior:
 - Persistent dev server in sandbox for fast feedback/HMR during editing.
 - Sync path avoids unnecessary rewrites to reduce no-op restarts.
-- Builder preview iframe uses sandbox preview URL with preview-token bridge.
-- Draft-dev preview URLs are decorated with runtime context query params so template runtime clients can resolve chat base path in preview:
+- Builder preview iframe URL stays stable and tokenless across heartbeat/token refresh.
+- Draft-dev session response carries off-URL auth fields (`preview_auth_token`, `preview_auth_expires_at`) for iframe auth channel updates.
+- Draft-dev preview URLs are decorated only with runtime routing query params so template runtime clients can resolve chat base path in preview:
   - `runtime_mode=builder-preview`
   - `runtime_base_path={resolved_runtime_api_base}/public/apps/preview/revisions/{revision_id}`
-  - `runtime_preview_token` / `preview_token` for preview chat auth.
+- Builder sends preview auth to iframe runtime via `window.postMessage` (`talmudpedia.preview-auth.v1`), and runtime SDK uses bearer auth headers for preview chat stream calls.
 
 ## Coding-Agent Runtime (Current)
 ### Single-Sandbox, Stage/Live Model
@@ -168,7 +170,8 @@ Public endpoints:
 Runtime delivery behavior:
 - HTML runtime responses inject `window.__APP_RUNTIME_CONTEXT` using the same bootstrap payload schema as `/runtime/bootstrap`.
 - Published public runtime endpoints now enforce per-app CORS allowlist (`allowed_origins`, plus published URL).
-- Preview runtime keeps existing trusted-origin preview token behavior.
+- Preview runtime/bootstrap/assets return tokenless URLs and no longer support query-token auth.
+- Preview auth is bearer/cookie only, and preview runtime responses set preview cookie from the authenticated principal token for tokenless browser navigation.
 
 Removed path behavior:
 - `GET /public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED`.

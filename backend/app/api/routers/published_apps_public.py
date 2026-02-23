@@ -1,6 +1,5 @@
 import json
 import os
-import re
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional
@@ -39,9 +38,7 @@ from app.services.published_app_auth_service import PublishedAppAuthError, Publi
 
 
 router = APIRouter(prefix="/public/apps", tags=["published-apps-public"])
-PREVIEW_TOKEN_QUERY_PARAM = "preview_token"
 PREVIEW_TOKEN_COOKIE_NAME = "published_app_preview_token"
-HTML_ASSET_REF_RE = re.compile(r'(?P<prefix>\b(?:src|href)=["\'])(?P<url>[^"\']+)(?P<suffix>["\'])')
 
 
 class PublicAppConfigResponse(BaseModel):
@@ -100,7 +97,6 @@ class RuntimeBootstrapResponse(BaseModel):
     chat_stream_path: str
     chat_stream_url: str
     auth: RuntimeBootstrapAuthResponse
-    preview_token: Optional[str] = None
 
 
 class PublicAuthRequest(BaseModel):
@@ -298,7 +294,6 @@ def _build_preview_bootstrap(
     request: Request,
     app: PublishedApp,
     revision: PublishedAppRevision,
-    preview_token: Optional[str],
 ) -> RuntimeBootstrapResponse:
     runtime_api_base = _resolve_runtime_api_base_url(request)
     runtime_api_parsed = urlparse(runtime_api_base)
@@ -306,9 +301,6 @@ def _build_preview_bootstrap(
     stream_suffix = f"/public/apps/preview/revisions/{revision.id}/chat/stream"
     stream_path = f"{api_base_path}{stream_suffix}" if api_base_path else stream_suffix
     stream_url = f"{runtime_api_base}{stream_suffix}"
-    if preview_token:
-        connector = "&" if "?" in stream_url else "?"
-        stream_url = f"{stream_url}{connector}{PREVIEW_TOKEN_QUERY_PARAM}={preview_token}"
     return RuntimeBootstrapResponse(
         app_id=str(app.id),
         slug=app.slug,
@@ -323,7 +315,6 @@ def _build_preview_bootstrap(
             providers=list(app.auth_providers or []),
             exchange_enabled=False,
         ),
-        preview_token=preview_token or None,
     )
 
 
@@ -340,26 +331,24 @@ def _inject_runtime_context_into_html(html: str, context: RuntimeBootstrapRespon
     return f"{script}{html}"
 
 
-def _inject_preview_token_into_html_assets(html: str, token: str) -> str:
-    if not html or not token:
-        return html
-
-    def _replace(match: re.Match[str]) -> str:
-        prefix = match.group("prefix")
-        url = match.group("url")
-        suffix = match.group("suffix")
-        stripped = (url or "").strip()
-        if not stripped:
-            return match.group(0)
-        lowered = stripped.lower()
-        if lowered.startswith(("http://", "https://", "data:", "javascript:", "mailto:", "#")):
-            return match.group(0)
-        if f"{PREVIEW_TOKEN_QUERY_PARAM}=" in stripped:
-            return match.group(0)
-        with_token = _append_query(stripped, {PREVIEW_TOKEN_QUERY_PARAM: token})
-        return f"{prefix}{with_token}{suffix}"
-
-    return HTML_ASSET_REF_RE.sub(_replace, html)
+def _set_preview_auth_cookie(
+    *,
+    response: Response,
+    request: Request,
+    revision_id: UUID,
+    auth_token: Optional[str],
+) -> None:
+    token = (auth_token or "").strip()
+    if not token:
+        return
+    response.set_cookie(
+        key=PREVIEW_TOKEN_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        path=f"/public/apps/preview/revisions/{revision_id}",
+    )
 
 
 def _chat_message_to_payload(message: Message) -> dict[str, Any]:
@@ -710,8 +699,6 @@ async def get_preview_asset(
     if not dist_prefix:
         raise HTTPException(status_code=404, detail="Preview assets are unavailable for this revision")
 
-    query_token = (request.query_params.get(PREVIEW_TOKEN_QUERY_PARAM) or "").strip()
-
     try:
         storage = PublishedAppBundleStorage.from_env()
         payload, content_type = storage.read_asset_bytes(
@@ -727,24 +714,13 @@ async def get_preview_asset(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if query_token and content_type.startswith("text/html"):
-        try:
-            html = payload.decode("utf-8")
-            html = _inject_preview_token_into_html_assets(html, query_token)
-            payload = html.encode("utf-8")
-        except Exception:
-            # If rewriting fails, return original payload.
-            pass
-
     if content_type.startswith("text/html"):
         try:
             html = payload.decode("utf-8")
-            preview_token = query_token or (principal.get("auth_token") or "").strip()
             bootstrap = _build_preview_bootstrap(
                 request=request,
                 app=app,
                 revision=revision,
-                preview_token=preview_token or None,
             )
             html = _inject_runtime_context_into_html(html, bootstrap)
             payload = html.encode("utf-8")
@@ -756,21 +732,19 @@ async def get_preview_asset(
         media_type=content_type,
         headers={"Cache-Control": "no-store"},
     )
-    if query_token:
-        response.set_cookie(
-            key=PREVIEW_TOKEN_COOKIE_NAME,
-            value=query_token,
-            httponly=True,
-            secure=request.url.scheme == "https",
-            samesite="lax",
-            path=f"/public/apps/preview/revisions/{revision_id}",
-        )
+    _set_preview_auth_cookie(
+        response=response,
+        request=request,
+        revision_id=revision_id,
+        auth_token=principal.get("auth_token"),
+    )
     return response
 
 
 @router.get("/preview/revisions/{revision_id}/runtime", response_model=PreviewAppRuntimeResponse)
 async def get_preview_runtime(
     request: Request,
+    response: Response,
     revision_id: UUID,
     principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
     db: AsyncSession = Depends(get_db),
@@ -796,9 +770,12 @@ async def get_preview_runtime(
         if isinstance(manifest_entry, str) and manifest_entry.strip():
             entry_html = manifest_entry.lstrip("/")
     preview_url = f"{asset_base_url}{entry_html}"
-    token = (principal.get("auth_token") or "").strip()
-    if token:
-        preview_url = _append_query(preview_url, {PREVIEW_TOKEN_QUERY_PARAM: token})
+    _set_preview_auth_cookie(
+        response=response,
+        request=request,
+        revision_id=revision_id,
+        auth_token=principal.get("auth_token"),
+    )
     return PreviewAppRuntimeResponse(
         app_id=str(app.id),
         slug=app.slug,
@@ -813,6 +790,7 @@ async def get_preview_runtime(
 @router.get("/preview/revisions/{revision_id}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
 async def get_preview_runtime_bootstrap(
     request: Request,
+    response: Response,
     revision_id: UUID,
     principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
     db: AsyncSession = Depends(get_db),
@@ -822,12 +800,16 @@ async def get_preview_runtime_bootstrap(
         revision_id=revision_id,
         principal=principal,
     )
-    preview_token = (principal.get("auth_token") or "").strip() or None
+    _set_preview_auth_cookie(
+        response=response,
+        request=request,
+        revision_id=revision_id,
+        auth_token=principal.get("auth_token"),
+    )
     return _build_preview_bootstrap(
         request=request,
         app=app,
         revision=revision,
-        preview_token=preview_token,
     )
 
 

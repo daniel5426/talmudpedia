@@ -183,13 +183,15 @@ async def test_revision_preview_token_matches_requested_revision(client, db_sess
     assert preview_token
 
     runtime_ok = await client.get(
-        f"/public/apps/preview/revisions/{published_revision_id}/runtime?preview_token={preview_token}"
+        f"/public/apps/preview/revisions/{published_revision_id}/runtime",
+        headers={"Authorization": f"Bearer {preview_token}"},
     )
     assert runtime_ok.status_code == 200
     assert runtime_ok.json()["revision_id"] == published_revision_id
 
     runtime_wrong_revision = await client.get(
-        f"/public/apps/preview/revisions/{app_row.current_draft_revision_id}/runtime?preview_token={preview_token}"
+        f"/public/apps/preview/revisions/{app_row.current_draft_revision_id}/runtime",
+        headers={"Authorization": f"Bearer {preview_token}"},
     )
     assert runtime_wrong_revision.status_code == 403
     assert runtime_wrong_revision.json()["detail"] == "Preview token does not match requested revision"

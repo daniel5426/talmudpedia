@@ -155,7 +155,8 @@ async def test_preview_chat_stream_uses_preview_token_and_runs_without_persisten
     monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
 
     stream_resp = await client.post(
-        f"/public/apps/preview/revisions/{draft_revision_id}/chat/stream?preview_token={preview_token}",
+        f"/public/apps/preview/revisions/{draft_revision_id}/chat/stream",
+        headers={"Authorization": f"Bearer {preview_token}"},
         json={"input": "Preview prompt"},
     )
     assert stream_resp.status_code == 200
@@ -193,6 +194,7 @@ async def test_preview_chat_stream_requires_preview_token(client, db_session):
 
     state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_resp.status_code == 200
+    preview_token = state_resp.json()["preview_token"]
     draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
 
     stream_resp = await client.post(
@@ -200,3 +202,9 @@ async def test_preview_chat_stream_requires_preview_token(client, db_session):
         json={"input": "No token"},
     )
     assert stream_resp.status_code == 401
+
+    query_only_resp = await client.post(
+        f"/public/apps/preview/revisions/{draft_revision_id}/chat/stream?preview_token={preview_token}",
+        json={"input": "Query token only"},
+    )
+    assert query_only_resp.status_code == 401

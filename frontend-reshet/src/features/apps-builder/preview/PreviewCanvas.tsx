@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,17 +10,20 @@ type DraftDevStatus = "starting" | "running" | "stopped" | "expired" | "error";
 
 type PreviewCanvasProps = {
   previewUrl?: string | null;
+  previewAuthToken?: string | null;
   devStatus?: DraftDevStatus | null;
   devError?: string | null;
 };
 
 const PREVIEW_REVEAL_DELAY_MS = 350;
 const PREVIEW_MAX_HIDDEN_MS = 8_000;
+const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 
 export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
-  function PreviewCanvas({ previewUrl, devStatus, devError }, ref) {
+  function PreviewCanvas({ previewUrl, previewAuthToken, devStatus, devError }, ref) {
     const revealTimerRef = useRef<number | null>(null);
     const failSafeTimerRef = useRef<number | null>(null);
+    const frameRef = useRef<HTMLIFrameElement | null>(null);
     const [isFrameVisible, setIsFrameVisible] = useState(false);
 
     const clearTimers = useCallback(() => {
@@ -41,6 +44,38 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
     const hasSessionError = Boolean(devError);
     const canLoadFrame = devStatus === "running" && Boolean(previewUrl) && !hasFailed && !hasSessionError;
 
+    const setFrameRef = useCallback(
+      (node: HTMLIFrameElement | null) => {
+        frameRef.current = node;
+        if (typeof ref === "function") {
+          ref(node);
+          return;
+        }
+        if (ref) {
+          (ref as MutableRefObject<HTMLIFrameElement | null>).current = node;
+        }
+      },
+      [ref],
+    );
+
+    const postPreviewAuthToken = useCallback(() => {
+      const frame = frameRef.current;
+      if (!frame?.contentWindow || !canLoadFrame) return;
+      let targetOrigin = "*";
+      try {
+        targetOrigin = new URL(previewUrl || "").origin;
+      } catch {
+        // Keep wildcard fallback for malformed/non-URL src values.
+      }
+      frame.contentWindow.postMessage(
+        {
+          type: PREVIEW_AUTH_MESSAGE_TYPE,
+          token: (previewAuthToken || "").trim() || null,
+        },
+        targetOrigin,
+      );
+    }, [canLoadFrame, previewAuthToken, previewUrl]);
+
     useEffect(() => {
       clearTimers();
       setIsFrameVisible(false);
@@ -54,18 +89,30 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       }, PREVIEW_MAX_HIDDEN_MS);
     }, [canLoadFrame, clearTimers, previewUrl]);
 
+    useEffect(() => {
+      if (!canLoadFrame) return;
+      postPreviewAuthToken();
+      const timer = window.setTimeout(() => {
+        postPreviewAuthToken();
+      }, 180);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }, [canLoadFrame, postPreviewAuthToken]);
+
     const handleFrameLoad = useCallback(() => {
       clearTimers();
+      postPreviewAuthToken();
       revealTimerRef.current = window.setTimeout(() => {
         setIsFrameVisible(true);
       }, PREVIEW_REVEAL_DELAY_MS);
-    }, [clearTimers]);
+    }, [clearTimers, postPreviewAuthToken]);
 
     return (
       <div className="relative h-full w-full overflow-hidden bg-white">
         {canLoadFrame ? (
           <iframe
-            ref={ref}
+            ref={setFrameRef}
             title="App Preview"
             data-testid="preview-iframe"
             className={cn(

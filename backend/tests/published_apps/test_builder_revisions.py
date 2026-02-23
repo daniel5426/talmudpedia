@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.api.routers.published_apps_admin import BUILDER_MAX_FILE_BYTES
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSession, PublishedAppDraftDevSessionStatus
@@ -199,8 +201,95 @@ async def test_draft_dev_session_preview_url_includes_runtime_context(client, db
     assert query["runtime_mode"] == ["builder-preview"]
     runtime_base_path = query["runtime_base_path"][0]
     assert runtime_base_path.endswith(f"/public/apps/preview/revisions/{draft_revision_id}")
-    assert query["preview_token"][0]
-    assert query["runtime_preview_token"][0]
+    assert "preview_token" not in query
+    assert "runtime_preview_token" not in query
+    assert payload["preview_auth_token"]
+    assert payload["preview_auth_expires_at"]
+
+
+@pytest.mark.asyncio
+async def test_draft_dev_ensure_session_recovers_from_concurrent_scope_insert(db_session, monkeypatch):
+    service = PublishedAppDraftDevRuntimeService(db_session)
+    now = datetime.now(timezone.utc)
+    user_id = uuid4()
+    app_id = uuid4()
+    revision_id = uuid4()
+    files_payload = {"src/main.tsx": "export default function App() { return null; }"}
+    dependency_hash = service._dependency_hash(files_payload)
+
+    app = SimpleNamespace(
+        id=app_id,
+        slug="race-app",
+        tenant_id=uuid4(),
+        agent_id=uuid4(),
+    )
+    revision = SimpleNamespace(
+        id=revision_id,
+        files=files_payload,
+        entry_file="src/main.tsx",
+    )
+
+    existing_session = PublishedAppDraftDevSession(
+        id=uuid4(),
+        published_app_id=app_id,
+        user_id=user_id,
+        revision_id=revision_id,
+        status=PublishedAppDraftDevSessionStatus.running,
+        sandbox_id="sandbox-existing",
+        preview_url="https://preview.local/sandbox/sandbox-existing/",
+        idle_timeout_seconds=180,
+        last_activity_at=now,
+        expires_at=now + timedelta(minutes=3),
+        dependency_hash=dependency_hash,
+        last_error=None,
+    )
+
+    get_session_calls = {"count": 0}
+
+    async def fake_get_session(*, app_id, user_id):
+        _ = (app_id, user_id)
+        get_session_calls["count"] += 1
+        if get_session_calls["count"] == 1:
+            return None
+        return existing_session
+
+    class _Nested:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = (exc_type, exc, tb)
+            return False
+
+    async def fake_expire_idle_sessions(*, app_id=None, user_id=None):
+        _ = (app_id, user_id)
+        return 0
+
+    async def fake_flush():
+        raise IntegrityError("INSERT", {}, Exception("duplicate key"))
+
+    async def fake_sync_session(**kwargs):
+        _ = kwargs
+        return None
+
+    monkeypatch.setattr(service, "get_session", fake_get_session)
+    monkeypatch.setattr(service, "expire_idle_sessions", fake_expire_idle_sessions)
+    monkeypatch.setattr(service.db, "begin_nested", lambda: _Nested())
+    monkeypatch.setattr(service.db, "flush", fake_flush)
+    monkeypatch.setattr(service.client, "sync_session", fake_sync_session)
+
+    session = await service.ensure_session(
+        app=app,
+        revision=revision,
+        user_id=user_id,
+        files=files_payload,
+        entry_file="src/main.tsx",
+    )
+
+    assert session is existing_session
+    assert get_session_calls["count"] >= 2
+    assert session.status == PublishedAppDraftDevSessionStatus.running
+    assert session.sandbox_id == "sandbox-existing"
 
 
 @pytest.mark.asyncio

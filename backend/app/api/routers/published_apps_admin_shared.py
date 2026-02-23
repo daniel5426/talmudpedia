@@ -340,7 +340,11 @@ class DraftDevSessionResponse(BaseModel):
     app_id: str
     revision_id: Optional[str] = None
     status: str
+    active_coding_run_id: Optional[str] = None
+    active_coding_run_status: Optional[str] = None
     preview_url: Optional[str] = None
+    preview_auth_token: Optional[str] = None
+    preview_auth_expires_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     idle_timeout_seconds: int = 180
     last_activity_at: Optional[datetime] = None
@@ -680,12 +684,18 @@ def _revision_build_status_to_response(revision: PublishedAppRevision) -> Revisi
     )
 
 
-def _draft_dev_session_to_response(session: PublishedAppDraftDevSession) -> DraftDevSessionResponse:
+def _draft_dev_session_to_response(
+    session: PublishedAppDraftDevSession,
+    *,
+    active_coding_run_status: str | None = None,
+) -> DraftDevSessionResponse:
     return DraftDevSessionResponse(
         session_id=str(session.id),
         app_id=str(session.published_app_id),
         revision_id=str(session.revision_id) if session.revision_id else None,
         status=session.status.value if hasattr(session.status, "value") else str(session.status),
+        active_coding_run_id=str(session.active_coding_run_id) if session.active_coding_run_id else None,
+        active_coding_run_status=active_coding_run_status,
         preview_url=session.preview_url,
         expires_at=session.expires_at,
         idle_timeout_seconds=int(session.idle_timeout_seconds or 180),

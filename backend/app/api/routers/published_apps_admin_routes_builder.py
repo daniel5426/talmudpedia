@@ -1,5 +1,5 @@
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
@@ -99,15 +99,25 @@ def _resolve_runtime_api_base_url(request: Request) -> str:
     return f"{origin}{api_prefix.rstrip('/')}"
 
 
-def _decorate_draft_dev_session_response(
+async def _decorate_draft_dev_session_response(
     *,
+    db: AsyncSession,
     request: Request,
     session: PublishedAppDraftDevSession,
     app: PublishedApp,
     actor_id: UUID | None,
     revision_id: UUID | None,
 ) -> DraftDevSessionResponse:
-    response = _draft_dev_session_to_response(session)
+    active_coding_run_status: str | None = None
+    if session.active_coding_run_id is not None:
+        run = await db.get(AgentRun, session.active_coding_run_id)
+        if run is not None:
+            active_coding_run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+
+    response = _draft_dev_session_to_response(
+        session,
+        active_coding_run_status=active_coding_run_status,
+    )
     if actor_id is None:
         return response
     preview_url = (response.preview_url or "").strip()
@@ -118,7 +128,8 @@ def _decorate_draft_dev_session_response(
     if effective_revision_id is None:
         return response
 
-    preview_token = create_published_app_preview_token(
+    preview_auth_expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
+    preview_auth_token = create_published_app_preview_token(
         subject=str(actor_id),
         tenant_id=str(app.tenant_id),
         app_id=str(app.id),
@@ -131,12 +142,12 @@ def _decorate_draft_dev_session_response(
     response.preview_url = _append_query(
         preview_url,
         {
-            "preview_token": preview_token,
             "runtime_mode": "builder-preview",
             "runtime_base_path": runtime_base_path,
-            "runtime_preview_token": preview_token,
         },
     )
+    response.preview_auth_token = preview_auth_token
+    response.preview_auth_expires_at = preview_auth_expires_at
     return response
 
 
@@ -158,7 +169,7 @@ async def _assert_no_active_coding_run_for_scope(
         session.active_coding_run_client_message_id = None
         return
     run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
-    if run_status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
+    if run_status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value, RunStatus.paused.value}:
         session.active_coding_run_id = None
         session.active_coding_run_locked_at = None
         session.active_coding_run_client_message_id = None
@@ -217,7 +228,8 @@ async def get_builder_state(
         current_published_revision=_revision_to_response(published) if published else None,
         preview_token=preview_token,
         draft_dev=(
-            _decorate_draft_dev_session_response(
+            await _decorate_draft_dev_session_response(
+                db=db,
                 request=request,
                 session=draft_dev_session,
                 app=app,
@@ -372,7 +384,8 @@ async def get_builder_draft_dev_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Draft dev session not found")
     await db.commit()
-    return _decorate_draft_dev_session_response(
+    return await _decorate_draft_dev_session_response(
+        db=db,
         request=request,
         session=session,
         app=app,
@@ -411,7 +424,8 @@ async def ensure_builder_draft_dev_session(
     except PublishedAppDraftDevRuntimeDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     await db.commit()
-    return _decorate_draft_dev_session_response(
+    return await _decorate_draft_dev_session_response(
+        db=db,
         request=request,
         session=session,
         app=app,
@@ -458,7 +472,8 @@ async def sync_builder_draft_dev_session(
         raise HTTPException(status_code=409, detail=str(exc))
 
     await db.commit()
-    return _decorate_draft_dev_session_response(
+    return await _decorate_draft_dev_session_response(
+        db=db,
         request=request,
         session=session,
         app=app,
@@ -494,7 +509,8 @@ async def heartbeat_builder_draft_dev_session(
     except PublishedAppDraftDevRuntimeDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     await db.commit()
-    return _decorate_draft_dev_session_response(
+    return await _decorate_draft_dev_session_response(
+        db=db,
         request=request,
         session=session,
         app=app,
@@ -530,7 +546,8 @@ async def delete_builder_draft_dev_session(
         reason=PublishedAppDraftDevSessionStatus.stopped,
     )
     await db.commit()
-    return _decorate_draft_dev_session_response(
+    return await _decorate_draft_dev_session_response(
+        db=db,
         request=request,
         session=session,
         app=app,

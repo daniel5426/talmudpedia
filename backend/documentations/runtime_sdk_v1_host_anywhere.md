@@ -1,6 +1,6 @@
 # Runtime SDK v1 (Host-Anywhere)
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-23
 
 ## Purpose
 This document defines the current runtime SDK contract for published apps that need to run both on-platform and on external hosting (GitHub/Vercel/Netlify/self-hosted).
@@ -30,12 +30,17 @@ Bootstrap payload includes:
 - mode: `published-runtime | builder-preview`
 - routing: `api_base_path`, optional `api_base_url`, `chat_stream_path`, optional `chat_stream_url`
 - auth capabilities: `enabled`, `providers`, `exchange_enabled`
-- optional preview token metadata for preview mode
+- preview runtime/chat URLs are tokenless; query-token transport is not supported
 
 Runtime HTML responses inject:
 - `window.__APP_RUNTIME_CONTEXT`
 
 Injection uses the same serializer payload shape as bootstrap endpoints to prevent drift.
+
+Preview auth transport (builder mode):
+- Runtime SDK wrapper listens for `window.postMessage` auth events (`talmudpedia.preview-auth.v1`) and keeps preview token in memory only.
+- Preview stream calls use `Authorization: Bearer <token>` when preview token is present.
+- Preview runtime/bootstrap/assets endpoints accept bearer/cookie auth and do not accept query-token-only auth.
 
 ## Auth Exchange (External Identity -> Platform Session)
 Endpoint:
@@ -78,7 +83,8 @@ Template import stability:
 1. Fetch bootstrap (`fetchRuntimeBootstrap`) for app slug or preview revision.
 2. Build client with `createRuntimeClient`.
 3. Provide a `tokenProvider` for platform bearer tokens.
-4. If external identity is used, exchange external JWT via `auth.exchange` and persist returned platform token.
+4. For builder preview iframe flows, push preview auth token updates over `postMessage` and keep iframe URL stable.
+5. If external identity is used, exchange external JWT via `auth.exchange` and persist returned platform token.
 
 ## Backend Files of Record
 - `backend/app/api/routers/published_apps_public.py`

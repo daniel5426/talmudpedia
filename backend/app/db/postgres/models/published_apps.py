@@ -68,6 +68,14 @@ class PublishedAppCodingChatMessageRole(str, enum.Enum):
     assistant = "assistant"
 
 
+class PublishedAppCodingPromptQueueStatus(str, enum.Enum):
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
 class PublishedAppUserMembershipStatus(str, enum.Enum):
     active = "active"
     blocked = "blocked"
@@ -149,6 +157,11 @@ class PublishedApp(Base):
     )
     coding_chat_sessions = relationship(
         "PublishedAppCodingChatSession",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+    )
+    coding_prompt_queue_items = relationship(
+        "PublishedAppCodingPromptQueue",
         back_populates="published_app",
         cascade="all, delete-orphan",
     )
@@ -300,6 +313,11 @@ class PublishedAppCodingChatSession(Base):
         back_populates="session",
         cascade="all, delete-orphan",
     )
+    prompt_queue_items = relationship(
+        "PublishedAppCodingPromptQueue",
+        back_populates="chat_session",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index(
@@ -340,6 +358,81 @@ class PublishedAppCodingChatMessage(Base):
     __table_args__ = (
         UniqueConstraint("run_id", "role", name="uq_published_app_coding_chat_messages_run_role"),
         Index("ix_published_app_coding_chat_messages_session_created_at", "session_id", "created_at"),
+    )
+
+
+class PublishedAppCodingRunEvent(Base):
+    __tablename__ = "published_app_coding_run_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    seq = Column(Integer, nullable=False)
+    event = Column(String(128), nullable=False)
+    stage = Column(String(64), nullable=False)
+    payload_json = Column(JSONB, nullable=False, default=dict)
+    diagnostics_json = Column(JSONB, nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    run = relationship("AgentRun")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "seq", name="uq_published_app_coding_run_events_run_seq"),
+        Index("ix_published_app_coding_run_events_run_seq", "run_id", "seq"),
+    )
+
+
+class PublishedAppCodingPromptQueue(Base):
+    __tablename__ = "published_app_coding_prompt_queue"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chat_session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_coding_chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    position = Column(Integer, nullable=False)
+    status = Column(
+        SQLEnum(PublishedAppCodingPromptQueueStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppCodingPromptQueueStatus.queued,
+    )
+    payload = Column(JSONB, nullable=False, default=dict)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="coding_prompt_queue_items")
+    user = relationship("User")
+    chat_session = relationship("PublishedAppCodingChatSession", back_populates="prompt_queue_items")
+
+    __table_args__ = (
+        Index("ix_published_app_coding_prompt_queue_session_position", "chat_session_id", "position"),
+        Index("ix_published_app_coding_prompt_queue_session_status", "chat_session_id", "status"),
+        UniqueConstraint(
+            "chat_session_id",
+            "position",
+            name="uq_published_app_coding_prompt_queue_session_position",
+        ),
     )
 
 

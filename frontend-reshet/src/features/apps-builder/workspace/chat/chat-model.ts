@@ -1,6 +1,7 @@
 export type TimelineTone = "default" | "success" | "error";
 export type TimelineKind = "user" | "assistant" | "tool";
 export type ToolRunStatus = "running" | "completed" | "failed";
+export type UserDeliveryStatus = "pending" | "queued" | "sent" | "failed";
 
 export type TimelineItem = {
   id: string;
@@ -14,6 +15,9 @@ export type TimelineItem = {
   toolPath?: string;
   assistantStreamId?: string;
   checkpointId?: string;
+  userDeliveryStatus?: UserDeliveryStatus;
+  clientMessageId?: string;
+  queueItemId?: string;
 };
 
 export function timelineId(prefix: string): string {

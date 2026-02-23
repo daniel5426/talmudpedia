@@ -172,7 +172,10 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     )
 
     asset_path = f"/public/apps/preview/revisions/{draft_revision_id}/assets/assets/main.js"
-    asset_resp = await client.get(f"{asset_path}?preview_token={preview_token}")
+    asset_resp = await client.get(
+        asset_path,
+        headers={"Authorization": f"Bearer {preview_token}"},
+    )
     assert asset_resp.status_code == 200
     assert asset_resp.headers["content-type"].startswith("application/javascript")
     assert "console.log('ok');" in asset_resp.text
@@ -193,12 +196,12 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     preview_url = runtime_payload["preview_url"]
     assert "/assets/index.html" in preview_url
     preview_query = parse_qs(urlparse(preview_url).query)
-    assert preview_query.get("preview_token") == [preview_token]
+    assert preview_query.get("preview_token") in (None, [])
     assert runtime_payload["asset_base_url"].endswith("/assets/")
 
 
 @pytest.mark.asyncio
-async def test_preview_runtime_allows_valid_query_token_when_auth_header_is_invalid(client, db_session):
+async def test_preview_runtime_rejects_query_token_fallback_when_auth_header_is_invalid(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -228,14 +231,11 @@ async def test_preview_runtime_allows_valid_query_token_when_auth_header_is_inva
         f"/public/apps/preview/revisions/{draft_revision_id}/runtime?preview_token={preview_token}",
         headers={"Authorization": "Bearer invalid-preview-token"},
     )
-    assert runtime_resp.status_code == 200
-    payload = runtime_resp.json()
-    assert payload["revision_id"] == draft_revision_id
-    assert "/assets/" in payload["asset_base_url"]
+    assert runtime_resp.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_preview_asset_html_rewrites_relative_assets_with_preview_token(client, db_session, monkeypatch):
+async def test_preview_asset_html_keeps_relative_assets_tokenless(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -288,12 +288,14 @@ async def test_preview_asset_html_rewrites_relative_assets_with_preview_token(cl
     )
 
     resp = await client.get(
-        f"/public/apps/preview/revisions/{draft_revision_id}/assets/index.html?preview_token={preview_token}"
+        f"/public/apps/preview/revisions/{draft_revision_id}/assets/index.html",
+        headers={"Authorization": f"Bearer {preview_token}"},
     )
     assert resp.status_code == 200
     text = resp.text
-    assert f"./assets/main.css?preview_token={preview_token}" in text
-    assert f"./assets/main.js?preview_token={preview_token}" in text
+    assert "./assets/main.css" in text
+    assert "./assets/main.js" in text
+    assert "preview_token=" not in text
     assert "window.__APP_RUNTIME_CONTEXT=" in text
     assert "\"mode\":\"builder-preview\"" in text
 
@@ -466,14 +468,15 @@ async def test_preview_runtime_bootstrap_contract(client, db_session):
     assert preview_token
 
     bootstrap_resp = await client.get(
-        f"/public/apps/preview/revisions/{draft_revision_id}/runtime/bootstrap?preview_token={preview_token}"
+        f"/public/apps/preview/revisions/{draft_revision_id}/runtime/bootstrap",
+        headers={"Authorization": f"Bearer {preview_token}"},
     )
     assert bootstrap_resp.status_code == 200
     payload = bootstrap_resp.json()
     assert payload["version"] == "runtime-bootstrap.v1"
     assert payload["mode"] == "builder-preview"
     assert payload["revision_id"] == draft_revision_id
-    assert payload["preview_token"] == preview_token
+    assert "preview_token" not in payload
     assert payload["chat_stream_path"].endswith(f"/public/apps/preview/revisions/{draft_revision_id}/chat/stream")
 
 

@@ -122,7 +122,7 @@ export const publishedRuntimeService = {
 
   async getPreviewRuntime(revisionId: string, token: string): Promise<PreviewRuntimeDescriptor> {
     return runtimeRequest<PreviewRuntimeDescriptor>(
-      `/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime?preview_token=${encodeURIComponent(token)}`,
+      `/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime`,
       { token },
     );
   },

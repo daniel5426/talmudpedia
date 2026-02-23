@@ -1,6 +1,6 @@
 # Coding Agent API Tests
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-23
 
 ## Scope of the feature
 - Admin coding-agent run lifecycle APIs under `/admin/apps/{app_id}/coding-agent/runs*`.
@@ -42,6 +42,7 @@ Last Updated: 2026-02-22
 - Execution service applies run-scoped model override onto graph node `model_id` fields.
 - Stale `base_revision_id` conflict contract (`REVISION_CONFLICT`).
 - Stream endpoint returns correctly framed SSE envelopes (`data: ...\n\n`) and executes coding-agent stream generator.
+- Stream endpoint persists replay-log event payload/diagnostics as JSON-safe values (including datetime coercion to strings) so runner commits cannot fail on JSON serialization.
 - Stream endpoint fails closed when a run is missing sandbox context and returns `run.failed` with sandbox-required diagnostics.
 - Stream endpoint attempts sandbox-context recovery/bootstrap before failing closed on missing sandbox metadata.
 - Completed runs auto-apply/checkpoint from run sandbox before sandbox teardown, avoiding end-of-run snapshot races.
@@ -55,13 +56,16 @@ Last Updated: 2026-02-22
 - OpenCode unrecovered-`apply_patch` fail-closed behavior is configurable via `APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH`.
 - OpenCode engine stops consuming upstream events immediately after terminal events (`run.completed`/`run.failed`) so downstream stream finalization cannot hang on non-closing provider streams.
 - Runtime stream finalizes promptly even when an engine emits a terminal event and then hangs, and it force-persists terminal status when needed (`completed`/`failed`) to avoid indefinitely running UI state.
+- Runtime stream fail-closes to `failed` and persists terminal run status when an engine stops without emitting any terminal event (prevents `run.failed` event with DB run row still `queued`).
 - Runtime stream emits `assistant.delta` from final persisted output when token streaming is empty.
 - Runtime stream emits prompt-aware assistant fallback text when final output is missing.
 - Runtime stream handles detached/non-persistent `AgentRun` instances by reloading the run row from DB before finalize/refresh paths.
 - Runtime event mapping enriches patch tool failures with structured diagnostics (failure count + recommended refresh window).
 - Resume endpoint accepts paused runs and rejects non-paused runs.
-- Cancel endpoint transitions active runs to `cancelled`.
-- OpenCode cancellation follows fail-closed semantics: unconfirmed upstream cancellation transitions run to `failed`.
+- Cancel endpoint transitions active runs to `cancelled` immediately and no longer waits for provider cancellation confirmation.
+- Runtime stream emits `run.cancelled` as a first-class terminal SSE event for cancelled runs.
+- Stream endpoint emits a terminal snapshot event when a terminal run is streamed with `from_seq` beyond the persisted terminal row, preventing client-side non-terminal stream closures on replay-window races.
+- Orchestrator event-log persistence retries on `(run_id, seq)` uniqueness collisions and advances to the next sequence instead of failing the runner.
 - OpenCode stream path follows fail-closed semantics: adapter/runtime exceptions transition run to `failed` and emit `run.failed`.
 - Runtime/OpenCode/router layers persist timing telemetry in run context (`timing_metrics_ms`) for `create_run`, `create_run_api`, `sandbox_start`, `opencode_start`, and `first_token`.
 - `create_run` telemetry includes phase-level breakdown metrics (`create_run_model_resolve`, `create_run_opencode_health`, `create_run_opencode_model_resolve`, `create_run_profile_resolve`, `create_run_message_prepare`, `create_run_contract_build`, `create_run_executor_start`, `create_run_load_run`, `create_run_resolve_preview_session`) to diagnose run creation latency.
@@ -69,6 +73,33 @@ Last Updated: 2026-02-22
 - Runtime stream telemetry also records `terminal_event`, `checkpoint_done`, and `checkpoint_skipped_no_edit_tool`.
 
 ## Last run command + date/time + result
+- Command: `cd backend && pytest -q tests/coding_agent_api/test_terminal_stream_completion.py`
+- Date: 2026-02-23
+- Result: PASS (3 passed, 6 warnings)
+- Command: `cd backend && pytest -q tests/coding_agent_api/test_run_lifecycle.py::test_orchestrator_append_event_row_retries_on_seq_conflict`
+- Date: 2026-02-23
+- Result: PASS (1 passed, 6 warnings)
+- Command: `cd backend && pytest -q tests/coding_agent_api/test_run_lifecycle.py -k "stream_returns_sse_envelopes or stream_emits_terminal_snapshot_when_replay_window_has_no_terminal_event or stream_run_events_emits_run_cancelled_for_terminal_cancelled_status or coding_agent_cancel_is_immediate_when_opencode_cancel_unconfirmed"`
+- Date: 2026-02-23
+- Result: FAIL (3 failed, 1 passed, 32 deselected, 6 warnings) — sqlite in-memory harness instability when mixed stream tests spawn detached orchestrator tasks (`no such table: tenants` in later tests).
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py -k "run_cancelled_for_terminal_cancelled_status or cancel_is_immediate_when_opencode_cancel_unconfirmed"`
+- Date: 2026-02-23
+- Result: PASS (2 passed, 33 deselected, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py::test_coding_agent_stream_returns_sse_envelopes`
+- Date: 2026-02-23
+- Result: PASS (1 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py::test_stream_run_events_emits_run_cancelled_for_terminal_cancelled_status`
+- Date: 2026-02-23
+- Result: PASS (1 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py::test_coding_agent_cancel_is_immediate_when_opencode_cancel_unconfirmed`
+- Date: 2026-02-23
+- Result: PASS (1 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py::test_coding_agent_stream_emits_terminal_snapshot_when_replay_window_has_no_terminal_event`
+- Date: 2026-02-23
+- Result: PASS (1 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_run_lifecycle.py -k "cancel or stream_run_events_emits_assistant_delta_from_final_output_when_tokens_missing"`
+- Date: 2026-02-23
+- Result: PASS (3 passed, 31 deselected, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_terminal_stream_completion.py tests/coding_agent_api/test_opencode_apply_patch_recovery.py tests/opencode_server_client/test_opencode_server_client.py`
 - Date: 2026-02-22
 - Result: PASS (32 passed, 6 warnings)
@@ -207,3 +238,4 @@ Last Updated: 2026-02-22
 
 ## Known gaps or follow-ups
 - Add authorization-negative coverage for cross-tenant run access.
+- Stabilize combined SQLite in-memory runs for stream tests that spawn detached orchestrator tasks; run these high-concurrency scenarios in isolated test processes for deterministic CI behavior.

@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-23
 
 ## Scope of the feature
 - Admin control plane CRUD and publish lifecycle for tenant published apps.
@@ -50,12 +50,16 @@ Last Updated: 2026-02-22
 - Publish endpoint returns async job metadata and publish jobs move through `queued/running/succeeded/failed`.
 - Publish failures keep previous `current_published_revision_id` unchanged.
 - Draft-dev session APIs support ensure/sync/heartbeat/read/stop lifecycle per `(app_id, user_id)`.
-- Draft-dev ensure response decorates `preview_url` with runtime context query fields (`runtime_mode`, `runtime_base_path`, `preview_token`, `runtime_preview_token`) for template runtime SDK preview chat.
+- Draft-dev ensure/heartbeat responses return tokenless `preview_url` (runtime routing params only) plus off-URL auth fields (`preview_auth_token`, `preview_auth_expires_at`).
+- Draft-dev ensure path tolerates concurrent `(published_app_id, user_id)` insert races (unique-scope collision) and reuses the winning session row instead of failing with 500.
 - Public runtime descriptor and preview runtime/asset endpoints are covered.
 - Runtime bootstrap endpoints are covered for both published and preview revisions.
 - Runtime HTML injection of `window.__APP_RUNTIME_CONTEXT` is covered on runtime HTML responses.
 - Per-app public endpoint CORS allowlist behavior is covered (allowed and blocked origins).
-- Preview chat stream endpoint is covered (`POST /public/apps/preview/revisions/{revision_id}/chat/stream`), including preview-token auth requirement and ephemeral execution semantics.
+- Preview runtime/bootstrap/assets contracts are covered for tokenless URL behavior (no query-tokenized URLs or asset rewrites).
+- Preview endpoints reject query-token-only auth and accept bearer/cookie auth.
+- Preview runtime/bootstrap/assets responses set preview auth cookie from authenticated preview principal for tokenless browser navigation.
+- Preview chat stream endpoint is covered (`POST /public/apps/preview/revisions/{revision_id}/chat/stream`), including bearer/cookie auth requirement and ephemeral execution semantics.
 - Published runtime static asset proxy is covered (`GET /public/apps/{slug}/assets/{asset_path}`), including SPA route fallback to `index.html`.
 - Public `/public/apps/{slug}/ui` is permanently removed and returns `410 UI_SOURCE_MODE_REMOVED`.
 - Hostname resolve and app config retrieval for public runtime are covered.
@@ -65,6 +69,12 @@ Last Updated: 2026-02-22
 - Legacy builder chat endpoints (`/builder/chat/stream`, `/builder/checkpoints`, `/builder/undo`, `/builder/revert-file`) are intentionally removed and are no longer part of this suite.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_builder_revisions.py`
+- Date: 2026-02-23
+- Result: PASS (11 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps`
+- Date: 2026-02-23
+- Result: PASS (45 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps`
 - Date: 2026-02-22
 - Result: PASS (45 passed)
@@ -109,7 +119,7 @@ Last Updated: 2026-02-22
 ## Known gaps or follow-ups
 - Add negative tests for cross-app token replay attempts.
 - Add coverage for revoked-session rejection on chat endpoints.
-- Add preview-token invalid-claim and expiration-path tests for builder preview UI endpoints.
+- Add expanded coverage for preview cookie-expiration/refresh edge paths across long-lived preview sessions.
 - Coding-agent run/checkpoint API coverage is tracked in:
 - `backend/tests/coding_agent_api/test_state.md`
 - `backend/tests/coding_agent_checkpoints/test_state.md`

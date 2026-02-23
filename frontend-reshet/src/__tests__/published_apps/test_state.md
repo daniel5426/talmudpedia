@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-23
 
 ## Scope
 Frontend coverage for:
@@ -15,6 +15,7 @@ Frontend coverage for:
 ## Test Files
 - `frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/published_auth_templates.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/published_runtime_gate.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/published_auth_flows.test.tsx`
@@ -39,9 +40,11 @@ Frontend coverage for:
 - Builder workspace shows `Reasoning...` fallback only when no tool is actively running; active tool rows own the shimmer state while executing.
 - Builder workspace scopes `Reasoning...` fallback to the active prompt so second/subsequent prompts still show immediate shimmer before first stream activity.
 - Builder workspace shows FIFO queued prompts via AI Elements `Queue` when user submits during active runs, with per-item remove action.
-- Builder workspace stop flow calls coding-agent cancel endpoint and preserves queue progression to the next pending prompt.
+- Builder workspace queue UI is server-authoritative (`list/delete chat-session queue` APIs) with no optimistic local queue fallback.
+- Builder workspace stop flow calls coding-agent cancel endpoint while preserving persisted queued prompts.
 - Builder workspace stop flow still dispatches cancel when stop is clicked before `create-run` returns `run_id` (run-id race protection).
-- Builder workspace recovers from missing terminal SSE by reconciling persisted run status (`/coding-agent/runs/{run_id}`), then dequeues and executes queued prompts.
+- Builder workspace keeps queued prompt behavior server-authoritative when terminal SSE is missing (no persisted-run fallback polling path).
+- Builder workspace renders user prompt bubbles immediately on submit before `create-run` resolves, with delivery-state labels (`Sending...`, `Queued`, `Failed`).
 - Builder workspace loads coding-agent capabilities once to hydrate engine/policy context for coding runs.
 - Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
 - Builder workspace shell now enforces viewport-bounded layout (`h-dvh` + `min-h-0` + overflow clamps) so chat scroll stays internal and the page does not grow with timeline length.
@@ -61,7 +64,9 @@ Frontend coverage for:
 - Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
 - Builder code tab auto-expands ancestor folders when the selected file is nested.
 - Builder code tab maps `index.html` to Monaco `html` language and sets builder-only validation decoration suppression.
-- Builder workspace ensures draft-dev session on preview and uses sandbox `preview_url` for iframe rendering.
+- Builder workspace ensures draft-dev session on preview, consumes tokenless sandbox `preview_url`, and stores `preview_auth_token` off-URL.
+- Builder workspace keeps iframe `src` stable when heartbeat rotates preview auth token.
+- Preview canvas sends auth token updates to iframe runtime via `window.postMessage` on initial load and token refresh, without iframe navigation.
 - Builder workspace treats transient draft-dev bootstrap 400s (`Draft dev sandbox is not running`) as recoverable, retries session ensure with backoff, and keeps loading UI instead of surfacing immediate preview failure.
 - Builder workspace syncs draft files via draft-dev sync API without creating revisions per keystroke.
 - Builder preview iframe remains hidden behind a warmup overlay until the sandbox frame is ready, preventing early transient Vite error flashes.
@@ -73,6 +78,15 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runInBand --silent src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-02-23
+- Result: PASS (1 suite, 45 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand --silent src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "queues a prompt while run is active and supports removing queued items|stops active run via cancel endpoint and continues with queued prompt|recovers queued prompts when stream misses terminal event but run is persisted as completed|still sends cancel when stop is clicked before create-run returns a run id|loads chat sessions from API, hydrates timeline, and resumes with the same chat_session_id"`
+- Date: 2026-02-23
+- Result: PASS (1 suite, 5 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps src/__tests__/runtime_sdk`
+- Date: 2026-02-23
+- Result: PASS (7 suites, 55 tests)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
 - Date: 2026-02-22
 - Result: PASS (1 suite, 43 tests)

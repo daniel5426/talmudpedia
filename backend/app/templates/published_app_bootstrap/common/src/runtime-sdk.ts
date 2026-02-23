@@ -23,7 +23,6 @@ type QueryRuntimeContext = {
   basePath?: string;
   bootstrapUrl?: string;
   token?: string | null;
-  previewToken?: string | null;
 };
 
 type RuntimeConfig = {
@@ -35,9 +34,12 @@ type RuntimeConfig = {
 };
 
 const TOKEN_PREFIX = "published-app-auth-token";
+const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 const config = (runtimeConfig || {}) as RuntimeConfig;
 
 let bootstrapPromise: Promise<RuntimeBootstrap> | null = null;
+let previewAuthToken: string | null = null;
+let isPreviewAuthChannelBound = false;
 
 function toLegacyEvent(event: NormalizedRuntimeEvent): RuntimeEvent {
   return {
@@ -56,14 +58,25 @@ function readQueryContext(): QueryRuntimeContext {
   const basePath = params.get("runtime_base_path");
   const bootstrapUrl = params.get("runtime_bootstrap_url");
   const token = params.get("runtime_token");
-  const previewToken = params.get("runtime_preview_token") || params.get("preview_token");
   return {
     mode: mode === "builder-preview" || mode === "published-runtime" ? mode : undefined,
     basePath: basePath || undefined,
     bootstrapUrl: bootstrapUrl || undefined,
     token: token || null,
-    previewToken: previewToken || null,
   };
+}
+
+function bindPreviewAuthChannel(): void {
+  if (typeof window === "undefined" || isPreviewAuthChannelBound) return;
+  isPreviewAuthChannelBound = true;
+  window.addEventListener("message", (event: MessageEvent<unknown>) => {
+    const data = event.data;
+    if (!data || typeof data !== "object") return;
+    const payload = data as Record<string, unknown>;
+    if (payload.type !== PREVIEW_AUTH_MESSAGE_TYPE) return;
+    const token = String(payload.token || "").trim();
+    previewAuthToken = token || null;
+  });
 }
 
 function normalizeApiBaseUrl(value?: string): string {
@@ -73,12 +86,6 @@ function normalizeApiBaseUrl(value?: string): string {
 
 function buildBootstrapFromBasePath(ctx: QueryRuntimeContext, basePath: string): RuntimeBootstrap {
   const normalizedBase = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
-  let streamUrl = `${normalizedBase}/chat/stream`;
-  if (ctx.previewToken && normalizedBase.includes("/preview/revisions/")) {
-    const connector = streamUrl.includes("?") ? "&" : "?";
-    streamUrl = `${streamUrl}${connector}preview_token=${encodeURIComponent(ctx.previewToken)}`;
-  }
-
   return {
     version: "runtime-bootstrap.v1",
     app_id: String(config.app_id || ""),
@@ -87,13 +94,12 @@ function buildBootstrapFromBasePath(ctx: QueryRuntimeContext, basePath: string):
     api_base_path: normalizeApiBaseUrl(config.api_base_url),
     api_base_url: normalizeApiBaseUrl(config.api_base_url),
     chat_stream_path: `${normalizedBase}/chat/stream`,
-    chat_stream_url: streamUrl,
+    chat_stream_url: `${normalizedBase}/chat/stream`,
     auth: {
       enabled: true,
       providers: ["password"],
       exchange_enabled: false,
     },
-    preview_token: ctx.previewToken || null,
   };
 }
 
@@ -108,10 +114,9 @@ function readInlineBootstrap(): RuntimeBootstrap | null {
 }
 
 async function fetchBootstrapFromConfig(ctx: QueryRuntimeContext): Promise<RuntimeBootstrap> {
+  const previewHeaders = previewAuthToken ? { Authorization: `Bearer ${previewAuthToken}` } : undefined;
   if (ctx.bootstrapUrl) {
-    const response = await fetch(ctx.bootstrapUrl, {
-      headers: ctx.previewToken ? { Authorization: `Bearer ${ctx.previewToken}` } : undefined,
-    });
+    const response = await fetch(ctx.bootstrapUrl, { headers: previewHeaders });
     if (!response.ok) {
       throw new Error("Failed to fetch runtime bootstrap.");
     }
@@ -122,9 +127,7 @@ async function fetchBootstrapFromConfig(ctx: QueryRuntimeContext): Promise<Runti
   if (bootstrapPath) {
     const apiBaseUrl = normalizeApiBaseUrl(config.api_base_url);
     const url = `${apiBaseUrl}${bootstrapPath.startsWith("/") ? bootstrapPath : `/${bootstrapPath}`}`;
-    const response = await fetch(url, {
-      headers: ctx.previewToken ? { Authorization: `Bearer ${ctx.previewToken}` } : undefined,
-    });
+    const response = await fetch(url, { headers: previewHeaders });
     if (!response.ok) {
       throw new Error("Failed to fetch runtime bootstrap.");
     }
@@ -139,7 +142,7 @@ async function fetchBootstrapFromConfig(ctx: QueryRuntimeContext): Promise<Runti
   return fetchRuntimeBootstrap({
     apiBaseUrl: normalizeApiBaseUrl(config.api_base_url),
     appSlug,
-    previewToken: ctx.previewToken || undefined,
+    previewToken: previewAuthToken || undefined,
   });
 }
 
@@ -164,14 +167,18 @@ async function resolveBootstrap(basePath?: string): Promise<RuntimeBootstrap> {
   return bootstrapPromise;
 }
 
-function resolveTokenProvider() {
+function resolveTokenProvider(basePath?: string) {
   const query = readQueryContext();
   const explicitToken = query.token;
-  const explicitPreviewToken = query.previewToken;
+  const resolvedBasePath = basePath || query.basePath || "";
+  const isPreviewMode =
+    query.mode === "builder-preview" ||
+    resolvedBasePath.includes("/public/apps/preview/revisions/");
 
   return async () => {
+    bindPreviewAuthChannel();
     if (explicitToken) return explicitToken;
-    if (explicitPreviewToken) return null;
+    if (isPreviewMode) return previewAuthToken;
     if (typeof window === "undefined") return null;
     const appSlug = String(config.app_slug || "").trim();
     if (!appSlug) return null;
@@ -180,6 +187,7 @@ function resolveTokenProvider() {
 }
 
 export const createRuntimeClient = (basePath?: string) => {
+  bindPreviewAuthChannel();
   return {
     async stream(
       input: RuntimeInput,
@@ -189,7 +197,7 @@ export const createRuntimeClient = (basePath?: string) => {
       const runtimeClient = createSdkRuntimeClient({
         apiBaseUrl: normalizeApiBaseUrl(config.api_base_url),
         bootstrap,
-        tokenProvider: resolveTokenProvider(),
+        tokenProvider: resolveTokenProvider(basePath),
       });
 
       return runtimeClient.stream(input, (event) => {

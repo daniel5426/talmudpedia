@@ -98,6 +98,17 @@ class _TerminalThenHungEngine:
             await asyncio.sleep(60)
 
 
+class _NonTerminalThenStopsEngine:
+    async def stream(self, ctx):
+        yield EngineStreamEvent(
+            event="assistant.delta",
+            stage="assistant",
+            payload={"content": "partial output"},
+            diagnostics=None,
+        )
+        return
+
+
 async def _collect_stream_events(service: PublishedAppCodingAgentRuntimeService, app: PublishedApp, run: AgentRun):
     return [event async for event in service.stream_run_events(app=app, run=run)]
 
@@ -163,3 +174,37 @@ async def test_runtime_stream_fails_after_engine_failed_event_even_if_engine_han
     assert persisted is not None
     assert persisted.status == RunStatus.failed
     assert error_message in str(persisted.error_message)
+
+
+@pytest.mark.asyncio
+async def test_runtime_stream_fail_closes_and_persists_failed_status_when_engine_ends_without_terminal_event(
+    client, db_session, monkeypatch
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = await _insert_coding_agent_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+        status=RunStatus.queued,
+    )
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+
+    engine = _NonTerminalThenStopsEngine()
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_resolve_engine_for_run", lambda self, run: engine)
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+    events = await asyncio.wait_for(_collect_stream_events(service, app, run), timeout=2.0)
+
+    assert events[-1]["event"] == "run.failed"
+    persisted = await db_session.get(AgentRun, run.id)
+    assert persisted is not None
+    assert persisted.status == RunStatus.failed
+    assert str(persisted.error_message or "").strip() != ""
+    assert persisted.completed_at is not None

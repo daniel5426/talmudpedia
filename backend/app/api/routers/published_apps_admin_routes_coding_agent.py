@@ -14,9 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.models.agents import RunStatus
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSessionStatus, PublishedAppRevision
+from app.db.postgres.engine import sessionmaker
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.db.postgres.session import get_db
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
+from app.services.published_app_coding_run_orchestrator import PublishedAppCodingRunOrchestrator
 from app.services.published_app_coding_agent_capabilities import (
     build_published_app_coding_agent_capabilities,
 )
@@ -45,6 +47,7 @@ class CodingAgentCreateRunRequest(BaseModel):
     engine: Optional[Literal["native", "opencode"]] = None
     chat_session_id: Optional[UUID] = None
     client_message_id: Optional[str] = None
+    enqueue_if_active: bool = False
 
 
 class CodingAgentResumeRunRequest(BaseModel):
@@ -131,6 +134,32 @@ class CodingAgentCapabilitiesResponse(BaseModel):
     native_tool_count: int
     native_tools: List[CodingAgentCapabilityToolResponse] = Field(default_factory=list)
     opencode_policy: CodingAgentOpenCodePolicyResponse
+
+
+class CodingAgentActiveRunResponse(BaseModel):
+    run_id: str
+    status: str
+    last_seq: int
+    queued_prompt_count: int
+    is_cancelling: bool
+
+
+class CodingAgentPromptQueueItemResponse(BaseModel):
+    id: str
+    chat_session_id: str
+    position: int
+    status: str
+    input: str
+    client_message_id: Optional[str] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class CodingAgentQueueDeleteResponse(BaseModel):
+    status: str
+    id: str
 
 
 logger = logging.getLogger(__name__)
@@ -239,7 +268,9 @@ async def create_coding_agent_run(
         raise HTTPException(status_code=400, detail="input is required")
 
     service = PublishedAppCodingAgentRuntimeService(db)
+    orchestrator = PublishedAppCodingRunOrchestrator(db)
     runtime_service = PublishedAppDraftDevRuntimeService(db)
+    history_service = PublishedAppCodingChatHistoryService(db)
     draft_dev_session = None
     if actor_id is not None:
         try:
@@ -273,13 +304,52 @@ async def create_coding_agent_run(
                 and draft_dev_session.active_coding_run_client_message_id == client_message_id
             ):
                 return _run_to_response(service, locked_run)
-            if locked_status not in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
+            if locked_status not in {
+                RunStatus.completed.value,
+                RunStatus.failed.value,
+                RunStatus.cancelled.value,
+                RunStatus.paused.value,
+            }:
+                locked_chat_session_id = str(service.serialize_run(locked_run).get("chat_session_id") or "").strip() or None
+                next_replay_seq = await orchestrator.get_next_replay_seq(run_id=locked_run.id)
+                if payload.enqueue_if_active and actor_id is not None:
+                    enqueue_chat_session_id: UUID | None = None
+                    if payload.chat_session_id is not None:
+                        enqueue_chat_session_id = payload.chat_session_id
+                    elif locked_chat_session_id:
+                        try:
+                            enqueue_chat_session_id = UUID(locked_chat_session_id)
+                        except Exception:
+                            enqueue_chat_session_id = None
+                    if enqueue_chat_session_id is None:
+                        session = await history_service.resolve_or_create_session(
+                            app_id=app.id,
+                            user_id=actor_id,
+                            user_prompt=user_prompt,
+                            session_id=payload.chat_session_id,
+                        )
+                        enqueue_chat_session_id = session.id
+                    await orchestrator.enqueue_prompt(
+                        app_id=app.id,
+                        user_id=actor_id,
+                        chat_session_id=enqueue_chat_session_id,
+                        payload={
+                            "input": user_prompt,
+                            "model_id": str(payload.model_id) if payload.model_id else None,
+                            "engine": payload.engine,
+                            "client_message_id": client_message_id,
+                        },
+                    )
+                    await orchestrator.ensure_runner(app_id=app.id, run_id=locked_run.id)
+                    return _run_to_response(service, locked_run)
                 raise HTTPException(
                     status_code=409,
                     detail={
                         "code": "CODING_AGENT_RUN_ACTIVE",
                         "message": "A coding-agent run is already active for this preview session.",
                         "active_run_id": str(locked_run.id),
+                        "chat_session_id": locked_chat_session_id,
+                        "next_replay_seq": next_replay_seq,
                     },
                 )
             draft_dev_session.active_coding_run_id = None
@@ -296,7 +366,6 @@ async def create_coding_agent_run(
         if not content:
             continue
         run_messages.append({"role": role, "content": content})
-    history_service = PublishedAppCodingChatHistoryService(db)
     chat_session_id: UUID | None = None
     if actor_id is not None:
         session = await history_service.resolve_or_create_session(
@@ -350,6 +419,7 @@ async def create_coding_agent_run(
         )
     else:
         await db.commit()
+    await orchestrator.ensure_runner(app_id=app.id, run_id=run.id)
     return _run_to_response(service, run)
 
 
@@ -412,6 +482,130 @@ async def get_coding_agent_chat_session(
 
 
 @router.get(
+    "/{app_id}/coding-agent/chat-sessions/{session_id}/active-run",
+    response_model=CodingAgentActiveRunResponse,
+)
+async def get_coding_agent_chat_session_active_run(
+    app_id: UUID,
+    session_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    actor_id = actor.id if actor else None
+    if actor_id is None:
+        raise HTTPException(status_code=403, detail="User context is required for coding-agent run state")
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    history_service = PublishedAppCodingChatHistoryService(db)
+    session = await history_service.get_session_for_user(
+        app_id=app.id,
+        user_id=actor_id,
+        session_id=session_id,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Coding-agent chat session not found")
+
+    orchestrator = PublishedAppCodingRunOrchestrator(db)
+    run = await orchestrator.get_active_run_for_chat_session(
+        app_id=app.id,
+        chat_session_id=session.id,
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="No active coding-agent run for this chat session")
+    next_replay_seq = await orchestrator.get_next_replay_seq(run_id=run.id)
+    queued_count = await orchestrator.count_queued_prompts(chat_session_id=session.id)
+    status = run.status.value if hasattr(run.status, "value") else str(run.status)
+    return CodingAgentActiveRunResponse(
+        run_id=str(run.id),
+        status=status,
+        last_seq=max(0, next_replay_seq - 1),
+        queued_prompt_count=queued_count,
+        is_cancelling=bool(getattr(run, "is_cancelling", False)),
+    )
+
+
+@router.get(
+    "/{app_id}/coding-agent/chat-sessions/{session_id}/queue",
+    response_model=List[CodingAgentPromptQueueItemResponse],
+)
+async def list_coding_agent_chat_session_queue(
+    app_id: UUID,
+    session_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    actor_id = actor.id if actor else None
+    if actor_id is None:
+        return []
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    history_service = PublishedAppCodingChatHistoryService(db)
+    session = await history_service.get_session_for_user(
+        app_id=app.id,
+        user_id=actor_id,
+        session_id=session_id,
+    )
+    if session is None:
+        return []
+    orchestrator = PublishedAppCodingRunOrchestrator(db)
+    items = await orchestrator.list_queue_items(
+        app_id=app.id,
+        user_id=actor_id,
+        chat_session_id=session.id,
+    )
+    return [CodingAgentPromptQueueItemResponse(**orchestrator.serialize_queue_item(item)) for item in items]
+
+
+@router.delete(
+    "/{app_id}/coding-agent/chat-sessions/{session_id}/queue/{queue_item_id}",
+    response_model=CodingAgentQueueDeleteResponse,
+)
+async def delete_coding_agent_chat_session_queue_item(
+    app_id: UUID,
+    session_id: UUID,
+    queue_item_id: UUID,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    actor_id = actor.id if actor else None
+    if actor_id is None:
+        raise HTTPException(status_code=403, detail="User context is required for coding-agent queue updates")
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    history_service = PublishedAppCodingChatHistoryService(db)
+    session = await history_service.get_session_for_user(
+        app_id=app.id,
+        user_id=actor_id,
+        session_id=session_id,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Coding-agent chat session not found")
+    orchestrator = PublishedAppCodingRunOrchestrator(db)
+    removed = await orchestrator.remove_queue_item(
+        app_id=app.id,
+        user_id=actor_id,
+        chat_session_id=session.id,
+        queue_item_id=queue_item_id,
+    )
+    if not removed:
+        raise HTTPException(status_code=404, detail="Queued prompt not found")
+    return CodingAgentQueueDeleteResponse(status="removed", id=str(queue_item_id))
+
+
+@router.get(
     "/{app_id}/coding-agent/capabilities",
     response_model=CodingAgentCapabilitiesResponse,
 )
@@ -471,6 +665,8 @@ async def stream_coding_agent_run(
     app_id: UUID,
     run_id: UUID,
     request: Request,
+    from_seq: int = Query(default=1, ge=1),
+    replay: bool = Query(default=True),
     _: Dict[str, Any] = Depends(require_scopes("apps.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
@@ -481,12 +677,39 @@ async def stream_coding_agent_run(
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     service = PublishedAppCodingAgentRuntimeService(db)
     run = await service.get_run_for_app(app_id=app.id, run_id=run_id)
+    await PublishedAppCodingRunOrchestrator(db).purge_old_events(retention_hours=24)
+    bind = db.get_bind()
+    bind_dialect = getattr(bind, "dialect", None)
+    bind_url = getattr(bind, "url", None)
+    use_request_scoped_stream_db = (
+        getattr(bind_dialect, "name", "") == "sqlite"
+    )
 
     async def event_generator():
-        yield ": " + (" " * 2048) + "\n\n"
-        async for payload in service.stream_run_events(app=app, run=run):
-            yield _sse(payload)
-            await asyncio.sleep(0)
+        if use_request_scoped_stream_db:
+            orchestrator = PublishedAppCodingRunOrchestrator(db)
+            yield ": " + (" " * 2048) + "\n\n"
+            async for payload in orchestrator.stream_events(
+                app_id=app.id,
+                run_id=run.id,
+                from_seq=from_seq,
+                replay=replay,
+            ):
+                yield _sse(payload)
+                await asyncio.sleep(0)
+            return
+
+        async with sessionmaker() as stream_db:
+            orchestrator = PublishedAppCodingRunOrchestrator(stream_db)
+            yield ": " + (" " * 2048) + "\n\n"
+            async for payload in orchestrator.stream_events(
+                app_id=app.id,
+                run_id=run.id,
+                from_seq=from_seq,
+                replay=replay,
+            ):
+                yield _sse(payload)
+                await asyncio.sleep(0)
 
     return StreamingResponse(
         event_generator(),

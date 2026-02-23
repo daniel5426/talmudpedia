@@ -27,7 +27,6 @@ export type RuntimeBootstrap = {
   chat_stream_path: string;
   chat_stream_url?: string;
   auth: RuntimeAuthCapabilities;
-  preview_token?: string | null;
 };
 
 export type RawRuntimeEvent = Record<string, unknown>;

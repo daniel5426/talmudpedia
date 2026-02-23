@@ -67,6 +67,7 @@ type AppsBuilderChatPanelProps = {
   isOpen: boolean;
   onOpenChange: (next: boolean) => void;
   isSending: boolean;
+  isStopping: boolean;
   isUndoing: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
@@ -90,6 +91,7 @@ export function AppsBuilderChatPanel({
   isOpen,
   onOpenChange,
   isSending,
+  isStopping,
   isUndoing,
   timeline,
   activeThinkingSummary,
@@ -135,6 +137,12 @@ export function AppsBuilderChatPanel({
   }, [lastUserIndex, timeline]);
 
   const renderedTimeline = useMemo(() => {
+    const renderUserDeliveryLabel = (status?: TimelineItem["userDeliveryStatus"]) => {
+      if (!status || status === "sent") return null;
+      if (status === "pending") return "Sending...";
+      if (status === "queued") return "Queued";
+      return "Failed";
+    };
 
     const isReadTool = (toolName?: string) => {
       const normalized = String(toolName || "").trim().toLowerCase();
@@ -180,6 +188,11 @@ export function AppsBuilderChatPanel({
           <Message key={item.id} from="user" className="group/usermsg max-w-full">
             <MessageContent className="relative">
               <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
+              {renderUserDeliveryLabel(item.userDeliveryStatus) ? (
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {renderUserDeliveryLabel(item.userDeliveryStatus)}
+                </div>
+              ) : null}
               {item.checkpointId && (
                 <button
                   type="button"
@@ -452,7 +465,8 @@ export function AppsBuilderChatPanel({
                   variant="ghost"
                   className="h-6 w-6 text-muted-foreground hover:text-foreground"
                   onClick={onStopRun}
-                  aria-label="Stop"
+                  aria-label={isStopping ? "Stopping" : "Stop"}
+                  disabled={isStopping}
                 >
                   <Square className="h-3 w-3 fill-current" />
                 </Button>

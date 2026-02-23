@@ -161,6 +161,22 @@ function buildPreviewFrameUrl(baseUrl: string, route: string, reloadToken: numbe
   }
 }
 
+function normalizePreviewSessionUrlForReloadCompare(url: string | null | undefined): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete("preview_token");
+    parsed.searchParams.delete("runtime_preview_token");
+    const normalizedPath = parsed.pathname.endsWith("/") ? parsed.pathname.slice(0, -1) : parsed.pathname;
+    parsed.pathname = normalizedPath || "/";
+    parsed.search = parsed.searchParams.toString();
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return String(url).trim();
+  }
+}
+
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const { setOpen } = useSidebar();
   const [state, setState] = useState<BuilderStateResponse | null>(null);
@@ -175,6 +191,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [draftDevStatus, setDraftDevStatus] = useState<DraftDevSessionStatus | null>(null);
   const [draftDevError, setDraftDevError] = useState<string | null>(null);
   const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
+  const [previewAuthToken, setPreviewAuthToken] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isAuthTemplatesLoading, setIsAuthTemplatesLoading] = useState(true);
@@ -222,6 +239,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setHasLoadedDomains(false);
     setPreviewRoute("/");
     setPreviewReloadToken(0);
+    setPreviewAuthToken(null);
   }, [appId]);
 
   const appRoutes = useMemo(() => extractRoutesFromFiles(files), [files]);
@@ -249,7 +267,16 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setDraftDevSessionId(session?.session_id || null);
     setDraftDevStatus((session?.status as DraftDevSessionStatus | undefined) || null);
     setDraftDevError(session?.last_error || null);
-    setPreviewAssetUrl(session?.preview_url || null);
+    setPreviewAuthToken(session?.preview_auth_token || null);
+    const nextPreviewUrl = session?.preview_url || null;
+    setPreviewAssetUrl((current) => {
+      const currentNormalized = normalizePreviewSessionUrlForReloadCompare(current);
+      const nextNormalized = normalizePreviewSessionUrlForReloadCompare(nextPreviewUrl);
+      if (current && nextPreviewUrl && currentNormalized === nextNormalized) {
+        return current;
+      }
+      return nextPreviewUrl;
+    });
   }, []);
 
   const hydrateFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
@@ -705,6 +732,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     isAgentPanelOpen,
     setIsAgentPanelOpen,
     isSending,
+    isStopping,
     isUndoing,
     timeline,
     activeThinkingSummary,
@@ -731,6 +759,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     onApplyRestoredRevision: applyRestoredRevision,
     onSetCurrentRevisionId: setCurrentRevisionId,
     onError: setError,
+    initialActiveRunId: state?.draft_dev?.active_coding_run_id || null,
   });
 
   const openApp = useCallback(async () => {
@@ -1047,6 +1076,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                   )}>
                     <PreviewCanvas
                       previewUrl={previewFrameUrl}
+                      previewAuthToken={previewAuthToken}
                       devStatus={draftDevStatus}
                       devError={draftDevError}
                     />
@@ -1476,6 +1506,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             isOpen={isAgentPanelOpen}
             onOpenChange={setIsAgentPanelOpen}
             isSending={isSending}
+            isStopping={isStopping}
             isUndoing={isUndoing}
             timeline={timeline}
             activeThinkingSummary={activeThinkingSummary}

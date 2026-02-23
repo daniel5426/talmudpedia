@@ -339,10 +339,6 @@ async def get_optional_published_app_preview_principal(
         if bearer_token:
             token_candidates.append(bearer_token)
 
-    query_token = (request.query_params.get("preview_token") or "").strip()
-    if query_token and query_token not in token_candidates:
-        token_candidates.append(query_token)
-
     cookie_token = (request.cookies.get("published_app_preview_token") or "").strip()
     if cookie_token and cookie_token not in token_candidates:
         token_candidates.append(cookie_token)

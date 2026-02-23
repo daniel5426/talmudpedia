@@ -443,6 +443,7 @@ def build_published_app_revision_task(
         )
         from app.db.postgres.session import sessionmaker
         from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
+        from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
         from app.services.published_app_bundle_storage import (
             PublishedAppBundleStorage,
         )
@@ -473,7 +474,13 @@ def build_published_app_revision_task(
                 }
 
             requested_seq = int(revision.build_seq or 0)
-            source_files = dict(revision.files or {})
+            source_files = apply_runtime_bootstrap_overlay(
+                dict(revision.files or {}),
+                runtime_context=TemplateRuntimeContext(
+                    app_id=str(app_id),
+                    app_slug=str(slug or ""),
+                ),
+            )
             project_entry_file = revision.entry_file or "src/main.tsx"
             revision.build_status = PublishedAppRevisionBuildStatus.running
             revision.build_started_at = now
@@ -663,6 +670,7 @@ def publish_published_app_task(
         )
         from app.db.postgres.session import sessionmaker
         from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
+        from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
         from app.services.published_app_bundle_storage import PublishedAppBundleStorage
 
         job_uuid = UUID(str(job_id))
@@ -730,7 +738,14 @@ def publish_published_app_task(
             job.diagnostics = []
             await db.commit()
 
-            source_files = dict(source_revision.files or {})
+            source_files = apply_runtime_bootstrap_overlay(
+                dict(source_revision.files or {}),
+                runtime_context=TemplateRuntimeContext(
+                    app_id=str(app.id),
+                    app_slug=str(app.slug or ""),
+                    agent_id=str(app.agent_id or ""),
+                ),
+            )
             source_entry_file = source_revision.entry_file or "src/main.tsx"
             app_uuid = app.id
             tenant_uuid = app.tenant_id
