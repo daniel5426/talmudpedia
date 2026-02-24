@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-23
+Last Updated: 2026-02-24
 
 ## Scope
 Frontend coverage for:
@@ -40,30 +40,29 @@ Frontend coverage for:
 - Builder workspace coding-agent panel now uses AI elements `Conversation` scrolling model + `ConversationScrollButton`, with minimal/no-card event presentation and lightweight shimmering `Thinking...` text.
 - Builder workspace shows `Reasoning...` fallback only when no tool is actively running; active tool rows own the shimmer state while executing.
 - Builder workspace scopes `Reasoning...` fallback to the active prompt so second/subsequent prompts still show immediate shimmer before first stream activity.
-- Builder workspace shows FIFO queued prompts via AI Elements `Queue` when user submits during active runs, with per-item remove action.
-- Builder workspace queue UI is server-authoritative (`list/delete chat-session queue` APIs) with no optimistic local queue fallback.
-- Builder workspace stop flow calls coding-agent cancel endpoint while preserving persisted queued prompts.
+- Builder workspace shows FIFO queued prompts in a minimalist queue panel above the composer when user submits during active runs, with per-item remove action.
+- Builder workspace queue UI is frontend-local (no queue list/delete API roundtrip) and updates immediately on enqueue/remove.
+- Builder workspace stop flow calls coding-agent cancel endpoint while preserving frontend-local queued prompts.
 - Builder workspace stop flow still dispatches cancel when stop is clicked before `create-run` returns `run_id` (run-id race protection).
-- Builder workspace keeps queued prompt behavior server-authoritative when terminal SSE is missing (no persisted-run fallback polling path).
-- Builder workspace renders user prompt bubbles immediately on submit before `create-run` resolves, with delivery-state labels (`Sending...`, `Queued`, `Failed`).
+- Builder workspace keeps queued prompt progression frontend-local when terminal SSE is missing by draining local queue after run-state recovery.
+- Builder workspace renders user prompt bubbles immediately on submit before `create-run` resolves, with delivery-state labels (`Sending...`, `Failed`) while queued prompts remain in the queue panel (not in chat timeline).
 - Builder workspace retries `ensureDraftDevSession` after terminal SSE when backend briefly reports `CODING_AGENT_RUN_ACTIVE` for the same run, and avoids surfacing lock-conflict noise to users.
 - Coding-agent stream consumer renders one `assistant.delta` chunk at a time (no frontend delta coalescing).
-- Builder workspace loads coding-agent capabilities once to hydrate engine/policy context for coding runs.
+- Builder workspace no longer depends on coding-agent capabilities/engine selection in chat flow.
 - Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
 - Builder workspace shell now enforces viewport-bounded layout (`h-dvh` + `min-h-0` + overflow clamps) so chat scroll stays internal and the page does not grow with timeline length.
 - Builder workspace renders an immediate shell skeleton during first builder-state bootstrap (no blocking full-page spinner text state).
 - Builder workspace renders section skeletons while `Users`/`Domains` API payloads are still loading.
-- Builder workspace creates coding-agent runs through `/coding-agent/runs`, then streams via `/coding-agent/runs/{run_id}/stream`.
+- Builder workspace submits prompts through `/coding-agent/v2/prompts` and streams via `/coding-agent/v2/runs/{run_id}/stream`.
 - Builder workspace retries coding-agent run creation once after `REVISION_CONFLICT` by refreshing state and resubmitting with `latest_revision_id`.
 - Builder workspace renders `assistant.delta` incrementally while a run is active (partial text appears before stream completion).
 - Builder workspace uses server-persisted chat sessions as the conversation source of truth (`chat_session_id`), and resumes the same thread on follow-up sends.
 - Builder workspace shows per-run model selector options (`Auto` + active chat models) and sends `model_id` on run creation.
 - Builder workspace supports changing model selection between messages and uses the new selection for the next run payload.
 - Builder workspace surfaces actionable model availability errors when backend returns `CODING_AGENT_MODEL_UNAVAILABLE`.
-- Builder workspace no longer renders an execution-engine selector and sends env-resolved engine (`NEXT_PUBLIC_APPS_CODING_AGENT_ENGINE`, default `opencode`) on run creation.
-- Builder workspace surfaces actionable engine-availability errors when backend returns `CODING_AGENT_ENGINE_UNAVAILABLE` / `CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME`.
+- Builder workspace no longer renders execution-engine selection and relies on OpenCode-only backend runtime.
 - Builder workspace chat history dialog loads real sessions from API, hydrates persisted user/assistant turns, and reuses loaded `chat_session_id`.
-- Builder workspace per-message revert action restores attached coding-agent checkpoints via `/coding-agent/checkpoints/{checkpoint_id}/restore`.
+- Builder workspace per-message revert action restores attached coding-agent checkpoints via `/coding-agent/v2/checkpoints/{checkpoint_id}/restore`.
 - Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
 - Builder code tab auto-expands ancestor folders when the selected file is nested.
 - Builder code tab maps `index.html` to Monaco `html` language and sets builder-only validation decoration suppression.
@@ -81,6 +80,18 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && pnpm -s test src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand -t "queues a prompt while run is active and supports removing queued items|stops active run via cancel endpoint and continues with queued prompt|keeps queued prompts server-authoritative when stream misses terminal event"`
+- Date: 2026-02-24
+- Result: PASS (1 suite, 3 tests; 43 skipped by `-t`)
+- Command: `cd frontend-reshet && pnpm -s test src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand -t "queues a prompt while run is active and supports removing queued items|continues local queued prompts when stream misses terminal event"`
+- Date: 2026-02-24
+- Result: PASS (1 suite, 2 tests; 44 skipped by `-t`)
+- Command: `cd frontend-reshet && pnpm -s test src/__tests__/published_apps/coding_agent_stream_speed.test.ts --runInBand`
+- Date: 2026-02-24
+- Result: PASS (1 suite, 1 test)
+- Command: `cd frontend-reshet && pnpm -s test src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand --silent`
+- Date: 2026-02-24
+- Result: FAIL (1 suite; 3 tests failing: `still sends cancel when stop is clicked before create-run returns a run id`, `does not enter full-page loading state while refreshing state after a run`, `sends selected model_id and supports changing model between messages`)
 - Command: `cd frontend-reshet && npm test -- --runTestsByPath src/__tests__/published_apps/coding_agent_stream_speed.test.ts --watch=false`
 - Date: 2026-02-23
 - Result: PASS (1 suite, 1 test)

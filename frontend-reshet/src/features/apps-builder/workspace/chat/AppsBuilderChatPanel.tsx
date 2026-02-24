@@ -33,19 +33,6 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
-import {
-  Queue,
-  QueueItem,
-  QueueItemAction,
-  QueueItemActions,
-  QueueItemContent,
-  QueueItemIndicator,
-  QueueList,
-  QueueSection,
-  QueueSectionContent,
-  QueueSectionLabel,
-  QueueSectionTrigger,
-} from "@/components/ai-elements/queue";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "@/components/ai-elements/task";
 import { Button } from "@/components/ui/button";
@@ -138,7 +125,6 @@ export function AppsBuilderChatPanel({
     const renderUserDeliveryLabel = (status?: TimelineItem["userDeliveryStatus"]) => {
       if (!status || status === "sent") return null;
       if (status === "pending") return "Sending...";
-      if (status === "queued") return "Queued";
       return "Failed";
     };
 
@@ -182,6 +168,10 @@ export function AppsBuilderChatPanel({
     while (index < timeline.length) {
       const item = timeline[index];
       if (isUserTimelineItem(item)) {
+        if (item.userDeliveryStatus === "queued") {
+          index += 1;
+          continue;
+        }
         renderedItems.push(
           <Message key={item.id} from="user" className="group/usermsg max-w-full">
             <MessageContent className="relative">
@@ -370,34 +360,36 @@ export function AppsBuilderChatPanel({
         </Conversation>
 
         {queuedPrompts.length > 0 ? (
-          <Queue className="mb-2">
-            <QueueSection defaultOpen>
-              <QueueSectionTrigger>
-                <QueueSectionLabel count={queuedPrompts.length} label="queued prompts" />
-              </QueueSectionTrigger>
-              <QueueSectionContent>
-                <QueueList>
-                  {queuedPrompts.map((prompt) => (
-                    <QueueItem key={prompt.id}>
-                      <div className="flex items-start gap-2">
-                        <QueueItemIndicator />
-                        <QueueItemContent>{prompt.text}</QueueItemContent>
-                        <QueueItemActions>
-                          <QueueItemAction
-                            aria-label="Remove queued prompt"
-                            onClick={() => onRemoveQueuedPrompt(prompt.id)}
-                            title="Remove"
-                          >
-                            <X className="h-3 w-3" />
-                          </QueueItemAction>
-                        </QueueItemActions>
-                      </div>
-                    </QueueItem>
-                  ))}
-                </QueueList>
-              </QueueSectionContent>
-            </QueueSection>
-          </Queue>
+          <section
+            aria-label="Queued prompts"
+            data-testid="queued-prompts-panel"
+            className="mb-2 overflow-hidden rounded-lg border border-border/50 bg-muted/20"
+          >
+            <header className="flex items-center justify-between border-b border-border/50 px-3 py-1.5">
+              <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Queue</p>
+              <span className="text-[11px] text-muted-foreground">{queuedPrompts.length}</span>
+            </header>
+            <ul className="max-h-28 space-y-0.5 overflow-y-auto p-1.5" role="list">
+              {queuedPrompts.map((prompt, index) => (
+                <li
+                  key={prompt.id}
+                  className="group flex items-start gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-background/80"
+                >
+                  <span className="mt-0.5 text-[10px] text-muted-foreground">{index + 1}.</span>
+                  <p className="min-w-0 flex-1 line-clamp-2 text-xs leading-5 text-foreground/90">{prompt.text}</p>
+                  <button
+                    type="button"
+                    aria-label="Remove queued prompt"
+                    onClick={() => onRemoveQueuedPrompt(prompt.id)}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground opacity-70 transition-colors hover:bg-accent hover:text-foreground"
+                    title="Remove"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
 
         <div className="shrink-0 pt-1">

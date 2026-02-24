@@ -50,9 +50,51 @@ type ConsumeRunStreamOptions = {
   refreshStateSilently: () => Promise<void>;
   ensureDraftDevSession: () => Promise<void>;
   loadChatSessions: () => Promise<unknown[]>;
-  refreshQueue: (sessionId: string | null | undefined) => Promise<void>;
   requestCancelForRun: (runId: string) => Promise<void>;
 };
+
+const WRITE_TOOL_HINTS = [
+  "apply_patch",
+  "write",
+  "rename",
+  "delete",
+  "remove",
+  "move",
+  "mkdir",
+  "touch",
+  "create",
+  "edit",
+  "replace",
+  "insert",
+  "append",
+  "prepend",
+];
+
+function isLikelyWorkspaceWriteTool(toolName: string): boolean {
+  const normalized = String(toolName || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return WRITE_TOOL_HINTS.some((hint) => normalized.includes(hint));
+}
+
+function findSseFrameBoundary(buffer: string): { index: number; delimiterLength: number } | null {
+  const lfBoundary = buffer.indexOf("\n\n");
+  const crlfBoundary = buffer.indexOf("\r\n\r\n");
+  if (lfBoundary < 0 && crlfBoundary < 0) {
+    return null;
+  }
+  if (lfBoundary < 0) {
+    return { index: crlfBoundary, delimiterLength: 4 };
+  }
+  if (crlfBoundary < 0) {
+    return { index: lfBoundary, delimiterLength: 2 };
+  }
+  if (lfBoundary <= crlfBoundary) {
+    return { index: lfBoundary, delimiterLength: 2 };
+  }
+  return { index: crlfBoundary, delimiterLength: 4 };
+}
 
 export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {
   const {
@@ -81,7 +123,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     refreshStateSilently,
     ensureDraftDevSession,
     loadChatSessions,
-    refreshQueue,
     requestCancelForRun,
   } = options;
 
@@ -143,6 +184,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     let recoveryCancelAttempted = false;
     let recoveryCancelConfirmed = false;
     let terminalStatus: TerminalStatus | null = null;
+    let sawLikelyWriteToolEvent = false;
 
     const STALL_TIMEOUT_MS = resolvePositiveTimeoutMs(
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS,
@@ -161,6 +203,17 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     let pendingRead:
       | Promise<{ ok: true; result: ReadableStreamReadResult<Uint8Array> } | { ok: false; error: unknown }>
       | null = null;
+    const yieldForPaint = async (): Promise<void> => {
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        });
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    };
 
     const readWithPollingTimeout = async (
       timeoutMs: number,
@@ -276,21 +329,24 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      let splitIndex = buffer.indexOf("\n\n");
-      while (splitIndex >= 0) {
-        const raw = buffer.slice(0, splitIndex).trim();
-        buffer = buffer.slice(splitIndex + 2);
+      let boundary = findSseFrameBoundary(buffer);
+      let parsedEventsInThisRead = 0;
+      let parsedAssistantDeltasInThisRead = 0;
+      while (boundary) {
+        const raw = buffer.slice(0, boundary.index).trim();
+        buffer = buffer.slice(boundary.index + boundary.delimiterLength);
         const parsed = parseSse(raw);
         if (!parsed) {
-          splitIndex = buffer.indexOf("\n\n");
+          boundary = findSseFrameBoundary(buffer);
           continue;
         }
 
+        parsedEventsInThisRead += 1;
         const seq = Number(parsed.seq || 0);
         if (seq > 0) {
           const eventKey = `${normalizedRunId}:${seq}`;
           if (seenRunEventKeysRef.current.has(eventKey)) {
-            splitIndex = buffer.indexOf("\n\n");
+            boundary = findSseFrameBoundary(buffer);
             continue;
           }
           seenRunEventKeysRef.current.add(eventKey);
@@ -300,12 +356,22 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         const payload = (parsed.payload || {}) as Record<string, unknown>;
 
         if (parsed.event === "assistant.delta" && payload.content) {
-          assistantText += String(payload.content);
+          const chunkText = String(payload.content);
+          assistantText += chunkText;
+          parsedAssistantDeltasInThisRead += 1;
           if (assistantText.trim()) {
             setActiveThinkingSummary("");
             upsertAssistantTimeline(currentStreamId, assistantText);
           }
-          splitIndex = buffer.indexOf("\n\n");
+          // If many frames arrive in one read burst, explicitly yield for paint so
+          // the chat does not collapse all deltas into one final render.
+          if (
+            parsedEventsInThisRead > 1 &&
+            (parsedAssistantDeltasInThisRead <= 6 || parsedAssistantDeltasInThisRead % 4 === 0)
+          ) {
+            await yieldForPaint();
+          }
+          boundary = findSseFrameBoundary(buffer);
           continue;
         }
 
@@ -319,6 +385,9 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
         if (parsed.event === "tool.started") {
           const toolName = String(payload.tool || "tool");
+          if (isLikelyWorkspaceWriteTool(toolName)) {
+            sawLikelyWriteToolEvent = true;
+          }
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.input || payload);
           if (assistantText.trim()) {
@@ -332,6 +401,9 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
         if (parsed.event === "tool.completed") {
           const toolName = String(payload.tool || "tool");
+          if (isLikelyWorkspaceWriteTool(toolName)) {
+            sawLikelyWriteToolEvent = true;
+          }
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.output || payload);
           upsertToolTimeline(toolCallId, describeToolIntent(toolName), "completed", toolName, toolPath);
@@ -339,6 +411,9 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
         if (parsed.event === "tool.failed") {
           const toolName = String(payload.tool || "tool");
+          if (isLikelyWorkspaceWriteTool(toolName)) {
+            sawLikelyWriteToolEvent = true;
+          }
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.output || payload);
           upsertToolTimeline(toolCallId, describeToolIntent(toolName), "failed", toolName, toolPath);
@@ -404,14 +479,16 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           break;
         }
 
-        splitIndex = buffer.indexOf("\n\n");
+        if (parsedEventsInThisRead % 12 === 0) {
+          await yieldForPaint();
+        }
+        boundary = findSseFrameBoundary(buffer);
       }
 
       if (sawTerminalEvent) {
         break;
       }
     }
-
     if (sawMaxDurationTimeout && !intentionalAbortRef.current) {
       onError(
         recoveryCancelConfirmed
@@ -478,6 +555,80 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     }
 
     const finalizeAfterRun = async () => {
+      const waitForResultRevisionIfNeeded = async () => {
+        if (terminalStatus !== "completed" || !sawLikelyWriteToolEvent) {
+          return;
+        }
+        const timeoutMs = resolvePositiveTimeoutMs(
+          process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_REVISION_WAIT_TIMEOUT_MS,
+          30000,
+        );
+        const pollMs = Math.min(
+          timeoutMs,
+          resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_REVISION_WAIT_POLL_MS, 400),
+        );
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline && !intentionalAbortRef.current) {
+          try {
+            const run = await publishedAppsService.getCodingAgentRun(appId, normalizedRunId);
+            const status = parseTerminalRunStatus(run.status);
+            if (status && status !== "completed") {
+              return;
+            }
+            const revisionId = String(run.result_revision_id || run.checkpoint_revision_id || "").trim();
+            if (revisionId) {
+              latestResultRevisionId = revisionId;
+              return;
+            }
+          } catch {
+            // Best-effort polling only.
+          }
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, pollMs);
+          });
+        }
+      };
+
+      const waitForBuilderDraftRevisionIfNeeded = async () => {
+        if (terminalStatus !== "completed") {
+          return;
+        }
+        const expectedRevisionId = String(latestResultRevisionId || "").trim();
+        if (!expectedRevisionId) {
+          return;
+        }
+        const timeoutMs = resolvePositiveTimeoutMs(
+          process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_BUILDER_STATE_WAIT_TIMEOUT_MS,
+          30000,
+        );
+        const pollMs = Math.min(
+          timeoutMs,
+          resolvePositiveTimeoutMs(
+            process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_BUILDER_STATE_WAIT_POLL_MS,
+            400,
+          ),
+        );
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline && !intentionalAbortRef.current) {
+          try {
+            const state = await publishedAppsService.getBuilderState(appId);
+            const draftRevisionId = String(
+              state.current_draft_revision?.id || state.app?.current_draft_revision_id || "",
+            ).trim();
+            if (draftRevisionId && draftRevisionId === expectedRevisionId) {
+              return;
+            }
+          } catch {
+            // Best-effort polling only.
+          }
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, pollMs);
+          });
+        }
+      };
+
+      await waitForResultRevisionIfNeeded();
+      await waitForBuilderDraftRevisionIfNeeded();
       await refreshStateSilently();
       if (activeTab === "preview") {
         const maxEnsureAttempts = 6;
@@ -508,7 +659,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         onSetCurrentRevisionId(latestResultRevisionId);
       }
       await loadChatSessions();
-      await refreshQueue(activeChatSessionIdRef.current);
     };
 
     if (process.env.NODE_ENV === "test") {

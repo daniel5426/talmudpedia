@@ -1,5 +1,5 @@
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { TextDecoder } from "util";
 
 import { AppsBuilderWorkspace } from "@/features/apps-builder/workspace/AppsBuilderWorkspace";
@@ -164,22 +164,6 @@ jest.mock("@/components/ai-elements/task", () => ({
     <div className={className}>{children}</div>
   ),
   TaskItemFile: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
-}));
-
-jest.mock("@/components/ai-elements/queue", () => ({
-  Queue: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  QueueSection: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  QueueSectionTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  QueueSectionLabel: ({ count, label }: { count?: number; label: string }) => <div>{count} {label}</div>,
-  QueueSectionContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  QueueList: ({ children }: { children: React.ReactNode }) => <ul>{children}</ul>,
-  QueueItem: ({ children }: { children: React.ReactNode }) => <li>{children}</li>,
-  QueueItemIndicator: () => <span />,
-  QueueItemContent: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
-  QueueItemActions: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  QueueItemAction: ({ children, ...props }: React.ComponentPropsWithoutRef<"button">) => (
-    <button type="button" {...props}>{children}</button>
-  ),
 }));
 
 jest.mock("@/components/ai-elements/shimmer", () => ({
@@ -1410,19 +1394,16 @@ describe("AppsBuilderWorkspace", () => {
       });
       fireEvent.submit(screen.getByPlaceholderText("Plan, @ for context, / for commands").closest("form")!);
 
-      expect(await screen.findByText("queued task")).toBeInTheDocument();
+      const queuePanel = await screen.findByRole("region", { name: "Queued prompts" });
+      expect(within(queuePanel).getByText("queued task")).toBeInTheDocument();
+      expect(screen.queryAllByText("queued task")).toHaveLength(1);
       fireEvent.click(screen.getByRole("button", { name: "Remove queued prompt" }));
-      await waitFor(() => {
-        expect(publishedAppsService.deleteCodingAgentChatSessionQueueItem).toHaveBeenCalledWith(
-          "app-1",
-          "chat-1",
-          "queue-1",
-        );
-      });
       await waitFor(() => {
         expect(screen.queryByRole("button", { name: "Remove queued prompt" })).not.toBeInTheDocument();
       });
-      expect(screen.getByText("queued task")).toBeInTheDocument();
+      expect(publishedAppsService.deleteCodingAgentChatSessionQueueItem).not.toHaveBeenCalled();
+      expect(screen.queryByRole("region", { name: "Queued prompts" })).not.toBeInTheDocument();
+      expect(screen.queryByText("queued task")).not.toBeInTheDocument();
     } finally {
       releaseFirstRun();
     }
@@ -1528,7 +1509,9 @@ describe("AppsBuilderWorkspace", () => {
         target: { value: "second queued" },
       });
       fireEvent.submit(screen.getByPlaceholderText("Plan, @ for context, / for commands").closest("form")!);
-      await screen.findByText("second queued");
+      const queuePanel = await screen.findByRole("region", { name: "Queued prompts" });
+      expect(within(queuePanel).getByText("second queued")).toBeInTheDocument();
+      expect(screen.queryAllByText("second queued")).toHaveLength(1);
 
       fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
       await waitFor(() => {
@@ -1544,7 +1527,7 @@ describe("AppsBuilderWorkspace", () => {
     }
   });
 
-  it("keeps queued prompts server-authoritative when stream misses terminal event", async () => {
+  it("continues local queued prompts when stream misses terminal event", async () => {
     const originalStallTimeout = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS;
     const originalMaxDuration = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_MAX_DURATION_MS;
     const originalReadPoll = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS;
@@ -1653,7 +1636,8 @@ describe("AppsBuilderWorkspace", () => {
         target: { value: "second queued after stall" },
       });
       fireEvent.submit(screen.getByPlaceholderText("Plan, @ for context, / for commands").closest("form")!);
-      await screen.findByText("second queued after stall");
+      const queuePanel = await screen.findByRole("region", { name: "Queued prompts" });
+      expect(within(queuePanel).getByText("second queued after stall")).toBeInTheDocument();
 
       await waitFor(() => {
         expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(2);
@@ -1665,7 +1649,7 @@ describe("AppsBuilderWorkspace", () => {
           chat_session_id: "chat-1",
         }),
       );
-      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledTimes(1);
+      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledTimes(2);
     } finally {
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS = originalStallTimeout;
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_MAX_DURATION_MS = originalMaxDuration;

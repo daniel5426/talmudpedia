@@ -99,7 +99,6 @@ describe("coding agent stream rendering speed", () => {
       refreshStateSilently: jest.fn(async () => undefined),
       ensureDraftDevSession: jest.fn(async () => undefined),
       loadChatSessions: jest.fn(async () => []),
-      refreshQueue: jest.fn(async () => undefined),
       requestCancelForRun: jest.fn(async () => undefined),
     });
 

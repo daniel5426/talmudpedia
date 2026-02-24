@@ -472,11 +472,36 @@ export const publishedAppsService = {
   },
 
   async streamCodingAgentRun(appId: string, runId: string): Promise<Response> {
-    return httpClient.requestRaw(`/admin/apps/${appId}/coding-agent/v2/runs/${runId}/stream`, {
+    // Bypass Next.js rewrite proxy for SSE because it can buffer chunked responses.
+    const streamBase = String(process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || "").trim();
+    const backendBase = String(process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
+    const directBackendUrl = /^https?:\/\//i.test(streamBase)
+      ? streamBase
+      : /^https?:\/\//i.test(backendBase)
+        ? backendBase
+        : "http://127.0.0.1:8000";
+    const { useAuthStore } = await import("@/lib/store/useAuthStore");
+    const authState = useAuthStore.getState();
+    const token = authState.token;
+    const tenantId = authState.user?.tenant_id;
+    const headers: Record<string, string> = {
+      Accept: "text/event-stream",
+      "Cache-Control": "no-cache",
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    if (tenantId) {
+      headers["X-Tenant-ID"] = tenantId;
+    }
+    const url = new URL(
+      `/admin/apps/${encodeURIComponent(appId)}/coding-agent/v2/runs/${encodeURIComponent(runId)}/stream`,
+      directBackendUrl,
+    );
+    return fetch(url.toString(), {
       method: "GET",
-      headers: {
-        Accept: "text/event-stream",
-      },
+      headers,
+      credentials: "include",
     });
   },
 

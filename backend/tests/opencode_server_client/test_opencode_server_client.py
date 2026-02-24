@@ -617,6 +617,89 @@ async def test_official_mode_global_event_stream_skips_reasoning_deltas(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_official_mode_global_event_stream_emits_deltas_from_message_updated_payload(monkeypatch: pytest.MonkeyPatch):
+    session_id = "sess-global-updated-deltas"
+    assistant_message_id = "msg-assistant-updated"
+    user_message_id = "msg-user-updated"
+    text_part_id = "part-text-updated"
+
+    global_events = [
+        ("message.updated", {"info": {"id": user_message_id, "sessionID": session_id, "role": "user"}}),
+        (
+            "message.updated",
+            {
+                "info": {
+                    "id": assistant_message_id,
+                    "sessionID": session_id,
+                    "role": "assistant",
+                    "parentID": user_message_id,
+                },
+                "parts": [{"id": text_part_id, "type": "text", "text": "Hel"}],
+            },
+        ),
+        (
+            "message.updated",
+            {
+                "info": {
+                    "id": assistant_message_id,
+                    "sessionID": session_id,
+                    "role": "assistant",
+                    "parentID": user_message_id,
+                },
+                "parts": [{"id": text_part_id, "type": "text", "text": "Hello there"}],
+            },
+        ),
+        ("session.idle", {"sessionID": session_id}),
+    ]
+    sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == f"/session/{session_id}/prompt_async":
+            return httpx.Response(204, text="")
+        if request.url.path == "/global/event":
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "info": {
+                            "id": assistant_message_id,
+                            "sessionID": session_id,
+                            "role": "assistant",
+                            "parentID": user_message_id,
+                            "time": {"created": 1, "completed": 2},
+                        },
+                        "parts": [{"id": text_part_id, "type": "text", "text": "Hello there"}],
+                    }
+                ],
+            )
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+    client = _client()
+
+    run_ref = await client.start_run(
+        run_id="run-global-updated-deltas",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="Reply with Hello there",
+        messages=[{"role": "user", "content": "Reply with Hello there"}],
+    )
+    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
+    assistant_chunks = [str(item.get("payload", {}).get("content") or "") for item in events if item.get("event") == "assistant.delta"]
+    assert assistant_chunks
+    assert "".join(assistant_chunks) == "Hello there"
+    assert events[-1].get("event") == "run.completed"
+
+
+@pytest.mark.asyncio
 async def test_official_mode_global_event_stream_settles_without_session_idle(monkeypatch: pytest.MonkeyPatch):
     session_id = "sess-global-settle"
     assistant_message_id = "msg-assistant-settle"

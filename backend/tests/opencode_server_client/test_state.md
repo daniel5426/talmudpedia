@@ -1,4 +1,4 @@
-Last Updated: 2026-02-22
+Last Updated: 2026-02-24
 
 ## Scope
 - OpenCode server client transport compatibility for coding-agent engine runs.
@@ -20,6 +20,7 @@ Last Updated: 2026-02-22
 - Host mode fails closed when `workspace_path` is missing/invalid for custom-tool bootstrap.
 - Global event stream translation emits incremental `assistant.delta` tokens and tool lifecycle events (`tool.started` / `tool.completed` / `tool.failed`).
 - Global event parsing preserves early tool events even before assistant message-role metadata lands.
+- Global event `message.updated` payloads are now parsed for incremental assistant text/tool state, including fallback text-diff extraction when `message.part.delta` is absent.
 - Reasoning parts are filtered out from user-visible assistant deltas.
 - Incremental text offset tracking prevents duplicate text when `/global/event` and `/session/{id}/message` overlap.
 - Official global-event streaming can settle to terminal completion without explicit `session.idle` when assistant text is complete and no tools are running.
@@ -30,6 +31,12 @@ Last Updated: 2026-02-22
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py::test_official_mode_global_event_stream_emits_deltas_from_message_updated_payload`
+- Date/Time: 2026-02-24
+- Result: Pass (1 passed, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py::test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404`
+- Date/Time: 2026-02-24
+- Result: Pass (1 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_terminal_stream_completion.py tests/coding_agent_api/test_opencode_apply_patch_recovery.py tests/opencode_server_client/test_opencode_server_client.py`
 - Date/Time: 2026-02-22
 - Result: Pass (32 passed, 6 warnings)

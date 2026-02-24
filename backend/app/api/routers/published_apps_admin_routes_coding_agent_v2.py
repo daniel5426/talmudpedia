@@ -298,13 +298,26 @@ async def stream_coding_agent_run(
     monitor = PublishedAppCodingRunMonitor(db)
 
     async def event_generator():
+        PublishedAppCodingRunMonitor._trace(
+            "api.stream.opened",
+            app_id=str(app.id),
+            run_id=str(run.id),
+        )
         yield ": " + (" " * 2048) + "\n\n"
         seq = 0
-        async for payload in monitor.stream_events(app_id=app.id, run_id=run.id):
-            seq += 1
-            payload["seq"] = seq
-            yield _sse(payload)
-            await asyncio.sleep(0)
+        try:
+            async for payload in monitor.stream_events(app_id=app.id, run_id=run.id):
+                seq += 1
+                framed = dict(payload)
+                framed["seq"] = seq
+                yield _sse(framed)
+                await asyncio.sleep(0)
+        finally:
+            PublishedAppCodingRunMonitor._trace(
+                "api.stream.closed",
+                app_id=str(app.id),
+                run_id=str(run.id),
+            )
 
     return StreamingResponse(
         event_generator(),

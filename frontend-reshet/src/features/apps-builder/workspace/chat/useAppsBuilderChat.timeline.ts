@@ -1,6 +1,4 @@
-import { useCallback, useRef, useState } from "react";
-
-import type { CodingAgentPromptQueueItem } from "@/services";
+import { useCallback, useState } from "react";
 
 import {
   TimelineItem,
@@ -15,22 +13,16 @@ export type QueuedPrompt = {
   text: string;
   createdAt: number;
   clientMessageId?: string | null;
+  modelId?: string | null;
 };
 
 export function useAppsBuilderChatTimelineState() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
 
-  const queuePromptByIdRef = useRef<Map<string, QueuedPrompt>>(new Map());
-  const timelineByClientMessageIdRef = useRef<Map<string, string>>(new Map());
-  const queuedTimelineByClientMessageIdRef = useRef<Map<string, string>>(new Map());
-
   const resetTimelineState = useCallback(() => {
     setTimeline([]);
     setQueuedPrompts([]);
-    queuePromptByIdRef.current = new Map();
-    timelineByClientMessageIdRef.current = new Map();
-    queuedTimelineByClientMessageIdRef.current = new Map();
   }, []);
 
   const pushTimeline = useCallback((item: Omit<TimelineItem, "id" | "kind"> & { kind?: TimelineItem["kind"] }) => {
@@ -63,7 +55,6 @@ export function useAppsBuilderChatTimelineState() {
           queueItemId: queueItemId || undefined,
         },
       ]);
-      timelineByClientMessageIdRef.current.set(clientMessageId, id);
       return id;
     },
     [],
@@ -72,18 +63,14 @@ export function useAppsBuilderChatTimelineState() {
   const updateUserTimelineDelivery = useCallback(
     ({
       timelineId,
-      clientMessageId,
       status,
       queueItemId,
     }: {
       timelineId?: string | null;
-      clientMessageId?: string | null;
       status: UserDeliveryStatus;
       queueItemId?: string | null;
     }) => {
-      const resolvedTimelineId =
-        String(timelineId || "").trim() ||
-        (clientMessageId ? timelineByClientMessageIdRef.current.get(String(clientMessageId)) || "" : "");
+      const resolvedTimelineId = String(timelineId || "").trim();
       if (!resolvedTimelineId) return;
       setTimeline((prev) => {
         const index = prev.findIndex((item) => item.id === resolvedTimelineId && item.kind === "user");
@@ -174,13 +161,14 @@ export function useAppsBuilderChatTimelineState() {
   const finalizeRunningTools = useCallback((status: Extract<ToolRunStatus, "completed" | "failed">) => {
     setTimeline((prev) => {
       let changed = false;
+      const tone: TimelineTone = status === "failed" ? "error" : "success";
       const next = prev.map((item) => {
         if (item.kind !== "tool" || item.toolStatus !== "running") return item;
         changed = true;
         return {
           ...item,
           toolStatus: status,
-          tone: status === "failed" ? "error" : "success",
+          tone,
         };
       });
       return changed ? next : prev;
@@ -200,69 +188,11 @@ export function useAppsBuilderChatTimelineState() {
     });
   }, []);
 
-  const mapQueueItems = useCallback((items: CodingAgentPromptQueueItem[]) => {
-    const safeItems = Array.isArray(items) ? items : [];
-    const next = [...safeItems]
-      .sort((a, b) => {
-        const posDiff = Number(a.position || 0) - Number(b.position || 0);
-        if (posDiff !== 0) return posDiff;
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-      })
-      .map((item) => ({
-        id: item.id,
-        text: String(item.input || "").trim(),
-        createdAt: new Date(item.created_at).getTime() || Date.now(),
-        clientMessageId: String(item.client_message_id || "").trim() || null,
-      }))
-      .filter((item) => item.text.length > 0);
-
-    queuePromptByIdRef.current = new Map(next.map((item) => [item.id, item]));
-    setQueuedPrompts(next);
-
-    const queuedClientIds = new Set(
-      next
-        .map((item) => String(item.clientMessageId || "").trim())
-        .filter((value) => value.length > 0),
-    );
-
-    for (const [clientMessageId, timelineItemId] of queuedTimelineByClientMessageIdRef.current.entries()) {
-      const queueMatch = next.find((item) => item.clientMessageId === clientMessageId);
-      if (queueMatch) {
-        updateUserTimelineDelivery({
-          timelineId: timelineItemId,
-          status: "queued",
-          queueItemId: queueMatch.id,
-        });
-        continue;
-      }
-      queuedTimelineByClientMessageIdRef.current.delete(clientMessageId);
-      updateUserTimelineDelivery({
-        timelineId: timelineItemId,
-        status: "sent",
-      });
-    }
-
-    for (const clientMessageId of queuedClientIds) {
-      const timelineItemId = timelineByClientMessageIdRef.current.get(clientMessageId);
-      if (!timelineItemId) continue;
-      queuedTimelineByClientMessageIdRef.current.set(clientMessageId, timelineItemId);
-      const queueMatch = next.find((item) => item.clientMessageId === clientMessageId);
-      updateUserTimelineDelivery({
-        timelineId: timelineItemId,
-        status: "queued",
-        queueItemId: queueMatch?.id || null,
-      });
-    }
-  }, [updateUserTimelineDelivery]);
-
   return {
     timeline,
     setTimeline,
     queuedPrompts,
     setQueuedPrompts,
-    queuePromptByIdRef,
-    timelineByClientMessageIdRef,
-    queuedTimelineByClientMessageIdRef,
     resetTimelineState,
     pushTimeline,
     appendUserTimeline,
@@ -271,6 +201,5 @@ export function useAppsBuilderChatTimelineState() {
     upsertToolTimeline,
     finalizeRunningTools,
     attachCheckpointToLastUser,
-    mapQueueItems,
   };
 }

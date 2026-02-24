@@ -22,6 +22,7 @@ from app.services.published_app_templates import (
     OPENCODE_BOOTSTRAP_CONTEXT_PATH,
     build_opencode_bootstrap_files,
 )
+from app.services.published_app_coding_run_monitor_config import monitor_trace
 
 
 class OpenCodeServerClientError(Exception):
@@ -34,6 +35,10 @@ OPENCODE_DEPRECATED_TOOL_PATHS = (
     ".opencode/tools/coding_agent_get_agent_integration_contract.ts",
     ".opencode/tools/coding_agent_describe_selected_agent_contract.ts",
 )
+
+
+def _opencode_trace(event: str, **fields: Any) -> None:
+    monitor_trace(event, **fields)
 
 
 @dataclass(frozen=True)
@@ -457,6 +462,17 @@ class OpenCodeServerClient:
         settle_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS") or "1.0").strip())
         settle_seconds = max(0.2, settle_seconds)
         running_statuses = {"running", "pending", "in_progress", "started"}
+        global_event_seen = 0
+        global_event_matched_session = 0
+        assistant_delta_emitted = 0
+        delta_skipped_field_filter = 0
+        delta_skipped_empty = 0
+        event_type_counts: dict[str, int] = {}
+
+        _opencode_trace(
+            "opencode.global_stream.opened",
+            session_id=session_id,
+        )
 
         def _maybe_mark_settled_complete() -> bool:
             nonlocal terminal_event
@@ -520,6 +536,7 @@ class OpenCodeServerClient:
                     payload = self._extract_global_event_payload(event_wrapper)
                     if not isinstance(payload, dict):
                         continue
+                    global_event_seen += 1
                     event_type = str(payload.get("type") or "").strip()
                     properties = payload.get("properties") if isinstance(payload.get("properties"), dict) else {}
                     if not event_type or not properties:
@@ -527,6 +544,8 @@ class OpenCodeServerClient:
                     event_session_id = self._extract_session_id_from_global_event_properties(properties)
                     if event_session_id != session_id:
                         continue
+                    global_event_matched_session += 1
+                    event_type_counts[event_type] = int(event_type_counts.get(event_type) or 0) + 1
 
                     if event_type == "message.updated":
                         info = properties.get("info") if isinstance(properties.get("info"), dict) else {}
@@ -546,9 +565,66 @@ class OpenCodeServerClient:
                                 "code": "OPENCODE_ASSISTANT_ERROR",
                             }
                             break
+                        candidates = self._collect_official_assistant_candidates(properties)
+                        if not candidates and role == "assistant":
+                            candidates = [properties]
+                        if parent_message_id:
+                            filtered = [
+                                item
+                                for item in candidates
+                                if self._extract_candidate_parent_id(item) in {"", parent_message_id}
+                            ]
+                            if filtered:
+                                candidates = filtered
+                        candidates = self._sort_assistant_candidates(candidates)
+                        for message in candidates:
+                            message_info = message.get("info") if isinstance(message.get("info"), dict) else {}
+                            candidate_role = str(message_info.get("role") or role or "").strip().lower()
+                            candidate_message_id = str(message_info.get("id") or message_id or "").strip()
+                            if candidate_message_id and candidate_role:
+                                message_roles[candidate_message_id] = candidate_role
+                            if candidate_message_id and candidate_role == "assistant":
+                                assistant_message_ids.add(candidate_message_id)
+                            if candidate_role == "user":
+                                continue
+                            if candidate_message_id and parent_message_id and candidate_message_id == parent_message_id:
+                                continue
+                            emitted_part_delta = False
+                            for event in self._extract_incremental_tool_events(message=message, state=state):
+                                state["last_progress_at"] = time.monotonic()
+                                yield event
+                            for delta in self._extract_incremental_text_deltas(message=message, state=state):
+                                emitted_part_delta = True
+                                saw_assistant_text = True
+                                state["last_progress_at"] = time.monotonic()
+                                assistant_delta_emitted += 1
+                                yield {"event": "assistant.delta", "payload": {"content": delta}}
+                            if emitted_part_delta:
+                                continue
+                            fallback_text = self._extract_text_from_message_payload(message)
+                            if not fallback_text:
+                                continue
+                            fallback_offsets = state.setdefault("message_text_offsets", {})
+                            fallback_key = candidate_message_id
+                            if not fallback_key:
+                                fallback_hash = sha256(
+                                    json.dumps(message, sort_keys=True, default=str).encode("utf-8")
+                                ).hexdigest()[:16]
+                                fallback_key = f"message.updated:{fallback_hash}"
+                            previous = int(fallback_offsets.get(fallback_key) or 0)
+                            if len(fallback_text) <= previous:
+                                continue
+                            delta = fallback_text[previous:]
+                            fallback_offsets[fallback_key] = len(fallback_text)
+                            saw_assistant_text = True
+                            state["last_progress_at"] = time.monotonic()
+                            assistant_delta_emitted += 1
+                            yield {"event": "assistant.delta", "payload": {"content": delta}}
                         continue
 
-                    if event_type in {"message.part.delta", "message_part.delta", "message.part_delta", "message.delta"}:
+                    if event_type in {"message.part.delta", "message_part.delta", "message.part_delta", "message.delta"} or (
+                        "delta" in event_type and ("message" in event_type or "assistant" in event_type)
+                    ):
                         message_id = str(
                             properties.get("messageID")
                             or properties.get("messageId")
@@ -561,16 +637,19 @@ class OpenCodeServerClient:
                         if role == "user":
                             continue
                         field_name = str(properties.get("field") or "").strip().lower()
-                        if field_name and field_name not in {
-                            "text",
-                            "content",
-                            "value",
-                            "output_text",
-                            "markdown",
-                            "final",
-                            "delta",
-                        }:
-                            continue
+                        if field_name:
+                            allowed_field_tokens = (
+                                "text",
+                                "content",
+                                "value",
+                                "output_text",
+                                "markdown",
+                                "final",
+                                "delta",
+                            )
+                            if not any(token in field_name for token in allowed_field_tokens):
+                                delta_skipped_field_filter += 1
+                                continue
                         part_id = str(
                             properties.get("partID")
                             or properties.get("partId")
@@ -585,9 +664,12 @@ class OpenCodeServerClient:
                             or properties.get("textDelta")
                             or properties.get("text_delta")
                             or properties.get("text")
+                            or properties.get("value")
+                            or properties.get("content")
                             or ""
                         )
                         if not delta:
+                            delta_skipped_empty += 1
                             continue
                         offsets = state.setdefault("text_offsets", {})
                         offset_key = part_id or f"{message_id}:delta"
@@ -595,6 +677,7 @@ class OpenCodeServerClient:
                         offsets[offset_key] = previous_offset + len(delta)
                         saw_assistant_text = True
                         state["last_progress_at"] = time.monotonic()
+                        assistant_delta_emitted += 1
                         yield {"event": "assistant.delta", "payload": {"content": delta}}
                         continue
 
@@ -675,6 +758,7 @@ class OpenCodeServerClient:
                             for delta in self._extract_incremental_text_deltas(message=message, state=state):
                                 saw_assistant_text = True
                                 state["last_progress_at"] = time.monotonic()
+                                assistant_delta_emitted += 1
                                 yield {"event": "assistant.delta", "payload": {"content": delta}}
                             embedded_error = self._extract_assistant_info_error(message)
                             if embedded_error:
@@ -700,11 +784,34 @@ class OpenCodeServerClient:
         if terminal_event is None:
             _maybe_mark_settled_complete()
         if terminal_event is not None:
+            top_event_types = sorted(event_type_counts.items(), key=lambda item: item[1], reverse=True)[:12]
+            _opencode_trace(
+                "opencode.global_stream.closed",
+                session_id=session_id,
+                global_event_seen=global_event_seen,
+                global_event_matched_session=global_event_matched_session,
+                assistant_delta_emitted=assistant_delta_emitted,
+                delta_skipped_field_filter=delta_skipped_field_filter,
+                delta_skipped_empty=delta_skipped_empty,
+                event_type_counts=top_event_types,
+                terminal_event=str(terminal_event.get("event") or ""),
+            )
             yield terminal_event
             self._official_run_state.pop(session_id, None)
             return
 
         # No terminal event observed; let snapshot polling handle completion/failure.
+        top_event_types = sorted(event_type_counts.items(), key=lambda item: item[1], reverse=True)[:12]
+        _opencode_trace(
+            "opencode.global_stream.closed_no_terminal",
+            session_id=session_id,
+            global_event_seen=global_event_seen,
+            global_event_matched_session=global_event_matched_session,
+            assistant_delta_emitted=assistant_delta_emitted,
+            delta_skipped_field_filter=delta_skipped_field_filter,
+            delta_skipped_empty=delta_skipped_empty,
+            event_type_counts=top_event_types,
+        )
 
     async def _stream_official_run_events_snapshot(self, *, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
         state = self._official_run_state.setdefault(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -41,6 +42,7 @@ class _MonitorState:
     run_id: str
     task: asyncio.Task
     subscribers: set[asyncio.Queue] = field(default_factory=set)
+    event_backlog: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=6000))
 
 
 class PublishedAppCodingRunMonitor:
@@ -107,14 +109,19 @@ class PublishedAppCodingRunMonitor:
 
     @classmethod
     async def _emit_to_subscribers(cls, *, run_id: UUID, payload: dict[str, Any]) -> None:
+        run_key = str(run_id)
         async with cls._monitors_lock:
-            state = cls._monitors.get(str(run_id))
+            state = cls._monitors.get(run_key)
+            if state is not None:
+                # Keep an in-memory backlog so late stream subscribers can replay
+                # already-emitted events without DB replay semantics.
+                state.event_backlog.append(dict(payload))
             subscribers = list(state.subscribers) if state is not None else []
         event_name = str(payload.get("event") or "").strip()
         if event_name and event_name != "assistant.delta":
             cls._trace(
                 "monitor.emit",
-                run_id=str(run_id),
+                run_id=run_key,
                 run_event=event_name,
                 subscriber_count=len(subscribers),
             )
@@ -122,7 +129,7 @@ class PublishedAppCodingRunMonitor:
                 run_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
                 cls._trace(
                     "monitor.terminal_payload",
-                    run_id=str(run_id),
+                    run_id=run_key,
                     run_event=event_name,
                     status=run_payload.get("status"),
                     result_revision_id=run_payload.get("result_revision_id"),
@@ -131,7 +138,7 @@ class PublishedAppCodingRunMonitor:
                 )
         for queue in subscribers:
             try:
-                queue.put_nowait(payload)
+                queue.put_nowait(dict(payload))
             except Exception as exc:
                 cls._trace(
                     "monitor.emit_queue_put_failed",
@@ -320,16 +327,19 @@ class PublishedAppCodingRunMonitor:
         # under transient plan/tool event bursts.
         queue: asyncio.Queue = asyncio.Queue()
         attached = False
+        backlog_snapshot: list[dict[str, Any]] = []
         async with self.__class__._monitors_lock:
             current = self.__class__._monitors.get(str(run_id))
             if current is not None:
                 current.subscribers.add(queue)
+                backlog_snapshot = [dict(item) for item in current.event_backlog]
                 attached = True
                 self.__class__._trace(
                     "monitor.subscriber_attached",
                     run_id=str(run_id),
                     app_id=str(app_id),
                     subscriber_count=len(current.subscribers),
+                    backlog_size=len(backlog_snapshot),
                 )
 
         if not attached:
@@ -340,6 +350,10 @@ class PublishedAppCodingRunMonitor:
             )
 
         try:
+            for payload in backlog_snapshot:
+                yield payload
+                if str(payload.get("event") or "") in _TERMINAL_EVENTS:
+                    return
             while True:
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=2.0)
