@@ -4,6 +4,8 @@ import { publishedAppsService } from "@/services";
 
 import { describeToolIntent, extractPrimaryToolPath, timelineId } from "./chat-model";
 import {
+  type CodingAgentPendingQuestion,
+  parsePendingQuestionPayload,
   parseRunActiveDetail,
   parseSse,
   parseTerminalRunStatus,
@@ -51,6 +53,8 @@ type ConsumeRunStreamOptions = {
   ensureDraftDevSession: () => Promise<void>;
   loadChatSessions: () => Promise<unknown[]>;
   requestCancelForRun: (runId: string) => Promise<void>;
+  onQuestionAsked: (question: CodingAgentPendingQuestion) => void;
+  onQuestionResolved: (requestId?: string) => void;
 };
 
 const WRITE_TOOL_HINTS = [
@@ -124,6 +128,8 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     ensureDraftDevSession,
     loadChatSessions,
     requestCancelForRun,
+    onQuestionAsked,
+    onQuestionResolved,
   } = options;
 
   const normalizedRunId = String(runId || "").trim();
@@ -419,6 +425,18 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           upsertToolTimeline(toolCallId, describeToolIntent(toolName), "failed", toolName, toolPath);
         }
 
+        if (parsed.event === "tool.question") {
+          const pendingQuestion = parsePendingQuestionPayload(payload);
+          if (pendingQuestion) {
+            onQuestionAsked(pendingQuestion);
+          }
+        }
+
+        if (parsed.event === "tool.question.answered" || parsed.event === "tool.question.rejected") {
+          const requestId = String(payload.request_id || payload.requestId || "").trim() || undefined;
+          onQuestionResolved(requestId);
+        }
+
         if (parsed.event === "revision.created") {
           const revisionId = String(payload.revision_id || "");
           latestResultRevisionId = revisionId || latestResultRevisionId;
@@ -462,6 +480,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
         if (TERMINAL_RUN_EVENTS.has(parsed.event)) {
           sawTerminalEvent = true;
+          onQuestionResolved();
           if (parsed.event === "run.cancelled") {
             terminalStatus = "cancelled";
           } else if (parsed.event === "run.paused") {
@@ -686,6 +705,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       onError(err instanceof Error ? err.message : "Failed to run coding agent");
     }
   } finally {
+    onQuestionResolved();
     abortReaderRef.current = null;
     activeRunIdRef.current = null;
     lastKnownRunIdRef.current = null;

@@ -262,6 +262,20 @@ class OpenCodePublishedAppCodingAgentEngine:
             diagnostics=[{"code": "OPENCODE_CANCEL_UNCONFIRMED", "message": "OpenCode cancellation not confirmed"}],
         )
 
+    async def answer_question(self, *, run: AgentRun, question_id: str, answers: list[list[str]]) -> None:
+        if not run.engine_run_ref:
+            raise RuntimeError("Missing OpenCode run reference for question response")
+        input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
+        raw_context = input_params.get("context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        sandbox_id = str(context.get("opencode_sandbox_id") or context.get("preview_sandbox_id") or "").strip() or None
+        await self._client.answer_question(
+            run_ref=str(run.engine_run_ref),
+            question_id=str(question_id or "").strip(),
+            answers=answers,
+            sandbox_id=sandbox_id,
+        )
+
     @classmethod
     def _extract_workspace_violations(cls, *, payload: dict[str, Any], workspace_root: str) -> list[str]:
         if not workspace_root:
@@ -435,6 +449,36 @@ class OpenCodePublishedAppCodingAgentEngine:
                     "output": payload.get("output") or raw.get("output"),
                 },
                 diagnostics=diagnostics,
+            )
+
+        if event_type == "tool.question":
+            request_id = str(payload.get("request_id") or raw.get("request_id") or "").strip()
+            questions = payload.get("questions") if isinstance(payload.get("questions"), list) else []
+            tool_payload = payload.get("tool") if isinstance(payload.get("tool"), dict) else {}
+            if not request_id:
+                return None
+            return EngineStreamEvent(
+                event="tool.question",
+                stage="tool",
+                payload={
+                    "request_id": request_id,
+                    "questions": [item for item in questions if isinstance(item, dict)],
+                    "tool": dict(tool_payload),
+                },
+                diagnostics=None,
+            )
+
+        if event_type in {"tool.question.answered", "tool.question.rejected"}:
+            request_id = str(payload.get("request_id") or raw.get("request_id") or "").strip()
+            answers = payload.get("answers") if isinstance(payload.get("answers"), list) else []
+            return EngineStreamEvent(
+                event=event_type,
+                stage="tool",
+                payload={
+                    "request_id": request_id,
+                    "answers": answers,
+                },
+                diagnostics=None,
             )
 
         if event_type == "plan.updated":

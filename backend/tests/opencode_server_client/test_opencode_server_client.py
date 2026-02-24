@@ -1308,3 +1308,65 @@ async def test_official_mode_prefers_assistant_candidate_with_text(monkeypatch: 
         item.get("event") == "assistant.delta" and "Earlier completed text" in str(item.get("payload", {}).get("content"))
         for item in events
     )
+
+
+@pytest.mark.asyncio
+async def test_host_mode_answer_question_ignores_sandbox_id_and_uses_api(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[str, str]] = []
+
+    class _SandboxClientStub:
+        is_remote_enabled = True
+
+        async def answer_opencode_question(self, **kwargs):
+            raise AssertionError("sandbox controller path should not be used when host mode is forced")
+
+    async def fake_request(method: str, path: str, **kwargs):
+        calls.append((method, path))
+        if path == "/question/question-1/reply":
+            return {}
+        raise AssertionError(f"Unexpected request path: {path}")
+
+    client = _client(sandbox_controller_mode_override=False)
+    client._sandbox_runtime_client = _SandboxClientStub()
+    client._api_mode = "official"
+    client._request = fake_request  # type: ignore[method-assign]
+
+    ok = await client.answer_question(
+        run_ref="run-1",
+        question_id="question-1",
+        answers=[["A"]],
+        sandbox_id="sandbox-1",
+    )
+
+    assert ok is True
+    assert calls == [("POST", "/question/question-1/reply")]
+
+
+@pytest.mark.asyncio
+async def test_host_mode_cancel_ignores_sandbox_id_and_uses_api(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[str, str]] = []
+
+    class _SandboxClientStub:
+        is_remote_enabled = True
+
+        async def cancel_opencode_run(self, **kwargs):
+            raise AssertionError("sandbox controller path should not be used when host mode is forced")
+
+    async def fake_request(method: str, path: str, **kwargs):
+        calls.append((method, path))
+        if path == "/session/run-1/abort":
+            return {"aborted": True}
+        raise AssertionError(f"Unexpected request path: {path}")
+
+    client = _client(sandbox_controller_mode_override=False)
+    client._sandbox_runtime_client = _SandboxClientStub()
+    client._api_mode = "official"
+    client._request = fake_request  # type: ignore[method-assign]
+
+    ok = await client.cancel_run(
+        run_ref="run-1",
+        sandbox_id="sandbox-1",
+    )
+
+    assert ok is True
+    assert calls == [("POST", "/session/run-1/abort")]

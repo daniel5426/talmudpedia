@@ -743,7 +743,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setIsModelSelectorOpen,
     selectedRunModelLabel,
     queuedPrompts,
+    pendingQuestion,
+    isAnsweringQuestion,
     removeQueuedPrompt,
+    answerPendingQuestion,
     sendBuilderChat,
     stopCurrentRun,
     startNewChat,
@@ -1520,7 +1523,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             onModelSelectorOpenChange={setIsModelSelectorOpen}
             onSelectModelId={setSelectedRunModelId}
             queuedPrompts={queuedPrompts}
+            pendingQuestion={pendingQuestion}
+            isAnsweringQuestion={isAnsweringQuestion}
             onRemoveQueuedPrompt={removeQueuedPrompt}
+            onAnswerQuestion={answerPendingQuestion}
           />
         </div>
       </div>

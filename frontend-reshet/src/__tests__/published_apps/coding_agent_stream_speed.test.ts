@@ -100,6 +100,8 @@ describe("coding agent stream rendering speed", () => {
       ensureDraftDevSession: jest.fn(async () => undefined),
       loadChatSessions: jest.fn(async () => []),
       requestCancelForRun: jest.fn(async () => undefined),
+      onQuestionAsked: jest.fn(),
+      onQuestionResolved: jest.fn(),
     });
 
     const nonEmptyErrors = onError.mock.calls
@@ -110,5 +112,137 @@ describe("coding agent stream rendering speed", () => {
     expect(upsertAssistantTimeline.mock.calls.length).toBeGreaterThanOrEqual(10);
     const latestText = String(upsertAssistantTimeline.mock.calls.at(-1)?.[1] || "");
     expect(latestText).toBe("ABCDEFGHIJ");
+  });
+
+  it("surfaces question tool events to the question UI callbacks", async () => {
+    const sse = [
+      buildSseFrame({
+        event: "run.accepted",
+        run_id: "run-2",
+        app_id: "app-1",
+        seq: 1,
+        ts: "2026-02-24T10:00:00Z",
+        stage: "run",
+        payload: { status: "queued" },
+        diagnostics: [],
+      }),
+      buildSseFrame({
+        event: "tool.question",
+        run_id: "run-2",
+        app_id: "app-1",
+        seq: 2,
+        ts: "2026-02-24T10:00:01Z",
+        stage: "tool",
+        payload: {
+          request_id: "q-1",
+          questions: [
+            {
+              header: "Implementation choice",
+              question: "Which approach should I use?",
+              multiple: false,
+              options: [
+                { label: "A", description: "Use option A" },
+                { label: "B", description: "Use option B" },
+              ],
+            },
+          ],
+          tool: {
+            call_id: "call-1",
+            message_id: "message-1",
+          },
+        },
+        diagnostics: [],
+      }),
+      buildSseFrame({
+        event: "tool.question.answered",
+        run_id: "run-2",
+        app_id: "app-1",
+        seq: 3,
+        ts: "2026-02-24T10:00:02Z",
+        stage: "tool",
+        payload: {
+          request_id: "q-1",
+          answers: [["A"]],
+        },
+        diagnostics: [],
+      }),
+      buildSseFrame({
+        event: "run.completed",
+        run_id: "run-2",
+        app_id: "app-1",
+        seq: 4,
+        ts: "2026-02-24T10:00:03Z",
+        stage: "run",
+        payload: { status: "completed" },
+        diagnostics: [],
+      }),
+    ].join("");
+
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+        controller.close();
+      },
+    });
+    const response = {
+      ok: true,
+      status: 200,
+      body,
+      json: async () => ({}),
+    } as unknown as Response;
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValue(response);
+
+    const onQuestionAsked = jest.fn();
+    const onQuestionResolved = jest.fn();
+
+    await consumeRunStream({
+      appId: "app-1",
+      runId: "run-2",
+      activeTab: "config",
+      activeChatSessionIdRef: { current: "session-1" },
+      setIsSending: jest.fn(),
+      setIsStopping: jest.fn(),
+      setActiveThinkingSummary: jest.fn(),
+      isSendingRef: { current: false },
+      pendingCancelRef: { current: false },
+      intentionalAbortRef: { current: false },
+      activeRunIdRef: { current: null },
+      lastKnownRunIdRef: { current: null },
+      abortReaderRef: { current: null },
+      isMountedRef: { current: true },
+      seenRunEventKeysRef: { current: new Set<string>() },
+      onError: jest.fn(),
+      onSetCurrentRevisionId: jest.fn(),
+      pushTimeline: jest.fn(),
+      upsertAssistantTimeline: jest.fn(),
+      upsertToolTimeline: jest.fn(),
+      finalizeRunningTools: jest.fn(),
+      attachCheckpointToLastUser: jest.fn(),
+      refreshStateSilently: jest.fn(async () => undefined),
+      ensureDraftDevSession: jest.fn(async () => undefined),
+      loadChatSessions: jest.fn(async () => []),
+      requestCancelForRun: jest.fn(async () => undefined),
+      onQuestionAsked,
+      onQuestionResolved,
+    });
+
+    expect(onQuestionAsked).toHaveBeenCalledTimes(1);
+    expect(onQuestionAsked).toHaveBeenCalledWith({
+      requestId: "q-1",
+      questions: [
+        {
+          header: "Implementation choice",
+          question: "Which approach should I use?",
+          multiple: false,
+          options: [
+            { label: "A", description: "Use option A" },
+            { label: "B", description: "Use option B" },
+          ],
+        },
+      ],
+      toolCallId: "call-1",
+      toolMessageId: "message-1",
+    });
+    expect(onQuestionResolved).toHaveBeenCalledWith("q-1");
   });
 });

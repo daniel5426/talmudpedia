@@ -329,6 +329,11 @@ export type CodingAgentPromptSubmissionResponse =
   | CodingAgentPromptSubmissionStartedResponse
   | CodingAgentPromptSubmissionQueuedResponse;
 
+export interface CodingAgentAnswerQuestionRequest {
+  question_id: string;
+  answers: string[][];
+}
+
 export const publishedAppsService = {
   async list(): Promise<PublishedApp[]> {
     return httpClient.get<PublishedApp[]>("/admin/apps");
@@ -511,6 +516,17 @@ export const publishedAppsService = {
 
   async cancelCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {
     return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/v2/runs/${runId}/cancel`, {});
+  },
+
+  async answerCodingAgentRunQuestion(
+    appId: string,
+    runId: string,
+    payload: CodingAgentAnswerQuestionRequest,
+  ): Promise<CodingAgentRun> {
+    return httpClient.post<CodingAgentRun>(
+      `/admin/apps/${appId}/coding-agent/v2/runs/${runId}/answer-question`,
+      payload,
+    );
   },
 
   async getCodingAgentChatSessionActiveRun(appId: string, sessionId: string): Promise<CodingAgentActiveRunState> {

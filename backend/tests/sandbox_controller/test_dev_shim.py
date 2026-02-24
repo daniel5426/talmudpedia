@@ -152,6 +152,12 @@ async def test_dev_shim_opencode_start_stream_cancel(client, monkeypatch, tmp_pa
             assert run_ref == "host-run-ref-1"
             return True
 
+        async def answer_question(self, *, run_ref, question_id, answers, sandbox_id=None):
+            assert run_ref == "host-run-ref-1"
+            assert question_id == "que_1"
+            assert answers == [["A"]]
+            return True
+
     monkeypatch.setattr(shim_router, "get_local_draft_dev_runtime_manager", lambda: _FakeManager())
     monkeypatch.setattr(shim_router, "_build_host_opencode_client", lambda: _FakeHostClient())
 
@@ -189,6 +195,76 @@ async def test_dev_shim_opencode_start_stream_cancel(client, monkeypatch, tmp_pa
         body = (await stream_response.aread()).decode("utf-8")
         assert "assistant.delta" in body
         assert "run.completed" in body
+
+
+@pytest.mark.asyncio
+async def test_dev_shim_opencode_question_answer(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "1")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_PER_SANDBOX", "0")
+
+    project_dir = tmp_path / "sandbox-question"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    class _FakeManager:
+        async def resolve_project_dir(self, *, sandbox_id):
+            return str(project_dir)
+
+    class _FakeHostClient:
+        async def ensure_healthy(self, *, force=False):
+            return None
+
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+            return "host-run-ref-question"
+
+        async def stream_run_events(self, *, run_ref):
+            await asyncio.sleep(0.05)
+            yield {
+                "event": "tool.question",
+                "payload": {
+                    "request_id": "que_1",
+                    "questions": [{"question": "Pick one", "options": [{"label": "A"}, {"label": "B"}]}],
+                },
+            }
+            await asyncio.sleep(5)
+            if False:  # pragma: no cover - keeps generator shape
+                yield {"event": "noop"}
+
+        async def cancel_run(self, *, run_ref, sandbox_id=None):
+            return True
+
+        async def answer_question(self, *, run_ref, question_id, answers, sandbox_id=None):
+            assert run_ref == "host-run-ref-question"
+            assert question_id == "que_1"
+            assert answers == [["A"]]
+            return True
+
+    monkeypatch.setattr(shim_router, "get_local_draft_dev_runtime_manager", lambda: _FakeManager())
+    monkeypatch.setattr(shim_router, "_build_host_opencode_client", lambda: _FakeHostClient())
+
+    headers = {"Authorization": "Bearer dev-token"}
+    start_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-question/opencode/start",
+        headers=headers,
+        json={
+            "run_id": "run-question",
+            "app_id": "app-1",
+            "workspace_path": "/workspace",
+            "model_id": "openai/gpt-5",
+            "prompt": "hello",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["run_ref"] == "host-run-ref-question"
+
+    answer_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-question/opencode/question-answer",
+        headers=headers,
+        json={"run_ref": "host-run-ref-question", "question_id": "que_1", "answers": [["A"]]},
+    )
+    assert answer_response.status_code == 200
+    assert answer_response.json()["ok"] is True
 
 
 @pytest.mark.asyncio

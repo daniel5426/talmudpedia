@@ -159,6 +159,12 @@ class OpenCodeCancelRequest(BaseModel):
     run_ref: str
 
 
+class OpenCodeQuestionAnswerRequest(BaseModel):
+    run_ref: str
+    question_id: str
+    answers: list[list[str]] = Field(default_factory=list)
+
+
 class StagePrepareRequest(BaseModel):
     run_id: str
 
@@ -810,5 +816,22 @@ async def opencode_cancel(sandbox_id: str, payload: OpenCodeCancelRequest) -> di
             )
             await state.queue.put(None)
         return {"cancelled": bool(cancelled)}
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/opencode/question-answer")
+async def opencode_question_answer(sandbox_id: str, payload: OpenCodeQuestionAnswerRequest) -> dict[str, Any]:
+    state = await _opencode_store.get(payload.run_ref)
+    if state is None or str(state.sandbox_id) != str(sandbox_id):
+        return {"ok": False, "reason": "run not found"}
+    try:
+        ok = await state.host_client.answer_question(
+            run_ref=state.host_run_ref,
+            question_id=str(payload.question_id or "").strip(),
+            answers=payload.answers,
+            sandbox_id=str(sandbox_id),
+        )
+        return {"ok": bool(ok)}
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc

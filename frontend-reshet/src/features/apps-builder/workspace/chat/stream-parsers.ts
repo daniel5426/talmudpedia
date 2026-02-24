@@ -22,6 +22,25 @@ export type CodingAgentRunActiveDetail = {
 
 export type TerminalRunStatus = "completed" | "failed" | "cancelled" | "paused";
 
+export type CodingAgentQuestionOption = {
+  label: string;
+  description?: string;
+};
+
+export type CodingAgentQuestionItem = {
+  header?: string;
+  question: string;
+  multiple?: boolean;
+  options: CodingAgentQuestionOption[];
+};
+
+export type CodingAgentPendingQuestion = {
+  requestId: string;
+  questions: CodingAgentQuestionItem[];
+  toolCallId?: string;
+  toolMessageId?: string;
+};
+
 export const TERMINAL_RUN_EVENTS = new Set<string>([
   "run.completed",
   "run.failed",
@@ -176,6 +195,43 @@ export const parseTerminalRunStatus = (status: unknown): TerminalRunStatus | nul
     return null;
   }
   return normalized;
+};
+
+export const parsePendingQuestionPayload = (payload: unknown): CodingAgentPendingQuestion | null => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const source = payload as Record<string, unknown>;
+  const requestId = String(source.request_id || source.requestId || "").trim();
+  if (!requestId) {
+    return null;
+  }
+  const rawQuestions = Array.isArray(source.questions) ? source.questions : [];
+  const questions: CodingAgentQuestionItem[] = rawQuestions
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map((item) => ({
+      header: String(item.header || "").trim() || undefined,
+      question: String(item.question || "").trim(),
+      multiple: Boolean(item.multiple),
+      options: (Array.isArray(item.options) ? item.options : [])
+        .filter((opt): opt is Record<string, unknown> => !!opt && typeof opt === "object")
+        .map((opt) => ({
+          label: String(opt.label || "").trim(),
+          description: String(opt.description || "").trim() || undefined,
+        }))
+        .filter((opt) => !!opt.label),
+    }))
+    .filter((item) => !!item.question);
+  if (questions.length === 0) {
+    return null;
+  }
+  const tool = source.tool && typeof source.tool === "object" ? (source.tool as Record<string, unknown>) : {};
+  return {
+    requestId,
+    questions,
+    toolCallId: String(tool.call_id || tool.callId || "").trim() || undefined,
+    toolMessageId: String(tool.message_id || tool.messageId || "").trim() || undefined,
+  };
 };
 
 export const resolvePositiveTimeoutMs = (rawValue: string | undefined, fallbackMs: number): number => {

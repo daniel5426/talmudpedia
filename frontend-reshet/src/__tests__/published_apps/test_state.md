@@ -41,6 +41,7 @@ Frontend coverage for:
 - Builder workspace shows `Reasoning...` fallback only when no tool is actively running; active tool rows own the shimmer state while executing.
 - Builder workspace scopes `Reasoning...` fallback to the active prompt so second/subsequent prompts still show immediate shimmer before first stream activity.
 - Builder workspace shows FIFO queued prompts in a minimalist queue panel above the composer when user submits during active runs, with per-item remove action.
+- Coding-agent stream consumer surfaces OpenCode question tool lifecycle events (`tool.question`, `tool.question.answered`) so the custom question UI can render choices and clear state after answers.
 - Builder workspace queue UI is frontend-local (no queue list/delete API roundtrip) and updates immediately on enqueue/remove.
 - Builder workspace stop flow calls coding-agent cancel endpoint while preserving frontend-local queued prompts.
 - Builder workspace stop flow still dispatches cancel when stop is clicked before `create-run` returns `run_id` (run-id race protection).
@@ -80,6 +81,9 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npx jest src/__tests__/published_apps/coding_agent_stream_speed.test.ts --runInBand`
+- Date: 2026-02-24
+- Result: PASS (1 suite, 2 tests)
 - Command: `cd frontend-reshet && pnpm -s test src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand -t "queues a prompt while run is active and supports removing queued items|stops active run via cancel endpoint and continues with queued prompt|keeps queued prompts server-authoritative when stream misses terminal event"`
 - Date: 2026-02-24
 - Result: PASS (1 suite, 3 tests; 43 skipped by `-t`)

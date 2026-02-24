@@ -699,6 +699,41 @@ class PublishedAppCodingAgentRuntimeService(
             pass
         return run
 
+    async def answer_question(
+        self,
+        *,
+        run: AgentRun,
+        question_id: str,
+        answers: list[list[str]],
+    ) -> AgentRun:
+        status = run.status.value if hasattr(run.status, "value") else str(run.status)
+        if status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value, RunStatus.paused.value}:
+            raise HTTPException(status_code=409, detail="Coding-agent run is not active")
+        request_id = str(question_id or "").strip()
+        if not request_id:
+            raise HTTPException(status_code=400, detail="question_id is required")
+        normalized_answers: list[list[str]] = []
+        for row in answers or []:
+            if not isinstance(row, list):
+                continue
+            values = [str(item).strip() for item in row if str(item).strip()]
+            normalized_answers.append(values)
+        if not normalized_answers:
+            raise HTTPException(status_code=400, detail="answers must contain at least one response")
+        engine = self._resolve_engine_for_run(run)
+        try:
+            await engine.answer_question(
+                run=run,
+                question_id=request_id,
+                answers=normalized_answers,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to answer coding-agent question: {exc}") from exc
+        await self.db.refresh(run)
+        return run
+
     async def list_checkpoints(self, *, app_id: UUID, limit: int = 25) -> list[dict[str, Any]]:
         result = await self.db.execute(
             select(AgentRun)

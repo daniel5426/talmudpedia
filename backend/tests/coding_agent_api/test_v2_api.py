@@ -299,6 +299,62 @@ async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(cl
 
 
 @pytest.mark.asyncio
+async def test_v2_answer_question_endpoint(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={
+            "input": "Need answer",
+            "context": {
+                "chat_session_id": str(uuid4()),
+                "preview_sandbox_id": "sandbox-test",
+                "preview_sandbox_status": "running",
+            },
+        },
+        surface=CODING_AGENT_SURFACE,
+        published_app_id=UUID(app_id),
+        base_revision_id=UUID(draft_revision_id),
+        execution_engine="opencode",
+        engine_run_ref="ses_test_1",
+    )
+    db_session.add(run)
+    await db_session.commit()
+    await db_session.refresh(run)
+
+    async def _fake_answer_question(self, *, run, question_id, answers):
+        _ = self
+        assert str(run.id) == str(run_id)
+        assert question_id == "que_1"
+        assert answers == [["A"]]
+        return run
+
+    run_id = run.id
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "answer_question", _fake_answer_question)
+    monkeypatch.setattr(
+        PublishedAppCodingRunMonitor,
+        "ensure_monitor",
+        lambda self, *, app_id, run_id: asyncio.sleep(0, result=SimpleNamespace(task=None)),
+    )
+
+    response = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/v2/runs/{run_id}/answer-question",
+        headers=headers,
+        json={"question_id": "que_1", "answers": [["A"]]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == str(run_id)
+    assert payload["status"] == "running"
+
+
+@pytest.mark.asyncio
 async def test_v2_cancel_marks_cancelled_and_dispatches_next(client, db_session, monkeypatch):
     _install_fake_create_run(monkeypatch)
 

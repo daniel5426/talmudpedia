@@ -33,3 +33,6 @@ class PublishedAppCodingAgentEngine(Protocol):
 
     async def cancel(self, run: AgentRun) -> EngineCancelResult:
         ...
+
+    async def answer_question(self, *, run: AgentRun, question_id: str, answers: list[list[str]]) -> None:
+        ...

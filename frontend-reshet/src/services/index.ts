@@ -111,6 +111,7 @@ export type {
   CodingAgentCheckpoint,
   CodingAgentRestoreCheckpointResponse,
   CodingAgentPromptSubmissionResponse,
+  CodingAgentAnswerQuestionRequest,
   CreatePublishedAppRequest,
   CreateBuilderRevisionRequest,
   UpdatePublishedAppRequest,

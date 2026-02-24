@@ -28,9 +28,13 @@ Last Updated: 2026-02-24
 - Snapshot polling fallback remains compatible (empty response recovery, wrapped payloads, missing `parentID`, read-timeout recovery).
 - Session creation includes workspace external-directory permission rules.
 - Missing assistant text still fails closed with deterministic diagnostics.
+- Host/API mode question answers and cancel requests ignore `sandbox_id` hints and stay on direct OpenCode API paths (prevents controller recursion when host mode is forced).
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py::test_host_mode_answer_question_ignores_sandbox_id_and_uses_api tests/opencode_server_client/test_opencode_server_client.py::test_host_mode_cancel_ignores_sandbox_id_and_uses_api tests/sandbox_controller/test_dev_shim.py::test_dev_shim_opencode_question_answer tests/coding_agent_api/test_v2_api.py::test_v2_answer_question_endpoint`
+- Date/Time: 2026-02-24
+- Result: Pass (4 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py::test_official_mode_global_event_stream_emits_deltas_from_message_updated_payload`
 - Date/Time: 2026-02-24
 - Result: Pass (1 passed, 1 warning)

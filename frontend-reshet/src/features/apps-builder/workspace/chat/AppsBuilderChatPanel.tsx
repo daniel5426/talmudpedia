@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Clock,
   PanelRightClose,
@@ -48,6 +48,7 @@ import {
   isToolTimelineItem,
   isUserTimelineItem,
 } from "./chat-model";
+import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import type { QueuedPrompt } from "./useAppsBuilderChat";
 
 type AppsBuilderChatPanelProps = {
@@ -70,7 +71,10 @@ type AppsBuilderChatPanelProps = {
   onModelSelectorOpenChange: (next: boolean) => void;
   onSelectModelId: (modelId: string | null) => void;
   queuedPrompts: QueuedPrompt[];
+  pendingQuestion: CodingAgentPendingQuestion | null;
+  isAnsweringQuestion: boolean;
   onRemoveQueuedPrompt: (promptId: string) => void;
+  onAnswerQuestion: (answers: string[][]) => Promise<void>;
 };
 
 export function AppsBuilderChatPanel({
@@ -93,9 +97,15 @@ export function AppsBuilderChatPanel({
   onModelSelectorOpenChange,
   onSelectModelId,
   queuedPrompts,
+  pendingQuestion,
+  isAnsweringQuestion,
   onRemoveQueuedPrompt,
+  onAnswerQuestion,
 }: AppsBuilderChatPanelProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [questionStepIndex, setQuestionStepIndex] = useState(0);
+  const [questionSelections, setQuestionSelections] = useState<Record<number, string[]>>({});
+  const [questionCustomInput, setQuestionCustomInput] = useState<Record<number, string>>({});
   const hasRunningTool = useMemo(
     () => timeline.some((item) => isToolTimelineItem(item) && item.toolStatus === "running"),
     [timeline],
@@ -120,6 +130,63 @@ export function AppsBuilderChatPanel({
     }
     return false;
   }, [lastUserIndex, timeline]);
+
+  useEffect(() => {
+    setQuestionStepIndex(0);
+    setQuestionSelections({});
+    setQuestionCustomInput({});
+  }, [pendingQuestion?.requestId]);
+
+  const activeQuestion = useMemo(() => {
+    if (!pendingQuestion) return null;
+    const index = Math.max(0, Math.min(questionStepIndex, pendingQuestion.questions.length - 1));
+    return pendingQuestion.questions[index] || null;
+  }, [pendingQuestion, questionStepIndex]);
+
+  const canSubmitQuestion = useMemo(() => {
+    if (!pendingQuestion) return false;
+    return pendingQuestion.questions.some((question, index) => {
+      const selections = questionSelections[index] || [];
+      const custom = String(questionCustomInput[index] || "").trim();
+      return selections.length > 0 || !!custom;
+    });
+  }, [pendingQuestion, questionCustomInput, questionSelections]);
+
+  const handleQuestionOptionToggle = (label: string) => {
+    if (!pendingQuestion || !activeQuestion) return;
+    const normalizedLabel = String(label || "").trim();
+    if (!normalizedLabel) return;
+    const questionCount = pendingQuestion.questions.length;
+    setQuestionSelections((prev) => {
+      const current = prev[questionStepIndex] || [];
+      if (activeQuestion.multiple) {
+        const next = current.includes(normalizedLabel)
+          ? current.filter((item) => item !== normalizedLabel)
+          : [...current, normalizedLabel];
+        return { ...prev, [questionStepIndex]: next };
+      }
+      return { ...prev, [questionStepIndex]: [normalizedLabel] };
+    });
+    if (!activeQuestion.multiple && questionCount > 1 && questionStepIndex < questionCount - 1) {
+      setQuestionStepIndex((prev) => Math.min(questionCount - 1, prev + 1));
+    }
+  };
+
+  const handleSubmitQuestion = async () => {
+    if (!pendingQuestion) return;
+    const answers = pendingQuestion.questions.map((question, index) => {
+      const fromOptions = (questionSelections[index] || []).map((item) => String(item || "").trim()).filter(Boolean);
+      const custom = String(questionCustomInput[index] || "").trim();
+      if (custom) {
+        if (fromOptions.includes(custom)) {
+          return fromOptions;
+        }
+        return [...fromOptions, custom];
+      }
+      return fromOptions;
+    });
+    await onAnswerQuestion(answers);
+  };
 
   const renderedTimeline = useMemo(() => {
     const renderUserDeliveryLabel = (status?: TimelineItem["userDeliveryStatus"]) => {
@@ -392,6 +459,98 @@ export function AppsBuilderChatPanel({
           </section>
         ) : null}
 
+        {pendingQuestion && activeQuestion ? (
+          <section
+            aria-label="Question prompt"
+            data-testid="question-prompt-panel"
+            className="mb-2 overflow-hidden rounded-lg border border-border/60 bg-background"
+          >
+            <header className="flex items-center justify-between border-b border-border/50 px-3 py-2">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  {activeQuestion.header || "Need your input"}
+                </p>
+                <p className="mt-0.5 text-xs text-foreground">{activeQuestion.question}</p>
+              </div>
+              {pendingQuestion.questions.length > 1 ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {questionStepIndex + 1}/{pendingQuestion.questions.length}
+                </span>
+              ) : null}
+            </header>
+            <div className="space-y-2 p-2.5">
+              <div className="grid gap-1.5">
+                {activeQuestion.options.map((option) => {
+                  const selected = (questionSelections[questionStepIndex] || []).includes(option.label);
+                  return (
+                    <button
+                      key={`${pendingQuestion.requestId}-${questionStepIndex}-${option.label}`}
+                      type="button"
+                      onClick={() => handleQuestionOptionToggle(option.label)}
+                      className={cn(
+                        "rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
+                        selected
+                          ? "border-foreground/30 bg-muted text-foreground"
+                          : "border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      )}
+                    >
+                      <div className="font-medium">{option.label}</div>
+                      {option.description ? <div className="mt-0.5 text-[11px]">{option.description}</div> : null}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                type="text"
+                value={questionCustomInput[questionStepIndex] || ""}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setQuestionCustomInput((prev) => ({ ...prev, [questionStepIndex]: value }));
+                }}
+                placeholder="Or type your own answer"
+                className="h-8 w-full rounded-md border border-border/70 bg-background px-2.5 text-xs outline-none ring-0 placeholder:text-muted-foreground/80 focus:border-foreground/30"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => setQuestionStepIndex((prev) => Math.max(0, prev - 1))}
+                    disabled={questionStepIndex <= 0}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() =>
+                      setQuestionStepIndex((prev) => Math.min((pendingQuestion.questions.length || 1) - 1, prev + 1))
+                    }
+                    disabled={questionStepIndex >= pendingQuestion.questions.length - 1}
+                  >
+                    Next
+                  </Button>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={() => {
+                    void handleSubmitQuestion();
+                  }}
+                  disabled={isAnsweringQuestion || !canSubmitQuestion}
+                >
+                  {isAnsweringQuestion ? "Submitting..." : "Submit answer"}
+                </Button>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         <div className="shrink-0 pt-1">
           <PromptInput
             onSubmit={async (message) => {
@@ -403,6 +562,7 @@ export function AppsBuilderChatPanel({
               <PromptInputTextarea
                 placeholder="Plan, @ for context, / for commands"
                 className="min-h-10 max-h-40 bg-transparent px-3 pt-2.5 text-sm"
+                disabled={isAnsweringQuestion}
               />
             </PromptInputBody>
             <PromptInputFooter className="justify-between px-2 pb-1.5 pt-0">

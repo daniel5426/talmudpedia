@@ -483,6 +483,7 @@ class PublishedAppCodingRunMonitor:
                 last_progress_at = monitor_started_at
                 last_status_probe_at = 0.0
                 last_plan_summary = ""
+                awaiting_question_prompt = False
 
                 async def _load_run_fresh() -> AgentRun | None:
                     if use_external_probe:
@@ -619,6 +620,9 @@ class PublishedAppCodingRunMonitor:
                         "tool.started",
                         "tool.completed",
                         "tool.failed",
+                        "tool.question",
+                        "tool.question.answered",
+                        "tool.question.rejected",
                         "revision.created",
                         "checkpoint.created",
                     }
@@ -654,7 +658,7 @@ class PublishedAppCodingRunMonitor:
                                 await _emit_terminal_from_status(status=refreshed_status)
                                 break
                         run_elapsed_seconds = max(0.0, now_monotonic - monitor_started_at)
-                        if run_elapsed_seconds >= max_runtime_seconds:
+                        if (not awaiting_question_prompt) and run_elapsed_seconds >= max_runtime_seconds:
                             terminalized = await _terminalize_stalled_run(
                                 message=f"OpenCode monitor exceeded max runtime ({int(run_elapsed_seconds)}s)",
                                 log_reason="max_runtime_timeout",
@@ -669,7 +673,7 @@ class PublishedAppCodingRunMonitor:
                                 break
 
                         idle_progress_seconds = max(0.0, now_monotonic - last_progress_at)
-                        if idle_progress_seconds >= inactivity_timeout_seconds:
+                        if (not awaiting_question_prompt) and idle_progress_seconds >= inactivity_timeout_seconds:
                             terminalized = await _terminalize_stalled_run(
                                 message=(
                                     "OpenCode stream stalled before terminal event "
@@ -701,7 +705,7 @@ class PublishedAppCodingRunMonitor:
                                     await _emit_terminal_from_status(status=refreshed_for_timeout_status)
                                     break
                             idle_for_seconds = max(0.0, time.monotonic() - last_event_at)
-                            if idle_for_seconds >= inactivity_timeout_seconds:
+                            if (not awaiting_question_prompt) and idle_for_seconds >= inactivity_timeout_seconds:
                                 terminalized = await _terminalize_stalled_run(
                                     message=(
                                         "OpenCode stream stalled before terminal event "
@@ -736,20 +740,29 @@ class PublishedAppCodingRunMonitor:
                             "payload": dict(envelope.get("payload") or {}),
                             "diagnostics": list(envelope.get("diagnostics") or []),
                         }
+                        event_name = payload["event"]
+                        if event_name == "tool.question":
+                            awaiting_question_prompt = True
+                        elif event_name in {"tool.question.answered", "tool.question.rejected"}:
+                            awaiting_question_prompt = False
+                        elif event_name in {"assistant.delta", "tool.started", "tool.completed", "tool.failed"}:
+                            # Any resumed model/tool activity means question wait has been resolved.
+                            awaiting_question_prompt = False
                         if _should_emit_event_to_subscribers(
-                            event_name=payload["event"],
+                            event_name=event_name,
                             payload=payload["payload"],
                         ):
                             await cls._emit_to_subscribers(run_id=run_id, payload=payload)
-                        if _is_progress_event(event_name=payload["event"], payload=payload["payload"]):
+                        if _is_progress_event(event_name=event_name, payload=payload["payload"]):
                             last_progress_at = time.monotonic()
-                        if payload["event"] in _TERMINAL_EVENTS:
+                        if event_name in _TERMINAL_EVENTS:
                             terminal_emitted = True
+                            awaiting_question_prompt = False
                             cls._trace(
                                 "monitor.terminal_event_seen",
                                 run_id=str(run_id),
                                 app_id=str(app_id),
-                                run_event=payload["event"],
+                                run_event=event_name,
                             )
                             break
                 finally:

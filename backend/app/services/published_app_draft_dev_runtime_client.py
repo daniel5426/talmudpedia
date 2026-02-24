@@ -596,6 +596,41 @@ class PublishedAppDraftDevRuntimeClient:
         payload = {"run_ref": run_ref}
         return await self._request("POST", f"/sessions/{sandbox_id}/opencode/cancel", json=payload)
 
+    async def answer_opencode_question(
+        self,
+        *,
+        sandbox_id: str,
+        run_ref: str,
+        question_id: str,
+        answers: list[list[str]],
+    ) -> Dict[str, Any]:
+        if not self.is_remote_enabled:
+            raise PublishedAppDraftDevRuntimeClientError(
+                "OpenCode sandbox question response requires APPS_SANDBOX_CONTROLLER_URL or APPS_DRAFT_DEV_CONTROLLER_URL"
+            )
+        question_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_QUESTION_TIMEOUT_SECONDS") or "").strip()
+        question_timeout_seconds: float | None = None
+        if question_timeout_raw:
+            try:
+                parsed = float(question_timeout_raw)
+                if parsed > 0:
+                    question_timeout_seconds = parsed
+            except Exception:
+                question_timeout_seconds = None
+        if question_timeout_seconds is None:
+            question_timeout_seconds = max(float(self._config.request_timeout_seconds), 45.0)
+        payload = {
+            "run_ref": run_ref,
+            "question_id": question_id,
+            "answers": answers,
+        }
+        return await self._request(
+            "POST",
+            f"/sessions/{sandbox_id}/opencode/question-answer",
+            json=payload,
+            timeout_seconds=question_timeout_seconds,
+        )
+
     async def _request(
         self,
         method: str,

@@ -144,6 +144,11 @@ class CodingAgentQueueDeleteResponse(BaseModel):
     id: str
 
 
+class CodingAgentAnswerQuestionRequest(BaseModel):
+    question_id: str = Field(min_length=1)
+    answers: List[List[str]] = Field(default_factory=list)
+
+
 def _run_to_response(service: PublishedAppCodingAgentRuntimeService, run) -> CodingAgentRunResponse:
     return CodingAgentRunResponse(**service.serialize_run(run))
 
@@ -360,6 +365,31 @@ async def cancel_coding_agent_run(
         status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
     )
     return _run_to_response(service, run)
+
+
+@router.post("/{app_id}/coding-agent/v2/runs/{run_id}/answer-question", response_model=CodingAgentRunResponse)
+async def answer_coding_agent_run_question(
+    app_id: UUID,
+    run_id: UUID,
+    payload: CodingAgentAnswerQuestionRequest,
+    request: Request,
+    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    service = PublishedAppCodingAgentRuntimeService(db)
+    run = await service.get_run_for_app(app_id=app.id, run_id=run_id)
+    await PublishedAppCodingRunMonitor(db).ensure_monitor(app_id=app.id, run_id=run.id)
+    updated = await service.answer_question(
+        run=run,
+        question_id=payload.question_id,
+        answers=payload.answers,
+    )
+    return _run_to_response(service, updated)
 
 
 @router.get("/{app_id}/coding-agent/v2/chat-sessions", response_model=List[CodingAgentChatSessionResponse])
