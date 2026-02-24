@@ -122,14 +122,17 @@ async def test_dev_shim_session_lifecycle_and_file_routes(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_dev_shim_opencode_start_stream_cancel(client, monkeypatch):
+async def test_dev_shim_opencode_start_stream_cancel(client, monkeypatch, tmp_path):
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "1")
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_PER_SANDBOX", "0")
 
+    project_dir = tmp_path / "sandbox-2"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
     class _FakeManager:
         async def resolve_project_dir(self, *, sandbox_id):
-            return "/tmp/talmudpedia-draft-dev/sandbox-2"
+            return str(project_dir)
 
     class _FakeHostClient:
         async def ensure_healthy(self, *, force=False):
@@ -137,7 +140,7 @@ async def test_dev_shim_opencode_start_stream_cancel(client, monkeypatch):
 
         async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
             assert sandbox_id == "sandbox-2"
-            assert workspace_path == os.path.realpath("/tmp/talmudpedia-draft-dev/sandbox-2")
+            assert workspace_path == str(project_dir)
             return "host-run-ref-1"
 
         async def stream_run_events(self, *, run_ref):
@@ -287,14 +290,17 @@ async def test_dev_shim_opencode_start_maps_virtual_workspace_path(client, monke
 
 
 @pytest.mark.asyncio
-async def test_dev_shim_opencode_cancel_flushes_terminal_event_for_hung_stream(client, monkeypatch):
+async def test_dev_shim_opencode_cancel_flushes_terminal_event_for_hung_stream(client, monkeypatch, tmp_path):
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "1")
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_PER_SANDBOX", "0")
 
+    project_dir = tmp_path / "sandbox-hung"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
     class _FakeManager:
         async def resolve_project_dir(self, *, sandbox_id):
-            return "/tmp/talmudpedia-draft-dev/sandbox-hung"
+            return str(project_dir)
 
     class _FakeHostClient:
         async def ensure_healthy(self, *, force=False):
@@ -347,7 +353,7 @@ async def test_dev_shim_opencode_cancel_flushes_terminal_event_for_hung_stream(c
     ) as stream_response:
         assert stream_response.status_code == 200
         body = (await stream_response.aread()).decode("utf-8")
-        assert "run.failed" in body
+        assert "run.cancelled" in body
         assert "run cancelled" in body.lower()
 
 
@@ -381,14 +387,18 @@ async def test_dev_shim_opencode_start_rejects_when_sandbox_not_running(client, 
 
 
 @pytest.mark.asyncio
-async def test_dev_shim_opencode_start_uses_per_sandbox_client_when_enabled(client, monkeypatch):
+async def test_dev_shim_opencode_start_uses_per_sandbox_client_when_enabled(client, monkeypatch, tmp_path):
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "1")
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_PER_SANDBOX", "1")
 
+    project_dir = tmp_path / "sandbox-4"
+    stage_workspace = project_dir / ".talmudpedia" / "stage" / "run-4" / "workspace"
+    stage_workspace.mkdir(parents=True, exist_ok=True)
+
     class _FakeManager:
         async def resolve_project_dir(self, *, sandbox_id):
-            return "/tmp/talmudpedia-draft-dev/sandbox-4"
+            return str(project_dir)
 
     captured: dict[str, str] = {}
 
@@ -416,7 +426,7 @@ async def test_dev_shim_opencode_start_uses_per_sandbox_client_when_enabled(clie
         json={
             "run_id": "run-4",
             "app_id": "app-1",
-            "workspace_path": "/workspace",
+            "workspace_path": "/workspace/.talmudpedia/stage/run-4/workspace",
             "model_id": "openai/gpt-5",
             "prompt": "hello",
             "messages": [{"role": "user", "content": "hello"}],
@@ -426,6 +436,39 @@ async def test_dev_shim_opencode_start_uses_per_sandbox_client_when_enabled(clie
     assert response.status_code == 200
     assert response.json()["run_ref"] == "sandbox-run-ref-4"
     assert captured["client_sandbox_id"] == "sandbox-4"
-    assert captured["client_workspace_path"] == os.path.realpath("/tmp/talmudpedia-draft-dev/sandbox-4")
+    assert captured["client_workspace_path"] == str(stage_workspace)
     assert captured["sandbox_id"] == "sandbox-4"
-    assert captured["workspace_path"] == os.path.realpath("/tmp/talmudpedia-draft-dev/sandbox-4")
+    assert captured["workspace_path"] == str(stage_workspace)
+
+
+@pytest.mark.asyncio
+async def test_dev_shim_opencode_start_rejects_invalid_requested_workspace(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "1")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_PER_SANDBOX", "0")
+
+    project_dir = tmp_path / "sandbox-invalid"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    class _FakeManager:
+        async def resolve_project_dir(self, *, sandbox_id):
+            return str(project_dir)
+
+    monkeypatch.setattr(shim_router, "get_local_draft_dev_runtime_manager", lambda: _FakeManager())
+
+    headers = {"Authorization": "Bearer dev-token"}
+    response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-invalid/opencode/start",
+        headers=headers,
+        json={
+            "run_id": "run-invalid",
+            "app_id": "app-1",
+            "workspace_path": "/workspace/.talmudpedia/stage/run-invalid/workspace",
+            "model_id": "openai/gpt-5",
+            "prompt": "hello",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Requested workspace path is invalid or outside sandbox project scope"

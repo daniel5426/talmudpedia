@@ -11,7 +11,6 @@ from app.db.postgres.models.published_apps import PublishedApp
 class EngineRunContext:
     app: PublishedApp
     run: AgentRun
-    resume_payload: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

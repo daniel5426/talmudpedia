@@ -275,6 +275,13 @@ class PublishedAppCodingQueueService:
         except Exception:
             return None
 
+        active_run = await self.get_active_run_for_chat_session(
+            app_id=terminal_run.published_app_id,
+            chat_session_id=chat_session_id,
+        )
+        if active_run is not None and str(active_run.id) != str(terminal_run.id):
+            return None
+
         queue_result = await self.db.execute(
             select(PublishedAppCodingPromptQueue)
             .where(

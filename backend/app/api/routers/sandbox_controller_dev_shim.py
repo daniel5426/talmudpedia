@@ -431,7 +431,10 @@ def _resolve_requested_workspace_path(
             in_project_scope = False
         if in_project_scope and os.path.isdir(candidate):
             return candidate
-    return project_workspace_resolved
+    raise HTTPException(
+        status_code=400,
+        detail="Requested workspace path is invalid or outside sandbox project scope",
+    )
 
 
 async def _pump_opencode_events(state: _OpenCodeRunState) -> None:
@@ -440,7 +443,7 @@ async def _pump_opencode_events(state: _OpenCodeRunState) -> None:
             if isinstance(event, dict):
                 await state.queue.put(event)
                 event_name = str(event.get("event") or event.get("type") or "").strip().lower()
-                if event_name in {"run.completed", "run.failed"}:
+                if event_name in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
                     break
     except Exception as exc:
         await state.queue.put(
@@ -723,7 +726,7 @@ async def opencode_start(sandbox_id: str, payload: OpenCodeStartRequest) -> dict
         if _opencode_per_sandbox_enabled():
             host_client = await _get_per_sandbox_opencode_client(
                 sandbox_id=sandbox_id,
-                workspace_path=project_workspace_resolved,
+                workspace_path=effective_workspace,
             )
         else:
             host_client = _build_host_opencode_client()
@@ -800,8 +803,8 @@ async def opencode_cancel(sandbox_id: str, payload: OpenCodeCancelRequest) -> di
                 state.task.cancel()
             await state.queue.put(
                 {
-                    "event": "run.failed",
-                    "payload": {"error": "Run cancelled."},
+                    "event": "run.cancelled",
+                    "payload": {"status": "cancelled"},
                     "diagnostics": [{"message": "run cancelled"}],
                 }
             )

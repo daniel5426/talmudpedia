@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from uuid import UUID
+from uuid import uuid4
 
 import pytest
 
@@ -147,3 +149,69 @@ async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, 
     service = PublishedAppCodingAgentRuntimeService(db_session)
     events = [event async for event in service.stream_run_events(app=app, run=run)]
     assert events[-1]["event"] == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_completed_run_promotes_revision_even_without_write_tool_events(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.queued,
+        input_params={
+            "input": "test",
+            "context": {
+                "preview_sandbox_id": "preview-sandbox-2",
+                "preview_workspace_stage_path": "/workspace/.talmudpedia/stage/run/workspace",
+            },
+        },
+        surface=CODING_AGENT_SURFACE,
+        published_app_id=UUID(app_id),
+        base_revision_id=UUID(draft_revision_id),
+        execution_engine="opencode",
+    )
+    db_session.add(run)
+    await db_session.commit()
+    await db_session.refresh(run)
+
+    async def _fake_stream(self, ctx):
+        yield EngineStreamEvent(
+            event="assistant.delta",
+            stage="assistant",
+            payload={"content": "done"},
+            diagnostics=[],
+        )
+        # No tool.started/tool.completed write hints, only terminal completion.
+        yield EngineStreamEvent(
+            event="run.completed",
+            stage="run",
+            payload={},
+            diagnostics=[],
+        )
+
+    async def _fake_auto_apply(self, _run):
+        _run.result_revision_id = uuid4()
+        _run.checkpoint_revision_id = _run.result_revision_id
+        return SimpleNamespace(
+            id=_run.result_revision_id,
+            entry_file="src/main.tsx",
+            files={"src/main.tsx": "export default function App(){return null;}"},
+        )
+
+    monkeypatch.setattr(OpenCodePublishedAppCodingAgentEngine, "stream", _fake_stream)
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _fake_auto_apply)
+
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+    events = [event async for event in service.stream_run_events(app=app, run=run)]
+    event_names = [event.get("event") for event in events]
+    assert "revision.created" in event_names
+    assert "checkpoint.created" in event_names
+    assert event_names[-1] == "run.completed"

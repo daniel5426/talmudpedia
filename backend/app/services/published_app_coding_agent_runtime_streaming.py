@@ -176,7 +176,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         *,
         app: PublishedApp,
         run: AgentRun,
-        resume_payload: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         run_id = run.id
         persistent_run = await self.db.get(AgentRun, run_id)
@@ -312,7 +311,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 EngineRunContext(
                     app=app,
                     run=run,
-                    resume_payload=resume_payload,
                 )
             ):
                 mapped_event = str(raw_event.event or "")
@@ -371,34 +369,8 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 status = RunStatus.failed.value
 
             if status == RunStatus.completed.value:
-                if saw_write_tool_event:
-                    revision = await self.auto_apply_and_checkpoint(run)
-                    self._set_timing_metric_value(run, metric="checkpoint_skipped_no_edit_tool", value=False)
-                else:
-                    revision = None
-                    self._set_timing_metric_value(run, metric="checkpoint_skipped_no_edit_tool", value=True)
-
                 await finalize_sandbox("stopped")
                 await self.db.commit()
-
-                if revision is not None:
-                    yield emit(
-                        "revision.created",
-                        "revision",
-                        {
-                            "revision_id": str(revision.id),
-                            "entry_file": revision.entry_file,
-                            "file_count": len(revision.files or {}),
-                        },
-                    )
-                    yield emit(
-                        "checkpoint.created",
-                        "checkpoint",
-                        {
-                            "checkpoint_id": str(run.checkpoint_revision_id or revision.id),
-                            "revision_id": str(revision.id),
-                        },
-                    )
 
                 if assistant_delta_events == 0:
                     assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
@@ -414,7 +386,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     terminal_event="run.completed",
                     assistant_delta_events=assistant_delta_events,
                     saw_write_tool_event=saw_write_tool_event,
-                    revision_created=revision is not None,
+                    revision_created=bool(run.result_revision_id),
                 )
                 await release_run_lock()
                 yield emit("run.completed", "run", self.serialize_run(run))

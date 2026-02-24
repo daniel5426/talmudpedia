@@ -18,9 +18,16 @@ Last Updated: 2026-02-23
 - Stream layer emits one `assistant.delta` per upstream chunk (no backend coalescing).
 - Terminal transitions are persisted and old non-v2 route is removed (`/coding-agent/runs` => 404).
 - Cancel endpoint marks run `cancelled` and unblocks queued dispatch.
+- Cancel endpoint now force-closes stream subscribers even when runtime keeps emitting non-terminal events.
 - OpenCode apply-patch recovery/fail-closed semantics remain covered in engine-level tests.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py::test_v2_cancel_closes_stream_when_runtime_keeps_non_terminal_events tests/coding_agent_api/test_v2_api.py::test_v2_cancel_marks_cancelled_and_dispatches_next tests/sandbox_controller/test_dev_shim.py`
+- Date: 2026-02-23
+- Result: PASS (9 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py tests/sandbox_controller/test_dev_shim.py`
+- Date: 2026-02-23
+- Result: PASS (11 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api tests/coding_agent_chat_history_api tests/coding_agent_checkpoints tests/coding_agent_sandbox_isolation`
 - Date: 2026-02-23
 - Result: PASS (15 passed, 6 warnings)

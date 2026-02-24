@@ -114,6 +114,8 @@ class OpenCodePublishedAppCodingAgentEngine:
 
         saw_terminal = False
         saw_failure = False
+        saw_cancelled = False
+        saw_paused = False
         failure_message = "OpenCode run failed"
         saw_apply_patch_failure = False
         saw_apply_patch_success = False
@@ -178,6 +180,14 @@ class OpenCodePublishedAppCodingAgentEngine:
             if mapped.event == "run.completed":
                 saw_terminal = True
                 break
+            if mapped.event == "run.cancelled":
+                saw_terminal = True
+                saw_cancelled = True
+                break
+            if mapped.event == "run.paused":
+                saw_terminal = True
+                saw_paused = True
+                break
             if mapped.event == "run.failed":
                 saw_terminal = True
                 saw_failure = True
@@ -193,6 +203,8 @@ class OpenCodePublishedAppCodingAgentEngine:
             fail_on_unrecovered_apply_patch
             and saw_terminal
             and not saw_failure
+            and not saw_cancelled
+            and not saw_paused
             and saw_apply_patch_failure
             and not saw_apply_patch_success
             and not saw_recovery_edit_success
@@ -202,7 +214,12 @@ class OpenCodePublishedAppCodingAgentEngine:
                 "OpenCode run completed after apply_patch failures without a successful follow-up edit."
             )
         if saw_terminal and not saw_failure:
-            persisted.status = RunStatus.completed
+            if saw_cancelled:
+                persisted.status = RunStatus.cancelled
+            elif saw_paused:
+                persisted.status = RunStatus.paused
+            else:
+                persisted.status = RunStatus.completed
             persisted.error_message = None
         else:
             persisted.status = RunStatus.failed
@@ -350,7 +367,7 @@ class OpenCodePublishedAppCodingAgentEngine:
         event_type = str(raw.get("event") or raw.get("type") or "").strip().lower()
         payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
 
-        if event_type in {"assistant.delta", "assistant_delta", "token"}:
+        if event_type == "assistant.delta":
             content = payload.get("content") if isinstance(payload, dict) else None
             if content is None:
                 content = raw.get("content")
@@ -361,7 +378,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                 diagnostics=None,
             )
 
-        if event_type in {"tool.started", "tool_start", "on_tool_start"}:
+        if event_type == "tool.started":
             tool_name = raw.get("tool") or payload.get("tool") or raw.get("name")
             return EngineStreamEvent(
                 event="tool.started",
@@ -374,7 +391,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                 diagnostics=None,
             )
 
-        if event_type in {"tool.completed", "tool_end", "on_tool_end"}:
+        if event_type == "tool.completed":
             tool_name = raw.get("tool") or payload.get("tool") or raw.get("name")
             output = payload.get("output") if isinstance(payload, dict) else raw.get("output")
             if isinstance(output, dict) and output.get("error"):
@@ -402,7 +419,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                 diagnostics=None,
             )
 
-        if event_type in {"tool.failed", "tool_error"}:
+        if event_type == "tool.failed":
             tool_name = raw.get("tool") or payload.get("tool") or raw.get("name")
             message = payload.get("error") or raw.get("error") or "Tool failed"
             diagnostics = [{"message": str(message)}]
@@ -420,7 +437,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                 diagnostics=diagnostics,
             )
 
-        if event_type in {"plan.updated", "plan_update", "node_start"}:
+        if event_type == "plan.updated":
             if not payload and isinstance(raw.get("state"), dict):
                 payload = {"state": raw.get("state")}
             return EngineStreamEvent(
@@ -430,7 +447,7 @@ class OpenCodePublishedAppCodingAgentEngine:
                 diagnostics=None,
             )
 
-        if event_type in {"run.completed", "completed"}:
+        if event_type == "run.completed":
             return EngineStreamEvent(
                 event="run.completed",
                 stage="run",
@@ -438,7 +455,23 @@ class OpenCodePublishedAppCodingAgentEngine:
                 diagnostics=None,
             )
 
-        if event_type in {"run.failed", "error", "failed"}:
+        if event_type == "run.cancelled":
+            return EngineStreamEvent(
+                event="run.cancelled",
+                stage="run",
+                payload=payload or {"status": "cancelled"},
+                diagnostics=None,
+            )
+
+        if event_type == "run.paused":
+            return EngineStreamEvent(
+                event="run.paused",
+                stage="run",
+                payload=payload or {"status": "paused"},
+                diagnostics=None,
+            )
+
+        if event_type == "run.failed":
             message = payload.get("error") or raw.get("error") or "OpenCode run failed"
             diagnostics = [{"message": str(message)}]
             code = payload.get("code") or raw.get("code")

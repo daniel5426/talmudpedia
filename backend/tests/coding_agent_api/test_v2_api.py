@@ -369,3 +369,57 @@ async def test_v2_cancel_marks_cancelled_and_dispatches_next(client, db_session,
             break
     else:
         raise AssertionError("Expected queued prompt to start after cancel")
+
+
+@pytest.mark.asyncio
+async def test_v2_cancel_closes_stream_when_runtime_keeps_non_terminal_events(client, db_session, monkeypatch):
+    _install_fake_create_run(monkeypatch)
+
+    async def _non_terminal_stream(self, *, app, run, resume_payload=None):
+        _ = app, run, resume_payload
+        while True:
+            await asyncio.sleep(0.05)
+            yield {
+                "event": "plan.updated",
+                "stage": "plan",
+                "payload": {"summary": "still working"},
+                "diagnostics": [],
+            }
+
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "stream_run_events", _non_terminal_stream)
+
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, _ = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    first_resp = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/v2/prompts",
+        headers=headers,
+        json={"input": "Long run"},
+    )
+    assert first_resp.status_code == 200
+    first_payload = first_resp.json()
+    run_id = UUID(first_payload["run"]["run_id"])
+
+    monitor = PublishedAppCodingRunMonitor(db_session)
+    observed_events: list[str] = []
+
+    async def _consume_stream() -> None:
+        async for envelope in monitor.stream_events(app_id=UUID(app_id), run_id=run_id):
+            observed_events.append(str(envelope.get("event") or ""))
+            if observed_events[-1] in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
+                break
+
+    consumer_task = asyncio.create_task(_consume_stream())
+    await asyncio.sleep(0.15)
+
+    cancel_resp = await client.post(
+        f"/admin/apps/{app_id}/coding-agent/v2/runs/{run_id}/cancel",
+        headers=headers,
+        json={},
+    )
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["status"] == "cancelled"
+
+    await asyncio.wait_for(consumer_task, timeout=3.0)
+    assert "run.cancelled" in observed_events

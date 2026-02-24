@@ -332,13 +332,20 @@ async def cancel_coding_agent_run(
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     service = PublishedAppCodingAgentRuntimeService(db)
     run = await service.get_run_for_app(app_id=app.id, run_id=run_id)
+    PublishedAppCodingRunMonitor._trace(
+        "api.cancel.requested",
+        app_id=str(app.id),
+        run_id=str(run.id),
+        status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
+    )
+    await PublishedAppCodingRunMonitor(db).ensure_monitor(app_id=app.id, run_id=run.id)
     run = await service.cancel_run(run)
-
-    queue_service = PublishedAppCodingQueueService(db)
-    next_run = await queue_service.dispatch_next_for_terminal_run(terminal_run=run)
-    if next_run is not None:
-        asyncio.create_task(PublishedAppCodingRunMonitor.ensure_monitor_detached(app_id=app.id, run_id=next_run.id))
-
+    PublishedAppCodingRunMonitor._trace(
+        "api.cancel.persisted",
+        app_id=str(app.id),
+        run_id=str(run.id),
+        status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
+    )
     return _run_to_response(service, run)
 
 

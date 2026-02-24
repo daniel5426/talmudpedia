@@ -3,7 +3,13 @@ import type { MutableRefObject } from "react";
 import { publishedAppsService } from "@/services";
 
 import { describeToolIntent, extractPrimaryToolPath, timelineId } from "./chat-model";
-import { parseRunActiveDetail, parseSse, resolvePositiveTimeoutMs, TERMINAL_RUN_EVENTS } from "./stream-parsers";
+import {
+  parseRunActiveDetail,
+  parseSse,
+  parseTerminalRunStatus,
+  resolvePositiveTimeoutMs,
+  TERMINAL_RUN_EVENTS,
+} from "./stream-parsers";
 
 type TerminalStatus = "completed" | "failed" | "cancelled" | "paused";
 
@@ -129,6 +135,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     let segmentCounter = 0;
     let latestSummary = "";
     let latestResultRevisionId = "";
+    let latestBackendFailureMessage = "";
     let sawRunFailure = false;
     let sawTerminalEvent = false;
     let sawInactivityTimeout = false;
@@ -200,6 +207,39 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           onError(err instanceof Error ? err.message : "Failed to cancel stuck coding-agent run");
         }
       }
+    };
+
+    const reconcileTerminalStateFromBackend = async (): Promise<boolean> => {
+      try {
+        const run = await publishedAppsService.getCodingAgentRun(appId, normalizedRunId);
+        const terminal = parseTerminalRunStatus(run.status);
+        if (!terminal) {
+          return false;
+        }
+        sawTerminalEvent = true;
+        terminalStatus = terminal;
+        if (terminal === "failed") {
+          sawRunFailure = true;
+          latestBackendFailureMessage = String(run.error || "").trim();
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const waitForBackendTerminalState = async (timeoutMs: number): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline && !intentionalAbortRef.current) {
+        const reconciled = await reconcileTerminalStateFromBackend();
+        if (reconciled) {
+          return true;
+        }
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 250);
+        });
+      }
+      return false;
     };
 
     while (true) {
@@ -385,8 +425,26 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           : "Coding-agent stream stalled before completion and cancellation could not be confirmed.",
       );
     } else if (!sawTerminalEvent && !intentionalAbortRef.current) {
-      sawRunFailure = true;
-      onError("Coding-agent stream ended before a terminal event.");
+      const reconciledImmediately = await reconcileTerminalStateFromBackend();
+      const TERMINAL_RECONCILE_TIMEOUT_MS = resolvePositiveTimeoutMs(
+        process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_TERMINAL_RECONCILE_TIMEOUT_MS,
+        5000,
+      );
+      if (!reconciledImmediately) {
+        await requestRecoveryCancel();
+        const reconciledAfterRecovery = await waitForBackendTerminalState(TERMINAL_RECONCILE_TIMEOUT_MS);
+        if (!reconciledAfterRecovery) {
+          sawRunFailure = true;
+          onError(
+            recoveryCancelConfirmed
+              ? "Coding-agent stream ended before a terminal event. The run was stopped to recover."
+              : "Coding-agent stream ended before a terminal event and cancellation could not be confirmed.",
+          );
+        }
+      }
+      if (terminalStatus === "failed" && !pendingCancelRef.current) {
+        onError(latestBackendFailureMessage || "Coding-agent run failed");
+      }
     } else if (
       !intentionalAbortRef.current &&
       terminalStatus === "failed" &&

@@ -464,7 +464,6 @@ export function AppsBuilderChatPanel({
                   className="h-6 w-6 text-muted-foreground hover:text-foreground"
                   onClick={onStopRun}
                   aria-label={isStopping ? "Stopping" : "Stop"}
-                  disabled={isStopping}
                 >
                   <Square className="h-3 w-3 fill-current" />
                 </Button>

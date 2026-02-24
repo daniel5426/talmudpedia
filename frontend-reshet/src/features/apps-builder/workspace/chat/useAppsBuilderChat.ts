@@ -166,6 +166,18 @@ export function useAppsBuilderChat({
     };
   }, [detachActiveStream]);
 
+  const forceClearSendingState = useCallback(() => {
+    detachActiveStream();
+    activeRunIdRef.current = null;
+    lastKnownRunIdRef.current = null;
+    pendingCancelRef.current = false;
+    cancelInFlightRunIdRef.current = null;
+    setIsStopping(false);
+    setActiveThinkingSummary("");
+    setIsSending(false);
+    isSendingRef.current = false;
+  }, [detachActiveStream]);
+
   const selectedRunModelLabel = useMemo(() => {
     if (!selectedRunModelId) return "Auto";
     const match = chatModels.find((model) => model.id === selectedRunModelId);
@@ -264,6 +276,7 @@ export function useAppsBuilderChat({
       ensureDraftDevSession,
       loadChatSessions,
       refreshQueue,
+      requestCancelForRun,
     });
   }, [
     activeTab,
@@ -277,6 +290,7 @@ export function useAppsBuilderChat({
     pushTimeline,
     refreshQueue,
     refreshStateSilently,
+    requestCancelForRun,
     upsertAssistantTimeline,
     upsertToolTimeline,
   ]);
@@ -341,11 +355,7 @@ export function useAppsBuilderChat({
 
     if (isSendingRef.current) {
       void requestCancelForRun(activeRunIdRef.current || lastKnownRunIdRef.current || "");
-      detachActiveStream();
-      setIsSending(false);
-      isSendingRef.current = false;
-      pendingCancelRef.current = false;
-      setIsStopping(false);
+      forceClearSendingState();
     }
 
     onError(null);
@@ -405,6 +415,7 @@ export function useAppsBuilderChat({
     mapQueueItems,
     onError,
     requestCancelForRun,
+    forceClearSendingState,
     setTimeline,
     timelineByClientMessageIdRef,
     queuedTimelineByClientMessageIdRef,
@@ -590,24 +601,109 @@ export function useAppsBuilderChat({
     }
   }, [initialActiveRunId, resumeActiveRun, restoreLastSessionIfPossible]);
 
+  useEffect(() => {
+    if (!isSending) {
+      return;
+    }
+    let disposed = false;
+    const intervalMs = 2000;
+
+    const isNotFoundError = (err: unknown): boolean => {
+      const message = err instanceof Error ? err.message : String(err || "");
+      return message.toLowerCase().includes("not found");
+    };
+
+    const reconcileSendingState = async () => {
+      if (disposed || !isSendingRef.current) {
+        return;
+      }
+      const runId = activeRunIdRef.current || lastKnownRunIdRef.current;
+      if (runId) {
+        try {
+          const run = await publishedAppsService.getCodingAgentRun(appId, runId);
+          if (parseTerminalRunStatus(run.status)) {
+            forceClearSendingState();
+          }
+          return;
+        } catch (err) {
+          if (isNotFoundError(err)) {
+            forceClearSendingState();
+            return;
+          }
+        }
+      }
+      const sessionId = activeChatSessionIdRef.current;
+      if (!sessionId) {
+        return;
+      }
+      try {
+        const active = await publishedAppsService.getCodingAgentChatSessionActiveRun(appId, sessionId);
+        if (parseTerminalRunStatus(active.status)) {
+          forceClearSendingState();
+        }
+      } catch (err) {
+        if (isNotFoundError(err)) {
+          forceClearSendingState();
+        }
+      }
+    };
+
+    void reconcileSendingState();
+    const timer = setInterval(() => {
+      void reconcileSendingState();
+    }, intervalMs);
+
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [appId, forceClearSendingState, isSending]);
+
   const stopCurrentRun = useCallback(() => {
     pendingCancelRef.current = true;
     setIsStopping(true);
 
     const runIdToCancel = activeRunIdRef.current || lastKnownRunIdRef.current;
-    if (!runIdToCancel) {
-      // Cancellation was requested before create-run resolved; runPrompt will
-      // issue cancel as soon as it receives a concrete run_id.
+    if (runIdToCancel) {
+      void requestCancelForRun(runIdToCancel)
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : "Failed to cancel current run";
+          onError(message);
+          pendingCancelRef.current = false;
+        })
+        .finally(() => {
+          if (isMountedRef.current) {
+            setIsStopping(false);
+          }
+        });
       return;
     }
 
-    void requestCancelForRun(runIdToCancel).catch((err) => {
-      const message = err instanceof Error ? err.message : "Failed to cancel current run";
-      onError(message);
-      pendingCancelRef.current = false;
-      setIsStopping(false);
-    });
-  }, [onError, requestCancelForRun]);
+    const sessionId = activeChatSessionIdRef.current;
+    if (!sessionId) {
+      forceClearSendingState();
+      return;
+    }
+
+    void (async () => {
+      try {
+        const active = await publishedAppsService.getCodingAgentChatSessionActiveRun(appId, sessionId);
+        if (!parseTerminalRunStatus(active.status)) {
+          await requestCancelForRun(active.run_id);
+        } else {
+          forceClearSendingState();
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to cancel current run";
+        onError(message);
+        pendingCancelRef.current = false;
+      } finally {
+        if (isMountedRef.current) {
+          setIsStopping(false);
+        }
+      }
+    })();
+  }, [appId, forceClearSendingState, onError, requestCancelForRun]);
 
   const removeQueuedPrompt = useCallback((promptId: string) => {
     const sessionId = activeChatSessionIdRef.current;

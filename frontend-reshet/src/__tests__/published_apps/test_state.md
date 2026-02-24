@@ -47,7 +47,7 @@ Frontend coverage for:
 - Builder workspace keeps queued prompt behavior server-authoritative when terminal SSE is missing (no persisted-run fallback polling path).
 - Builder workspace renders user prompt bubbles immediately on submit before `create-run` resolves, with delivery-state labels (`Sending...`, `Queued`, `Failed`).
 - Builder workspace retries `ensureDraftDevSession` after terminal SSE when backend briefly reports `CODING_AGENT_RUN_ACTIVE` for the same run, and avoids surfacing lock-conflict noise to users.
-- Coding-agent stream consumer batches assistant delta renders during token bursts while preserving incremental visibility (prevents one-render-per-token UI slowdown).
+- Coding-agent stream consumer renders one `assistant.delta` chunk at a time (no frontend delta coalescing).
 - Builder workspace loads coding-agent capabilities once to hydrate engine/policy context for coding runs.
 - Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
 - Builder workspace shell now enforces viewport-bounded layout (`h-dvh` + `min-h-0` + overflow clamps) so chat scroll stays internal and the page does not grow with timeline length.
@@ -81,6 +81,9 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runTestsByPath src/__tests__/published_apps/coding_agent_stream_speed.test.ts --watch=false`
+- Date: 2026-02-23
+- Result: PASS (1 suite, 1 test)
 - Command: `cd frontend-reshet && npm test -- --runInBand --silent src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
 - Date: 2026-02-23
 - Result: PASS (1 suite, 1 test)

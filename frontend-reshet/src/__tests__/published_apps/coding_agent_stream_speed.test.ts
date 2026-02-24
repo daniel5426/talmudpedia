@@ -100,6 +100,7 @@ describe("coding agent stream rendering speed", () => {
       ensureDraftDevSession: jest.fn(async () => undefined),
       loadChatSessions: jest.fn(async () => []),
       refreshQueue: jest.fn(async () => undefined),
+      requestCancelForRun: jest.fn(async () => undefined),
     });
 
     const nonEmptyErrors = onError.mock.calls

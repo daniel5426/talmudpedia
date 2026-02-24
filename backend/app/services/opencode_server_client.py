@@ -126,10 +126,7 @@ class OpenCodeServerClient:
         if force:
             self._api_mode = None
         await self._ensure_api_mode()
-        if self._api_mode == "official":
-            await self._request("GET", "/global/health", json_payload={}, retries=1, expect_json=True)
-        else:
-            await self._request("GET", "/health", json_payload={}, retries=1, expect_json=False)
+        await self._request("GET", "/global/health", json_payload={}, retries=1, expect_json=True)
         self._health_checked_at = now
         self._health_ok = True
 
@@ -181,33 +178,16 @@ class OpenCodeServerClient:
             selected_agent_contract=selected_agent_contract,
         )
 
-        mode = await self._ensure_api_mode()
-        if mode == "official":
-            return await self._start_run_official(
-                run_id=run_id,
-                app_id=app_id,
-                sandbox_id=sandbox_id,
-                workspace_path=workspace_path,
-                model_id=model_id,
-                prompt=prompt,
-                messages=messages,
-            )
-
-        payload = {
-            "run_id": run_id,
-            "app_id": app_id,
-            "sandbox_id": sandbox_id,
-            "workspace_path": workspace_path,
-            "model_id": model_id,
-            "prompt": prompt,
-            "messages": messages,
-            "ephemeral": True,
-        }
-        response = await self._request("POST", "/v1/runs", json_payload=payload, retries=0)
-        run_ref = response.get("run_ref") or response.get("id")
-        if not run_ref:
-            raise OpenCodeServerClientError("OpenCode run start response is missing run_ref.")
-        return str(run_ref)
+        await self._ensure_api_mode()
+        return await self._start_run_official(
+            run_id=run_id,
+            app_id=app_id,
+            sandbox_id=sandbox_id,
+            workspace_path=workspace_path,
+            model_id=model_id,
+            prompt=prompt,
+            messages=messages,
+        )
 
     async def stream_run_events(self, *, run_ref: str) -> AsyncGenerator[dict[str, Any], None]:
         sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref))
@@ -227,40 +207,10 @@ class OpenCodeServerClient:
 
         if not self._config.base_url:
             raise OpenCodeServerClientError("OpenCode base URL is not configured.")
-        mode = await self._ensure_api_mode()
-        if mode == "official":
-            async for event in self._stream_official_run_events(session_id=run_ref):
-                yield event
-            return
-
-        url = f"{self._config.base_url.rstrip('/')}/v1/runs/{run_ref}/events"
-        headers = self._headers()
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout()) as client:
-                async with client.stream("GET", url, headers=headers) as response:
-                    if response.status_code >= 400:
-                        body = (await response.aread()).decode("utf-8", errors="replace").strip()
-                        raise OpenCodeServerClientError(
-                            f"OpenCode stream request failed ({response.status_code}): {body or response.reason_phrase}"
-                        )
-                    async for line in response.aiter_lines():
-                        raw = (line or "").strip()
-                        if not raw or raw.startswith(":"):
-                            continue
-                        if raw.startswith("data:"):
-                            raw = raw[5:].strip()
-                        if not raw or raw == "[DONE]":
-                            continue
-                        try:
-                            parsed = json.loads(raw)
-                        except Exception as exc:
-                            raise OpenCodeServerClientError(f"OpenCode event stream returned invalid JSON: {raw}") from exc
-                        if isinstance(parsed, dict):
-                            yield parsed
-        except OpenCodeServerClientError:
-            raise
-        except Exception as exc:
-            raise OpenCodeServerClientError(f"OpenCode stream request failed: {exc}") from exc
+        await self._ensure_api_mode()
+        async for event in self._stream_official_run_events(session_id=run_ref):
+            yield event
+        return
 
     async def cancel_run(self, *, run_ref: str, sandbox_id: str | None = None) -> bool:
         resolved_sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref)) or str(sandbox_id or "").strip() or None
@@ -301,21 +251,14 @@ class OpenCodeServerClient:
                 return ok
             return True
 
-        mode = await self._ensure_api_mode()
-        if mode == "official":
-            response = await self._request("POST", f"/session/{run_ref}/abort", json_payload={}, retries=0)
-            if isinstance(response.get("cancelled"), bool):
-                return bool(response.get("cancelled"))
-            if isinstance(response.get("ok"), bool):
-                return bool(response.get("ok"))
-            if isinstance(response.get("aborted"), bool):
-                return bool(response.get("aborted"))
-            return True
-
-        response = await self._request("POST", f"/v1/runs/{run_ref}/cancel", json_payload={}, retries=0)
-        cancelled = response.get("cancelled")
-        if isinstance(cancelled, bool):
-            return cancelled
+        await self._ensure_api_mode()
+        response = await self._request("POST", f"/session/{run_ref}/abort", json_payload={}, retries=0)
+        if isinstance(response.get("cancelled"), bool):
+            return bool(response.get("cancelled"))
+        if isinstance(response.get("ok"), bool):
+            return bool(response.get("ok"))
+        if isinstance(response.get("aborted"), bool):
+            return bool(response.get("aborted"))
         return True
 
     async def _start_run_official(
@@ -447,7 +390,12 @@ class OpenCodeServerClient:
         if should_use_global:
             try:
                 async for event in self._stream_official_run_events_via_global_events(session_id=session_id):
-                    if str(event.get("event") or "").strip() in {"run.completed", "run.failed"}:
+                    if str(event.get("event") or "").strip() in {
+                        "run.completed",
+                        "run.failed",
+                        "run.cancelled",
+                        "run.paused",
+                    }:
                         terminal_emitted = True
                     yield event
                 if terminal_emitted:
@@ -613,7 +561,15 @@ class OpenCodeServerClient:
                         if role == "user":
                             continue
                         field_name = str(properties.get("field") or "").strip().lower()
-                        if field_name not in {"text", "content", "value"}:
+                        if field_name and field_name not in {
+                            "text",
+                            "content",
+                            "value",
+                            "output_text",
+                            "markdown",
+                            "final",
+                            "delta",
+                        }:
                             continue
                         part_id = str(
                             properties.get("partID")
@@ -1012,22 +968,14 @@ class OpenCodeServerClient:
     async def _ensure_api_mode(self) -> str:
         if self._api_mode:
             return self._api_mode
-        official_error: Exception | None = None
         try:
             await self._request("GET", "/global/health", json_payload={}, retries=1, expect_json=True)
             self._api_mode = "official"
             return self._api_mode
         except Exception as exc:
-            official_error = exc
-        try:
-            await self._request("GET", "/health", json_payload={}, retries=1, expect_json=False)
-            self._api_mode = "legacy"
-            return self._api_mode
-        except Exception as legacy_error:
             raise OpenCodeServerClientError(
-                f"OpenCode health check failed for both official and legacy APIs "
-                f"(official: {official_error}; legacy: {legacy_error})"
-            ) from legacy_error
+                f"OpenCode official API health check failed: {exc}"
+            ) from exc
 
     @staticmethod
     def _to_official_model(resolved_model_id: str) -> dict[str, str] | None:
