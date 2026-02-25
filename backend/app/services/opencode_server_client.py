@@ -67,6 +67,14 @@ class OpenCodeServerClient:
         self._host_context_hash: dict[str, str] = {}
         self._bootstrap_cleanup_done_targets: set[str] = set()
 
+    @staticmethod
+    def _seed_bootstrap_files_on_run_start() -> bool:
+        raw = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "0")
+            or "0"
+        ).strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
     @classmethod
     def from_env(cls) -> "OpenCodeServerClient":
         enabled = (os.getenv("APPS_CODING_AGENT_OPENCODE_ENABLED", "0").strip().lower() not in {"0", "false", "off", "no"})
@@ -1425,6 +1433,7 @@ class OpenCodeServerClient:
         )
         bootstrap_hash = self._files_hash(bootstrap_files)
         context_hash = self._content_hash(context_content)
+        seed_bootstrap_files = self._seed_bootstrap_files_on_run_start()
 
         if self._sandbox_controller_mode_enabled():
             if not sandbox_id:
@@ -1455,7 +1464,11 @@ class OpenCodeServerClient:
                         f"Failed to seed OpenCode custom tools in sandbox `{sandbox_id}` at `{path}`: {exc}"
                     ) from exc
 
-            if hasattr(self._sandbox_runtime_client, "delete_file") and sandbox_key not in self._bootstrap_cleanup_done_targets:
+            if (
+                seed_bootstrap_files
+                and hasattr(self._sandbox_runtime_client, "delete_file")
+                and sandbox_key not in self._bootstrap_cleanup_done_targets
+            ):
                 for path in OPENCODE_DEPRECATED_TOOL_PATHS:
                     try:
                         await self._sandbox_runtime_client.delete_file(
@@ -1467,12 +1480,18 @@ class OpenCodeServerClient:
                         pass
                 self._bootstrap_cleanup_done_targets.add(sandbox_key)
 
-            should_seed_bootstrap = self._sandbox_bootstrap_hash.get(sandbox_key) != bootstrap_hash
+            should_seed_bootstrap = (
+                seed_bootstrap_files
+                and self._sandbox_bootstrap_hash.get(sandbox_key) != bootstrap_hash
+            )
             should_seed_context = self._sandbox_context_hash.get(sandbox_key) != context_hash
 
             if should_seed_bootstrap:
                 for path, content in sorted(bootstrap_files.items()):
                     await _sandbox_write_if_changed(path, content)
+                self._sandbox_bootstrap_hash[sandbox_key] = bootstrap_hash
+            elif sandbox_key not in self._sandbox_bootstrap_hash:
+                # Bootstrap files are expected to be preinstalled with workspace templates.
                 self._sandbox_bootstrap_hash[sandbox_key] = bootstrap_hash
 
             if should_seed_context:
@@ -1499,7 +1518,10 @@ class OpenCodeServerClient:
             ) from exc
 
         workspace_key = str(workspace_root)
-        should_seed_bootstrap = self._host_bootstrap_hash.get(workspace_key) != bootstrap_hash
+        should_seed_bootstrap = (
+            seed_bootstrap_files
+            and self._host_bootstrap_hash.get(workspace_key) != bootstrap_hash
+        )
         should_seed_context = self._host_context_hash.get(workspace_key) != context_hash
 
         def write_workspace_file(path: str, content: str) -> None:
@@ -1525,12 +1547,14 @@ class OpenCodeServerClient:
             for path, content in sorted(bootstrap_files.items()):
                 write_workspace_file(path, content)
             self._host_bootstrap_hash[workspace_key] = bootstrap_hash
+        elif workspace_key not in self._host_bootstrap_hash:
+            self._host_bootstrap_hash[workspace_key] = bootstrap_hash
 
         if should_seed_context:
             write_workspace_file(OPENCODE_BOOTSTRAP_CONTEXT_PATH, context_content)
             self._host_context_hash[workspace_key] = context_hash
 
-        if workspace_key not in self._bootstrap_cleanup_done_targets:
+        if seed_bootstrap_files and workspace_key not in self._bootstrap_cleanup_done_targets:
             for path in OPENCODE_DEPRECATED_TOOL_PATHS:
                 normalized = str(path or "").replace("\\", "/").lstrip("/")
                 if not normalized or ".." in normalized.split("/"):

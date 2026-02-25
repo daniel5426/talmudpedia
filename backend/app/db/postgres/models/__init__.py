@@ -41,8 +41,6 @@ from .published_apps import (
     PublishedAppBuilderConversationTurn,
     PublishedAppCodingChatMessage,
     PublishedAppCodingChatMessageRole,
-    PublishedAppCodingPromptQueue,
-    PublishedAppCodingPromptQueueStatus,
     PublishedAppCodingChatSession,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,

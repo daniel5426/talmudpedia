@@ -64,7 +64,10 @@ import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
 import { LogoPickerDialog } from "@/features/apps-builder/workspace/LogoPickerDialog";
-import { isDraftSandboxNotRunningError } from "@/features/apps-builder/workspace/draftDevErrors";
+import {
+  isDraftDevTransientBootstrapError,
+  isDraftSandboxNotRunningError,
+} from "@/features/apps-builder/workspace/draftDevErrors";
 import {
   AppsBuilderWorkspaceBootSkeleton,
   DomainsListSkeleton,
@@ -209,6 +212,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [domainNotesInput, setDomainNotesInput] = useState("");
   const [pendingUserUpdateId, setPendingUserUpdateId] = useState<string | null>(null);
   const [pendingDomainDeleteId, setPendingDomainDeleteId] = useState<string | null>(null);
+  const hasActiveCodingRunLock = Boolean(state?.draft_dev?.has_active_coding_runs);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -365,7 +369,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         return;
       } catch (err) {
         lastError = err;
-        if (!isDraftSandboxNotRunningError(err) || attempt === DRAFT_DEV_RECOVERY_ATTEMPTS - 1) {
+        if (!isDraftDevTransientBootstrapError(err) || attempt === DRAFT_DEV_RECOVERY_ATTEMPTS - 1) {
           throw err;
         }
         setDraftDevError(null);
@@ -425,6 +429,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       syncFingerprintRef.current = "";
       return;
     }
+    if (hasActiveCodingRunLock) {
+      return;
+    }
     if (!draftDevSessionId || draftDevStatus !== "running") {
       return;
     }
@@ -455,7 +462,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [activeTab, currentRevisionId, draftDevSessionId, draftDevStatus, ensureDraftDevSession, entryFile, files, syncDraftDevSession]);
+  }, [activeTab, currentRevisionId, draftDevSessionId, draftDevStatus, ensureDraftDevSession, entryFile, files, hasActiveCodingRunLock, syncDraftDevSession]);
 
   useEffect(() => {
     if (activeTab !== "preview" || !draftDevSessionId) {
@@ -737,6 +744,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     timeline,
     activeThinkingSummary,
     chatSessions,
+    activeChatSessionId,
+    activateDraftChat,
     chatModels,
     setSelectedRunModelId,
     isModelSelectorOpen,
@@ -745,8 +754,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     queuedPrompts,
     pendingQuestion,
     isAnsweringQuestion,
+    runningSessionIds,
+    hasOlderHistory,
+    isLoadingOlderHistory,
+    loadOlderHistory,
     removeQueuedPrompt,
     answerPendingQuestion,
+    refreshChatSessionRunActivity,
     sendBuilderChat,
     stopCurrentRun,
     startNewChat,
@@ -760,8 +774,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     onApplyRestoredRevision: applyRestoredRevision,
     onSetCurrentRevisionId: setCurrentRevisionId,
     onError: setError,
-    initialActiveRunId: state?.draft_dev?.active_coding_run_id || null,
+    initialActiveRunId: null,
   });
+  const codeEditingLocked = isSending || hasActiveCodingRunLock;
 
   const openApp = useCallback(async () => {
     setError(null);
@@ -1494,7 +1509,11 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                       <CodeEditorPanel
                         files={files}
                         selectedFile={selectedFile}
-                        onUpdateFile={(path, content) => setFiles((prev) => ({ ...prev, [path]: content }))}
+                        onUpdateFile={(path, content) => {
+                          if (codeEditingLocked) return;
+                          setFiles((prev) => ({ ...prev, [path]: content }));
+                        }}
+                        readOnly={codeEditingLocked}
                       />
                     )}
                   </section>
@@ -1512,7 +1531,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             timeline={timeline}
             activeThinkingSummary={activeThinkingSummary}
             chatSessions={chatSessions}
+            activeChatSessionId={activeChatSessionId}
+            onActivateDraftChat={activateDraftChat}
             onStartNewChat={startNewChat}
+            onOpenHistory={() => {
+              void refreshChatSessionRunActivity();
+            }}
             onLoadChatSession={loadChatSession}
             onSendMessage={sendBuilderChat}
             onStopRun={stopCurrentRun}
@@ -1525,6 +1549,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             queuedPrompts={queuedPrompts}
             pendingQuestion={pendingQuestion}
             isAnsweringQuestion={isAnsweringQuestion}
+            runningSessionIds={runningSessionIds}
+            hasOlderHistory={hasOlderHistory}
+            isLoadingOlderHistory={isLoadingOlderHistory}
+            onLoadOlderHistory={loadOlderHistory}
             onRemoveQueuedPrompt={removeQueuedPrompt}
             onAnswerQuestion={answerPendingQuestion}
           />

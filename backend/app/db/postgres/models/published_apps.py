@@ -68,14 +68,6 @@ class PublishedAppCodingChatMessageRole(str, enum.Enum):
     assistant = "assistant"
 
 
-class PublishedAppCodingPromptQueueStatus(str, enum.Enum):
-    queued = "queued"
-    running = "running"
-    completed = "completed"
-    failed = "failed"
-    cancelled = "cancelled"
-
-
 class PublishedAppUserMembershipStatus(str, enum.Enum):
     active = "active"
     blocked = "blocked"
@@ -157,11 +149,6 @@ class PublishedApp(Base):
     )
     coding_chat_sessions = relationship(
         "PublishedAppCodingChatSession",
-        back_populates="published_app",
-        cascade="all, delete-orphan",
-    )
-    coding_prompt_queue_items = relationship(
-        "PublishedAppCodingPromptQueue",
         back_populates="published_app",
         cascade="all, delete-orphan",
     )
@@ -313,11 +300,6 @@ class PublishedAppCodingChatSession(Base):
         back_populates="session",
         cascade="all, delete-orphan",
     )
-    prompt_queue_items = relationship(
-        "PublishedAppCodingPromptQueue",
-        back_populates="chat_session",
-        cascade="all, delete-orphan",
-    )
 
     __table_args__ = (
         Index(
@@ -358,61 +340,11 @@ class PublishedAppCodingChatMessage(Base):
     __table_args__ = (
         UniqueConstraint("run_id", "role", name="uq_published_app_coding_chat_messages_run_role"),
         Index("ix_published_app_coding_chat_messages_session_created_at", "session_id", "created_at"),
-    )
-
-
-class PublishedAppCodingPromptQueue(Base):
-    __tablename__ = "published_app_coding_prompt_queue"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    published_app_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("published_apps.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    chat_session_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("published_app_coding_chat_sessions.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    position = Column(Integer, nullable=False)
-    status = Column(
-        SQLEnum(PublishedAppCodingPromptQueueStatus, values_callable=_enum_values),
-        nullable=False,
-        default=PublishedAppCodingPromptQueueStatus.queued,
-    )
-    payload = Column(JSONB, nullable=False, default=dict)
-    error = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
-    started_at = Column(DateTime(timezone=True), nullable=True)
-    finished_at = Column(DateTime(timezone=True), nullable=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    published_app = relationship("PublishedApp", back_populates="coding_prompt_queue_items")
-    user = relationship("User")
-    chat_session = relationship("PublishedAppCodingChatSession", back_populates="prompt_queue_items")
-
-    __table_args__ = (
-        Index("ix_published_app_coding_prompt_queue_session_position", "chat_session_id", "position"),
-        Index("ix_published_app_coding_prompt_queue_session_status", "chat_session_id", "status"),
         Index(
-            "ix_published_app_coding_prompt_queue_session_status_position",
-            "chat_session_id",
-            "status",
-            "position",
-        ),
-        UniqueConstraint(
-            "chat_session_id",
-            "position",
-            name="uq_published_app_coding_prompt_queue_session_position",
+            "ix_published_app_coding_chat_messages_session_created_at_id_desc",
+            "session_id",
+            desc("created_at"),
+            desc("id"),
         ),
     )
 
@@ -572,20 +504,12 @@ class PublishedAppDraftDevSession(Base):
     last_activity_at = Column(DateTime(timezone=True), nullable=True)
     dependency_hash = Column(String(64), nullable=True)
     last_error = Column(Text, nullable=True)
-    active_coding_run_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("agent_runs.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    active_coding_run_locked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     published_app = relationship("PublishedApp", back_populates="draft_dev_sessions")
     revision = relationship("PublishedAppRevision")
     user = relationship("User")
-    active_coding_run = relationship("AgentRun", foreign_keys=[active_coding_run_id])
 
     __table_args__ = (
         UniqueConstraint("published_app_id", "user_id", name="uq_published_app_draft_dev_session_scope"),

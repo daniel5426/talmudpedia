@@ -1,7 +1,7 @@
 # Backend Architecture Overview
 
 ## System Purpose
-A FastAPI-based backend for Talmudpedia, providing AI-powered chat capabilities with retrieval-augmented generation (RAG) over Jewish religious texts from the Sefaria library.
+A FastAPI-based backend for TalmudPedia, an Enterprise AI Agent & RAG Platform. Provides AI agent execution with LangGraph, visual pipeline builders for RAG, and unified management of models, tools, and knowledge stores.
 
 ## Core Architecture
 
@@ -49,10 +49,10 @@ MongoDB integration with Pydantic models:
 - **`security.py`**: Password hashing, JWT token generation/validation
 
 ### 6. External Services
-- **`vector_store.py`** (root): Pinecone vector database wrapper with Google embeddings
+- **`vector_store.py`** (root): PostgreSQL/pgvector wrapper
 - **Elasticsearch**: Lexical search for hybrid retrieval
-- **MongoDB**: Primary data store for texts, users, chats
-- **Sefaria API**: Source for Jewish text metadata and content
+- **PostgreSQL**: Primary metadata store with pgvector for embeddings
+- **MongoDB**: Legacy/specific data (e.g., Sefaria texts)
 
 ## Data Flow
 
@@ -71,10 +71,10 @@ MongoDB integration with Pydantic models:
 ### Text Retrieval Flow
 1. Client requests text via `/api/source/{ref}`
 2. `texts.py` parses reference using `ReferenceNavigator`
-3. Queries MongoDB for best version (priority-based)
+3. Queries PostgreSQL for best version (priority-based)
 4. `ComplexTextNavigator` traverses schema tree to locate content
 5. Constructs paginated response with context pages
-6. Returns formatted text with Hebrew references
+6. Returns formatted text
 
 ## Key Design Patterns
 - **Dependency Injection**: Agent components are injected via factory pattern
@@ -86,12 +86,12 @@ MongoDB integration with Pydantic models:
 ## Technology Stack
 - **Framework**: FastAPI (async Python web framework)
 - **Agent**: LangGraph + LangChain
-- **LLMs**: OpenAI GPT-4, Google Gemini
-- **Vector DB**: Pinecone (serverless)
-- **Search**: Elasticsearch
-- **Database**: MongoDB (Motor async driver)
-- **Auth**: JWT with bcrypt password hashing
-- **Embeddings**: Google `gemini-embedding-001`
+- **LLMs**: OpenAI, Anthropic, Google Gemini (vendor-agnostic)
+- **Vector DB**: PostgreSQL with pgvector
+- **Search**: Elasticsearch (lexical/hybrid)
+- **Database**: PostgreSQL (SQLAlchemy async), MongoDB (legacy), Redis
+- **Auth**: JWT with multi-tenancy (Tenant, OrgMembership)
+- **Embeddings**: Model Registry with tenant-specific configurations
 
 ## Directory Structure
 ```

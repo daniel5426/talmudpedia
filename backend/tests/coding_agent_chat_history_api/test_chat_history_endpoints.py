@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -35,7 +35,16 @@ async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_
     return app_id, draft_revision_id
 
 
-async def _insert_run(db_session, *, tenant_id, agent_id, user_id, app_id: str, base_revision_id: str) -> AgentRun:
+async def _insert_run(
+    db_session,
+    *,
+    tenant_id,
+    agent_id,
+    user_id,
+    app_id: str,
+    base_revision_id: str,
+    output_result: dict | None = None,
+) -> AgentRun:
     run = AgentRun(
         tenant_id=tenant_id,
         agent_id=agent_id,
@@ -46,6 +55,7 @@ async def _insert_run(db_session, *, tenant_id, agent_id, user_id, app_id: str, 
         surface=CODING_AGENT_SURFACE,
         published_app_id=UUID(app_id),
         base_revision_id=UUID(base_revision_id),
+        output_result=output_result,
         execution_engine="opencode",
     )
     db_session.add(run)
@@ -153,6 +163,32 @@ async def test_chat_history_detail_returns_ordered_turns(client, db_session):
         user_id=owner.id,
         app_id=app_id,
         base_revision_id=draft_revision_id,
+        output_result={
+            "tool_events": [
+                {
+                    "event": "tool.started",
+                    "stage": "tool",
+                    "payload": {
+                        "tool": "read_file",
+                        "span_id": "call-1",
+                        "input": {"path": "src/main.tsx"},
+                    },
+                    "diagnostics": [],
+                    "ts": "2026-02-25T10:00:00Z",
+                },
+                {
+                    "event": "tool.completed",
+                    "stage": "tool",
+                    "payload": {
+                        "tool": "read_file",
+                        "span_id": "call-1",
+                        "output": {"path": "src/main.tsx"},
+                    },
+                    "diagnostics": [],
+                    "ts": "2026-02-25T10:00:01Z",
+                },
+            ]
+        },
     )
 
     session = PublishedAppCodingChatSession(
@@ -195,6 +231,10 @@ async def test_chat_history_detail_returns_ordered_turns(client, db_session):
     assert payload["session"]["id"] == str(session.id)
     assert [item["role"] for item in payload["messages"]] == ["user", "assistant"]
     assert [item["content"] for item in payload["messages"]] == ["First prompt", "Second response"]
+    assert [item["event"] for item in payload["run_events"]] == ["tool.started", "tool.completed"]
+    assert [item["run_id"] for item in payload["run_events"]] == [str(second_run.id), str(second_run.id)]
+    assert payload["run_events"][0]["payload"]["tool"] == "read_file"
+    assert payload["paging"] == {"has_more": False, "next_before_message_id": None}
 
 
 @pytest.mark.asyncio
@@ -233,3 +273,204 @@ async def test_chat_history_detail_blocks_cross_user_session_access(client, db_s
     )
     assert response.status_code == 404
     assert "not found" in str(response.json()["detail"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_chat_history_detail_paginates_from_latest_with_cursor(client, db_session):
+    tenant, owner, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(owner.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    session = PublishedAppCodingChatSession(
+        published_app_id=UUID(app_id),
+        user_id=owner.id,
+        title="Paged thread",
+        last_message_at=datetime.now(timezone.utc),
+    )
+    db_session.add(session)
+    await db_session.commit()
+    await db_session.refresh(session)
+
+    base_time = datetime.now(timezone.utc)
+    message_ids: list[str] = []
+    for idx in range(12):
+        output_result = None
+        if idx == 0:
+            output_result = {
+                "tool_events": [
+                    {
+                        "event": "tool.started",
+                        "stage": "tool",
+                        "payload": {"tool": "read_file", "span_id": "call-old", "input": {"path": "src/old.tsx"}},
+                        "diagnostics": [],
+                    },
+                    {
+                        "event": "tool.completed",
+                        "stage": "tool",
+                        "payload": {"tool": "read_file", "span_id": "call-old", "output": {"path": "src/old.tsx"}},
+                        "diagnostics": [],
+                    },
+                ]
+            }
+        run = await _insert_run(
+            db_session,
+            tenant_id=tenant.id,
+            agent_id=agent.id,
+            user_id=owner.id,
+            app_id=app_id,
+            base_revision_id=draft_revision_id,
+            output_result=output_result,
+        )
+        message = PublishedAppCodingChatMessage(
+            session_id=session.id,
+            run_id=run.id,
+            role=PublishedAppCodingChatMessageRole.assistant,
+            content=f"message-{idx + 1}",
+            created_at=base_time + timedelta(seconds=idx),
+        )
+        db_session.add(message)
+        await db_session.commit()
+        await db_session.refresh(message)
+        message_ids.append(str(message.id))
+
+    latest_page = await client.get(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{session.id}",
+        headers=headers,
+    )
+    assert latest_page.status_code == 200
+    latest_payload = latest_page.json()
+    assert len(latest_payload["messages"]) == 10
+    assert [item["content"] for item in latest_payload["messages"]] == [f"message-{idx}" for idx in range(3, 13)]
+    assert latest_payload["paging"]["has_more"] is True
+    assert latest_payload["paging"]["next_before_message_id"] == latest_payload["messages"][0]["id"]
+    # Oldest run events should not appear in the latest page.
+    assert latest_payload["run_events"] == []
+
+    older_page = await client.get(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{session.id}"
+        f"?before_message_id={latest_payload['paging']['next_before_message_id']}",
+        headers=headers,
+    )
+    assert older_page.status_code == 200
+    older_payload = older_page.json()
+    assert [item["content"] for item in older_payload["messages"]] == ["message-1", "message-2"]
+    assert older_payload["paging"] == {"has_more": False, "next_before_message_id": None}
+    assert [item["event"] for item in older_payload["run_events"]] == ["tool.started", "tool.completed"]
+
+
+@pytest.mark.asyncio
+async def test_chat_history_detail_rejects_invalid_or_foreign_cursor(client, db_session):
+    tenant, owner, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(owner.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    session = PublishedAppCodingChatSession(
+        published_app_id=UUID(app_id),
+        user_id=owner.id,
+        title="Cursor thread",
+        last_message_at=datetime.now(timezone.utc),
+    )
+    foreign_session = PublishedAppCodingChatSession(
+        published_app_id=UUID(app_id),
+        user_id=owner.id,
+        title="Other cursor thread",
+        last_message_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([session, foreign_session])
+    await db_session.commit()
+    await db_session.refresh(session)
+    await db_session.refresh(foreign_session)
+
+    run = await _insert_run(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=owner.id,
+        app_id=app_id,
+        base_revision_id=draft_revision_id,
+    )
+    foreign_message = PublishedAppCodingChatMessage(
+        session_id=foreign_session.id,
+        run_id=run.id,
+        role=PublishedAppCodingChatMessageRole.user,
+        content="foreign cursor message",
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(foreign_message)
+    await db_session.commit()
+    await db_session.refresh(foreign_message)
+
+    missing_cursor_response = await client.get(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{session.id}?before_message_id={uuid4()}",
+        headers=headers,
+    )
+    assert missing_cursor_response.status_code == 404
+
+    foreign_cursor_response = await client.get(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{session.id}?before_message_id={foreign_message.id}",
+        headers=headers,
+    )
+    assert foreign_cursor_response.status_code == 404
+    assert "cursor message" in str(foreign_cursor_response.json()["detail"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_chat_history_detail_pagination_tie_order_is_stable(client, db_session):
+    tenant, owner, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(owner.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    session = PublishedAppCodingChatSession(
+        published_app_id=UUID(app_id),
+        user_id=owner.id,
+        title="Tie-order thread",
+        last_message_at=datetime.now(timezone.utc),
+    )
+    db_session.add(session)
+    await db_session.commit()
+    await db_session.refresh(session)
+
+    tied_time = datetime.now(timezone.utc)
+    all_ids: list[str] = []
+    for idx in range(4):
+        run = await _insert_run(
+            db_session,
+            tenant_id=tenant.id,
+            agent_id=agent.id,
+            user_id=owner.id,
+            app_id=app_id,
+            base_revision_id=draft_revision_id,
+        )
+        message = PublishedAppCodingChatMessage(
+            session_id=session.id,
+            run_id=run.id,
+            role=PublishedAppCodingChatMessageRole.user,
+            content=f"tie-{idx + 1}",
+            created_at=tied_time,
+        )
+        db_session.add(message)
+        await db_session.commit()
+        await db_session.refresh(message)
+        all_ids.append(str(message.id))
+
+    page1_resp = await client.get(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{session.id}?limit=2",
+        headers=headers,
+    )
+    assert page1_resp.status_code == 200
+    page1 = page1_resp.json()
+    cursor_1 = page1["paging"]["next_before_message_id"]
+    assert cursor_1
+
+    page2_resp = await client.get(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{session.id}?limit=2&before_message_id={cursor_1}",
+        headers=headers,
+    )
+    assert page2_resp.status_code == 200
+    page2 = page2_resp.json()
+    assert page2["paging"] == {"has_more": False, "next_before_message_id": None}
+
+    fetched_ids = [item["id"] for item in page1["messages"]] + [item["id"] for item in page2["messages"]]
+    assert len(fetched_ids) == 4
+    assert len(set(fetched_ids)) == 4
+    assert set(fetched_ids) == set(all_ids)

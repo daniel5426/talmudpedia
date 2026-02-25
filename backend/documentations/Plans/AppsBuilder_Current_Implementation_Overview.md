@@ -1,6 +1,6 @@
 # Apps Builder Current Implementation Overview
 
-Last Updated: 2026-02-23
+Last Updated: 2026-02-25
 
 ## Purpose
 This document is the current-state overview of the Apps Builder system (not a future implementation plan). It summarizes how the builder works today across backend, frontend, runtime, coding-agent, revision persistence, and publish/runtime delivery.
@@ -95,24 +95,29 @@ Important runtime behavior:
 ### Single-Sandbox, Stage/Live Model
 Coding-agent execution is now single-sandbox with internal stage/live workspaces:
 - Live workspace: preview app root used by Vite.
-- Stage workspace: `.talmudpedia/stage/<run_id>/workspace` inside same sandbox.
+- Shared stage workspace: `.talmudpedia/stage/shared/workspace` inside same sandbox.
 
 Run flow:
 1. Create run (`POST /coding-agent/runs`) and resolve active preview sandbox session.
-2. Prepare stage workspace from live snapshot.
-3. Start OpenCode against stage workspace path.
-4. Stream run events to frontend (assistant/tool/terminal events).
-5. On successful write run, promote stage -> live.
-6. Persist revision/checkpoint as needed.
+2. Compute active run count for `(surface=published_app_coding_agent, app_id, initiator_user_id)`.
+3. Prepare shared stage workspace:
+   - `reset=true` when active count is `0` (new batch)
+   - `reset=false` when joining an already-active batch
+4. Start OpenCode against the shared stage workspace path.
+5. Stream run events to frontend (assistant/tool/terminal events).
+6. On each run terminalization, invoke batch finalizer for the scope.
+7. Promote shared stage -> live only when scope becomes idle and there is at least one unfinalized completed run.
+8. Persist one revision/checkpoint for the batch owner run (latest completed in batch).
 
 ### Locking and Idempotency
-- Draft-dev session tracks active run lock metadata.
-- Builder writes can be blocked while run is active (`CODING_AGENT_RUN_ACTIVE`).
+- Builder writes are blocked while active coding run count for scope is `> 0` (`CODING_AGENT_RUN_ACTIVE`).
+- Active-run lock source-of-truth is `agent_runs` non-terminal count, not draft-dev pointer columns.
 - Run create accepts `client_message_id` for idempotent submission.
 
 ### Chat/History
 - Chat sessions and chat messages are persisted server-side.
 - Frontend can resume chat sessions and reuse `chat_session_id` across runs.
+- Run tool events are now persisted in run output payload (`output_result.tool_events`) and returned via chat-session detail `run_events` so reload can reconstruct tool-call timeline rows.
 
 ## OpenCode Integration
 OpenCode is the default engine path in current state.
@@ -127,6 +132,7 @@ Recent stability hardening reflected in code/docs:
 - Improved terminal event handling to reduce hanging runs.
 - Stream handling tuned for incremental assistant deltas.
 - Cancel path supports sandbox-routed cancellation and run finalization semantics.
+- Idle-batch finalization with advisory lock per `(app_id, actor_id)` to prevent duplicate promotions/revisions during parallel completion races.
 
 ## Revision Persistence Model
 Current revision persistence uses snapshot-manifest + content-addressed blob storage.
@@ -199,9 +205,10 @@ Current policy highlights:
 
 ### Ask Coding-Agent
 - Run created with selected/default model and context.
-- Agent executes in stage workspace.
+- Agent executes in shared stage workspace for the app+user scope.
 - Tool/assistant events stream to chat panel.
-- On success with edits, stage promotes to live and revision/checkpoint can be recorded.
+- Batch finalizer promotes to live only when active run count reaches zero and at least one completed run exists in the batch.
+- Only latest completed run in that finalized batch receives `result_revision_id`/`checkpoint_revision_id`; non-owner completed runs remain null for those fields.
 
 ### Publish
 - Async publish job performs deterministic build and artifact upload.
@@ -225,7 +232,30 @@ Notable recent coverage themes:
 - cancellation behavior,
 - template and draft-dev flows,
 - streaming behavior and chat queueing,
-- stage/live sandbox semantics.
+- shared-stage sandbox semantics and idle-batch promotion behavior,
+- chat-history tool-event persistence/restore on reload.
+
+## Data Model and Contracts (Current)
+### Draft-Dev Session Contract
+`DraftDevSessionResponse` now exposes count-based activity:
+- `has_active_coding_runs: bool` (required)
+- `active_coding_run_count: int` (required)
+
+Removed from contract:
+- `active_coding_run_id`
+- `active_coding_run_status`
+
+### Agent Run Batch-Finalization Fields
+`agent_runs` includes:
+- `has_workspace_writes BOOLEAN NOT NULL DEFAULT FALSE`
+- `batch_finalized_at TIMESTAMPTZ NULL`
+- `batch_owner BOOLEAN NOT NULL DEFAULT FALSE`
+
+### Internal Stage Runtime API Hard Cut
+`published_app_draft_dev_runtime_client` and dev shim now use scope-based stage methods:
+- `prepare_stage_workspace(reset: bool)`
+- `snapshot_workspace(stage)` (no run id)
+- `promote_stage_workspace()` (no run id)
 
 ## Current Constraints and Known Tradeoffs
 - Draft and publish paths intentionally optimize for different goals:

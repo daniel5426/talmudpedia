@@ -385,6 +385,8 @@ describe("AppsBuilderWorkspace", () => {
       app_id: "app-1",
       revision_id: "rev-1",
       status: "running",
+      has_active_coding_runs: false,
+      active_coding_run_count: 0,
       preview_url: "https://preview.local/sandbox/session-1/",
       preview_auth_token: "preview-auth-token-1",
       preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
@@ -398,6 +400,8 @@ describe("AppsBuilderWorkspace", () => {
       app_id: "app-1",
       revision_id: "rev-1",
       status: "running",
+      has_active_coding_runs: false,
+      active_coding_run_count: 0,
       preview_url: "https://preview.local/sandbox/session-1/",
       preview_auth_token: "preview-auth-token-1",
       preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
@@ -411,6 +415,8 @@ describe("AppsBuilderWorkspace", () => {
       app_id: "app-1",
       revision_id: "rev-1",
       status: "running",
+      has_active_coding_runs: false,
+      active_coding_run_count: 0,
       preview_url: "https://preview.local/sandbox/session-1/",
       preview_auth_token: "preview-auth-token-2",
       preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
@@ -592,6 +598,11 @@ describe("AppsBuilderWorkspace", () => {
         last_message_at: new Date().toISOString(),
       },
       messages: [],
+      run_events: [],
+      paging: {
+        has_more: false,
+        next_before_message_id: null,
+      },
     });
     (publishedAppsService.getCodingAgentChatSessionActiveRun as jest.Mock).mockRejectedValue(
       new Error("No active run"),
@@ -706,7 +717,7 @@ describe("AppsBuilderWorkspace", () => {
     expect(tabsRoot).toHaveClass("h-dvh", "min-h-0", "overflow-hidden");
     expect(tabsRoot).not.toHaveClass("h-screen");
 
-    const agentPanel = screen.getByRole("button", { name: "New chat" }).closest("aside");
+    const agentPanel = screen.getByRole("button", { name: "Create new chat" }).closest("aside");
     expect(agentPanel).toHaveClass("min-h-0", "overflow-hidden");
   });
 
@@ -766,6 +777,8 @@ describe("AppsBuilderWorkspace", () => {
       app_id: "app-1",
       revision_id: "rev-1",
       status: "running",
+      has_active_coding_runs: false,
+      active_coding_run_count: 0,
       preview_url: "https://preview.local/sandbox/session-1/",
       preview_auth_token: "preview-auth-token-1",
       preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
@@ -793,6 +806,8 @@ describe("AppsBuilderWorkspace", () => {
         app_id: "app-1",
         revision_id: "rev-1",
         status: "running",
+        has_active_coding_runs: false,
+        active_coding_run_count: 0,
         preview_url: "https://preview.local/sandbox/session-1/",
         preview_auth_token: "preview-auth-token-1",
         preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
@@ -1785,12 +1800,14 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
-  it("retries draft ensure after terminal when lock clear lags and then succeeds", async () => {
+  it("treats post-run draft ensure lock conflicts as non-fatal", async () => {
     const sessionPayload = {
       session_id: "session-1",
       app_id: "app-1",
       revision_id: "rev-1",
       status: "running",
+      has_active_coding_runs: false,
+      active_coding_run_count: 0,
       preview_url: "https://preview.local/sandbox/session-1/",
       preview_auth_token: "preview-auth-token-1",
       preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
@@ -1805,18 +1822,15 @@ describe("AppsBuilderWorkspace", () => {
       if (ensureCalls === 1) {
         return Promise.resolve(sessionPayload);
       }
-      if (ensureCalls === 2) {
-        return Promise.reject(
-          new Error(
-            JSON.stringify({
-              code: "CODING_AGENT_RUN_ACTIVE",
-              message: "Builder edits are locked while a coding-agent run is active for this session.",
-              active_run_id: "run-1",
-            }),
-          ),
-        );
-      }
-      return Promise.resolve(sessionPayload);
+      return Promise.reject(
+        new Error(
+          JSON.stringify({
+            code: "CODING_AGENT_RUN_ACTIVE",
+            message: "Builder edits are locked while a coding-agent run is active for this session.",
+            active_run_id: "run-1",
+          }),
+        ),
+      );
     });
 
     (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
@@ -1854,11 +1868,84 @@ describe("AppsBuilderWorkspace", () => {
       expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
     });
     await waitFor(() => {
-      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledTimes(3);
+      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledTimes(2);
     });
     expect(
       screen.queryByText("Builder edits are locked while a coding-agent run is active for this session."),
     ).not.toBeInTheDocument();
+  });
+
+  it("skips post-run preview ensure while another run is still active", async () => {
+    const sessionPayload = {
+      session_id: "session-1",
+      app_id: "app-1",
+      revision_id: "rev-1",
+      status: "running",
+      has_active_coding_runs: false,
+      active_coding_run_count: 0,
+      preview_url: "https://preview.local/sandbox/session-1/",
+      preview_auth_token: "preview-auth-token-1",
+      preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
+      idle_timeout_seconds: 180,
+      last_activity_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 180_000).toISOString(),
+      last_error: null,
+    };
+    const initialState = {
+      ...makeState(),
+      draft_dev: sessionPayload,
+    };
+    const activeScopeState = {
+      ...makeState(),
+      draft_dev: {
+        ...sessionPayload,
+        has_active_coding_runs: true,
+        active_coding_run_count: 1,
+      },
+    };
+    (publishedAppsService.getBuilderState as jest.Mock)
+      .mockResolvedValueOnce(initialState)
+      .mockResolvedValueOnce(activeScopeState)
+      .mockResolvedValue(activeScopeState);
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockResolvedValue(sessionPayload);
+
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"run.accepted","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"run","payload":{"status":"queued"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "parallel run state" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
+    });
+    await waitFor(() => {
+      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("reuses returned chat_session_id for subsequent messages", async () => {

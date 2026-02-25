@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.core.security import create_published_app_preview_token
-from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppBuilderConversationTurn,
@@ -30,6 +29,7 @@ from app.services.published_app_templates import build_template_files, get_templ
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
+    _count_active_coding_runs_for_scope,
     _ensure_current_draft_revision,
     _get_app_for_tenant,
     _get_draft_dev_session_for_scope,
@@ -108,15 +108,15 @@ async def _decorate_draft_dev_session_response(
     actor_id: UUID | None,
     revision_id: UUID | None,
 ) -> DraftDevSessionResponse:
-    active_coding_run_status: str | None = None
-    if session.active_coding_run_id is not None:
-        run = await db.get(AgentRun, session.active_coding_run_id)
-        if run is not None:
-            active_coding_run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+    active_coding_run_count = await _count_active_coding_runs_for_scope(
+        db,
+        app_id=app.id,
+        user_id=actor_id,
+    )
 
     response = _draft_dev_session_to_response(
         session,
-        active_coding_run_status=active_coding_run_status,
+        active_coding_run_count=active_coding_run_count,
     )
     if actor_id is None:
         return response
@@ -157,27 +157,19 @@ async def _assert_no_active_coding_run_for_scope(
     app_id: UUID,
     user_id: UUID | None,
 ) -> None:
-    if user_id is None:
-        return
-    session = await _get_draft_dev_session_for_scope(db, app_id=app_id, user_id=user_id)
-    if session is None or session.active_coding_run_id is None:
-        return
-    run = await db.get(AgentRun, session.active_coding_run_id)
-    if run is None:
-        session.active_coding_run_id = None
-        session.active_coding_run_locked_at = None
-        return
-    run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
-    if run_status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value, RunStatus.paused.value}:
-        session.active_coding_run_id = None
-        session.active_coding_run_locked_at = None
+    active_count = await _count_active_coding_runs_for_scope(
+        db,
+        app_id=app_id,
+        user_id=user_id,
+    )
+    if active_count <= 0:
         return
     raise HTTPException(
         status_code=409,
         detail={
             "code": "CODING_AGENT_RUN_ACTIVE",
             "message": "Builder edits are locked while a coding-agent run is active for this session.",
-            "active_run_id": str(run.id),
+            "active_coding_run_count": active_count,
         },
     )
 
@@ -451,6 +443,7 @@ async def sync_builder_draft_dev_session(
         raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
 
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    await _assert_no_active_coding_run_for_scope(db=db, app_id=app.id, user_id=actor.id)
     draft = await _ensure_current_draft_revision(db, app, actor.id)
     files = _coerce_files_payload(payload.files)
     entry_file = _normalize_builder_path(payload.entry_file or draft.entry_file)

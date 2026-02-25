@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-24
+Last Updated: 2026-02-25
 
 ## Scope
 Frontend coverage for:
@@ -15,6 +15,8 @@ Frontend coverage for:
 ## Test Files
 - `frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/chat_history_timeline.test.ts`
+- `frontend-reshet/src/__tests__/published_apps/chat_model_path_parsing.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/published_auth_templates.test.tsx`
@@ -36,6 +38,7 @@ Frontend coverage for:
 - Builder workspace renders tool calls via AI Elements `Task` rows, including normalized intent labels and file-path chips extracted from tool payloads.
 - Builder workspace running `read_file` calls now show filename directly in the title (`Reading file <path>`) and prepend a live grouped summary (`Researching N file(s)`) across consecutive read streaks.
 - Builder workspace sanitizes read-path labels from wrapped and malformed payload text (e.g. `<path>...</path>`, `path>... </path`) and ignores package specifiers (e.g. `@radix-ui/react-slot`) so file read titles only show valid workspace paths.
+- Chat-model path parser normalizes temp draft-dev absolute paths with UUID workspace roots (e.g. `/private/tmp/.../<uuid>/src/...`) into workspace-relative read labels.
 - Builder workspace coding-agent panel uses Cursor-style composer placeholder contract (`Plan, @ for context, / for commands`) with run submission preserved.
 - Builder workspace coding-agent panel now uses AI elements `Conversation` scrolling model + `ConversationScrollButton`, with minimal/no-card event presentation and lightweight shimmering `Thinking...` text.
 - Builder workspace shows `Reasoning...` fallback only when no tool is actively running; active tool rows own the shimmer state while executing.
@@ -63,6 +66,7 @@ Frontend coverage for:
 - Builder workspace surfaces actionable model availability errors when backend returns `CODING_AGENT_MODEL_UNAVAILABLE`.
 - Builder workspace no longer renders execution-engine selection and relies on OpenCode-only backend runtime.
 - Builder workspace chat history dialog loads real sessions from API, hydrates persisted user/assistant turns, and reuses loaded `chat_session_id`.
+- Persisted coding-agent tool events are restored into chat history timeline (tool rows render before same-run assistant message).
 - Builder workspace per-message revert action restores attached coding-agent checkpoints via `/coding-agent/v2/checkpoints/{checkpoint_id}/restore`.
 - Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
 - Builder code tab auto-expands ancestor folders when the selected file is nested.
@@ -81,6 +85,12 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runTestsByPath src/__tests__/published_apps/chat_history_timeline.test.ts --watch=false --silent`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 1 test)
+- Command: `cd frontend-reshet && pnpm -s test src/__tests__/published_apps/chat_model_path_parsing.test.ts --runInBand`
+- Date: 2026-02-24
+- Result: PASS (1 suite, 2 tests)
 - Command: `cd frontend-reshet && npx jest src/__tests__/published_apps/coding_agent_stream_speed.test.ts --runInBand`
 - Date: 2026-02-24
 - Result: PASS (1 suite, 2 tests)

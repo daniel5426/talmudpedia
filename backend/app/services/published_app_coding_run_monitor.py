@@ -17,7 +17,7 @@ from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
-from app.services.published_app_coding_queue_service import PublishedAppCodingQueueService
+from app.services.published_app_coding_batch_finalizer import PublishedAppCodingBatchFinalizer
 from app.services.published_app_coding_run_monitor_config import (
     monitor_inactivity_timeout_seconds,
     monitor_max_runtime_seconds,
@@ -208,31 +208,30 @@ class PublishedAppCodingRunMonitor:
             logger.exception("CODING_AGENT_MONITOR detached_start_failed run_id=%s app_id=%s", run_id, app_id)
 
     @classmethod
-    async def _finalize_completed_run_detached(cls, *, app_id: UUID, run_id: UUID) -> None:
+    async def _finalize_terminal_scope_detached(cls, *, app_id: UUID, run_id: UUID) -> None:
         try:
             async with cls._session_factory() as db:
-                runtime = PublishedAppCodingAgentRuntimeService(db)
+                finalizer = PublishedAppCodingBatchFinalizer(db)
                 cls._trace(
-                    "monitor.post_complete_finalize_begin",
+                    "monitor.batch_finalize_begin",
                     run_id=str(run_id),
                     app_id=str(app_id),
                 )
-                revision_id, checkpoint_id = await runtime.finalize_completed_run_postprocessing(run_id=run_id)
+                result = await finalizer.finalize_for_terminal_run(run_id=run_id)
                 cls._trace(
-                    "monitor.post_complete_finalize_done",
+                    "monitor.batch_finalize_done",
                     run_id=str(run_id),
                     app_id=str(app_id),
-                    revision_id=revision_id,
-                    checkpoint_id=checkpoint_id,
+                    result=result,
                 )
         except Exception as exc:
             logger.exception(
-                "CODING_AGENT_MONITOR post_complete_finalize_failed run_id=%s app_id=%s",
+                "CODING_AGENT_MONITOR batch_finalize_failed run_id=%s app_id=%s",
                 run_id,
                 app_id,
             )
             cls._trace(
-                "monitor.post_complete_finalize_failed",
+                "monitor.batch_finalize_failed",
                 run_id=str(run_id),
                 app_id=str(app_id),
                 error=str(exc),
@@ -291,6 +290,9 @@ class PublishedAppCodingRunMonitor:
         run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
 
         if run_status in _TERMINAL_RUN_STATUSES:
+            asyncio.create_task(
+                self.__class__._finalize_terminal_scope_detached(app_id=app_id, run_id=run_id)
+            )
             payload = runtime.serialize_run(run)
             diagnostics: list[dict[str, Any]] = []
             if run_status == RunStatus.failed.value:
@@ -309,6 +311,10 @@ class PublishedAppCodingRunMonitor:
         if state is None:
             refreshed = await runtime.get_run_for_app(app_id=app_id, run_id=run_id)
             refreshed_status = refreshed.status.value if hasattr(refreshed.status, "value") else str(refreshed.status)
+            if refreshed_status in _TERMINAL_RUN_STATUSES:
+                asyncio.create_task(
+                    self.__class__._finalize_terminal_scope_detached(app_id=app_id, run_id=run_id)
+                )
             payload = runtime.serialize_run(refreshed)
             diagnostics: list[dict[str, Any]] = []
             if refreshed_status == RunStatus.failed.value:
@@ -808,49 +814,9 @@ class PublishedAppCodingRunMonitor:
                     )
 
                 if refreshed_status in _TERMINAL_RUN_STATUSES:
-                    if refreshed_status == RunStatus.completed.value:
-                        asyncio.create_task(
-                            cls._finalize_completed_run_detached(app_id=app_id, run_id=run_id)
-                        )
-
-                    next_run = None
-                    if use_external_probe:
-                        async with cls._session_factory() as dispatch_db:
-                            dispatch_queue_service = PublishedAppCodingQueueService(dispatch_db)
-                            dispatch_terminal_run = await dispatch_db.get(AgentRun, run_id)
-                            if dispatch_terminal_run is not None:
-                                dispatch_terminal_status = (
-                                    dispatch_terminal_run.status.value
-                                    if hasattr(dispatch_terminal_run.status, "value")
-                                    else str(dispatch_terminal_run.status)
-                                )
-                                if dispatch_terminal_status in _TERMINAL_RUN_STATUSES:
-                                    next_run = await dispatch_queue_service.dispatch_next_for_terminal_run(
-                                        terminal_run=dispatch_terminal_run
-                                    )
-                    else:
-                        dispatch_queue_service = PublishedAppCodingQueueService(db)
-                        dispatch_terminal_run = await db.get(AgentRun, run_id)
-                        if dispatch_terminal_run is not None:
-                            dispatch_terminal_status = (
-                                dispatch_terminal_run.status.value
-                                if hasattr(dispatch_terminal_run.status, "value")
-                                else str(dispatch_terminal_run.status)
-                            )
-                            if dispatch_terminal_status in _TERMINAL_RUN_STATUSES:
-                                next_run = await dispatch_queue_service.dispatch_next_for_terminal_run(
-                                    terminal_run=dispatch_terminal_run
-                                )
-                    if next_run is not None:
-                        cls._trace(
-                            "monitor.queue_dispatched_next",
-                            run_id=str(run_id),
-                            app_id=str(app_id),
-                            next_run_id=str(next_run.id),
-                        )
-                        asyncio.create_task(
-                            cls.ensure_monitor_detached(app_id=app_id, run_id=next_run.id)
-                        )
+                    asyncio.create_task(
+                        cls._finalize_terminal_scope_detached(app_id=app_id, run_id=run_id)
+                    )
         except Exception as exc:
             logger.exception("CODING_AGENT_MONITOR runner_failed run_id=%s app_id=%s", run_id, app_id)
             cls._trace(
@@ -894,6 +860,9 @@ class PublishedAppCodingRunMonitor:
                                 app_id=str(app_id),
                                 status=RunStatus.failed.value,
                                 error=str(exc),
+                            )
+                            asyncio.create_task(
+                                cls._finalize_terminal_scope_detached(app_id=app_id, run_id=run_id)
                             )
             except Exception:
                 logger.exception("CODING_AGENT_MONITOR fail_closed_terminalize_failed run_id=%s", run_id)

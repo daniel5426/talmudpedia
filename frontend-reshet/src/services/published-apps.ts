@@ -1,4 +1,5 @@
 import { httpClient } from "./http";
+import { useAuthStore } from "@/lib/store/useAuthStore";
 
 export type PublishedAppStatus = "draft" | "published" | "paused" | "archived";
 export type PublishedAppVisibility = "public" | "private";
@@ -132,8 +133,8 @@ export interface DraftDevSessionResponse {
   app_id: string;
   revision_id?: string | null;
   status: DraftDevSessionStatus;
-  active_coding_run_id?: string | null;
-  active_coding_run_status?: string | null;
+  has_active_coding_runs: boolean;
+  active_coding_run_count: number;
   preview_url?: string | null;
   preview_auth_token?: string | null;
   preview_auth_expires_at?: string | null;
@@ -174,7 +175,7 @@ export interface PublishJobResponse {
   finished_at?: string | null;
 }
 
-export interface PublishJobStatusResponse extends PublishJobResponse {}
+export type PublishJobStatusResponse = PublishJobResponse;
 
 export interface CreatePublishedAppRequest {
   name: string;
@@ -276,9 +277,23 @@ export interface CodingAgentChatMessage {
   created_at: string;
 }
 
+export interface CodingAgentRunEvent {
+  run_id: string;
+  event: "tool.started" | "tool.completed" | "tool.failed";
+  stage: string;
+  payload: Record<string, unknown>;
+  diagnostics: Array<Record<string, unknown>>;
+  ts?: string | null;
+}
+
 export interface CodingAgentChatSessionDetail {
   session: CodingAgentChatSession;
   messages: CodingAgentChatMessage[];
+  run_events?: CodingAgentRunEvent[];
+  paging: {
+    has_more: boolean;
+    next_before_message_id?: string | null;
+  };
 }
 
 export interface CodingAgentCheckpoint {
@@ -298,7 +313,6 @@ export interface CodingAgentRestoreCheckpointResponse {
 export interface CodingAgentActiveRunState {
   run_id: string;
   status: string;
-  queued_prompt_count: number;
 }
 
 export interface CodingAgentPromptQueueItem {
@@ -470,9 +484,19 @@ export const publishedAppsService = {
     );
   },
 
-  async getCodingAgentChatSession(appId: string, sessionId: string, limit = 200): Promise<CodingAgentChatSessionDetail> {
+  async getCodingAgentChatSession(
+    appId: string,
+    sessionId: string,
+    options: { limit?: number; before_message_id?: string | null } = {},
+  ): Promise<CodingAgentChatSessionDetail> {
+    const params = new URLSearchParams();
+    params.set("limit", String(Math.max(1, Number(options.limit || 10))));
+    const beforeMessageId = String(options.before_message_id || "").trim();
+    if (beforeMessageId) {
+      params.set("before_message_id", beforeMessageId);
+    }
     return httpClient.get<CodingAgentChatSessionDetail>(
-      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}?limit=${encodeURIComponent(String(limit))}`,
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}?${params.toString()}`,
     );
   },
 
@@ -533,6 +557,33 @@ export const publishedAppsService = {
     return httpClient.get<CodingAgentActiveRunState>(
       `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/active-run`,
     );
+  },
+
+  async findCodingAgentChatSessionActiveRun(
+    appId: string,
+    sessionId: string,
+  ): Promise<CodingAgentActiveRunState | null> {
+    const response = await httpClient.requestRaw(
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/active-run`,
+      { method: "GET" },
+    );
+    if (response.status === 404) {
+      return null;
+    }
+    if (response.status === 401) {
+      useAuthStore.getState().logout();
+    }
+    if (!response.ok) {
+      let message = "Request failed";
+      try {
+        const data = await response.json();
+        message = data?.detail || data?.message || message;
+      } catch {
+        message = response.statusText || message;
+      }
+      throw new Error(typeof message === "string" ? message : JSON.stringify(message));
+    }
+    return response.json() as Promise<CodingAgentActiveRunState>;
   },
 
   async listCodingAgentChatSessionQueue(appId: string, sessionId: string): Promise<CodingAgentPromptQueueItem[]> {

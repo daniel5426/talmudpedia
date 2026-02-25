@@ -126,6 +126,13 @@ function normalizeExtractedPath(value: string): string {
     const relative = stripped.slice(workspaceIdx + "/workspace/".length).replace(/^\/+/, "");
     return relative || "workspace";
   }
+  const tempWorkspaceByUuid = stripped.match(
+    /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(.+)$/i,
+  );
+  if (tempWorkspaceByUuid && tempWorkspaceByUuid[1]) {
+    const relative = tempWorkspaceByUuid[1].replace(/^\/+/, "");
+    if (relative) return relative;
+  }
   return stripped;
 }
 

@@ -10,15 +10,16 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
-from app.db.postgres.models.agents import RunStatus
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSessionStatus, PublishedAppRevision
 from app.db.postgres.session import get_db
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
+from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
-from app.services.published_app_coding_queue_service import PublishedAppCodingQueueService
 from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_draft_dev_runtime import (
     PublishedAppDraftDevRuntimeDisabled,
@@ -67,31 +68,9 @@ class CodingAgentRunResponse(BaseModel):
     sandbox_started_at: Optional[datetime] = None
 
 
-class CodingAgentPromptQueueItemResponse(BaseModel):
-    id: str
-    chat_session_id: str
-    position: int
-    status: str
-    input: str
-    client_message_id: Optional[str] = None
-    created_at: datetime
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-    error: Optional[str] = None
-
-
 class CodingAgentPromptSubmissionStartedResponse(BaseModel):
     submission_status: Literal["started"] = "started"
     run: CodingAgentRunResponse
-
-
-class CodingAgentPromptSubmissionQueuedResponse(BaseModel):
-    submission_status: Literal["queued"] = "queued"
-    active_run_id: str
-    queue_item: CodingAgentPromptQueueItemResponse
-
-
-CodingAgentPromptSubmissionResponse = CodingAgentPromptSubmissionStartedResponse | CodingAgentPromptSubmissionQueuedResponse
 
 
 class CodingAgentCheckpointResponse(BaseModel):
@@ -131,17 +110,27 @@ class CodingAgentChatMessageResponse(BaseModel):
 class CodingAgentChatSessionDetailResponse(BaseModel):
     session: CodingAgentChatSessionResponse
     messages: List[CodingAgentChatMessageResponse] = Field(default_factory=list)
+    run_events: List["CodingAgentRunEventResponse"] = Field(default_factory=list)
+    paging: "CodingAgentChatSessionPagingResponse"
+
+
+class CodingAgentChatSessionPagingResponse(BaseModel):
+    has_more: bool = False
+    next_before_message_id: Optional[str] = None
+
+
+class CodingAgentRunEventResponse(BaseModel):
+    run_id: str
+    event: Literal["tool.started", "tool.completed", "tool.failed"]
+    stage: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    diagnostics: List[Dict[str, Any]] = Field(default_factory=list)
+    ts: Optional[str] = None
 
 
 class CodingAgentActiveRunResponse(BaseModel):
     run_id: str
     status: str
-    queued_prompt_count: int
-
-
-class CodingAgentQueueDeleteResponse(BaseModel):
-    status: str
-    id: str
 
 
 class CodingAgentAnswerQuestionRequest(BaseModel):
@@ -155,6 +144,37 @@ def _run_to_response(service: PublishedAppCodingAgentRuntimeService, run) -> Cod
 
 def _sse(payload: Dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, default=str)}\n\n"
+
+
+def _normalize_run_tool_events(*, run: AgentRun) -> List[CodingAgentRunEventResponse]:
+    output_result = run.output_result if isinstance(run.output_result, dict) else {}
+    raw_events = output_result.get("tool_events")
+    if not isinstance(raw_events, list):
+        return []
+    normalized: List[CodingAgentRunEventResponse] = []
+    for raw_item in raw_events:
+        if not isinstance(raw_item, dict):
+            continue
+        event_name = str(raw_item.get("event") or "").strip()
+        if event_name not in {"tool.started", "tool.completed", "tool.failed"}:
+            continue
+        stage_value = str(raw_item.get("stage") or "tool").strip() or "tool"
+        payload_value = raw_item.get("payload")
+        payload_dict = payload_value if isinstance(payload_value, dict) else {}
+        diagnostics_value = raw_item.get("diagnostics")
+        diagnostics_list = [item for item in diagnostics_value if isinstance(item, dict)] if isinstance(diagnostics_value, list) else []
+        ts_value = str(raw_item.get("ts") or "").strip() or None
+        normalized.append(
+            CodingAgentRunEventResponse(
+                run_id=str(run.id),
+                event=event_name,
+                stage=stage_value,
+                payload=payload_dict,
+                diagnostics=diagnostics_list,
+                ts=ts_value,
+            )
+        )
+    return normalized
 
 
 async def _refresh_draft_from_active_builder_sandbox(
@@ -214,7 +234,7 @@ async def _refresh_draft_from_active_builder_sandbox(
 
 @router.post(
     "/{app_id}/coding-agent/v2/prompts",
-    response_model=CodingAgentPromptSubmissionResponse,
+    response_model=CodingAgentPromptSubmissionStartedResponse,
 )
 async def submit_coding_agent_prompt(
     app_id: UUID,
@@ -231,39 +251,67 @@ async def submit_coding_agent_prompt(
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     draft = await _ensure_current_draft_revision(db, app, actor_id)
-    draft = await _refresh_draft_from_active_builder_sandbox(
-        db=db,
-        app=app,
-        draft=draft,
-        actor_id=actor_id,
-    )
 
     user_prompt = (payload.input or "").strip()
     if not user_prompt:
         raise HTTPException(status_code=400, detail="input is required")
 
-    queue_service = PublishedAppCodingQueueService(db)
-    result = await queue_service.submit_prompt(
+    runtime = PublishedAppCodingAgentRuntimeService(db)
+    history = PublishedAppCodingChatHistoryService(db)
+    resolved_session_id: UUID | None = None
+    run_messages: list[dict[str, str]] | None = None
+    client_message_id = str(payload.client_message_id or "").strip() or None
+
+    if actor_id is not None:
+        session = await history.resolve_or_create_session(
+            app_id=app.id,
+            user_id=actor_id,
+            user_prompt=user_prompt,
+            session_id=payload.chat_session_id,
+        )
+        resolved_session_id = session.id
+        run_messages = await history.build_run_messages(
+            session_id=session.id,
+            current_user_prompt=user_prompt,
+        )
+        active_run = await runtime.get_active_run_for_chat_session(
+            app_id=app.id,
+            chat_session_id=session.id,
+        )
+        if active_run is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CODING_AGENT_RUN_ACTIVE",
+                    "message": "A coding-agent run is already active for this chat session.",
+                    "active_run_id": str(active_run.id),
+                    "chat_session_id": str(session.id),
+                    "client_message_id": client_message_id,
+                },
+            )
+
+    run = await runtime.create_run(
         app=app,
         base_revision=draft,
         actor_id=actor_id,
         user_prompt=user_prompt,
-        model_id=payload.model_id,
-        chat_session_id=payload.chat_session_id,
-        client_message_id=str(payload.client_message_id or "").strip() or None,
+        messages=run_messages,
+        requested_model_id=payload.model_id,
+        chat_session_id=resolved_session_id,
     )
 
-    runtime = PublishedAppCodingAgentRuntimeService(db)
-    if result.status == "started" and result.run is not None:
-        await PublishedAppCodingRunMonitor(db).ensure_monitor(app_id=app.id, run_id=result.run.id)
-        return CodingAgentPromptSubmissionStartedResponse(run=_run_to_response(runtime, result.run))
+    if resolved_session_id is not None:
+        await history.persist_user_message(
+            session_id=resolved_session_id,
+            run_id=run.id,
+            content=user_prompt,
+        )
+    else:
+        await db.commit()
 
-    if result.active_run is None or result.queue_item is None:
-        raise HTTPException(status_code=500, detail="Queued prompt result is incomplete")
-
-    return CodingAgentPromptSubmissionQueuedResponse(
-        active_run_id=str(result.active_run.id),
-        queue_item=CodingAgentPromptQueueItemResponse(**queue_service.serialize_queue_item(result.queue_item)),
+    await PublishedAppCodingRunMonitor(db).ensure_monitor(app_id=app.id, run_id=run.id)
+    return CodingAgentPromptSubmissionStartedResponse(
+        run=_run_to_response(runtime, run),
     )
 
 
@@ -422,7 +470,8 @@ async def get_coding_agent_chat_session(
     app_id: UUID,
     session_id: UUID,
     request: Request,
-    limit: int = Query(default=200, ge=1, le=400),
+    limit: int = Query(default=10, ge=1, le=100),
+    before_message_id: Optional[UUID] = Query(default=None),
     _: Dict[str, Any] = Depends(require_scopes("apps.read")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
@@ -443,10 +492,48 @@ async def get_coding_agent_chat_session(
     )
     if session is None:
         raise HTTPException(status_code=404, detail="Coding-agent chat session not found")
-    messages = await history_service.list_messages(session_id=session.id, limit=limit)
+    messages, has_more, next_before_message_id = await history_service.list_messages_page(
+        session_id=session.id,
+        limit=limit,
+        before_message_id=before_message_id,
+    )
+    run_events: List[CodingAgentRunEventResponse] = []
+    run_ids_in_order: List[UUID] = []
+    seen_run_ids: set[UUID] = set()
+    for item in messages:
+        run_id = item.run_id
+        if run_id in seen_run_ids:
+            continue
+        seen_run_ids.add(run_id)
+        run_ids_in_order.append(run_id)
+    if run_ids_in_order:
+        run_rows = list(
+            (
+                await db.execute(
+                    select(AgentRun).where(
+                        and_(
+                            AgentRun.id.in_(run_ids_in_order),
+                            AgentRun.published_app_id == app.id,
+                            AgentRun.surface == CODING_AGENT_SURFACE,
+                        )
+                    )
+                )
+            ).scalars().all()
+        )
+        runs_by_id = {str(row.id): row for row in run_rows}
+        for run_id in run_ids_in_order:
+            run = runs_by_id.get(str(run_id))
+            if run is None:
+                continue
+            run_events.extend(_normalize_run_tool_events(run=run))
     return CodingAgentChatSessionDetailResponse(
         session=CodingAgentChatSessionResponse(**history_service.serialize_session(session)),
         messages=[CodingAgentChatMessageResponse(**history_service.serialize_message(item)) for item in messages],
+        run_events=run_events,
+        paging=CodingAgentChatSessionPagingResponse(
+            has_more=has_more,
+            next_before_message_id=str(next_before_message_id) if next_before_message_id else None,
+        ),
     )
 
 
@@ -479,101 +566,19 @@ async def get_coding_agent_chat_session_active_run(
     if session is None:
         raise HTTPException(status_code=404, detail="Coding-agent chat session not found")
 
-    queue_service = PublishedAppCodingQueueService(db)
-    run = await queue_service.get_active_run_for_chat_session(
+    runtime_service = PublishedAppCodingAgentRuntimeService(db)
+    run = await runtime_service.get_active_run_for_chat_session(
         app_id=app.id,
         chat_session_id=session.id,
     )
     if run is None:
         raise HTTPException(status_code=404, detail="No active coding-agent run for this chat session")
 
-    queued_count = await queue_service.count_queued_prompts(chat_session_id=session.id)
     status = run.status.value if hasattr(run.status, "value") else str(run.status)
     return CodingAgentActiveRunResponse(
         run_id=str(run.id),
         status=status,
-        queued_prompt_count=queued_count,
     )
-
-
-@router.get(
-    "/{app_id}/coding-agent/v2/chat-sessions/{session_id}/queue",
-    response_model=List[CodingAgentPromptQueueItemResponse],
-)
-async def list_coding_agent_chat_session_queue(
-    app_id: UUID,
-    session_id: UUID,
-    request: Request,
-    _: Dict[str, Any] = Depends(require_scopes("apps.read")),
-    principal: Dict[str, Any] = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-    actor = ctx.get("user")
-    actor_id = actor.id if actor else None
-    if actor_id is None:
-        return []
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    history_service = PublishedAppCodingChatHistoryService(db)
-    session = await history_service.get_session_for_user(
-        app_id=app.id,
-        user_id=actor_id,
-        session_id=session_id,
-    )
-    if session is None:
-        return []
-
-    queue_service = PublishedAppCodingQueueService(db)
-    items = await queue_service.list_queue_items(
-        app_id=app.id,
-        user_id=actor_id,
-        chat_session_id=session.id,
-    )
-    return [CodingAgentPromptQueueItemResponse(**queue_service.serialize_queue_item(item)) for item in items]
-
-
-@router.delete(
-    "/{app_id}/coding-agent/v2/chat-sessions/{session_id}/queue/{queue_item_id}",
-    response_model=CodingAgentQueueDeleteResponse,
-)
-async def delete_coding_agent_chat_session_queue_item(
-    app_id: UUID,
-    session_id: UUID,
-    queue_item_id: UUID,
-    request: Request,
-    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
-    principal: Dict[str, Any] = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-    actor = ctx.get("user")
-    actor_id = actor.id if actor else None
-    if actor_id is None:
-        raise HTTPException(status_code=403, detail="User context is required for coding-agent queue updates")
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    history_service = PublishedAppCodingChatHistoryService(db)
-    session = await history_service.get_session_for_user(
-        app_id=app.id,
-        user_id=actor_id,
-        session_id=session_id,
-    )
-    if session is None:
-        raise HTTPException(status_code=404, detail="Coding-agent chat session not found")
-
-    queue_service = PublishedAppCodingQueueService(db)
-    removed = await queue_service.remove_queue_item(
-        app_id=app.id,
-        user_id=actor_id,
-        chat_session_id=session.id,
-        queue_item_id=queue_item_id,
-    )
-    if not removed:
-        raise HTTPException(status_code=404, detail="Queued prompt not found")
-    return CodingAgentQueueDeleteResponse(status="removed", id=str(queue_item_id))
 
 
 @router.get("/{app_id}/coding-agent/v2/checkpoints", response_model=List[CodingAgentCheckpointResponse])

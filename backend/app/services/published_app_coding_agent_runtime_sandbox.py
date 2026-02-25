@@ -10,13 +10,15 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import and_, func, or_, select
 
-from app.db.postgres.models.agents import AgentRun
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSessionStatus,
     PublishedAppRevision,
 )
+from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,30 @@ _WORKSPACE_WRITE_TOOL_HINTS = (
 
 
 class PublishedAppCodingAgentRuntimeSandboxMixin:
+    async def _count_active_runs_for_scope(
+        self,
+        *,
+        app_id: UUID,
+        actor_id: UUID,
+        exclude_run_id: UUID | None = None,
+    ) -> int:
+        conditions = [
+            AgentRun.surface == CODING_AGENT_SURFACE,
+            AgentRun.published_app_id == app_id,
+            or_(
+                AgentRun.initiator_user_id == actor_id,
+                and_(
+                    AgentRun.initiator_user_id.is_(None),
+                    AgentRun.user_id == actor_id,
+                ),
+            ),
+            AgentRun.status.in_([RunStatus.queued, RunStatus.running]),
+        ]
+        if exclude_run_id is not None:
+            conditions.append(AgentRun.id != exclude_run_id)
+        result = await self.db.execute(select(func.count(AgentRun.id)).where(and_(*conditions)))
+        return int(result.scalar() or 0)
+
     @staticmethod
     def _local_telemetry_file_path() -> Path | None:
         raw = str(os.getenv("APPS_CODING_AGENT_LOCAL_TELEMETRY_FILE_PATH") or "").strip()
@@ -108,6 +134,54 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
             return False
         return any(hint in tool_name for hint in _WORKSPACE_WRITE_TOOL_HINTS)
 
+    async def _prepare_run_stage_workspace_context(
+        self,
+        *,
+        run: AgentRun,
+        runtime_service: PublishedAppDraftDevRuntimeService,
+        sandbox_id: str,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        actor_id = run.initiator_user_id or run.user_id
+        active_count = 0
+        if run.published_app_id is not None and actor_id is not None:
+            active_count = await self._count_active_runs_for_scope(
+                app_id=run.published_app_id,
+                actor_id=actor_id,
+                exclude_run_id=run.id,
+            )
+        should_reset_stage = active_count <= 0
+        stage_prepare_started_at = time.monotonic()
+        try:
+            stage_payload = await runtime_service.client.prepare_stage_workspace(
+                sandbox_id=sandbox_id,
+                reset=should_reset_stage,
+            )
+        except Exception as exc:
+            return None, f"Failed to prepare run workspace: {exc}"
+        stage_prepare_ms = max(0, int((time.monotonic() - stage_prepare_started_at) * 1000))
+        live_workspace_path = str(stage_payload.get("live_workspace_path") or "").strip()
+        if not live_workspace_path:
+            live_workspace_path = str(
+                await runtime_service.client.resolve_local_workspace_path(sandbox_id=sandbox_id) or ""
+            ).strip()
+        stage_workspace_path = str(
+            stage_payload.get("stage_workspace_path")
+            or stage_payload.get("workspace_path")
+            or live_workspace_path
+            or "/workspace"
+        ).strip()
+        return (
+            {
+                "preview_workspace_live_path": live_workspace_path or "/workspace",
+                "preview_workspace_stage_path": stage_workspace_path,
+                "opencode_sandbox_id": sandbox_id,
+                "opencode_workspace_path": stage_workspace_path,
+                "stage_prepare_ms": stage_prepare_ms,
+                "stage_prepare_reset": should_reset_stage,
+            },
+            None,
+        )
+
     async def _ensure_run_sandbox_context(
         self,
         *,
@@ -136,22 +210,8 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
                 f"Failed to initialize preview sandbox session: {session.last_error or 'unknown error'}"
             )
         sandbox_id = str(session.sandbox_id)
-        stage_prepare_started_at = time.monotonic()
-        stage_payload = await runtime_service.client.prepare_stage_workspace(
-            sandbox_id=sandbox_id,
-            run_id=str(run.id),
-        )
-        stage_prepare_ms = max(0, int((time.monotonic() - stage_prepare_started_at) * 1000))
-        live_workspace_path = str(stage_payload.get("live_workspace_path") or "").strip()
-        if not live_workspace_path:
-            live_workspace_path = (
-                str(await runtime_service.client.resolve_local_workspace_path(sandbox_id=sandbox_id) or "").strip()
-            )
-        stage_workspace_path = str(
-            stage_payload.get("stage_workspace_path")
-            or stage_payload.get("workspace_path")
-            or live_workspace_path
-            or "/workspace"
+        live_workspace_path = str(
+            await runtime_service.client.resolve_local_workspace_path(sandbox_id=sandbox_id) or ""
         ).strip()
         started_at = datetime.now(timezone.utc).isoformat()
         context = self._run_context(run)
@@ -159,16 +219,16 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
         context["preview_sandbox_status"] = status
         context["preview_sandbox_started_at"] = started_at
         context["preview_workspace_live_path"] = live_workspace_path or "/workspace"
-        context["preview_workspace_stage_path"] = stage_workspace_path
+        context.pop("preview_workspace_stage_path", None)
+        context["opencode_sandbox_id"] = sandbox_id
+        context.pop("opencode_workspace_path", None)
         return {
             "preview_sandbox_id": sandbox_id,
             "preview_sandbox_status": status,
             "preview_sandbox_started_at": started_at,
             "preview_workspace_live_path": live_workspace_path or "/workspace",
-            "preview_workspace_stage_path": stage_workspace_path,
             "opencode_sandbox_id": sandbox_id,
-            "opencode_workspace_path": stage_workspace_path,
-            "stage_prepare_ms": stage_prepare_ms,
+            "stage_prepare_ms": 0,
         }
 
     async def _recover_or_bootstrap_run_sandbox_context(
@@ -185,7 +245,22 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
                 context["opencode_sandbox_id"] = sandbox_id
                 changed = True
             stage_workspace_path = str(context.get("preview_workspace_stage_path") or "").strip()
-            if stage_workspace_path and not str(context.get("opencode_workspace_path") or "").strip():
+            opencode_workspace_path = str(context.get("opencode_workspace_path") or "").strip()
+            if not stage_workspace_path or not opencode_workspace_path:
+                runtime_service = PublishedAppDraftDevRuntimeService(self.db)
+                stage_context, stage_error = await self._prepare_run_stage_workspace_context(
+                    run=run,
+                    runtime_service=runtime_service,
+                    sandbox_id=sandbox_id,
+                )
+                if stage_error:
+                    return None, f"Preview sandbox session is required before execution ({stage_error})."
+                if stage_context:
+                    context.update(stage_context)
+                    changed = True
+                    stage_workspace_path = str(context.get("preview_workspace_stage_path") or "").strip()
+                    opencode_workspace_path = str(context.get("opencode_workspace_path") or "").strip()
+            if stage_workspace_path and not opencode_workspace_path:
                 context["opencode_workspace_path"] = stage_workspace_path
                 changed = True
             if changed:
@@ -216,8 +291,19 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
         except Exception as exc:
             return None, f"Preview sandbox session is required before execution ({exc})."
 
-        await self.db.commit()
+        runtime_service = PublishedAppDraftDevRuntimeService(self.db)
         sandbox_id = str(context.get("preview_sandbox_id") or "").strip()
+        if sandbox_id:
+            stage_context, stage_error = await self._prepare_run_stage_workspace_context(
+                run=run,
+                runtime_service=runtime_service,
+                sandbox_id=sandbox_id,
+            )
+            if stage_error:
+                return None, f"Preview sandbox session is required before execution ({stage_error})."
+            if stage_context:
+                context.update(stage_context)
+        await self.db.commit()
         if sandbox_id:
             return sandbox_id, None
         return None, "Preview sandbox session is required before execution."

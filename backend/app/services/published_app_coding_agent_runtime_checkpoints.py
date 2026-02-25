@@ -189,8 +189,6 @@ class PublishedAppCodingAgentRuntimeCheckpointsMixin:
         input_params = run.input_params if isinstance(run.input_params, dict) else {}
         context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         preview_sandbox_id = str(context.get("preview_sandbox_id") or "").strip()
-        run_scope_id = str(run.id)
-
         if not preview_sandbox_id:
             logger.info("CODING_AGENT_CHECKPOINT resolve_sandbox_from_session run_id=%s app_id=%s", run.id, app.id)
             try:
@@ -224,7 +222,6 @@ class PublishedAppCodingAgentRuntimeCheckpointsMixin:
             snapshot = await runtime_service.client.snapshot_workspace(
                 sandbox_id=preview_sandbox_id,
                 workspace="stage",
-                run_id=run_scope_id,
             )
         except Exception as exc:
             logger.warning(
@@ -235,12 +232,11 @@ class PublishedAppCodingAgentRuntimeCheckpointsMixin:
             )
             await runtime_service.client.prepare_stage_workspace(
                 sandbox_id=preview_sandbox_id,
-                run_id=run_scope_id,
+                reset=False,
             )
             snapshot = await runtime_service.client.snapshot_workspace(
                 sandbox_id=preview_sandbox_id,
                 workspace="stage",
-                run_id=run_scope_id,
             )
 
         raw_files = snapshot.get("files")
@@ -284,7 +280,6 @@ class PublishedAppCodingAgentRuntimeCheckpointsMixin:
         logger.info("CODING_AGENT_CHECKPOINT promote_stage_begin run_id=%s sandbox_id=%s", run.id, preview_sandbox_id)
         await runtime_service.client.promote_stage_workspace(
             sandbox_id=preview_sandbox_id,
-            run_id=run_scope_id,
         )
         self._set_timing_metric_value(
             run,
@@ -294,7 +289,6 @@ class PublishedAppCodingAgentRuntimeCheckpointsMixin:
         live_snapshot = await runtime_service.client.snapshot_workspace(
             sandbox_id=preview_sandbox_id,
             workspace="live",
-            run_id=run_scope_id,
         )
         live_raw_files = live_snapshot.get("files")
         if not isinstance(live_raw_files, dict):

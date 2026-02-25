@@ -87,6 +87,18 @@ class PublishedAppDraftDevRuntimeClient:
     def is_remote_enabled(self) -> bool:
         return bool(self._config.controller_url)
 
+    @staticmethod
+    def _operation_timeout_seconds(env_name: str, fallback_seconds: float) -> float:
+        raw = (os.getenv(env_name) or "").strip()
+        if raw:
+            try:
+                parsed = float(raw)
+                if parsed > 0:
+                    return parsed
+            except Exception:
+                pass
+        return float(fallback_seconds)
+
     async def start_session(
         self,
         *,
@@ -133,7 +145,16 @@ class PublishedAppDraftDevRuntimeClient:
             "dependency_hash": dependency_hash,
             "draft_dev_token": draft_dev_token,
         }
-        response = await self._request("POST", "/sessions/start", json=payload)
+        start_timeout_seconds = self._operation_timeout_seconds(
+            "APPS_DRAFT_DEV_CONTROLLER_START_TIMEOUT_SECONDS",
+            max(float(self._config.request_timeout_seconds), 120.0),
+        )
+        response = await self._request(
+            "POST",
+            "/sessions/start",
+            json=payload,
+            timeout_seconds=start_timeout_seconds,
+        )
         workspace_path = str(response.get("workspace_path") or "").strip()
         result: Dict[str, Any] = {
             "sandbox_id": str(response.get("sandbox_id") or session_id),
@@ -175,7 +196,16 @@ class PublishedAppDraftDevRuntimeClient:
             "dependency_hash": dependency_hash,
             "install_dependencies": install_dependencies,
         }
-        response = await self._request("PATCH", f"/sessions/{sandbox_id}/sync", json=payload)
+        sync_timeout_seconds = self._operation_timeout_seconds(
+            "APPS_DRAFT_DEV_CONTROLLER_SYNC_TIMEOUT_SECONDS",
+            max(float(self._config.request_timeout_seconds), 90.0),
+        )
+        response = await self._request(
+            "PATCH",
+            f"/sessions/{sandbox_id}/sync",
+            json=payload,
+            timeout_seconds=sync_timeout_seconds,
+        )
         return {
             "status": str(response.get("status") or "running"),
             "sandbox_id": str(response.get("sandbox_id") or sandbox_id),
@@ -399,13 +429,13 @@ class PublishedAppDraftDevRuntimeClient:
             raise PublishedAppDraftDevRuntimeClientError("Sandbox snapshot requires embedded runtime or remote controller")
         return await self._request("GET", f"/sessions/{sandbox_id}/files/snapshot", json={})
 
-    async def prepare_stage_workspace(self, *, sandbox_id: str, run_id: str) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"run_id": str(run_id)}
+    async def prepare_stage_workspace(self, *, sandbox_id: str, reset: bool) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"reset": bool(reset)}
         if not self.is_remote_enabled:
             if self._config.embedded_local_enabled:
                 manager = get_local_draft_dev_runtime_manager()
                 try:
-                    return await manager.prepare_stage_workspace(sandbox_id=sandbox_id, run_id=str(run_id))
+                    return await manager.prepare_stage_workspace(sandbox_id=sandbox_id, reset=bool(reset))
                 except LocalDraftDevRuntimeError as exc:
                     raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
             raise PublishedAppDraftDevRuntimeClientError(
@@ -418,11 +448,8 @@ class PublishedAppDraftDevRuntimeClient:
         *,
         sandbox_id: str,
         workspace: str = "live",
-        run_id: str | None = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"workspace": str(workspace or "live")}
-        if run_id:
-            payload["run_id"] = str(run_id)
         if not self.is_remote_enabled:
             if self._config.embedded_local_enabled:
                 manager = get_local_draft_dev_runtime_manager()
@@ -430,7 +457,6 @@ class PublishedAppDraftDevRuntimeClient:
                     return await manager.snapshot_workspace(
                         sandbox_id=sandbox_id,
                         workspace=str(workspace or "live"),
-                        run_id=(str(run_id) if run_id else None),
                     )
                 except LocalDraftDevRuntimeError as exc:
                     raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
@@ -439,13 +465,13 @@ class PublishedAppDraftDevRuntimeClient:
             )
         return await self._request("POST", f"/sessions/{sandbox_id}/stage/snapshot", json=payload)
 
-    async def promote_stage_workspace(self, *, sandbox_id: str, run_id: str) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"run_id": str(run_id)}
+    async def promote_stage_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
         if not self.is_remote_enabled:
             if self._config.embedded_local_enabled:
                 manager = get_local_draft_dev_runtime_manager()
                 try:
-                    return await manager.promote_stage_workspace(sandbox_id=sandbox_id, run_id=str(run_id))
+                    return await manager.promote_stage_workspace(sandbox_id=sandbox_id)
                 except LocalDraftDevRuntimeError as exc:
                     raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
             raise PublishedAppDraftDevRuntimeClientError(

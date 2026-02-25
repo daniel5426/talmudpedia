@@ -10,7 +10,6 @@ import pytest_asyncio
 from sqlalchemy import select
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.published_apps import PublishedAppCodingPromptQueue, PublishedAppCodingPromptQueueStatus
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
@@ -101,7 +100,7 @@ def _install_fake_create_run(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_v2_submit_prompt_started_then_queued(client, db_session, monkeypatch):
+async def test_v2_submit_prompt_started_then_run_active(client, db_session, monkeypatch):
     _install_fake_create_run(monkeypatch)
 
     async def _no_monitor(self, *, app_id, run_id):
@@ -135,106 +134,11 @@ async def test_v2_submit_prompt_started_then_queued(client, db_session, monkeypa
             "chat_session_id": chat_session_id,
         },
     )
-    assert second_resp.status_code == 200
-    second_payload = second_resp.json()
-    assert second_payload["submission_status"] == "queued"
+    assert second_resp.status_code == 409
+    second_payload = second_resp.json().get("detail") or {}
+    assert second_payload["code"] == "CODING_AGENT_RUN_ACTIVE"
     assert second_payload["active_run_id"] == run_payload["run_id"]
-    assert second_payload["queue_item"]["chat_session_id"] == chat_session_id
-
-
-@pytest.mark.asyncio
-async def test_v2_monitor_dispatches_next_queued_without_stream(client, db_session, monkeypatch):
-    _install_fake_create_run(monkeypatch)
-
-    started = asyncio.Event()
-    release_terminal = asyncio.Event()
-    terminal_run_id: str | None = None
-
-    async def _fake_stream_run_events(self, *, app, run, resume_payload=None):
-        _ = app, resume_payload
-        nonlocal terminal_run_id
-        if terminal_run_id is None:
-            terminal_run_id = str(run.id)
-            started.set()
-            yield {
-                "event": "run.accepted",
-                "stage": "run",
-                "payload": {"status": "queued"},
-                "diagnostics": [],
-            }
-            await release_terminal.wait()
-            run.status = RunStatus.completed
-            run.completed_at = datetime.now(timezone.utc)
-            await self.db.commit()
-            yield {
-                "event": "run.completed",
-                "stage": "run",
-                "payload": self.serialize_run(run),
-                "diagnostics": [],
-            }
-            return
-
-        run.status = RunStatus.completed
-        run.completed_at = datetime.now(timezone.utc)
-        await self.db.commit()
-        yield {
-            "event": "run.completed",
-            "stage": "run",
-            "payload": self.serialize_run(run),
-            "diagnostics": [],
-        }
-
-    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "stream_run_events", _fake_stream_run_events)
-
-    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, _ = await _create_app_and_draft_revision(client, headers, str(agent.id))
-
-    first_resp = await client.post(
-        f"/admin/apps/{app_id}/coding-agent/v2/prompts",
-        headers=headers,
-        json={"input": "Run one"},
-    )
-    assert first_resp.status_code == 200
-    first_payload = first_resp.json()
-    assert first_payload["submission_status"] == "started"
-    chat_session_id = first_payload["run"]["chat_session_id"]
-    assert chat_session_id
-
-    await asyncio.wait_for(started.wait(), timeout=2.0)
-
-    queued_resp = await client.post(
-        f"/admin/apps/{app_id}/coding-agent/v2/prompts",
-        headers=headers,
-        json={"input": "Run two", "chat_session_id": chat_session_id},
-    )
-    assert queued_resp.status_code == 200
-    queued_payload = queued_resp.json()
-    assert queued_payload["submission_status"] == "queued"
-
-    release_terminal.set()
-
-    for _ in range(40):
-        await asyncio.sleep(0.05)
-        runs = (
-            await db_session.execute(
-                select(AgentRun)
-                .where(AgentRun.published_app_id == UUID(app_id), AgentRun.surface == CODING_AGENT_SURFACE)
-                .order_by(AgentRun.created_at.asc())
-            )
-        ).scalars().all()
-        if len(runs) >= 2:
-            break
-    else:
-        raise AssertionError("Expected queued prompt dispatch to start a second run")
-
-    queue_items = (
-        await db_session.execute(
-            select(PublishedAppCodingPromptQueue).where(PublishedAppCodingPromptQueue.chat_session_id == UUID(chat_session_id))
-        )
-    ).scalars().all()
-    assert queue_items
-    assert any(item.status == PublishedAppCodingPromptQueueStatus.completed for item in queue_items)
+    assert second_payload["chat_session_id"] == chat_session_id
 
 
 @pytest.mark.asyncio
@@ -297,6 +201,17 @@ async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(cl
     )
     assert old_route_resp.status_code == 404
 
+    removed_queue_list = await client.get(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{uuid4()}/queue",
+        headers=headers,
+    )
+    assert removed_queue_list.status_code == 404
+    removed_queue_delete = await client.delete(
+        f"/admin/apps/{app_id}/coding-agent/v2/chat-sessions/{uuid4()}/queue/{uuid4()}",
+        headers=headers,
+    )
+    assert removed_queue_delete.status_code == 404
+
 
 @pytest.mark.asyncio
 async def test_v2_answer_question_endpoint(client, db_session, monkeypatch):
@@ -355,7 +270,7 @@ async def test_v2_answer_question_endpoint(client, db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_v2_cancel_marks_cancelled_and_dispatches_next(client, db_session, monkeypatch):
+async def test_v2_cancel_marks_cancelled(client, db_session, monkeypatch):
     _install_fake_create_run(monkeypatch)
 
     async def _hanging_stream(self, *, app, run, resume_payload=None):
@@ -396,14 +311,6 @@ async def test_v2_cancel_marks_cancelled_and_dispatches_next(client, db_session,
     run_id = first_payload["run"]["run_id"]
     chat_session_id = first_payload["run"]["chat_session_id"]
 
-    queued_resp = await client.post(
-        f"/admin/apps/{app_id}/coding-agent/v2/prompts",
-        headers=headers,
-        json={"input": "Queued follow-up", "chat_session_id": chat_session_id},
-    )
-    assert queued_resp.status_code == 200
-    assert queued_resp.json()["submission_status"] == "queued"
-
     cancel_resp = await client.post(
         f"/admin/apps/{app_id}/coding-agent/v2/runs/{run_id}/cancel",
         headers=headers,
@@ -412,19 +319,14 @@ async def test_v2_cancel_marks_cancelled_and_dispatches_next(client, db_session,
     assert cancel_resp.status_code == 200
     assert cancel_resp.json()["status"] == "cancelled"
 
-    for _ in range(40):
-        await asyncio.sleep(0.05)
-        runs = (
-            await db_session.execute(
-                select(AgentRun)
-                .where(AgentRun.published_app_id == UUID(app_id), AgentRun.surface == CODING_AGENT_SURFACE)
-                .order_by(AgentRun.created_at.asc())
-            )
-        ).scalars().all()
-        if len(runs) >= 2:
-            break
-    else:
-        raise AssertionError("Expected queued prompt to start after cancel")
+    runs = (
+        await db_session.execute(
+            select(AgentRun)
+            .where(AgentRun.published_app_id == UUID(app_id), AgentRun.surface == CODING_AGENT_SURFACE)
+            .order_by(AgentRun.created_at.asc())
+        )
+    ).scalars().all()
+    assert len(runs) == 1
 
 
 @pytest.mark.asyncio

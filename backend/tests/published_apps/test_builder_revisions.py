@@ -4,9 +4,11 @@ from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.routers.published_apps_admin import BUILDER_MAX_FILE_BYTES
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSession, PublishedAppDraftDevSessionStatus
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 
@@ -290,6 +292,76 @@ async def test_draft_dev_ensure_session_recovers_from_concurrent_scope_insert(db
     assert get_session_calls["count"] >= 2
     assert session.status == PublishedAppDraftDevSessionStatus.running
     assert session.sandbox_id == "sandbox-existing"
+
+
+@pytest.mark.asyncio
+async def test_draft_dev_sync_rejects_when_coding_run_active(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Draft Dev Sync Lock App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    state_payload = state_resp.json()
+    current_draft = state_payload["current_draft_revision"]
+
+    ensure_resp = await client.post(
+        f"/admin/apps/{app_id}/builder/draft-dev/session/ensure",
+        headers=headers,
+        json={},
+    )
+    assert ensure_resp.status_code == 200
+
+    session_result = await db_session.execute(
+        select(PublishedAppDraftDevSession).where(
+            PublishedAppDraftDevSession.published_app_id == UUID(app_id),
+            PublishedAppDraftDevSession.user_id == user.id,
+        )
+    )
+    session = session_result.scalar_one_or_none()
+    assert session is not None
+
+    active_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        surface="published_app_coding_agent",
+        published_app_id=UUID(app_id),
+        base_revision_id=UUID(current_draft["id"]),
+        input_params={"context": {"chat_session_id": "session-lock-test"}},
+        execution_engine="opencode",
+    )
+    db_session.add(active_run)
+    await db_session.commit()
+
+    sync_resp = await client.patch(
+        f"/admin/apps/{app_id}/builder/draft-dev/session/sync",
+        headers=headers,
+        json={
+            "files": current_draft["files"],
+            "entry_file": current_draft["entry_file"],
+            "revision_id": current_draft["id"],
+        },
+    )
+    assert sync_resp.status_code == 409
+    detail = sync_resp.json()["detail"]
+    assert detail["code"] == "CODING_AGENT_RUN_ACTIVE"
+    assert detail["active_coding_run_count"] >= 1
 
 
 @pytest.mark.asyncio

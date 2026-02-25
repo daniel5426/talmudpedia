@@ -135,6 +135,9 @@ class AgentRun(Base):
     resolved_model_id = Column(UUID(as_uuid=True), ForeignKey("model_registry.id", ondelete="SET NULL"), nullable=True, index=True)
     execution_engine = Column(String, nullable=False, default="opencode", server_default=text("'opencode'"), index=True)
     engine_run_ref = Column(String, nullable=True)
+    has_workspace_writes = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    batch_finalized_at = Column(DateTime(timezone=True), nullable=True)
+    batch_owner = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     # Orchestration lineage and idempotency
     root_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -168,6 +171,14 @@ class AgentRun(Base):
         UniqueConstraint("parent_run_id", "spawn_key", name="uq_agent_runs_parent_spawn_key"),
         Index("ix_agent_runs_root_created_at", "root_run_id", "created_at"),
         Index("ix_agent_runs_parent_created_at", "parent_run_id", "created_at"),
+        Index(
+            "ix_agent_runs_coding_scope_status_created_at",
+            "surface",
+            "published_app_id",
+            "initiator_user_id",
+            "status",
+            "created_at",
+        ),
     )
 
 

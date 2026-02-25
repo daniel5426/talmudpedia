@@ -2,10 +2,11 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, Request
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres.models.agents import Agent, AgentStatus
+from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import OrgMembership, OrgRole
 from app.db.postgres.models.published_apps import (
     PublishedApp,
@@ -21,6 +22,9 @@ from app.services.published_app_templates import build_template_files, get_templ
 
 from .published_apps_admin_builder_core import _next_build_seq
 from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify
+
+CODING_AGENT_SURFACE = "published_app_coding_agent"
+
 
 async def _resolve_tenant_admin_context(
     request: Request,
@@ -169,14 +173,61 @@ async def _get_draft_dev_session_for_scope(
     user_id: UUID,
 ) -> Optional[PublishedAppDraftDevSession]:
     result = await db.execute(
-        select(PublishedAppDraftDevSession).where(
+        select(PublishedAppDraftDevSession)
+        .options(
+            load_only(
+                PublishedAppDraftDevSession.id,
+                PublishedAppDraftDevSession.published_app_id,
+                PublishedAppDraftDevSession.user_id,
+                PublishedAppDraftDevSession.revision_id,
+                PublishedAppDraftDevSession.status,
+                PublishedAppDraftDevSession.sandbox_id,
+                PublishedAppDraftDevSession.preview_url,
+                PublishedAppDraftDevSession.idle_timeout_seconds,
+                PublishedAppDraftDevSession.expires_at,
+                PublishedAppDraftDevSession.last_activity_at,
+                PublishedAppDraftDevSession.dependency_hash,
+                PublishedAppDraftDevSession.last_error,
+                PublishedAppDraftDevSession.created_at,
+                PublishedAppDraftDevSession.updated_at,
+            )
+        )
+        .where(
             and_(
                 PublishedAppDraftDevSession.published_app_id == app_id,
                 PublishedAppDraftDevSession.user_id == user_id,
             )
-        ).limit(1)
+        )
+        .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _count_active_coding_runs_for_scope(
+    db: AsyncSession,
+    *,
+    app_id: UUID,
+    user_id: UUID | None,
+) -> int:
+    if user_id is None:
+        return 0
+    result = await db.execute(
+        select(func.count(AgentRun.id)).where(
+            and_(
+                AgentRun.surface == CODING_AGENT_SURFACE,
+                AgentRun.published_app_id == app_id,
+                or_(
+                    AgentRun.initiator_user_id == user_id,
+                    and_(
+                        AgentRun.initiator_user_id.is_(None),
+                        AgentRun.user_id == user_id,
+                    ),
+                ),
+                AgentRun.status.in_([RunStatus.queued, RunStatus.running]),
+            )
+        )
+    )
+    return int(result.scalar() or 0)
 
 
 async def _get_publish_job_for_app(

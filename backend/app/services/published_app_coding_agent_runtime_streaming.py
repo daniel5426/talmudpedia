@@ -20,6 +20,8 @@ _TERMINAL_RUN_STATUSES = {
 
 
 class PublishedAppCodingAgentRuntimeStreamingMixin:
+    _HISTORY_TOOL_EVENTS_MAX = 300
+
     def _envelope(
         self,
         *,
@@ -171,6 +173,37 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             content=text,
         )
 
+    async def _persist_tool_event_for_history(
+        self,
+        *,
+        run: AgentRun,
+        event: str,
+        stage: str,
+        payload: dict[str, Any] | None = None,
+        diagnostics: list[dict[str, Any]] | None = None,
+    ) -> None:
+        if event not in {"tool.started", "tool.completed", "tool.failed"}:
+            return
+        persisted = await self.db.get(AgentRun, run.id) or run
+        output_result = dict(persisted.output_result) if isinstance(persisted.output_result, dict) else {}
+        events = output_result.get("tool_events")
+        if not isinstance(events, list):
+            events = []
+        events.append(
+            {
+                "event": event,
+                "stage": str(stage or "tool"),
+                "payload": dict(payload or {}),
+                "diagnostics": list(diagnostics or []),
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        if len(events) > self._HISTORY_TOOL_EVENTS_MAX:
+            events = events[-self._HISTORY_TOOL_EVENTS_MAX :]
+        output_result["tool_events"] = events
+        persisted.output_result = output_result
+        await self.db.commit()
+
     async def stream_run_events(
         self,
         *,
@@ -187,6 +220,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         assistant_delta_events = 0
         assistant_message_persisted = False
         saw_write_tool_event = False
+        write_flag_persisted = False
 
         def emit(
             event: str,
@@ -233,6 +267,17 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 run_id=run.id,
             )
             await self.db.commit()
+
+        async def persist_workspace_write_flag() -> None:
+            nonlocal write_flag_persisted, run
+            if write_flag_persisted:
+                return
+            persisted = await self.db.get(AgentRun, run_id) or run
+            if not bool(getattr(persisted, "has_workspace_writes", False)):
+                persisted.has_workspace_writes = True
+                await self.db.commit()
+            run = persisted
+            write_flag_persisted = True
 
         yield emit(
             "run.accepted",
@@ -334,6 +379,15 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
 
                 if self._is_workspace_write_tool_event(event=mapped_event, payload=payload):
                     saw_write_tool_event = True
+                    await persist_workspace_write_flag()
+                if mapped_event in {"tool.started", "tool.completed", "tool.failed"}:
+                    await self._persist_tool_event_for_history(
+                        run=run,
+                        event=mapped_event,
+                        stage=stage,
+                        payload=payload,
+                        diagnostics=diagnostics,
+                    )
                 yield emit(mapped_event, stage, payload, diagnostics)
 
             run = await self.db.get(AgentRun, run_id) or run

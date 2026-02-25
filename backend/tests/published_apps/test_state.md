@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-02-23
+Last Updated: 2026-02-24
 
 ## Scope of the feature
 - Admin control plane CRUD and publish lifecycle for tenant published apps.
@@ -50,6 +50,7 @@ Last Updated: 2026-02-23
 - Publish endpoint returns async job metadata and publish jobs move through `queued/running/succeeded/failed`.
 - Publish failures keep previous `current_published_revision_id` unchanged.
 - Draft-dev session APIs support ensure/sync/heartbeat/read/stop lifecycle per `(app_id, user_id)`.
+- Draft-dev sync now rejects while a coding-agent run is active for the same builder scope (`CODING_AGENT_RUN_ACTIVE` lock).
 - Draft-dev ensure/heartbeat responses return tokenless `preview_url` (runtime routing params only) plus off-URL auth fields (`preview_auth_token`, `preview_auth_expires_at`).
 - Draft-dev ensure path tolerates concurrent `(published_app_id, user_id)` insert races (unique-scope collision) and reuses the winning session row instead of failing with 500.
 - Public runtime descriptor and preview runtime/asset endpoints are covered.
@@ -69,6 +70,9 @@ Last Updated: 2026-02-23
 - Legacy builder chat endpoints (`/builder/chat/stream`, `/builder/checkpoints`, `/builder/undo`, `/builder/revert-file`) are intentionally removed and are no longer part of this suite.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_builder_revisions.py::test_draft_dev_sync_rejects_when_coding_run_active tests/coding_agent_api/test_v2_api.py::test_v2_submit_prompt_started_then_queued tests/coding_agent_api/test_v2_api.py::test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404`
+- Date: 2026-02-24
+- Result: PASS (3 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_builder_revisions.py`
 - Date: 2026-02-23
 - Result: PASS (11 passed, 6 warnings)

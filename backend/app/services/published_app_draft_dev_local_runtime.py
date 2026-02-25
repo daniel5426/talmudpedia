@@ -486,15 +486,20 @@ class LocalDraftDevRuntimeManager:
                 "revision_token": self._current_revision_token(state),
             }
 
-    async def prepare_stage_workspace(self, *, sandbox_id: str, run_id: str) -> Dict[str, object]:
+    async def prepare_stage_workspace(self, *, sandbox_id: str, reset: bool) -> Dict[str, object]:
         async with self._lock:
             state = self._require_running_session_locked(sandbox_id)
-            stage_workspace = self._stage_workspace_dir(project_dir=state.project_dir, run_id=run_id)
-            live_files = self._collect_workspace_files_from_root(state.project_dir)
-            await self._sync_files_locked(stage_workspace, live_files)
+            stage_workspace = self._stage_workspace_dir(project_dir=state.project_dir)
+            live_files: Dict[str, str] = {}
+            if bool(reset):
+                live_files = self._collect_workspace_files_from_root(state.project_dir)
+                await self._sync_files_locked(stage_workspace, live_files)
+            elif not stage_workspace.exists() or not stage_workspace.is_dir():
+                live_files = self._collect_workspace_files_from_root(state.project_dir)
+                await self._sync_files_locked(stage_workspace, live_files)
             return {
                 "sandbox_id": sandbox_id,
-                "run_id": str(run_id),
+                "reset": bool(reset),
                 "live_workspace_path": str(state.project_dir),
                 "stage_workspace_path": str(stage_workspace),
                 "workspace_path": str(stage_workspace),
@@ -507,16 +512,13 @@ class LocalDraftDevRuntimeManager:
         *,
         sandbox_id: str,
         workspace: str = "live",
-        run_id: str | None = None,
     ) -> Dict[str, object]:
         async with self._lock:
             state = self._require_running_session_locked(sandbox_id)
             workspace_key = str(workspace or "live").strip().lower() or "live"
             workspace_root = state.project_dir
             if workspace_key == "stage":
-                if not run_id:
-                    raise LocalDraftDevRuntimeError("run_id is required for stage workspace snapshot")
-                workspace_root = self._stage_workspace_dir(project_dir=state.project_dir, run_id=run_id)
+                workspace_root = self._stage_workspace_dir(project_dir=state.project_dir)
                 if not workspace_root.exists() or not workspace_root.is_dir():
                     raise LocalDraftDevRuntimeError("Stage workspace is not prepared")
             elif workspace_key != "live":
@@ -524,7 +526,6 @@ class LocalDraftDevRuntimeManager:
             files = self._collect_workspace_files_from_root(workspace_root)
             return {
                 "sandbox_id": sandbox_id,
-                "run_id": str(run_id or ""),
                 "workspace": workspace_key,
                 "workspace_path": str(workspace_root),
                 "files": files,
@@ -532,17 +533,16 @@ class LocalDraftDevRuntimeManager:
                 "revision_token": self._current_revision_token(state),
             }
 
-    async def promote_stage_workspace(self, *, sandbox_id: str, run_id: str) -> Dict[str, object]:
+    async def promote_stage_workspace(self, *, sandbox_id: str) -> Dict[str, object]:
         async with self._lock:
             state = self._require_running_session_locked(sandbox_id)
-            stage_workspace = self._stage_workspace_dir(project_dir=state.project_dir, run_id=run_id)
+            stage_workspace = self._stage_workspace_dir(project_dir=state.project_dir)
             if not stage_workspace.exists() or not stage_workspace.is_dir():
                 raise LocalDraftDevRuntimeError("Stage workspace is not prepared")
             stage_files = self._collect_workspace_files_from_root(stage_workspace)
             await self._sync_files_locked(state.project_dir, stage_files)
             return {
                 "sandbox_id": sandbox_id,
-                "run_id": str(run_id),
                 "live_workspace_path": str(state.project_dir),
                 "stage_workspace_path": str(stage_workspace),
                 "promoted_file_count": len(stage_files),
@@ -594,14 +594,8 @@ class LocalDraftDevRuntimeManager:
     def _preview_url(self, port: int, draft_dev_token: str) -> str:
         return f"http://{self._host}:{port}/?draft_dev_token={draft_dev_token}"
 
-    def _stage_workspace_dir(self, *, project_dir: Path, run_id: str) -> Path:
-        raw_run_id = str(run_id or "").strip()
-        if not raw_run_id:
-            raise LocalDraftDevRuntimeError("run_id is required")
-        safe_run_id = re.sub(r"[^A-Za-z0-9._-]+", "-", raw_run_id).strip("-")
-        if not safe_run_id:
-            raise LocalDraftDevRuntimeError("run_id is invalid")
-        return project_dir / ".talmudpedia" / "stage" / safe_run_id / "workspace"
+    def _stage_workspace_dir(self, *, project_dir: Path) -> Path:
+        return project_dir / ".talmudpedia" / "stage" / "shared" / "workspace"
 
     def _collect_workspace_files_from_root(self, workspace_root: Path) -> Dict[str, str]:
         files: Dict[str, str] = {}

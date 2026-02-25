@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
   PanelRightClose,
@@ -50,6 +50,7 @@ import {
 } from "./chat-model";
 import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import type { QueuedPrompt } from "./useAppsBuilderChat";
+import { useAppsBuilderChatThreadTabs } from "./useAppsBuilderChat.thread-tabs";
 
 type AppsBuilderChatPanelProps = {
   isOpen: boolean;
@@ -60,7 +61,10 @@ type AppsBuilderChatPanelProps = {
   timeline: TimelineItem[];
   activeThinkingSummary: string;
   chatSessions: CodingAgentChatSession[];
+  activeChatSessionId: string | null;
+  onActivateDraftChat: () => void;
   onStartNewChat: () => void;
+  onOpenHistory: () => void;
   onLoadChatSession: (sessionId: string) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
   onStopRun: () => void;
@@ -73,6 +77,10 @@ type AppsBuilderChatPanelProps = {
   queuedPrompts: QueuedPrompt[];
   pendingQuestion: CodingAgentPendingQuestion | null;
   isAnsweringQuestion: boolean;
+  runningSessionIds: string[];
+  hasOlderHistory: boolean;
+  isLoadingOlderHistory: boolean;
+  onLoadOlderHistory: () => Promise<void>;
   onRemoveQueuedPrompt: (promptId: string) => void;
   onAnswerQuestion: (answers: string[][]) => Promise<void>;
 };
@@ -86,7 +94,10 @@ export function AppsBuilderChatPanel({
   timeline,
   activeThinkingSummary,
   chatSessions,
+  activeChatSessionId,
+  onActivateDraftChat,
   onStartNewChat,
+  onOpenHistory,
   onLoadChatSession,
   onSendMessage,
   onStopRun,
@@ -99,6 +110,10 @@ export function AppsBuilderChatPanel({
   queuedPrompts,
   pendingQuestion,
   isAnsweringQuestion,
+  runningSessionIds,
+  hasOlderHistory,
+  isLoadingOlderHistory,
+  onLoadOlderHistory,
   onRemoveQueuedPrompt,
   onAnswerQuestion,
 }: AppsBuilderChatPanelProps) {
@@ -106,6 +121,43 @@ export function AppsBuilderChatPanel({
   const [questionStepIndex, setQuestionStepIndex] = useState(0);
   const [questionSelections, setQuestionSelections] = useState<Record<number, string[]>>({});
   const [questionCustomInput, setQuestionCustomInput] = useState<Record<number, string>>({});
+  const [isScrolled, setIsScrolled] = useState(false);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const isLoadingOlderRef = useRef(false);
+
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    if (!sentinel) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsScrolled(!entry.isIntersecting);
+        if (!entry.isIntersecting) {
+          return;
+        }
+        if (!hasOlderHistory || isLoadingOlderHistory || isLoadingOlderRef.current) {
+          return;
+        }
+        const scrollNode = sentinel.parentElement?.parentElement as HTMLElement | null;
+        const previousHeight = scrollNode?.scrollHeight || 0;
+        const previousTop = scrollNode?.scrollTop || 0;
+        isLoadingOlderRef.current = true;
+        void onLoadOlderHistory().finally(() => {
+          if (scrollNode) {
+            const nextHeight = scrollNode.scrollHeight;
+            scrollNode.scrollTop = nextHeight - previousHeight + previousTop;
+          }
+          isLoadingOlderRef.current = false;
+        });
+      },
+      { threshold: 0 }
+    );
+    observer.observe(sentinel);
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasOlderHistory, isLoadingOlderHistory, onLoadOlderHistory]);
+
   const hasRunningTool = useMemo(
     () => timeline.some((item) => isToolTimelineItem(item) && item.toolStatus === "running"),
     [timeline],
@@ -130,6 +182,22 @@ export function AppsBuilderChatPanel({
     }
     return false;
   }, [lastUserIndex, timeline]);
+  const {
+    threadTabs,
+    handleOpenThreadTab,
+    handleStartNewThreadTab,
+    handleActivateDraftThreadTab,
+    handleCloseThreadTab,
+    handleTabsWheel,
+  } = useAppsBuilderChatThreadTabs({
+    chatSessions,
+    activeChatSessionId,
+    timeline,
+    onActivateDraftChat,
+    onLoadChatSession,
+    onStartNewChat,
+  });
+  const runningSessionIdSet = useMemo(() => new Set(runningSessionIds), [runningSessionIds]);
 
   useEffect(() => {
     setQuestionStepIndex(0);
@@ -244,7 +312,7 @@ export function AppsBuilderChatPanel({
             <MessageContent className="relative">
               <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
               {renderUserDeliveryLabel(item.userDeliveryStatus) ? (
-                <div className="mt-1 text-[11px] text-muted-foreground">
+                <div className="mt-1 text-[9px] text-muted-foreground">
                   {renderUserDeliveryLabel(item.userDeliveryStatus)}
                 </div>
               ) : null}
@@ -364,29 +432,96 @@ export function AppsBuilderChatPanel({
 
   if (!isOpen) {
     return (
-      <div className="flex h-full w-10 shrink-0 flex-col items-center border-l border-border/60 bg-muted/20 pt-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => onOpenChange(true)}
-          aria-label="Open agent panel"
-        >
-          <Sparkles className="h-4 w-4" />
-        </Button>
+      <div className="flex h-full w-10 shrink-0 flex-col border-l border-border/60 bg-muted/20">
+        <div className="flex h-9 shrink-0 items-center justify-center border-b border-border/50">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => onOpenChange(true)}
+            aria-label="Open agent panel"
+          >
+            <Sparkles className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
     <aside className="flex h-full min-h-0 w-[430px] shrink-0 flex-col overflow-hidden border-l border-border/60 bg-background">
-      <div className="flex items-center justify-end gap-0.5 px-2 py-1.5">
+      <div className="relative z-10 flex h-7 pt-2 shrink-0 items-center gap-1 px-2 bg-background">
+        <div
+          className={cn(
+            "absolute inset-x-0 -bottom-6 h-6 bg-gradient-to-b from-background via-background/90 to-transparent pointer-events-none transition-opacity duration-300",
+            isScrolled ? "opacity-100" : "opacity-0"
+          )}
+        />
+        <div
+          className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          onWheel={handleTabsWheel}
+        >
+          <div className="flex w-max items-center gap-1 pr-2">
+            {threadTabs.map((session) => {
+              const isSessionTab = session.kind === "session" || session.kind === "provisional";
+              const sessionId = session.kind === "session"
+                ? session.session.id
+                : session.kind === "provisional"
+                  ? session.sessionId
+                  : "__draft__";
+              const sessionTitle = session.kind === "session" ? session.session.title : session.title;
+              const isActive = isSessionTab
+                ? activeChatSessionId === sessionId
+                : !activeChatSessionId;
+              return (
+                <div key={session.id} className="h-7.5 group/thread relative shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "h-7 max-w-[150px] shrink-0 gap-1 rounded-md px-2 text-[12px]",
+                      isActive ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={() => {
+                      if (session.kind === "draft") {
+                        handleActivateDraftThreadTab();
+                        return;
+                      }
+                      if (isSessionTab) {
+                        handleOpenThreadTab(sessionId);
+                        return;
+                      }
+                      handleStartNewThreadTab();
+                    }}
+                    aria-label={`Open chat ${sessionTitle}`}
+                  >
+                    <span className="truncate">{sessionTitle}</span>
+                    {isSessionTab && runningSessionIdSet.has(sessionId) ? (
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+                    ) : null}
+                  </Button>
+                  <button
+                    type="button"
+                    aria-label={`Close tab ${sessionTitle}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCloseThreadTab(sessionId);
+                    }}
+                    className="absolute inset-y-0 bg-muted right-1 my-auto flex h-4 w-4 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/thread:opacity-100"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
         <Button
           variant="ghost"
           size="icon"
           className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={onStartNewChat}
-          aria-label="New chat"
+          onClick={handleStartNewThreadTab}
+          aria-label="Create new chat"
         >
           <Plus className="h-3.5 w-3.5" />
         </Button>
@@ -394,7 +529,10 @@ export function AppsBuilderChatPanel({
           variant="ghost"
           size="icon"
           className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={() => setIsHistoryOpen(true)}
+          onClick={() => {
+            onOpenHistory();
+            setIsHistoryOpen(true);
+          }}
           aria-label="Chat history"
         >
           <Clock className="h-3.5 w-3.5" />
@@ -409,9 +547,13 @@ export function AppsBuilderChatPanel({
           <PanelRightClose className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
-        <Conversation className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 pt-1 flex-1 flex-col px-3 pb-3">
+        <Conversation className="flex min-h-0 flex-1 flex-col transition-all">
           <ConversationContent className="gap-2 px-0 py-0 pb-3">
+            <div ref={topSentinelRef} className="h-1 w-full shrink-0" />
+            {isLoadingOlderHistory ? (
+              <div className="py-1 text-center text-[11px] text-muted-foreground">Loading older messages...</div>
+            ) : null}
             {renderedTimeline}
             {isSending && !hasRunningTool && !hasCurrentRunAssistantStream ? (
               <Message from="assistant" className="max-w-full">
@@ -448,7 +590,7 @@ export function AppsBuilderChatPanel({
                     type="button"
                     aria-label="Remove queued prompt"
                     onClick={() => onRemoveQueuedPrompt(prompt.id)}
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground opacity-70 transition-colors hover:bg-accent hover:text-foreground"
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-sm bg-muted text-muted-foreground opacity-70 transition-colors hover:bg-accent hover:text-foreground"
                     title="Remove"
                   >
                     <X className="h-3 w-3" />
@@ -649,11 +791,19 @@ export function AppsBuilderChatPanel({
                       type="button"
                       className="w-full overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
                       onClick={() => {
-                        void onLoadChatSession(session.id);
+                        handleOpenThreadTab(session.id);
                         setIsHistoryOpen(false);
                       }}
                     >
-                      <div className="whitespace-normal text-sm leading-snug [overflow-wrap:anywhere]">{session.title}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="whitespace-normal text-sm leading-snug [overflow-wrap:anywhere]">{session.title}</div>
+                        {runningSessionIdSet.has(session.id) ? (
+                          <span
+                            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500"
+                            aria-label="Session has an active run"
+                          />
+                        ) : null}
+                      </div>
                       <div className="text-xs text-muted-foreground">
                         {new Date(session.last_message_at).toLocaleDateString()}
                       </div>

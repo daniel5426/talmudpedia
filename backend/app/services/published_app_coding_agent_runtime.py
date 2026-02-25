@@ -34,7 +34,6 @@ from app.services.published_app_coding_agent_profile import (
 from app.services.published_app_coding_agent_engines.base import PublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
-from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_agent_integration_contract import build_published_app_agent_integration_contract
 from app.services.opencode_server_client import OpenCodeServerClient
@@ -46,6 +45,12 @@ from app.services.published_app_coding_agent_runtime_streaming import PublishedA
 logger = logging.getLogger(__name__)
 
 CODING_AGENT_ENGINE_OPENCODE = "opencode"
+_TERMINAL_RUN_STATUSES = {
+    RunStatus.completed.value,
+    RunStatus.failed.value,
+    RunStatus.cancelled.value,
+    RunStatus.paused.value,
+}
 _WORKSPACE_WRITE_TOOL_HINTS = (
     "write",
     "edit",
@@ -541,6 +546,9 @@ class PublishedAppCodingAgentRuntimeService(
         run.base_revision_id = base_revision.id
         run.result_revision_id = None
         run.checkpoint_revision_id = None
+        run.has_workspace_writes = False
+        run.batch_finalized_at = None
+        run.batch_owner = False
         run.requested_model_id = requested_model_id
         run.resolved_model_id = resolved_model_id
         run.execution_engine = normalized_engine
@@ -620,6 +628,33 @@ class PublishedAppCodingAgentRuntimeService(
         )
         return list(result.scalars().all())
 
+    async def get_active_run_for_chat_session(
+        self,
+        *,
+        app_id: UUID,
+        chat_session_id: UUID,
+    ) -> AgentRun | None:
+        result = await self.db.execute(
+            select(AgentRun)
+            .where(
+                AgentRun.published_app_id == app_id,
+                AgentRun.surface == CODING_AGENT_SURFACE,
+            )
+            .order_by(AgentRun.created_at.desc())
+            .limit(200)
+        )
+        runs = list(result.scalars().all())
+        target_chat_session_id = str(chat_session_id)
+        for run in runs:
+            status = run.status.value if hasattr(run.status, "value") else str(run.status)
+            if status in _TERMINAL_RUN_STATUSES:
+                continue
+            input_params = run.input_params if isinstance(run.input_params, dict) else {}
+            context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+            if str(context.get("chat_session_id") or "").strip() == target_chat_session_id:
+                return run
+        return None
+
     async def get_run_for_app(self, *, app_id: UUID, run_id: UUID) -> AgentRun:
         result = await self.db.execute(
             select(AgentRun).where(
@@ -642,25 +677,8 @@ class PublishedAppCodingAgentRuntimeService(
         actor_id: UUID | None,
         run_id: UUID,
     ) -> None:
-        if app_id is None or actor_id is None:
-            return
-        runtime_service = PublishedAppDraftDevRuntimeService(self.db)
-        try:
-            session = await runtime_service.get_session(app_id=app_id, user_id=actor_id)
-        except Exception:
-            return
-        if session is None or session.active_coding_run_id is None:
-            return
-        if str(session.active_coding_run_id) != str(run_id):
-            return
-        session.active_coding_run_id = None
-        session.active_coding_run_locked_at = None
-        logger.info(
-            "CODING_AGENT_LOCK_CLEAR run_id=%s app_id=%s actor_id=%s",
-            run_id,
-            app_id,
-            actor_id,
-        )
+        _ = app_id, actor_id, run_id
+        return
 
     async def cancel_run(self, run: AgentRun) -> AgentRun:
         status = run.status.value if hasattr(run.status, "value") else str(run.status)

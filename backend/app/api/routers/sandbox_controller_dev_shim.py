@@ -166,16 +166,15 @@ class OpenCodeQuestionAnswerRequest(BaseModel):
 
 
 class StagePrepareRequest(BaseModel):
-    run_id: str
+    reset: bool = False
 
 
 class StageSnapshotRequest(BaseModel):
     workspace: str = "live"
-    run_id: str | None = None
 
 
 class StagePromoteRequest(BaseModel):
-    run_id: str
+    pass
 
 
 def _build_host_opencode_client() -> OpenCodeServerClient:
@@ -670,7 +669,7 @@ async def prepare_stage_workspace(sandbox_id: str, payload: StagePrepareRequest)
     try:
         return await manager.prepare_stage_workspace(
             sandbox_id=sandbox_id,
-            run_id=payload.run_id,
+            reset=bool(payload.reset),
         )
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc
@@ -683,7 +682,6 @@ async def snapshot_workspace(sandbox_id: str, payload: StageSnapshotRequest) -> 
         return await manager.snapshot_workspace(
             sandbox_id=sandbox_id,
             workspace=payload.workspace,
-            run_id=payload.run_id,
         )
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc
@@ -693,10 +691,8 @@ async def snapshot_workspace(sandbox_id: str, payload: StageSnapshotRequest) -> 
 async def promote_stage_workspace(sandbox_id: str, payload: StagePromoteRequest) -> dict[str, Any]:
     manager = get_local_draft_dev_runtime_manager()
     try:
-        return await manager.promote_stage_workspace(
-            sandbox_id=sandbox_id,
-            run_id=payload.run_id,
-        )
+        _ = payload
+        return await manager.promote_stage_workspace(sandbox_id=sandbox_id)
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc
 

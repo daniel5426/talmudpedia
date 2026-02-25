@@ -5,23 +5,32 @@ import {
 } from "@/services";
 import type {
   CodingAgentChatSession,
-  CodingAgentPromptSubmissionResponse,
   LogicalModel,
   PublishedAppRevision,
 } from "@/services";
-import { TimelineItem } from "./chat-model";
+import { timelineId, type TimelineItem } from "./chat-model";
 import {
   type CodingAgentPendingQuestion,
-  parseEngineUnavailableDetail,
-  parseModelUnavailableDetail,
-  parseRunActiveDetail,
   parseTerminalRunStatus,
   type TerminalRunStatus,
 } from "./stream-parsers";
-import { consumeRunStream as consumeRunStreamImpl } from "./useAppsBuilderChat.stream";
 import { readStoredChatSessionId, writeStoredChatSessionId } from "./chat-session-storage";
-import { QueuedPrompt, useAppsBuilderChatTimelineState } from "./useAppsBuilderChat.timeline";
+import {
+  DRAFT_SESSION_KEY,
+  attachCheckpointToLastUser,
+  createSessionContainer,
+  finalizeRunningTools,
+  normalizeSessionKey,
+  prependTimelineWithoutDuplicates,
+  type QueuedPrompt,
+  type SessionContainer,
+} from "./useAppsBuilderChat.session-state";
+import { extractHistoryPaging, extractHistoryTimeline } from "./useAppsBuilderChat.session-history";
+import { consumeSessionRunStream } from "./useAppsBuilderChat.session-streams";
+import { useAppsBuilderChatRunActivity } from "./useAppsBuilderChat.run-activity";
+import { useAppsBuilderChatSessionActions } from "./useAppsBuilderChat.session-actions";
 export type { QueuedPrompt };
+
 export type UseAppsBuilderChatOptions = {
   appId: string;
   activeTab: "preview" | "config";
@@ -32,6 +41,7 @@ export type UseAppsBuilderChatOptions = {
   onError: (message: string | null) => void;
   initialActiveRunId?: string | null;
 };
+
 export type UseAppsBuilderChatResult = {
   isAgentPanelOpen: boolean;
   setIsAgentPanelOpen: (next: boolean) => void;
@@ -42,6 +52,7 @@ export type UseAppsBuilderChatResult = {
   activeThinkingSummary: string;
   chatSessions: CodingAgentChatSession[];
   activeChatSessionId: string | null;
+  activateDraftChat: () => void;
   chatModels: LogicalModel[];
   selectedRunModelId: string | null;
   setSelectedRunModelId: (next: string | null) => void;
@@ -51,31 +62,32 @@ export type UseAppsBuilderChatResult = {
   queuedPrompts: QueuedPrompt[];
   pendingQuestion: CodingAgentPendingQuestion | null;
   isAnsweringQuestion: boolean;
+  runningSessionIds: string[];
+  hasOlderHistory: boolean;
+  isLoadingOlderHistory: boolean;
+  loadOlderHistory: () => Promise<void>;
   removeQueuedPrompt: (promptId: string) => void;
   answerPendingQuestion: (answers: string[][]) => Promise<void>;
+  refreshChatSessionRunActivity: () => Promise<void>;
   sendBuilderChat: (rawInput: string) => Promise<void>;
   stopCurrentRun: () => void;
   startNewChat: () => void;
   revertToCheckpoint: (userItemId: string, checkpointId: string) => Promise<void>;
   loadChatSession: (sessionId: string) => Promise<void>;
 };
-type ConsumeRunOptions = {
-  runId: string;
-};
+
 type RestoreSessionOptions = {
   attachActiveRun?: boolean;
   preferredRunId?: string | null;
+  forceReload?: boolean;
 };
-type PromptRequest = {
-  input: string;
-  clientMessageId: string;
-  userTimelineId: string;
-  modelId?: string | null;
-};
+
 const TERMINAL_STATUSES = new Set<TerminalRunStatus>(["completed", "failed", "cancelled", "paused"]);
+
 function createClientMessageId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
+
 export function useAppsBuilderChat({
   appId,
   activeTab,
@@ -87,94 +99,234 @@ export function useAppsBuilderChat({
   initialActiveRunId,
 }: UseAppsBuilderChatOptions): UseAppsBuilderChatResult {
   const [isAgentPanelOpen, setIsAgentPanelOpenState] = useState(true);
-  const [isSending, setIsSending] = useState(false);
-  const [isStopping, setIsStopping] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
-  const [activeThinkingSummary, setActiveThinkingSummary] = useState("");
   const [chatSessions, setChatSessions] = useState<CodingAgentChatSession[]>([]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [chatModels, setChatModels] = useState<LogicalModel[]>([]);
   const [selectedRunModelId, setSelectedRunModelId] = useState<string | null>(null);
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const [pendingQuestion, setPendingQuestion] = useState<CodingAgentPendingQuestion | null>(null);
-  const [isAnsweringQuestion, setIsAnsweringQuestion] = useState(false);
-  const {
-    timeline,
-    setTimeline,
-    queuedPrompts,
-    setQueuedPrompts,
-    resetTimelineState,
-    pushTimeline,
-    appendUserTimeline,
-    updateUserTimelineDelivery,
-    upsertAssistantTimeline,
-    upsertToolTimeline,
-    finalizeRunningTools,
-    attachCheckpointToLastUser,
-  } = useAppsBuilderChatTimelineState();
-  const abortReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
-  const activeRunIdRef = useRef<string | null>(null);
-  const lastKnownRunIdRef = useRef<string | null>(null);
+  const [, setRenderTick] = useState(0);
+
   const activeChatSessionIdRef = useRef<string | null>(null);
-  const cancelInFlightRunIdRef = useRef<string | null>(null);
-  const pendingCancelRef = useRef(false);
-  const intentionalAbortRef = useRef(false);
-  const isSendingRef = useRef(false);
+  const sessionStoreRef = useRef<Record<string, SessionContainer>>({
+    [DRAFT_SESSION_KEY]: createSessionContainer(DRAFT_SESSION_KEY),
+  });
   const isMountedRef = useRef(true);
-  const seenRunEventKeysRef = useRef<Set<string>>(new Set());
   const bootstrapDidRunRef = useRef(false);
-  const lastResumeAttemptRunIdRef = useRef<string | null>(null);
   const restoredLastSessionRef = useRef(false);
-  const queuedPromptsRef = useRef<QueuedPrompt[]>([]);
-  const isQueueDrainActiveRef = useRef(false);
-  const drainQueuedPromptsRef = useRef<() => Promise<void>>(async () => undefined);
-  useEffect(() => {
-    isSendingRef.current = isSending;
-  }, [isSending]);
-  useEffect(() => {
-    queuedPromptsRef.current = queuedPrompts;
-  }, [queuedPrompts]);
+  const lastResumeAttemptRunIdRef = useRef<string | null>(null);
+
+  const {
+    runningSessionIds,
+    markSessionRunActive,
+    clearSessionRunActivity,
+    probeSessionRunActivity,
+    probeSessionRunActivityBatch,
+  } = useAppsBuilderChatRunActivity({ appId });
+
+  const bumpRender = useCallback(() => {
+    setRenderTick((prev) => prev + 1);
+  }, []);
+
+  const getSession = useCallback((sessionKey: string): SessionContainer => {
+    const normalizedKey = normalizeSessionKey(sessionKey);
+    const existing = sessionStoreRef.current[normalizedKey];
+    if (existing) {
+      return existing;
+    }
+    const created = createSessionContainer(normalizedKey);
+    sessionStoreRef.current[normalizedKey] = created;
+    return created;
+  }, []);
+
+  const mutateSession = useCallback((sessionKey: string, updater: (session: SessionContainer) => void) => {
+    const session = getSession(sessionKey);
+    updater(session);
+    bumpRender();
+  }, [bumpRender, getSession]);
+
+  const forceClearSessionSendingState = useCallback((sessionKey: string) => {
+    mutateSession(sessionKey, (session) => {
+      session.streamAttachmentIdRef.current += 1;
+      session.intentionalAbortRef.current = true;
+      const reader = session.abortReaderRef.current;
+      session.abortReaderRef.current = null;
+      if (reader && typeof reader.cancel === "function") {
+        void reader.cancel().catch(() => undefined);
+      }
+      session.activeRunIdRef.current = null;
+      session.lastKnownRunIdRef.current = null;
+      session.attachedRunIdRef.current = null;
+      session.attachedRunSessionIdRef.current = null;
+      session.pendingCancelRef.current = false;
+      session.cancelInFlightRunIdRef.current = null;
+      session.isStopping = false;
+      session.activeThinkingSummary = "";
+      session.isSending = false;
+      session.isSendingRef.current = false;
+      session.pendingQuestion = null;
+    });
+  }, [mutateSession]);
+
+  const setSessionSending = useCallback((sessionKey: string, next: boolean) => {
+    mutateSession(sessionKey, (session) => {
+      session.isSending = next;
+      session.isSendingRef.current = next;
+    });
+  }, [mutateSession]);
+
+  const setSessionStopping = useCallback((sessionKey: string, next: boolean) => {
+    mutateSession(sessionKey, (session) => {
+      session.isStopping = next;
+    });
+  }, [mutateSession]);
+
+  const setSessionThinking = useCallback((sessionKey: string, next: string) => {
+    mutateSession(sessionKey, (session) => {
+      session.activeThinkingSummary = next;
+    });
+  }, [mutateSession]);
+
+  const setSessionPendingQuestion = useCallback((sessionKey: string, question: CodingAgentPendingQuestion | null) => {
+    mutateSession(sessionKey, (session) => {
+      session.pendingQuestion = question;
+    });
+  }, [mutateSession]);
+
+  const pushSessionTimeline = useCallback((
+    sessionKey: string,
+    item: {
+      kind?: "assistant" | "user" | "tool";
+      title: string;
+      description?: string;
+      tone?: "default" | "success" | "error";
+    },
+  ) => {
+    mutateSession(sessionKey, (session) => {
+      session.timeline = [...session.timeline, { ...item, kind: item.kind || "assistant", id: timelineId("timeline") }];
+    });
+  }, [mutateSession]);
+
+  const upsertSessionAssistantTimeline = useCallback((sessionKey: string, assistantStreamId: string, description: string) => {
+    mutateSession(sessionKey, (session) => {
+      const existingIndex = session.timeline.findIndex(
+        (item) => item.kind === "assistant" && item.assistantStreamId === assistantStreamId,
+      );
+      if (existingIndex >= 0) {
+        const next = [...session.timeline];
+        next[existingIndex] = {
+          ...next[existingIndex],
+          description,
+          tone: "default",
+        };
+        session.timeline = next;
+        return;
+      }
+      session.timeline = [
+        ...session.timeline,
+        {
+          id: timelineId("assistant"),
+          kind: "assistant",
+          title: "Assistant",
+          description,
+          tone: "default",
+          assistantStreamId,
+        },
+      ];
+    });
+  }, [mutateSession]);
+
+  const upsertSessionToolTimeline = useCallback((
+    sessionKey: string,
+    toolCallId: string,
+    title: string,
+    status: "running" | "completed" | "failed",
+    toolName: string,
+    toolPath?: string | null,
+  ) => {
+    mutateSession(sessionKey, (session) => {
+      const existingIndex = session.timeline.findIndex((item) => item.kind === "tool" && item.toolCallId === toolCallId);
+      const nextTone = status === "failed" ? "error" : status === "completed" ? "success" : undefined;
+      if (existingIndex >= 0) {
+        const next = [...session.timeline];
+        next[existingIndex] = {
+          ...next[existingIndex],
+          title,
+          toolStatus: status,
+          tone: nextTone,
+          toolName,
+          toolPath: toolPath || next[existingIndex].toolPath,
+        };
+        session.timeline = next;
+        return;
+      }
+      session.timeline = [
+        ...session.timeline,
+        {
+          id: timelineId("tool"),
+          kind: "tool",
+          toolCallId,
+          toolStatus: status,
+          title,
+          tone: nextTone,
+          toolName,
+          toolPath: toolPath || undefined,
+        },
+      ];
+    });
+  }, [mutateSession]);
+
+  const finalizeSessionRunningTools = useCallback((sessionKey: string, status: "completed" | "failed") => {
+    mutateSession(sessionKey, (session) => {
+      session.timeline = finalizeRunningTools(session.timeline, status);
+    });
+  }, [mutateSession]);
+
+  const attachCheckpointToSessionLastUser = useCallback((sessionKey: string, checkpointId: string) => {
+    mutateSession(sessionKey, (session) => {
+      session.timeline = attachCheckpointToLastUser(session.timeline, checkpointId);
+    });
+  }, [mutateSession]);
+
+  const activeSessionKey = normalizeSessionKey(activeChatSessionId);
+  const activeSession = getSession(activeSessionKey);
+
   useEffect(() => {
     activeChatSessionIdRef.current = activeChatSessionId;
     writeStoredChatSessionId(appId, activeChatSessionId);
   }, [activeChatSessionId, appId]);
+
   useEffect(() => {
+    sessionStoreRef.current = { [DRAFT_SESSION_KEY]: createSessionContainer(DRAFT_SESSION_KEY) };
     restoredLastSessionRef.current = false;
-  }, [appId]);
-  const detachActiveStream = useCallback(() => {
-    intentionalAbortRef.current = true;
-    const reader = abortReaderRef.current;
-    abortReaderRef.current = null;
-    if (reader && typeof reader.cancel === "function") {
-      void reader.cancel().catch(() => undefined);
-    }
-  }, []);
+    setActiveChatSessionId(null);
+    bumpRender();
+  }, [appId, bumpRender]);
+
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
-      detachActiveStream();
+      for (const session of Object.values(sessionStoreRef.current)) {
+        session.intentionalAbortRef.current = true;
+        const reader = session.abortReaderRef.current;
+        session.abortReaderRef.current = null;
+        if (reader && typeof reader.cancel === "function") {
+          void reader.cancel().catch(() => undefined);
+        }
+      }
     };
-  }, [detachActiveStream]);
-  const forceClearSendingState = useCallback(() => {
-    detachActiveStream();
-    activeRunIdRef.current = null;
-    lastKnownRunIdRef.current = null;
-    pendingCancelRef.current = false;
-    cancelInFlightRunIdRef.current = null;
-    setIsStopping(false);
-    setActiveThinkingSummary("");
-    setIsSending(false);
-    isSendingRef.current = false;
-    setPendingQuestion(null);
-  }, [detachActiveStream]);
+  }, []);
+
   const selectedRunModelLabel = useMemo(() => {
     if (!selectedRunModelId) return "Auto";
     const match = chatModels.find((model) => model.id === selectedRunModelId);
     return match?.name || "Auto";
   }, [chatModels, selectedRunModelId]);
+
   const setIsAgentPanelOpen = useCallback((next: boolean) => {
     setIsAgentPanelOpenState(next);
   }, []);
+
   const loadChatModels = useCallback(async () => {
     try {
       const response = await modelsService.listModels("chat", "active", 0, 200);
@@ -188,6 +340,7 @@ export function useAppsBuilderChat({
       onError(err instanceof Error ? err.message : "Failed to load chat models");
     }
   }, [onError]);
+
   const loadChatSessions = useCallback(async (): Promise<CodingAgentChatSession[]> => {
     try {
       const sessions = await publishedAppsService.listCodingAgentChatSessions(appId, 50);
@@ -198,319 +351,275 @@ export function useAppsBuilderChat({
       return [];
     }
   }, [appId, onError]);
-  const replaceLocalQueue = useCallback((nextQueue: QueuedPrompt[]) => {
-    queuedPromptsRef.current = nextQueue;
-    setQueuedPrompts(nextQueue);
-  }, [setQueuedPrompts]);
-  const enqueueLocalPrompt = useCallback((input: string, modelId?: string | null): QueuedPrompt => {
-    const nextPrompt: QueuedPrompt = {
-      id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      text: input,
-      createdAt: Date.now(),
-      clientMessageId: null,
-      modelId: modelId || null,
-    };
-    const nextQueue = [...queuedPromptsRef.current, nextPrompt];
-    replaceLocalQueue(nextQueue);
-    return nextPrompt;
-  }, [replaceLocalQueue]);
-  const prependLocalPrompt = useCallback((input: string, modelId?: string | null): QueuedPrompt => {
-    const nextPrompt: QueuedPrompt = {
-      id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      text: input,
-      createdAt: Date.now(),
-      clientMessageId: null,
-      modelId: modelId || null,
-    };
-    const nextQueue = [nextPrompt, ...queuedPromptsRef.current];
-    replaceLocalQueue(nextQueue);
-    return nextPrompt;
-  }, [replaceLocalQueue]);
-  const popNextQueuedPrompt = useCallback((): QueuedPrompt | null => {
-    const [nextPrompt, ...rest] = queuedPromptsRef.current;
-    if (!nextPrompt) {
-      return null;
-    }
-    replaceLocalQueue(rest);
-    return nextPrompt;
-  }, [replaceLocalQueue]);
-  const requestCancelForRun = useCallback(
-    async (runId: string) => {
-      if (!runId) return;
-      if (cancelInFlightRunIdRef.current === runId) return;
-      cancelInFlightRunIdRef.current = runId;
-      try {
-        await publishedAppsService.cancelCodingAgentRun(appId, runId);
-      } finally {
-        if (cancelInFlightRunIdRef.current === runId) {
-          cancelInFlightRunIdRef.current = null;
-        }
+
+  const requestCancelForRun = useCallback(async (runId: string, session: SessionContainer) => {
+    if (!runId) return;
+    if (session.cancelInFlightRunIdRef.current === runId) return;
+    session.cancelInFlightRunIdRef.current = runId;
+    try {
+      await publishedAppsService.cancelCodingAgentRun(appId, runId);
+    } finally {
+      if (session.cancelInFlightRunIdRef.current === runId) {
+        session.cancelInFlightRunIdRef.current = null;
       }
-    },
-    [appId],
-  );
-  const consumeRunStream = useCallback(async ({ runId }: ConsumeRunOptions) => {
-    await consumeRunStreamImpl({
+    }
+  }, [appId]);
+
+  const ensureSessionKeyByServerSessionId = useCallback((
+    sessionKey: string,
+    serverSessionId: string | null | undefined,
+  ): string => {
+    const normalizedServerId = String(serverSessionId || "").trim();
+    if (!normalizedServerId) {
+      return normalizeSessionKey(sessionKey);
+    }
+    const sourceKey = normalizeSessionKey(sessionKey);
+    if (sourceKey === normalizedServerId) {
+      return normalizedServerId;
+    }
+    const source = getSession(sourceKey);
+    const target = getSession(normalizedServerId);
+    if (sourceKey === DRAFT_SESSION_KEY) {
+      target.timeline = source.timeline;
+      target.queuedPrompts = source.queuedPrompts;
+      target.pendingQuestion = source.pendingQuestion;
+      target.isAnsweringQuestion = source.isAnsweringQuestion;
+      target.isSending = source.isSending;
+      target.isStopping = source.isStopping;
+      target.activeThinkingSummary = source.activeThinkingSummary;
+      target.history = source.history;
+      target.activeRunIdRef.current = source.activeRunIdRef.current;
+      target.lastKnownRunIdRef.current = source.lastKnownRunIdRef.current;
+      target.attachedRunIdRef.current = source.attachedRunIdRef.current;
+      target.attachedRunSessionIdRef.current = normalizedServerId;
+      target.abortReaderRef.current = source.abortReaderRef.current;
+      target.pendingCancelRef.current = source.pendingCancelRef.current;
+      target.intentionalAbortRef.current = source.intentionalAbortRef.current;
+      target.isSendingRef.current = source.isSendingRef.current;
+      target.seenRunEventKeysRef.current = source.seenRunEventKeysRef.current;
+      target.streamAttachmentIdRef.current = source.streamAttachmentIdRef.current;
+      target.cancelInFlightRunIdRef.current = source.cancelInFlightRunIdRef.current;
+      target.isQueueDrainActiveRef.current = source.isQueueDrainActiveRef.current;
+      sessionStoreRef.current[DRAFT_SESSION_KEY] = createSessionContainer(DRAFT_SESSION_KEY);
+    }
+    return normalizedServerId;
+  }, [getSession]);
+
+  const consumeRunStreamForSession = useCallback(async (
+    sessionKey: string,
+    runId: string,
+    runSessionId: string | null,
+  ) => {
+    const resolvedSessionKey = ensureSessionKeyByServerSessionId(sessionKey, runSessionId);
+    const session = getSession(resolvedSessionKey);
+    const normalizedRunId = String(runId || "").trim();
+    const normalizedRunSessionId = String(runSessionId || resolvedSessionKey || "").trim() || null;
+    if (!normalizedRunId) {
+      return;
+    }
+    session.attachedRunIdRef.current = normalizedRunId;
+    session.attachedRunSessionIdRef.current = normalizedRunSessionId;
+    if (normalizedRunSessionId) {
+      markSessionRunActive(normalizedRunSessionId, normalizedRunId, "running");
+    }
+
+    await consumeSessionRunStream({
       appId,
-      runId,
+      runId: normalizedRunId,
+      runSessionId: normalizedRunSessionId,
       activeTab,
+      session,
       activeChatSessionIdRef,
-      setIsSending,
-      setIsStopping,
-      setActiveThinkingSummary,
-      isSendingRef,
-      pendingCancelRef,
-      intentionalAbortRef,
-      activeRunIdRef,
-      lastKnownRunIdRef,
-      abortReaderRef,
       isMountedRef,
-      seenRunEventKeysRef,
       onError,
       onSetCurrentRevisionId,
-      pushTimeline,
-      upsertAssistantTimeline,
-      upsertToolTimeline,
-      finalizeRunningTools,
-      attachCheckpointToLastUser,
       refreshStateSilently,
       ensureDraftDevSession,
       loadChatSessions,
       requestCancelForRun,
-      onQuestionAsked: (question) => {
-        setPendingQuestion(question);
-      },
-      onQuestionResolved: (requestId) => {
-        setPendingQuestion((prev) => {
-          if (!prev) return prev;
-          if (!requestId || prev.requestId === requestId) {
-            return null;
-          }
-          return prev;
-        });
-      },
+      setSessionSending,
+      setSessionStopping,
+      setSessionThinking,
+      pushSessionTimeline,
+      upsertSessionAssistantTimeline,
+      upsertSessionToolTimeline,
+      finalizeSessionRunningTools,
+      attachCheckpointToSessionLastUser,
+      setSessionPendingQuestion,
+      clearSessionRunActivity,
+      probeSessionRunActivity,
     });
-  }, [
-    activeTab,
-    appId,
-    attachCheckpointToLastUser,
-    ensureDraftDevSession,
-    finalizeRunningTools,
-    loadChatSessions,
-    onError,
-    onSetCurrentRevisionId,
-    pushTimeline,
-    refreshStateSilently,
-    requestCancelForRun,
-    upsertAssistantTimeline,
-    upsertToolTimeline,
-  ]);
-  const answerPendingQuestion = useCallback(async (answers: string[][]) => {
-    const requestId = String(pendingQuestion?.requestId || "").trim();
-    if (!requestId) {
-      return;
-    }
-    const runId = activeRunIdRef.current || lastKnownRunIdRef.current;
-    if (!runId) {
-      onError("Missing active run for question response");
-      return;
-    }
-    setIsAnsweringQuestion(true);
-    onError(null);
-    try {
-      await publishedAppsService.answerCodingAgentRunQuestion(appId, runId, {
-        question_id: requestId,
-        answers,
-      });
-      setPendingQuestion(null);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to submit question response");
-    } finally {
-      setIsAnsweringQuestion(false);
-    }
-  }, [appId, onError, pendingQuestion?.requestId]);
-  const restoreSession = useCallback(async (
+  }, [activeTab, appId, attachCheckpointToSessionLastUser, clearSessionRunActivity, ensureDraftDevSession, ensureSessionKeyByServerSessionId, finalizeSessionRunningTools, getSession, loadChatSessions, markSessionRunActive, onError, onSetCurrentRevisionId, probeSessionRunActivity, pushSessionTimeline, refreshStateSilently, requestCancelForRun, setSessionPendingQuestion, setSessionSending, setSessionStopping, setSessionThinking, upsertSessionAssistantTimeline, upsertSessionToolTimeline]);
+
+  const hydrateSessionHistory = useCallback(async (
     sessionId: string,
     options: RestoreSessionOptions = {},
   ) => {
     const normalizedSessionId = String(sessionId || "").trim();
     if (!normalizedSessionId) return;
-    if (isSendingRef.current) {
-      void requestCancelForRun(activeRunIdRef.current || lastKnownRunIdRef.current || "");
-      forceClearSendingState();
+    const session = getSession(normalizedSessionId);
+    if (session.history.initialized && !options.forceReload) {
+      setActiveChatSessionId(normalizedSessionId);
+      if (options.attachActiveRun && !session.isSendingRef.current) {
+        try {
+          const active = await publishedAppsService.findCodingAgentChatSessionActiveRun(appId, normalizedSessionId);
+          if (active && !parseTerminalRunStatus(active.status)) {
+            session.seenRunEventKeysRef.current = new Set<string>();
+            void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);
+          }
+        } catch {
+          // best effort
+        }
+      }
+      return;
     }
+
     onError(null);
     try {
-      const detail = await publishedAppsService.getCodingAgentChatSession(appId, normalizedSessionId, 300);
-      const restoredTimeline: TimelineItem[] = detail.messages
-        .filter((item) => (item.role === "user" || item.role === "assistant") && String(item.content || "").trim().length > 0)
-        .map((item) => ({
-          id: `history-${item.id}`,
-          kind: item.role,
-          title: item.role === "user" ? "User request" : "Assistant",
-          description: item.content,
-          tone: "default",
-          userDeliveryStatus: item.role === "user" ? "sent" : undefined,
-        }));
-      setTimeline(restoredTimeline);
-      replaceLocalQueue([]);
+      const detail = await publishedAppsService.getCodingAgentChatSession(appId, normalizedSessionId, { limit: 10 });
+      const restoredTimeline = extractHistoryTimeline(detail);
+      const paging = extractHistoryPaging(detail);
+      mutateSession(normalizedSessionId, (target) => {
+        target.timeline = restoredTimeline;
+        target.queuedPrompts = [];
+        target.pendingQuestion = null;
+        target.activeThinkingSummary = "";
+        target.history.initialized = true;
+        target.history.hasMore = paging.hasMore;
+        target.history.nextBeforeMessageId = paging.nextBeforeMessageId;
+        target.history.isLoadingOlder = false;
+      });
       setActiveChatSessionId(detail.session.id);
-      setActiveThinkingSummary("");
+      await probeSessionRunActivity(detail.session.id);
+
       if (!options.attachActiveRun) {
         return;
       }
+
       let runIdToAttach = String(options.preferredRunId || "").trim() || null;
-      try {
-        const active = await publishedAppsService.getCodingAgentChatSessionActiveRun(appId, detail.session.id);
+      const active = await publishedAppsService.findCodingAgentChatSessionActiveRun(appId, detail.session.id);
+      if (active) {
         const activeStatus = parseTerminalRunStatus(active.status);
         if (!activeStatus && (!runIdToAttach || runIdToAttach === active.run_id)) {
           runIdToAttach = active.run_id;
         }
-      } catch {
-        // No active run for session.
       }
       if (!runIdToAttach) {
         return;
       }
-      seenRunEventKeysRef.current = new Set();
-      await consumeRunStream({ runId: runIdToAttach });
-      await drainQueuedPromptsRef.current();
+      const target = getSession(detail.session.id);
+      target.seenRunEventKeysRef.current = new Set();
+      void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to load coding-agent chat session");
     }
-  }, [
-    appId,
-    consumeRunStream,
-    onError,
-    requestCancelForRun,
-    forceClearSendingState,
-    replaceLocalQueue,
-    setTimeline,
-  ]);
-  const loadChatSession = useCallback(async (sessionId: string) => {
-    await restoreSession(sessionId, { attachActiveRun: true });
-  }, [restoreSession]);
-  const runPrompt = useCallback(async ({ input, clientMessageId, userTimelineId, modelId }: PromptRequest) => {
-    const promptText = input.trim();
-    if (!promptText) return;
-    const resolvedModelId = modelId || null;
-    onError(null);
-    setIsSending(true);
-    isSendingRef.current = true;
-    setActiveThinkingSummary("Thinking...");
-    setPendingQuestion(null);
-    let streamStarted = false;
-    const submitPrompt = () =>
-      publishedAppsService.submitCodingAgentPrompt(appId, {
-        input: promptText,
-        model_id: resolvedModelId || undefined,
-        chat_session_id: activeChatSessionIdRef.current || undefined,
-        client_message_id: clientMessageId,
+  }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);
+
+  const loadOlderHistory = useCallback(async () => {
+    const sessionId = String(activeChatSessionIdRef.current || "").trim();
+    if (!sessionId) return;
+    const session = getSession(sessionId);
+    if (session.history.isLoadingOlder || !session.history.hasMore || !session.history.nextBeforeMessageId) {
+      return;
+    }
+
+    mutateSession(sessionId, (target) => {
+      target.history.isLoadingOlder = true;
+    });
+    try {
+      const detail = await publishedAppsService.getCodingAgentChatSession(appId, sessionId, {
+        limit: 10,
+        before_message_id: session.history.nextBeforeMessageId,
       });
-    try {
-      let submission: CodingAgentPromptSubmissionResponse;
-      try {
-        submission = await submitPrompt();
-      } catch (err: any) {
-        const engineUnavailable = parseEngineUnavailableDetail(err?.message);
-        if (engineUnavailable) {
-          updateUserTimelineDelivery({ timelineId: userTimelineId, status: "failed" });
-          onError(engineUnavailable.message);
-          return;
-        }
-        const modelUnavailable = parseModelUnavailableDetail(err?.message);
-        if (modelUnavailable) {
-          updateUserTimelineDelivery({ timelineId: userTimelineId, status: "failed" });
-          onError(modelUnavailable.message);
-          return;
-        }
-        throw err;
-      }
-      if (submission.submission_status === "queued") {
-        // Keep queue frontend-only: remove temporary chat row and re-queue locally.
-        setTimeline((prev) => prev.filter((item) => item.id !== userTimelineId));
-        prependLocalPrompt(promptText, resolvedModelId);
-        seenRunEventKeysRef.current = new Set();
-        streamStarted = true;
-        await consumeRunStream({ runId: submission.active_run_id });
-        return;
-      }
-      const run = submission.run;
-      if (run.chat_session_id) {
-        setActiveChatSessionId(run.chat_session_id);
-      }
-      updateUserTimelineDelivery({ timelineId: userTimelineId, status: "sent" });
-      if (pendingCancelRef.current) {
-        await requestCancelForRun(run.run_id);
-        return;
-      }
-      seenRunEventKeysRef.current = new Set();
-      streamStarted = true;
-      await consumeRunStream({ runId: run.run_id });
+      const olderTimeline = extractHistoryTimeline(detail);
+      const paging = extractHistoryPaging(detail);
+      mutateSession(sessionId, (target) => {
+        target.timeline = prependTimelineWithoutDuplicates(target.timeline, olderTimeline);
+        target.history.hasMore = paging.hasMore;
+        target.history.nextBeforeMessageId = paging.nextBeforeMessageId;
+        target.history.isLoadingOlder = false;
+      });
     } catch (err) {
-      updateUserTimelineDelivery({ timelineId: userTimelineId, status: "failed" });
-      onError(err instanceof Error ? err.message : "Failed to run coding agent");
-    } finally {
-      if (!streamStarted) {
-        pendingCancelRef.current = false;
-        setIsStopping(false);
-        setActiveThinkingSummary("");
-        setIsSending(false);
-        isSendingRef.current = false;
-      }
+      mutateSession(sessionId, (target) => {
+        target.history.isLoadingOlder = false;
+      });
+      onError(err instanceof Error ? err.message : "Failed to load older chat history");
     }
-  }, [
-    appId,
-    consumeRunStream,
-    onError,
-    prependLocalPrompt,
-    requestCancelForRun,
-    setTimeline,
-    updateUserTimelineDelivery,
-  ]);
-  const runPromptWithTimeline = useCallback(async (input: string, modelId?: string | null) => {
-    const promptText = input.trim();
-    if (!promptText) {
-      return;
-    }
-    const clientMessageId = createClientMessageId();
-    const userTimelineId = appendUserTimeline({
-      input: promptText,
-      status: "pending",
-      clientMessageId,
-    });
-    await runPrompt({
-      input: promptText,
-      clientMessageId,
-      userTimelineId,
-      modelId: modelId || null,
-    });
-  }, [appendUserTimeline, runPrompt]);
-  const drainQueuedPrompts = useCallback(async () => {
-    if (isQueueDrainActiveRef.current || isSendingRef.current) {
-      return;
-    }
-    isQueueDrainActiveRef.current = true;
+  }, [appId, getSession, mutateSession, onError]);
+
+  const loadChatSession = useCallback(async (sessionId: string) => {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId) return;
+    setActiveChatSessionId(normalizedSessionId);
+    await hydrateSessionHistory(normalizedSessionId, { attachActiveRun: true });
+  }, [hydrateSessionHistory]);
+
+  const activateDraftChat = useCallback(() => {
+    setActiveChatSessionId(null);
+  }, []);
+
+  const refreshChatSessionRunActivity = useCallback(async () => {
     try {
-      while (!isSendingRef.current) {
-        const nextPrompt = popNextQueuedPrompt();
-        if (!nextPrompt) {
-          break;
-        }
-        await runPromptWithTimeline(nextPrompt.text, nextPrompt.modelId || null);
+      const sessions = await loadChatSessions();
+      const candidates = new Set<string>();
+      const activeId = String(activeChatSessionIdRef.current || "").trim();
+      if (activeId) {
+        candidates.add(activeId);
       }
+      for (const sessionId of runningSessionIds) {
+        const normalized = String(sessionId || "").trim();
+        if (normalized) {
+          candidates.add(normalized);
+        }
+      }
+      for (const session of sessions.slice(0, 16)) {
+        candidates.add(session.id);
+      }
+      await probeSessionRunActivityBatch(Array.from(candidates));
+    } catch {
+      // best effort
+    }
+  }, [loadChatSessions, probeSessionRunActivityBatch, runningSessionIds]);
+
+  const {
+    sendBuilderChat,
+    removeQueuedPrompt,
+    answerPendingQuestion,
+    stopCurrentRun,
+    startNewChat,
+    revertToCheckpoint: revertToCheckpointImpl,
+  } = useAppsBuilderChatSessionActions({
+    appId,
+    activeTab,
+    selectedRunModelId,
+    activeChatSessionIdRef,
+    isMountedRef,
+    onError,
+    onApplyRestoredRevision,
+    ensureDraftDevSession,
+    mutateSession,
+    getSession,
+    markSessionRunActive,
+    clearSessionRunActivity,
+    probeSessionRunActivity,
+    consumeRunStreamForSession,
+    requestCancelForRun,
+    ensureSessionKeyByServerSessionId,
+    setActiveChatSessionId,
+    setSessionStopping,
+    forceClearSessionSendingState,
+    createClientMessageId,
+  });
+
+  const revertToCheckpoint = useCallback(async (userItemId: string, checkpointId: string) => {
+    setIsUndoing(true);
+    try {
+      await revertToCheckpointImpl(userItemId, checkpointId);
     } finally {
-      isQueueDrainActiveRef.current = false;
+      setIsUndoing(false);
     }
-  }, [popNextQueuedPrompt, runPromptWithTimeline]);
-  useEffect(() => {
-    drainQueuedPromptsRef.current = drainQueuedPrompts;
-  }, [drainQueuedPrompts]);
-  useEffect(() => {
-    if (!isSending && queuedPromptsRef.current.length > 0) {
-      void drainQueuedPrompts();
-    }
-  }, [drainQueuedPrompts, isSending]);
+  }, [revertToCheckpointImpl]);
+
   const restoreLastSessionIfPossible = useCallback(async (sessionsHint?: CodingAgentChatSession[]) => {
     if (restoredLastSessionRef.current) {
       return;
@@ -530,20 +639,9 @@ export function useAppsBuilderChat({
       return;
     }
     restoredLastSessionRef.current = true;
-    await restoreSession(storedSessionId, { attachActiveRun: true });
-  }, [appId, initialActiveRunId, loadChatSessions, restoreSession]);
-  useEffect(() => {
-    if (bootstrapDidRunRef.current) {
-      return;
-    }
-    bootstrapDidRunRef.current = true;
-    void Promise.all([
-      loadChatModels(),
-      loadChatSessions(),
-    ]).then(async ([, sessions]) => {
-      await restoreLastSessionIfPossible(sessions as CodingAgentChatSession[]);
-    });
-  }, [loadChatModels, loadChatSessions, restoreLastSessionIfPossible]);
+    await hydrateSessionHistory(storedSessionId, { attachActiveRun: true });
+  }, [appId, hydrateSessionHistory, initialActiveRunId, loadChatSessions]);
+
   const resumeActiveRun = useCallback(async (targetRunId: string) => {
     const runId = String(targetRunId || "").trim();
     if (!runId) return;
@@ -557,196 +655,103 @@ export function useAppsBuilderChat({
       }
       const runSessionId = String(run.chat_session_id || "").trim();
       if (runSessionId) {
-        await restoreSession(runSessionId, { attachActiveRun: true, preferredRunId: runId });
+        await hydrateSessionHistory(runSessionId, { attachActiveRun: true, preferredRunId: runId });
         return;
       }
       const sessions = await loadChatSessions();
       for (const session of sessions) {
         try {
-          const active = await publishedAppsService.getCodingAgentChatSessionActiveRun(appId, session.id);
-          if (active.run_id === runId && !parseTerminalRunStatus(active.status)) {
-            await restoreSession(session.id, { attachActiveRun: true, preferredRunId: runId });
+          const active = await publishedAppsService.findCodingAgentChatSessionActiveRun(appId, session.id);
+          if (active && active.run_id === runId && !parseTerminalRunStatus(active.status)) {
+            await hydrateSessionHistory(session.id, { attachActiveRun: true, preferredRunId: runId });
             return;
           }
         } catch {
-          // keep scanning
+          // continue scan
         }
       }
     } catch {
-      // keep quiet for resume bootstrapping
+      // bootstrap best-effort
     }
-  }, [appId, loadChatSessions, restoreSession]);
+  }, [appId, hydrateSessionHistory, loadChatSessions]);
+
+  useEffect(() => {
+    if (bootstrapDidRunRef.current) {
+      return;
+    }
+    bootstrapDidRunRef.current = true;
+    void Promise.all([loadChatModels(), loadChatSessions()]).then(async ([, sessions]) => {
+      await restoreLastSessionIfPossible(sessions as CodingAgentChatSession[]);
+    });
+  }, [loadChatModels, loadChatSessions, restoreLastSessionIfPossible]);
+
   useEffect(() => {
     const runId = String(initialActiveRunId || "").trim();
     if (runId) {
-      if (!isSendingRef.current) {
-        void resumeActiveRun(runId);
-      }
+      void resumeActiveRun(runId);
       return;
     }
-    if (!isSendingRef.current) {
-      void restoreLastSessionIfPossible();
-    }
-  }, [initialActiveRunId, resumeActiveRun, restoreLastSessionIfPossible]);
+    void restoreLastSessionIfPossible();
+  }, [initialActiveRunId, restoreLastSessionIfPossible, resumeActiveRun]);
+
   useEffect(() => {
-    if (!isSending) {
-      return;
-    }
-    let disposed = false;
-    const intervalMs = 2000;
-    const isNotFoundError = (err: unknown): boolean => {
-      const message = err instanceof Error ? err.message : String(err || "");
-      return message.toLowerCase().includes("not found");
-    };
-    const reconcileSendingState = async () => {
-      if (disposed || !isSendingRef.current) {
-        return;
-      }
-      const runId = activeRunIdRef.current || lastKnownRunIdRef.current;
-      if (runId) {
-        try {
-          const run = await publishedAppsService.getCodingAgentRun(appId, runId);
-          if (parseTerminalRunStatus(run.status)) {
-            forceClearSendingState();
-          }
-          return;
-        } catch (err) {
-          if (isNotFoundError(err)) {
-            forceClearSendingState();
-            return;
-          }
-        }
-      }
-      const sessionId = activeChatSessionIdRef.current;
-      if (!sessionId) {
-        return;
-      }
-      try {
-        const active = await publishedAppsService.getCodingAgentChatSessionActiveRun(appId, sessionId);
-        if (parseTerminalRunStatus(active.status)) {
-          forceClearSendingState();
-        }
-      } catch (err) {
-        if (isNotFoundError(err)) {
-          forceClearSendingState();
-        }
-      }
-    };
-    void reconcileSendingState();
     const timer = setInterval(() => {
-      void reconcileSendingState();
-    }, intervalMs);
+      for (const [key, session] of Object.entries(sessionStoreRef.current)) {
+        if (!session.isSendingRef.current) {
+          continue;
+        }
+        const runId = session.activeRunIdRef.current || session.lastKnownRunIdRef.current;
+        if (runId) {
+          void (async () => {
+            try {
+              const run = await publishedAppsService.getCodingAgentRun(appId, runId);
+              if (parseTerminalRunStatus(run.status)) {
+                forceClearSessionSendingState(key);
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err || "");
+              if (message.toLowerCase().includes("not found")) {
+                forceClearSessionSendingState(key);
+              }
+            }
+          })();
+          continue;
+        }
+
+        const sessionId = key === DRAFT_SESSION_KEY ? null : key;
+        if (!sessionId) {
+          continue;
+        }
+        void (async () => {
+          try {
+            const active = await publishedAppsService.findCodingAgentChatSessionActiveRun(appId, sessionId);
+            if (!active || parseTerminalRunStatus(active.status)) {
+              forceClearSessionSendingState(key);
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err || "");
+            if (message.toLowerCase().includes("not found")) {
+              forceClearSessionSendingState(key);
+            }
+          }
+        })();
+      }
+    }, 2000);
     return () => {
-      disposed = true;
       clearInterval(timer);
     };
-  }, [appId, forceClearSendingState, isSending]);
-  const stopCurrentRun = useCallback(() => {
-    pendingCancelRef.current = true;
-    setIsStopping(true);
-    const runIdToCancel = activeRunIdRef.current || lastKnownRunIdRef.current;
-    if (runIdToCancel) {
-      detachActiveStream();
-      void requestCancelForRun(runIdToCancel)
-        .catch((err) => {
-          const message = err instanceof Error ? err.message : "Failed to cancel current run";
-          onError(message);
-          pendingCancelRef.current = false;
-        })
-        .finally(() => {
-          if (isMountedRef.current) {
-            setIsStopping(false);
-          }
-        });
-      return;
-    }
-    const sessionId = activeChatSessionIdRef.current;
-    if (!sessionId) {
-      forceClearSendingState();
-      return;
-    }
-    detachActiveStream();
-    void (async () => {
-      try {
-        const active = await publishedAppsService.getCodingAgentChatSessionActiveRun(appId, sessionId);
-        if (!parseTerminalRunStatus(active.status)) {
-          await requestCancelForRun(active.run_id);
-        } else {
-          forceClearSendingState();
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to cancel current run";
-        onError(message);
-        pendingCancelRef.current = false;
-      } finally {
-        if (isMountedRef.current) {
-          setIsStopping(false);
-        }
-      }
-    })();
-  }, [appId, detachActiveStream, forceClearSendingState, onError, requestCancelForRun]);
-  const removeQueuedPrompt = useCallback((promptId: string) => {
-    const nextQueue = queuedPromptsRef.current.filter((item) => item.id !== promptId);
-    replaceLocalQueue(nextQueue);
-  }, [
-    replaceLocalQueue,
-  ]);
-  const sendBuilderChat = useCallback(async (rawInput: string) => {
-    const input = rawInput.trim();
-    if (!input) return;
-    const shouldQueueImmediately = isSendingRef.current || pendingCancelRef.current;
-    if (shouldQueueImmediately) {
-      enqueueLocalPrompt(input, selectedRunModelId);
-      return;
-    }
-    await runPromptWithTimeline(input, selectedRunModelId);
-    await drainQueuedPrompts();
-  }, [drainQueuedPrompts, enqueueLocalPrompt, runPromptWithTimeline, selectedRunModelId]);
-  const startNewChat = useCallback(() => {
-    if (isSendingRef.current) {
-      stopCurrentRun();
-      detachActiveStream();
-    }
-    resetTimelineState();
-    setActiveThinkingSummary("");
-    setActiveChatSessionId(null);
-    setPendingQuestion(null);
-    seenRunEventKeysRef.current = new Set();
-  }, [detachActiveStream, resetTimelineState, stopCurrentRun]);
-  const revertToCheckpoint = useCallback(async (userItemId: string, checkpointId: string) => {
-    if (isSendingRef.current) {
-      stopCurrentRun();
-      detachActiveStream();
-    }
-    setIsUndoing(true);
-    onError(null);
-    try {
-      const response = await publishedAppsService.restoreCodingAgentCheckpoint(appId, checkpointId, {});
-      const revision = response.revision;
-      onApplyRestoredRevision(revision);
-      setTimeline((prev) => {
-        const idx = prev.findIndex((item) => item.id === userItemId);
-        if (idx < 0) return prev;
-        return prev.slice(0, idx);
-      });
-      if (activeTab === "preview") {
-        await ensureDraftDevSession();
-      }
-    } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to revert to checkpoint");
-    } finally {
-      setIsUndoing(false);
-    }
-  }, [
-    activeTab,
-    appId,
-    detachActiveStream,
-    ensureDraftDevSession,
-    onApplyRestoredRevision,
-    onError,
-    setTimeline,
-    stopCurrentRun,
-  ]);
+  }, [appId, forceClearSessionSendingState]);
+
+  const isSending = activeSession.isSending;
+  const isStopping = activeSession.isStopping;
+  const timeline = activeSession.timeline;
+  const queuedPrompts = activeSession.queuedPrompts;
+  const pendingQuestion = activeSession.pendingQuestion;
+  const isAnsweringQuestion = activeSession.isAnsweringQuestion;
+  const activeThinkingSummary = activeSession.activeThinkingSummary;
+  const hasOlderHistory = activeSession.history.hasMore;
+  const isLoadingOlderHistory = activeSession.history.isLoadingOlder;
+
   return {
     isAgentPanelOpen,
     setIsAgentPanelOpen,
@@ -757,6 +762,7 @@ export function useAppsBuilderChat({
     activeThinkingSummary,
     chatSessions,
     activeChatSessionId,
+    activateDraftChat,
     chatModels,
     selectedRunModelId,
     setSelectedRunModelId,
@@ -766,8 +772,13 @@ export function useAppsBuilderChat({
     queuedPrompts,
     pendingQuestion,
     isAnsweringQuestion,
+    runningSessionIds,
+    hasOlderHistory,
+    isLoadingOlderHistory,
+    loadOlderHistory,
     removeQueuedPrompt,
     answerPendingQuestion,
+    refreshChatSessionRunActivity,
     sendBuilderChat,
     stopCurrentRun,
     startNewChat,

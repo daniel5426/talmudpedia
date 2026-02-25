@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,6 +110,44 @@ class PublishedAppCodingChatHistoryService:
             .limit(limit)
         )
         return list(reversed(list(result.scalars().all())))
+
+    async def list_messages_page(
+        self,
+        *,
+        session_id: UUID,
+        limit: int = 10,
+        before_message_id: UUID | None = None,
+    ) -> tuple[list[PublishedAppCodingChatMessage], bool, UUID | None]:
+        query = select(PublishedAppCodingChatMessage).where(PublishedAppCodingChatMessage.session_id == session_id)
+        if before_message_id is not None:
+            cursor_message = await self.db.get(PublishedAppCodingChatMessage, before_message_id)
+            if cursor_message is None or cursor_message.session_id != session_id:
+                raise HTTPException(status_code=404, detail="Paging cursor message not found for this chat session")
+            query = query.where(
+                or_(
+                    PublishedAppCodingChatMessage.created_at < cursor_message.created_at,
+                    and_(
+                        PublishedAppCodingChatMessage.created_at == cursor_message.created_at,
+                        PublishedAppCodingChatMessage.id < cursor_message.id,
+                    ),
+                )
+            )
+
+        result = await self.db.execute(
+            query
+            .order_by(
+                desc(PublishedAppCodingChatMessage.created_at),
+                desc(PublishedAppCodingChatMessage.id),
+            )
+            .limit(limit + 1)
+        )
+        newest_first = list(result.scalars().all())
+        has_more = len(newest_first) > limit
+        if has_more:
+            newest_first = newest_first[:limit]
+        chronological = list(reversed(newest_first))
+        next_before_message_id = chronological[0].id if chronological and has_more else None
+        return chronological, has_more, next_before_message_id
 
     async def build_run_messages(
         self,

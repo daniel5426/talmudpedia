@@ -14,10 +14,12 @@ import {
 } from "./stream-parsers";
 
 type TerminalStatus = "completed" | "failed" | "cancelled" | "paused";
-
 type ConsumeRunStreamOptions = {
   appId: string;
   runId: string;
+  runSessionId?: string | null;
+  streamAttachmentId?: number;
+  getCurrentStreamAttachmentId?: () => number;
   activeTab: "preview" | "config";
   activeChatSessionIdRef: MutableRefObject<string | null>;
   setIsSending: (next: boolean) => void;
@@ -55,32 +57,18 @@ type ConsumeRunStreamOptions = {
   requestCancelForRun: (runId: string) => Promise<void>;
   onQuestionAsked: (question: CodingAgentPendingQuestion) => void;
   onQuestionResolved: (requestId?: string) => void;
+  shouldEnsureDraftPreviewAfterRun?: (params: {
+    runId: string;
+    sessionId: string | null;
+    terminalStatus: TerminalStatus | null;
+  }) => boolean;
+  onRunTerminalized?: (params: {
+    sessionId: string;
+    runId: string;
+    terminalStatus: TerminalStatus | null;
+    sawTerminalEvent: boolean;
+  }) => void | Promise<void>;
 };
-
-const WRITE_TOOL_HINTS = [
-  "apply_patch",
-  "write",
-  "rename",
-  "delete",
-  "remove",
-  "move",
-  "mkdir",
-  "touch",
-  "create",
-  "edit",
-  "replace",
-  "insert",
-  "append",
-  "prepend",
-];
-
-function isLikelyWorkspaceWriteTool(toolName: string): boolean {
-  const normalized = String(toolName || "").trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return WRITE_TOOL_HINTS.some((hint) => normalized.includes(hint));
-}
 
 function findSseFrameBoundary(buffer: string): { index: number; delimiterLength: number } | null {
   const lfBoundary = buffer.indexOf("\n\n");
@@ -104,6 +92,9 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
   const {
     appId,
     runId,
+    runSessionId,
+    streamAttachmentId,
+    getCurrentStreamAttachmentId,
     activeTab,
     activeChatSessionIdRef,
     setIsSending,
@@ -130,10 +121,26 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     requestCancelForRun,
     onQuestionAsked,
     onQuestionResolved,
+    shouldEnsureDraftPreviewAfterRun,
+    onRunTerminalized,
   } = options;
 
   const normalizedRunId = String(runId || "").trim();
+  const normalizedRunSessionId = String(runSessionId || activeChatSessionIdRef.current || "").trim();
+  const resolvedStreamAttachmentId = Number.isFinite(Number(streamAttachmentId))
+    ? Number(streamAttachmentId)
+    : 0;
+  const resolvedGetCurrentStreamAttachmentId =
+    typeof getCurrentStreamAttachmentId === "function"
+      ? getCurrentStreamAttachmentId
+      : () => resolvedStreamAttachmentId;
+  const isCurrentAttachment = (): boolean =>
+    resolvedGetCurrentStreamAttachmentId() === resolvedStreamAttachmentId;
+  const canMutateUi = (): boolean => isCurrentAttachment() && isMountedRef.current;
   if (!normalizedRunId) {
+    return;
+  }
+  if (!isCurrentAttachment()) {
     return;
   }
 
@@ -150,6 +157,8 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
   lastKnownRunIdRef.current = normalizedRunId;
 
   let shouldSuppressErrors = false;
+  let sawTerminalEvent = false;
+  let terminalStatus: TerminalStatus | null = null;
 
   try {
     const response = await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId);
@@ -184,13 +193,10 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     let latestResultRevisionId = "";
     let latestBackendFailureMessage = "";
     let sawRunFailure = false;
-    let sawTerminalEvent = false;
     let sawInactivityTimeout = false;
     let sawMaxDurationTimeout = false;
     let recoveryCancelAttempted = false;
     let recoveryCancelConfirmed = false;
-    let terminalStatus: TerminalStatus | null = null;
-    let sawLikelyWriteToolEvent = false;
 
     const STALL_TIMEOUT_MS = resolvePositiveTimeoutMs(
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS,
@@ -307,6 +313,11 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         shouldSuppressErrors = true;
         break;
       }
+      if (!isCurrentAttachment()) {
+        sawTerminalEvent = true;
+        shouldSuppressErrors = true;
+        break;
+      }
       const now = Date.now();
       if (now - runStartedAt > MAX_RUN_DURATION_MS) {
         sawMaxDurationTimeout = true;
@@ -360,6 +371,11 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
         lastEventAt = Date.now();
         const payload = (parsed.payload || {}) as Record<string, unknown>;
+        if (!isCurrentAttachment()) {
+          sawTerminalEvent = true;
+          shouldSuppressErrors = true;
+          break;
+        }
 
         if (parsed.event === "assistant.delta" && payload.content) {
           const chunkText = String(payload.content);
@@ -391,9 +407,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
         if (parsed.event === "tool.started") {
           const toolName = String(payload.tool || "tool");
-          if (isLikelyWorkspaceWriteTool(toolName)) {
-            sawLikelyWriteToolEvent = true;
-          }
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.input || payload);
           if (assistantText.trim()) {
@@ -407,9 +420,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
         if (parsed.event === "tool.completed") {
           const toolName = String(payload.tool || "tool");
-          if (isLikelyWorkspaceWriteTool(toolName)) {
-            sawLikelyWriteToolEvent = true;
-          }
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.output || payload);
           upsertToolTimeline(toolCallId, describeToolIntent(toolName), "completed", toolName, toolPath);
@@ -417,9 +427,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
         if (parsed.event === "tool.failed") {
           const toolName = String(payload.tool || "tool");
-          if (isLikelyWorkspaceWriteTool(toolName)) {
-            sawLikelyWriteToolEvent = true;
-          }
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.output || payload);
           upsertToolTimeline(toolCallId, describeToolIntent(toolName), "failed", toolName, toolPath);
@@ -509,17 +516,21 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       }
     }
     if (sawMaxDurationTimeout && !intentionalAbortRef.current) {
-      onError(
-        recoveryCancelConfirmed
-          ? "Coding-agent run exceeded maximum duration. The run was stopped to recover."
-          : "Coding-agent run exceeded maximum duration and cancellation could not be confirmed.",
-      );
+      if (isCurrentAttachment()) {
+        onError(
+          recoveryCancelConfirmed
+            ? "Coding-agent run exceeded maximum duration. The run was stopped to recover."
+            : "Coding-agent run exceeded maximum duration and cancellation could not be confirmed.",
+        );
+      }
     } else if (sawInactivityTimeout && !intentionalAbortRef.current) {
-      onError(
-        recoveryCancelConfirmed
-          ? "Coding-agent stream stalled before completion. The run was stopped to recover."
-          : "Coding-agent stream stalled before completion and cancellation could not be confirmed.",
-      );
+      if (isCurrentAttachment()) {
+        onError(
+          recoveryCancelConfirmed
+            ? "Coding-agent stream stalled before completion. The run was stopped to recover."
+            : "Coding-agent stream stalled before completion and cancellation could not be confirmed.",
+        );
+      }
     } else if (!sawTerminalEvent && !intentionalAbortRef.current) {
       const reconciledImmediately = await reconcileTerminalStateFromBackend();
       const TERMINAL_RECONCILE_TIMEOUT_MS = resolvePositiveTimeoutMs(
@@ -531,14 +542,16 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         const reconciledAfterRecovery = await waitForBackendTerminalState(TERMINAL_RECONCILE_TIMEOUT_MS);
         if (!reconciledAfterRecovery) {
           sawRunFailure = true;
-          onError(
-            recoveryCancelConfirmed
-              ? "Coding-agent stream ended before a terminal event. The run was stopped to recover."
-              : "Coding-agent stream ended before a terminal event and cancellation could not be confirmed.",
-          );
+          if (isCurrentAttachment()) {
+            onError(
+              recoveryCancelConfirmed
+                ? "Coding-agent stream ended before a terminal event. The run was stopped to recover."
+                : "Coding-agent stream ended before a terminal event and cancellation could not be confirmed.",
+            );
+          }
         }
       }
-      if (terminalStatus === "failed" && !pendingCancelRef.current) {
+      if (terminalStatus === "failed" && !pendingCancelRef.current && isCurrentAttachment()) {
         onError(latestBackendFailureMessage || "Coding-agent run failed");
       }
     } else if (
@@ -546,7 +559,9 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       terminalStatus === "failed" &&
       !pendingCancelRef.current
     ) {
-      onError("Coding-agent run failed");
+      if (isCurrentAttachment()) {
+        onError("Coding-agent run failed");
+      }
     }
 
     if (!intentionalAbortRef.current) {
@@ -574,123 +589,69 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     }
 
     const finalizeAfterRun = async () => {
-      const waitForResultRevisionIfNeeded = async () => {
-        if (terminalStatus !== "completed" || !sawLikelyWriteToolEvent) {
-          return;
+      const isAttachedRun = (): boolean =>
+        String(activeRunIdRef.current || "").trim() === normalizedRunId;
+      const parseRunActiveFromError = (err: unknown) =>
+        parseRunActiveDetail(err instanceof Error ? err.message : String(err || ""));
+      let activeRunCount: number | null = null;
+      if (isCurrentAttachment() && isAttachedRun()) {
+        try {
+          const state = await publishedAppsService.getBuilderState(appId);
+          activeRunCount = Number(state?.draft_dev?.active_coding_run_count || 0);
+        } catch {
+          activeRunCount = null;
         }
-        const timeoutMs = resolvePositiveTimeoutMs(
-          process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_REVISION_WAIT_TIMEOUT_MS,
-          30000,
-        );
-        const pollMs = Math.min(
-          timeoutMs,
-          resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_REVISION_WAIT_POLL_MS, 400),
-        );
-        const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline && !intentionalAbortRef.current) {
-          try {
-            const run = await publishedAppsService.getCodingAgentRun(appId, normalizedRunId);
-            const status = parseTerminalRunStatus(run.status);
-            if (status && status !== "completed") {
-              return;
-            }
-            const revisionId = String(run.result_revision_id || run.checkpoint_revision_id || "").trim();
-            if (revisionId) {
-              latestResultRevisionId = revisionId;
-              return;
-            }
-          } catch {
-            // Best-effort polling only.
-          }
-          await new Promise<void>((resolve) => {
-            setTimeout(resolve, pollMs);
-          });
-        }
-      };
-
-      const waitForBuilderDraftRevisionIfNeeded = async () => {
-        if (terminalStatus !== "completed") {
-          return;
-        }
-        const expectedRevisionId = String(latestResultRevisionId || "").trim();
-        if (!expectedRevisionId) {
-          return;
-        }
-        const timeoutMs = resolvePositiveTimeoutMs(
-          process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_BUILDER_STATE_WAIT_TIMEOUT_MS,
-          30000,
-        );
-        const pollMs = Math.min(
-          timeoutMs,
-          resolvePositiveTimeoutMs(
-            process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_BUILDER_STATE_WAIT_POLL_MS,
-            400,
-          ),
-        );
-        const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline && !intentionalAbortRef.current) {
-          try {
-            const state = await publishedAppsService.getBuilderState(appId);
-            const draftRevisionId = String(
-              state.current_draft_revision?.id || state.app?.current_draft_revision_id || "",
-            ).trim();
-            if (draftRevisionId && draftRevisionId === expectedRevisionId) {
-              return;
-            }
-          } catch {
-            // Best-effort polling only.
-          }
-          await new Promise<void>((resolve) => {
-            setTimeout(resolve, pollMs);
-          });
-        }
-      };
-
-      await waitForResultRevisionIfNeeded();
-      await waitForBuilderDraftRevisionIfNeeded();
-      await refreshStateSilently();
-      if (activeTab === "preview") {
-        const maxEnsureAttempts = 6;
-        for (let attempt = 0; attempt < maxEnsureAttempts; attempt += 1) {
-          try {
-            await ensureDraftDevSession();
-            break;
-          } catch (err) {
-            const runActive = parseRunActiveDetail(err instanceof Error ? err.message : String(err || ""));
-            if (!runActive) {
-              throw err;
-            }
-            const conflictingRunId = String(runActive.active_run_id || "").trim();
-            if (conflictingRunId && conflictingRunId !== normalizedRunId) {
-              break;
-            }
-            if (attempt + 1 >= maxEnsureAttempts) {
-              throw err;
-            }
-            const retryDelayMs = 120 * (attempt + 1);
-            await new Promise<void>((resolve) => {
-              setTimeout(resolve, retryDelayMs);
-            });
+      }
+      const hasActiveRunsInScope = activeRunCount !== null && activeRunCount > 0;
+      if (isCurrentAttachment() && isAttachedRun() && !hasActiveRunsInScope) {
+        try {
+          await refreshStateSilently();
+        } catch (err) {
+          if (!parseRunActiveFromError(err)) {
+            throw err;
           }
         }
       }
-      if (latestResultRevisionId) {
+      const shouldEnsurePreview =
+        shouldEnsureDraftPreviewAfterRun?.({
+          runId: normalizedRunId,
+          sessionId: normalizedRunSessionId || null,
+          terminalStatus,
+        }) ?? isAttachedRun();
+      if (
+        isCurrentAttachment()
+        && isAttachedRun()
+        && !hasActiveRunsInScope
+        && activeTab === "preview"
+        && shouldEnsurePreview
+      ) {
+        try {
+          await ensureDraftDevSession();
+        } catch (err) {
+          if (!parseRunActiveFromError(err)) {
+            throw err;
+          }
+        }
+      }
+      if (isCurrentAttachment() && isAttachedRun() && !hasActiveRunsInScope && latestResultRevisionId) {
         onSetCurrentRevisionId(latestResultRevisionId);
       }
-      await loadChatSessions();
+      if (isCurrentAttachment()) {
+        await loadChatSessions();
+      }
     };
 
     if (process.env.NODE_ENV === "test") {
       try {
         await finalizeAfterRun();
       } catch (err) {
-        if (!intentionalAbortRef.current && isMountedRef.current && !shouldSuppressErrors) {
+        if (!intentionalAbortRef.current && canMutateUi() && !shouldSuppressErrors) {
           onError(err instanceof Error ? err.message : "Failed to refresh builder state after run");
         }
       }
     } else {
       void finalizeAfterRun().catch((err) => {
-        if (!intentionalAbortRef.current && isMountedRef.current && !shouldSuppressErrors) {
+        if (!intentionalAbortRef.current && canMutateUi() && !shouldSuppressErrors) {
           onError(err instanceof Error ? err.message : "Failed to refresh builder state after run");
         }
       });
@@ -701,14 +662,33 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       err !== null &&
       "name" in err &&
       String((err as { name?: string }).name || "") === "AbortError";
-    if (!intentionalAbortRef.current && !isAbortError && !shouldSuppressErrors) {
+    if (!intentionalAbortRef.current && !isAbortError && !shouldSuppressErrors && isCurrentAttachment()) {
       onError(err instanceof Error ? err.message : "Failed to run coding agent");
     }
   } finally {
+    if (!intentionalAbortRef.current && normalizedRunSessionId && onRunTerminalized) {
+      try {
+        await onRunTerminalized({
+          sessionId: normalizedRunSessionId,
+          runId: normalizedRunId,
+          terminalStatus,
+          sawTerminalEvent,
+        });
+      } catch {
+        // Best-effort callback; stream cleanup must continue.
+      }
+    }
+    if (!isCurrentAttachment()) {
+      return;
+    }
     onQuestionResolved();
     abortReaderRef.current = null;
-    activeRunIdRef.current = null;
-    lastKnownRunIdRef.current = null;
+    if (activeRunIdRef.current === normalizedRunId) {
+      activeRunIdRef.current = null;
+    }
+    if (lastKnownRunIdRef.current === normalizedRunId) {
+      lastKnownRunIdRef.current = null;
+    }
     pendingCancelRef.current = false;
     setIsStopping(false);
     if (!isMountedRef.current) {

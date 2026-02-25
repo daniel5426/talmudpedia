@@ -127,7 +127,6 @@ backend/app/services/published_app_coding_agent_runtime_checkpoints.py
 backend/app/services/published_app_coding_agent_runtime_streaming.py
 backend/app/services/published_app_coding_run_monitor.py
 backend/app/services/published_app_coding_run_monitor_config.py
-backend/app/services/published_app_coding_queue_service.py
 backend/app/services/published_app_revision_store.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
