@@ -9,6 +9,7 @@ from typing import Any, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
+from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.services.opencode_server_client import OpenCodeServerClient
 
 from .base import EngineCancelResult, EngineRunContext, EngineStreamEvent
@@ -49,6 +50,14 @@ class OpenCodePublishedAppCodingAgentEngine:
 
     async def stream(self, ctx: EngineRunContext) -> AsyncGenerator[EngineStreamEvent, None]:
         run = ctx.run
+        trace_base = {
+            "run_id": str(run.id),
+            "app_id": str(ctx.app.id),
+        }
+
+        def trace_engine(event: str, **fields: Any) -> None:
+            pipeline_trace(event, pipeline="opencode_engine", **trace_base, **fields)
+
         input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
         raw_context = input_params.get("context")
         context = dict(raw_context) if isinstance(raw_context, dict) else {}
@@ -71,8 +80,10 @@ class OpenCodePublishedAppCodingAgentEngine:
         ).strip()
         live_workspace_path = str(context.get("preview_workspace_live_path") or "").strip()
         if not workspace_path:
+            trace_engine("engine.stream.invalid_workspace", reason="missing_workspace_path")
             raise RuntimeError("OpenCode run requires a prepared stage workspace path.")
         if live_workspace_path and workspace_path.rstrip("/") == live_workspace_path.rstrip("/"):
+            trace_engine("engine.stream.invalid_workspace", reason="workspace_equals_live_workspace")
             raise RuntimeError("OpenCode run workspace resolved to live workspace; stage workspace is required.")
         sandbox_id = str(
             context.get("opencode_sandbox_id")
@@ -83,6 +94,12 @@ class OpenCodePublishedAppCodingAgentEngine:
 
         if not run.engine_run_ref:
             opencode_start_started_at = time.monotonic()
+            trace_engine(
+                "engine.stream.start_requested",
+                sandbox_id=sandbox_id or None,
+                workspace_path=workspace_path,
+                model_id=opencode_model_id or resolved_model_id,
+            )
             run.engine_run_ref = await self._client.start_run(
                 run_id=str(run.id),
                 app_id=str(ctx.app.id),
@@ -109,6 +126,11 @@ class OpenCodePublishedAppCodingAgentEngine:
                 ctx.app.id,
                 opencode_start_ms,
             )
+            trace_engine(
+                "engine.stream.start_confirmed",
+                engine_run_ref=str(run.engine_run_ref or ""),
+                opencode_start_ms=opencode_start_ms,
+            )
 
         run.status = RunStatus.running
         if not run.started_at:
@@ -132,14 +154,27 @@ class OpenCodePublishedAppCodingAgentEngine:
             mapped = self._translate_event(raw)
             if mapped is None:
                 continue
+            if mapped.event != "assistant.delta":
+                payload = mapped.payload if isinstance(mapped.payload, dict) else {}
+                trace_engine(
+                    "engine.stream.event",
+                    mapped_event=mapped.event,
+                    stage=mapped.stage,
+                    tool=str(payload.get("tool") or "").strip() or None,
+                    span_id=str(payload.get("span_id") or "").strip() or None,
+                    diagnostics_count=len(mapped.diagnostics or []),
+                )
             if mapped.event == "tool.failed" and self._is_apply_patch_tool(mapped.payload):
                 saw_apply_patch_failure = True
+                trace_engine("engine.stream.apply_patch_failed")
             elif mapped.event == "tool.completed":
                 if self._is_successful_apply_patch(mapped.payload):
                     saw_apply_patch_success = True
                     saw_recovery_edit_success = True
+                    trace_engine("engine.stream.apply_patch_succeeded")
                 elif self._is_recovery_edit_tool(mapped.payload):
                     saw_recovery_edit_success = True
+                    trace_engine("engine.stream.recovery_edit_succeeded")
             workspace_violations = self._extract_workspace_violations(
                 payload=mapped.payload or {},
                 workspace_root=workspace_root,
@@ -159,6 +194,13 @@ class OpenCodePublishedAppCodingAgentEngine:
                     sandbox_id,
                     workspace_root,
                     workspace_violations,
+                )
+                trace_engine(
+                    "engine.stream.workspace_violation",
+                    sandbox_id=sandbox_id or None,
+                    workspace_root=workspace_root,
+                    violation_count=len(workspace_violations),
+                    violations=workspace_violations[:10],
                 )
                 try:
                     if run.engine_run_ref:
@@ -217,6 +259,7 @@ class OpenCodePublishedAppCodingAgentEngine:
             failure_message = (
                 "OpenCode run completed after apply_patch failures without a successful follow-up edit."
             )
+            trace_engine("engine.stream.force_failed_unrecovered_apply_patch")
         if saw_terminal and not saw_failure:
             if saw_cancelled:
                 persisted.status = RunStatus.cancelled
@@ -233,9 +276,31 @@ class OpenCodePublishedAppCodingAgentEngine:
                 persisted.error_message = "OpenCode stream ended without terminal completion event"
         persisted.completed_at = datetime.now(timezone.utc)
         await self._db.commit()
+        trace_engine(
+            "engine.stream.closed",
+            status=(
+                persisted.status.value
+                if hasattr(persisted.status, "value")
+                else str(persisted.status)
+            ),
+            saw_terminal=saw_terminal,
+            saw_failure=saw_failure,
+            saw_cancelled=saw_cancelled,
+            saw_paused=saw_paused,
+            saw_apply_patch_failure=saw_apply_patch_failure,
+            saw_apply_patch_success=saw_apply_patch_success,
+            saw_recovery_edit_success=saw_recovery_edit_success,
+            error=str(persisted.error_message or "") or None,
+        )
 
     async def cancel(self, run: AgentRun) -> EngineCancelResult:
         if not run.engine_run_ref:
+            pipeline_trace(
+                "engine.cancel.unconfirmed_missing_run_ref",
+                pipeline="opencode_engine",
+                run_id=str(run.id),
+                app_id=str(run.published_app_id) if run.published_app_id else None,
+            )
             return EngineCancelResult(
                 confirmed=False,
                 diagnostics=[{"code": "OPENCODE_CANCEL_UNCONFIRMED", "message": "Missing OpenCode run reference"}],
@@ -250,6 +315,14 @@ class OpenCodePublishedAppCodingAgentEngine:
                 sandbox_id=sandbox_id,
             )
         except Exception as exc:
+            pipeline_trace(
+                "engine.cancel.failed",
+                pipeline="opencode_engine",
+                run_id=str(run.id),
+                app_id=str(run.published_app_id) if run.published_app_id else None,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
             return EngineCancelResult(
                 confirmed=False,
                 diagnostics=[
@@ -260,7 +333,19 @@ class OpenCodePublishedAppCodingAgentEngine:
                 ],
             )
         if confirmed:
+            pipeline_trace(
+                "engine.cancel.confirmed",
+                pipeline="opencode_engine",
+                run_id=str(run.id),
+                app_id=str(run.published_app_id) if run.published_app_id else None,
+            )
             return EngineCancelResult(confirmed=True, diagnostics=[])
+        pipeline_trace(
+            "engine.cancel.unconfirmed",
+            pipeline="opencode_engine",
+            run_id=str(run.id),
+            app_id=str(run.published_app_id) if run.published_app_id else None,
+        )
         return EngineCancelResult(
             confirmed=False,
             diagnostics=[{"code": "OPENCODE_CANCEL_UNCONFIRMED", "message": "OpenCode cancellation not confirmed"}],
@@ -268,6 +353,13 @@ class OpenCodePublishedAppCodingAgentEngine:
 
     async def answer_question(self, *, run: AgentRun, question_id: str, answers: list[list[str]]) -> None:
         if not run.engine_run_ref:
+            pipeline_trace(
+                "engine.answer_question.missing_run_ref",
+                pipeline="opencode_engine",
+                run_id=str(run.id),
+                app_id=str(run.published_app_id) if run.published_app_id else None,
+                question_id=str(question_id or "") or None,
+            )
             raise RuntimeError("Missing OpenCode run reference for question response")
         input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
         raw_context = input_params.get("context")
@@ -278,6 +370,14 @@ class OpenCodePublishedAppCodingAgentEngine:
             question_id=str(question_id or "").strip(),
             answers=answers,
             sandbox_id=sandbox_id,
+        )
+        pipeline_trace(
+            "engine.answer_question.sent",
+            pipeline="opencode_engine",
+            run_id=str(run.id),
+            app_id=str(run.published_app_id) if run.published_app_id else None,
+            question_id=str(question_id or "") or None,
+            answer_groups=len(answers or []),
         )
 
     @classmethod

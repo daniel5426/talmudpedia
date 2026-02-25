@@ -11,6 +11,33 @@ The coding-agent stack is now hard-cut to an OpenCode-first architecture:
 - Old replay/event-log orchestration has been removed.
 - Prompt queueing is frontend-owned (no backend durable queue orchestration).
 
+## Pipeline Trace Logging (JSONL, New)
+
+To support postmortems of intermittent multi-run failures (stall/cancel races, missing terminal signals, tool-failure chains), the coding-agent stack now emits structured JSON lines to a dedicated trace sink.
+
+Default output file:
+- `/tmp/talmudpedia-coding-agent-pipeline-trace.jsonl`
+
+Primary environment controls:
+- `APPS_CODING_AGENT_PIPELINE_TRACE_ENABLED` (`1/0`, defaults to enabled)
+- `APPS_CODING_AGENT_PIPELINE_TRACE_FILE` (absolute file path override)
+
+Backward compatibility aliases:
+- `APPS_CODING_AGENT_DEBUG_TRACE_ENABLED`
+- `APPS_CODING_AGENT_DEBUG_TRACE_FILE`
+
+Pipelines now traced:
+- `api_v2` (prompt submit / stream open-close / cancel / question answer)
+- `runtime` (run creation, sandbox init, cancellation lifecycle, answer-question lifecycle)
+- `runtime_stream` (engine event mapping, terminalization, forced failure reasons, stream close)
+- `monitor` (subscriber/emit lifecycle, synthetic terminalization, timeout enforcement)
+- `opencode_engine` (mapped tool/run events, apply_patch recovery policy outcomes)
+- `opencode_client` (start/cancel/answer requests + results, official stream closure stats)
+
+Event model:
+- One JSON object per line, with `ts`, `pipeline`, `event`, `pid`, and run correlation fields (`run_id`, `app_id`, optional session/tool identifiers).
+- Logging is best-effort and non-blocking with failure swallow semantics (trace writes never break run execution).
+
 ## v2 API Surface
 
 All coding-agent endpoints now live under:

@@ -20,6 +20,7 @@ from app.db.postgres.session import get_db
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
+from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_draft_dev_runtime import (
     PublishedAppDraftDevRuntimeDisabled,
@@ -255,12 +256,22 @@ async def submit_coding_agent_prompt(
     user_prompt = (payload.input or "").strip()
     if not user_prompt:
         raise HTTPException(status_code=400, detail="input is required")
+    client_message_id = str(payload.client_message_id or "").strip() or None
+    pipeline_trace(
+        "api.prompt.received",
+        pipeline="api_v2",
+        app_id=str(app.id),
+        actor_id=str(actor_id) if actor_id else None,
+        requested_chat_session_id=str(payload.chat_session_id) if payload.chat_session_id else None,
+        requested_model_id=str(payload.model_id or "") or None,
+        client_message_id=client_message_id,
+        prompt_chars=len(user_prompt),
+    )
 
     runtime = PublishedAppCodingAgentRuntimeService(db)
     history = PublishedAppCodingChatHistoryService(db)
     resolved_session_id: UUID | None = None
     run_messages: list[dict[str, str]] | None = None
-    client_message_id = str(payload.client_message_id or "").strip() or None
 
     if actor_id is not None:
         session = await history.resolve_or_create_session(
@@ -279,6 +290,14 @@ async def submit_coding_agent_prompt(
             chat_session_id=session.id,
         )
         if active_run is not None:
+            pipeline_trace(
+                "api.prompt.rejected_active_run",
+                pipeline="api_v2",
+                app_id=str(app.id),
+                actor_id=str(actor_id) if actor_id else None,
+                chat_session_id=str(session.id),
+                active_run_id=str(active_run.id),
+            )
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -299,6 +318,14 @@ async def submit_coding_agent_prompt(
         requested_model_id=(str(payload.model_id or "").strip() or None),
         chat_session_id=resolved_session_id,
     )
+    pipeline_trace(
+        "api.prompt.run_created",
+        pipeline="api_v2",
+        app_id=str(app.id),
+        run_id=str(run.id),
+        actor_id=str(actor_id) if actor_id else None,
+        chat_session_id=str(resolved_session_id) if resolved_session_id else None,
+    )
 
     if resolved_session_id is not None:
         await history.persist_user_message(
@@ -310,6 +337,12 @@ async def submit_coding_agent_prompt(
         await db.commit()
 
     await PublishedAppCodingRunMonitor(db).ensure_monitor(app_id=app.id, run_id=run.id)
+    pipeline_trace(
+        "api.prompt.monitor_ensured",
+        pipeline="api_v2",
+        app_id=str(app.id),
+        run_id=str(run.id),
+    )
     return CodingAgentPromptSubmissionStartedResponse(
         run=_run_to_response(runtime, run),
     )
@@ -351,6 +384,12 @@ async def stream_coding_agent_run(
     monitor = PublishedAppCodingRunMonitor(db)
 
     async def event_generator():
+        pipeline_trace(
+            "api.stream.opened",
+            pipeline="api_v2",
+            app_id=str(app.id),
+            run_id=str(run.id),
+        )
         PublishedAppCodingRunMonitor._trace(
             "api.stream.opened",
             app_id=str(app.id),
@@ -366,6 +405,12 @@ async def stream_coding_agent_run(
                 yield _sse(framed)
                 await asyncio.sleep(0)
         finally:
+            pipeline_trace(
+                "api.stream.closed",
+                pipeline="api_v2",
+                app_id=str(app.id),
+                run_id=str(run.id),
+            )
             PublishedAppCodingRunMonitor._trace(
                 "api.stream.closed",
                 app_id=str(app.id),
@@ -404,10 +449,24 @@ async def cancel_coding_agent_run(
         run_id=str(run.id),
         status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
     )
+    pipeline_trace(
+        "api.cancel.requested",
+        pipeline="api_v2",
+        app_id=str(app.id),
+        run_id=str(run.id),
+        status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
+    )
     await PublishedAppCodingRunMonitor(db).ensure_monitor(app_id=app.id, run_id=run.id)
     run = await service.cancel_run(run)
     PublishedAppCodingRunMonitor._trace(
         "api.cancel.persisted",
+        app_id=str(app.id),
+        run_id=str(run.id),
+        status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
+    )
+    pipeline_trace(
+        "api.cancel.persisted",
+        pipeline="api_v2",
         app_id=str(app.id),
         run_id=str(run.id),
         status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
@@ -431,11 +490,26 @@ async def answer_coding_agent_run_question(
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     service = PublishedAppCodingAgentRuntimeService(db)
     run = await service.get_run_for_app(app_id=app.id, run_id=run_id)
+    pipeline_trace(
+        "api.answer_question.requested",
+        pipeline="api_v2",
+        app_id=str(app.id),
+        run_id=str(run.id),
+        question_id=payload.question_id,
+        answer_groups=len(payload.answers or []),
+    )
     await PublishedAppCodingRunMonitor(db).ensure_monitor(app_id=app.id, run_id=run.id)
     updated = await service.answer_question(
         run=run,
         question_id=payload.question_id,
         answers=payload.answers,
+    )
+    pipeline_trace(
+        "api.answer_question.sent",
+        pipeline="api_v2",
+        app_id=str(app.id),
+        run_id=str(run.id),
+        question_id=payload.question_id,
     )
     return _run_to_response(service, updated)
 

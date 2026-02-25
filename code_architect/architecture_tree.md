@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-02-24
+Last Updated: 2026-02-25
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -127,6 +127,7 @@ backend/app/services/published_app_coding_agent_runtime_checkpoints.py
 backend/app/services/published_app_coding_agent_runtime_streaming.py
 backend/app/services/published_app_coding_run_monitor.py
 backend/app/services/published_app_coding_run_monitor_config.py
+backend/app/services/published_app_coding_pipeline_trace.py
 backend/app/services/published_app_revision_store.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py

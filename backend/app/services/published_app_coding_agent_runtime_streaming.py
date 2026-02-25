@@ -8,6 +8,7 @@ from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.services.published_app_coding_agent_engines.base import EngineRunContext
+from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 
 _TERMINAL_EVENTS = {"run.completed", "run.failed", "run.cancelled", "run.paused"}
@@ -211,6 +212,37 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         run: AgentRun,
     ) -> AsyncGenerator[dict[str, Any], None]:
         run_id = run.id
+        trace_base = {
+            "run_id": str(run_id),
+            "app_id": str(app.id),
+        }
+
+        def trace_stream(event: str, **fields: Any) -> None:
+            pipeline_trace(event, pipeline="runtime_stream", **trace_base, **fields)
+
+        def summarize_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+            if not isinstance(payload, dict):
+                return {}
+            summary: dict[str, Any] = {"payload_keys": sorted(payload.keys())[:24]}
+            tool = str(payload.get("tool") or "").strip()
+            span_id = str(payload.get("span_id") or "").strip()
+            status = str(payload.get("status") or "").strip()
+            error = str(payload.get("error") or "").strip()
+            if tool:
+                summary["tool"] = tool
+            if span_id:
+                summary["span_id"] = span_id
+            if status:
+                summary["status"] = status
+            if error:
+                summary["error"] = error[:400]
+            return summary
+
+        trace_stream(
+            "runtime_stream.opened",
+            status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
+            chat_session_id=str(self._extract_chat_session_id(run) or "") or None,
+        )
         persistent_run = await self.db.get(AgentRun, run_id)
         if persistent_run is not None:
             run = persistent_run
@@ -296,6 +328,10 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             RunStatus.cancelled.value,
             RunStatus.paused.value,
         }:
+            trace_stream(
+                "runtime_stream.already_terminal",
+                terminal_status=terminal_status,
+            )
             if terminal_status == RunStatus.completed.value:
                 assistant_text = self._extract_assistant_text_from_output(run.output_result) or self._fallback_assistant_text(run)
                 if assistant_text:
@@ -304,24 +340,28 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     assistant_delta_events += 1
                 await persist_assistant_message_for_terminal(assistant_text)
                 await release_run_lock()
+                trace_stream("runtime_stream.closed", terminal_event="run.completed")
                 yield emit("run.completed", "run", self.serialize_run(run))
                 return
 
             if terminal_status == RunStatus.cancelled.value:
                 await persist_assistant_message_for_terminal("Run cancelled.")
                 await release_run_lock()
+                trace_stream("runtime_stream.closed", terminal_event="run.cancelled")
                 yield emit("run.cancelled", "run", self.serialize_run(run))
                 return
 
             if terminal_status == RunStatus.paused.value:
                 await persist_assistant_message_for_terminal("Run paused.")
                 await release_run_lock()
+                trace_stream("runtime_stream.closed", terminal_event="run.paused")
                 yield emit("run.paused", "run", self.serialize_run(run))
                 return
 
             failure_message = self._compose_failure_message(run=run, fallback="run failed")
             await persist_assistant_message_for_terminal(failure_message)
             await release_run_lock()
+            trace_stream("runtime_stream.closed", terminal_event="run.failed", error=failure_message)
             yield emit("run.failed", "run", self.serialize_run(run), [{"message": failure_message}])
             return
 
@@ -338,6 +378,12 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 "run",
                 self.serialize_run(run),
                 [{"code": "CODING_AGENT_SANDBOX_REQUIRED", "message": run.error_message}],
+            )
+            trace_stream(
+                "runtime_stream.closed",
+                terminal_event="run.failed",
+                error=run.error_message,
+                error_code="CODING_AGENT_SANDBOX_REQUIRED",
             )
             return
 
@@ -366,10 +412,23 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                         yield emit("assistant.delta", "assistant", {"content": content})
                     continue
 
+                trace_stream(
+                    "runtime_stream.engine_event",
+                    mapped_event=mapped_event,
+                    stage=stage,
+                    **summarize_payload(payload),
+                )
+
                 if mapped_event in _TERMINAL_EVENTS:
                     terminal_engine_event = mapped_event
                     terminal_engine_payload = payload
                     terminal_engine_diagnostics = diagnostics
+                    trace_stream(
+                        "runtime_stream.engine_terminal_observed",
+                        mapped_event=mapped_event,
+                        diagnostics_count=len(diagnostics),
+                        **summarize_payload(payload),
+                    )
                     break
 
                 if self._is_workspace_write_tool_event(event=mapped_event, payload=payload):
@@ -409,6 +468,11 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 run.completed_at = run.completed_at or datetime.now(timezone.utc)
                 await self.db.commit()
                 status = run.status.value if hasattr(run.status, "value") else str(run.status)
+                trace_stream(
+                    "runtime_stream.terminal_status_persisted",
+                    status=status,
+                    mapped_terminal_event=terminal_engine_event,
+                )
 
             if status not in _TERMINAL_RUN_STATUSES:
                 run.status = RunStatus.failed
@@ -416,6 +480,11 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 run.completed_at = datetime.now(timezone.utc)
                 await self.db.commit()
                 status = RunStatus.failed.value
+                trace_stream(
+                    "runtime_stream.force_failed_missing_terminal",
+                    status=status,
+                    error=run.error_message,
+                )
 
             if status == RunStatus.completed.value:
                 await finalize_sandbox("stopped")
@@ -438,6 +507,12 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     revision_created=bool(run.result_revision_id),
                 )
                 await release_run_lock()
+                trace_stream(
+                    "runtime_stream.closed",
+                    terminal_event="run.completed",
+                    assistant_delta_events=assistant_delta_events,
+                    saw_write_tool_event=saw_write_tool_event,
+                )
                 yield emit("run.completed", "run", self.serialize_run(run))
                 return
 
@@ -453,6 +528,12 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     revision_created=bool(run.result_revision_id),
                 )
                 await release_run_lock()
+                trace_stream(
+                    "runtime_stream.closed",
+                    terminal_event="run.cancelled",
+                    assistant_delta_events=assistant_delta_events,
+                    saw_write_tool_event=saw_write_tool_event,
+                )
                 yield emit("run.cancelled", "run", self.serialize_run(run))
                 return
 
@@ -468,6 +549,12 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     revision_created=bool(run.result_revision_id),
                 )
                 await release_run_lock()
+                trace_stream(
+                    "runtime_stream.closed",
+                    terminal_event="run.paused",
+                    assistant_delta_events=assistant_delta_events,
+                    saw_write_tool_event=saw_write_tool_event,
+                )
                 yield emit("run.paused", "run", self.serialize_run(run))
                 return
 
@@ -493,6 +580,13 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 revision_created=bool(run.result_revision_id),
             )
             await release_run_lock()
+            trace_stream(
+                "runtime_stream.closed",
+                terminal_event="run.failed",
+                assistant_delta_events=assistant_delta_events,
+                saw_write_tool_event=saw_write_tool_event,
+                error=failure_message,
+            )
             yield emit("run.failed", "run", self.serialize_run(run), [{"message": failure_message}])
         except Exception as exc:
             error_message = self._exception_message(exc)
@@ -516,6 +610,13 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 saw_write_tool_event=saw_write_tool_event,
                 revision_created=bool(run.result_revision_id),
             )
+            trace_stream(
+                "runtime_stream.exception",
+                error=error_message,
+                error_type=exc.__class__.__name__ if exc is not None else "Exception",
+                assistant_delta_events=assistant_delta_events,
+                saw_write_tool_event=saw_write_tool_event,
+            )
             yield emit("run.failed", "run", self.serialize_run(run), [{"message": error_message}])
         finally:
             # Guard against lock leaks on disconnect paths.
@@ -532,3 +633,4 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                         await self.db.commit()
             except Exception:
                 pass
+            trace_stream("runtime_stream.finally")

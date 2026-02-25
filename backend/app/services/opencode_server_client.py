@@ -155,6 +155,15 @@ class OpenCodeServerClient:
         messages: list[dict[str, str]],
         selected_agent_contract: dict[str, Any] | None = None,
     ) -> str:
+        _opencode_trace(
+            "opencode.start.requested",
+            run_id=run_id,
+            app_id=app_id,
+            sandbox_id=sandbox_id or None,
+            workspace_path=workspace_path,
+            model_id=model_id,
+            mode="sandbox" if self._sandbox_controller_mode_enabled() else "host",
+        )
         if self._sandbox_controller_mode_enabled():
             if not sandbox_id:
                 raise OpenCodeServerClientError("OpenCode sandbox mode requires sandbox_id.")
@@ -176,11 +185,28 @@ class OpenCodeServerClient:
                     messages=messages,
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
+                _opencode_trace(
+                    "opencode.start.failed",
+                    run_id=run_id,
+                    app_id=app_id,
+                    sandbox_id=sandbox_id or None,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                    mode="sandbox",
+                )
                 raise OpenCodeServerClientError(f"OpenCode sandbox start request failed: {exc}") from exc
             run_ref = str(response.get("run_ref") or response.get("id") or run_id).strip()
             if not run_ref:
                 raise OpenCodeServerClientError("OpenCode sandbox start response is missing run_ref.")
             self._sandbox_run_ref_to_sandbox_id[run_ref] = sandbox_id
+            _opencode_trace(
+                "opencode.start.confirmed",
+                run_id=run_id,
+                app_id=app_id,
+                run_ref=run_ref,
+                sandbox_id=sandbox_id or None,
+                mode="sandbox",
+            )
             return run_ref
 
         await self._seed_custom_tools_and_context(
@@ -192,7 +218,7 @@ class OpenCodeServerClient:
         )
 
         await self._ensure_api_mode()
-        return await self._start_run_official(
+        run_ref = await self._start_run_official(
             run_id=run_id,
             app_id=app_id,
             sandbox_id=sandbox_id,
@@ -201,6 +227,15 @@ class OpenCodeServerClient:
             prompt=prompt,
             messages=messages,
         )
+        _opencode_trace(
+            "opencode.start.confirmed",
+            run_id=run_id,
+            app_id=app_id,
+            run_ref=run_ref,
+            sandbox_id=sandbox_id or None,
+            mode="host",
+        )
+        return run_ref
 
     async def stream_run_events(self, *, run_ref: str) -> AsyncGenerator[dict[str, Any], None]:
         sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref))
@@ -227,6 +262,12 @@ class OpenCodeServerClient:
 
     async def cancel_run(self, *, run_ref: str, sandbox_id: str | None = None) -> bool:
         resolved_sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref)) or str(sandbox_id or "").strip() or None
+        _opencode_trace(
+            "opencode.cancel.requested",
+            run_ref=str(run_ref),
+            sandbox_id=resolved_sandbox_id,
+            mode="sandbox" if self._sandbox_controller_mode_enabled() and resolved_sandbox_id else "host",
+        )
         if self._sandbox_controller_mode_enabled() and resolved_sandbox_id:
             try:
                 response = await self._sandbox_runtime_client.cancel_opencode_run(
@@ -234,15 +275,26 @@ class OpenCodeServerClient:
                     run_ref=str(run_ref),
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
+                _opencode_trace(
+                    "opencode.cancel.failed",
+                    run_ref=str(run_ref),
+                    sandbox_id=resolved_sandbox_id,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                    mode="sandbox",
+                )
                 raise OpenCodeServerClientError(f"OpenCode sandbox cancel request failed: {exc}") from exc
             finally:
                 self._sandbox_run_ref_to_sandbox_id.pop(str(run_ref), None)
             cancelled = response.get("cancelled")
             if isinstance(cancelled, bool):
+                _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=cancelled, mode="sandbox")
                 return cancelled
             ok = response.get("ok")
             if isinstance(ok, bool):
+                _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=ok, mode="sandbox")
                 return ok
+            _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=True, mode="sandbox")
             return True
 
         # Host/API mode: never bounce back through sandbox controller even if a sandbox_id is present.
@@ -251,11 +303,18 @@ class OpenCodeServerClient:
         await self._ensure_api_mode()
         response = await self._request("POST", f"/session/{run_ref}/abort", json_payload={}, retries=0)
         if isinstance(response.get("cancelled"), bool):
-            return bool(response.get("cancelled"))
+            cancelled = bool(response.get("cancelled"))
+            _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=cancelled, mode="host")
+            return cancelled
         if isinstance(response.get("ok"), bool):
-            return bool(response.get("ok"))
+            cancelled = bool(response.get("ok"))
+            _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=cancelled, mode="host")
+            return cancelled
         if isinstance(response.get("aborted"), bool):
-            return bool(response.get("aborted"))
+            cancelled = bool(response.get("aborted"))
+            _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=cancelled, mode="host")
+            return cancelled
+        _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=True, mode="host")
         return True
 
     async def answer_question(
@@ -280,6 +339,14 @@ class OpenCodeServerClient:
             raise OpenCodeServerClientError("OpenCode question response requires at least one answer.")
 
         resolved_sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref)) or str(sandbox_id or "").strip() or None
+        _opencode_trace(
+            "opencode.answer.requested",
+            run_ref=str(run_ref),
+            question_id=request_id,
+            answer_groups=len(normalized_answers),
+            sandbox_id=resolved_sandbox_id,
+            mode="sandbox" if self._sandbox_controller_mode_enabled() and resolved_sandbox_id else "host",
+        )
         if self._sandbox_controller_mode_enabled() and resolved_sandbox_id:
             try:
                 response = await self._sandbox_runtime_client.answer_opencode_question(
@@ -289,10 +356,20 @@ class OpenCodeServerClient:
                     answers=normalized_answers,
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
+                _opencode_trace(
+                    "opencode.answer.failed",
+                    run_ref=str(run_ref),
+                    question_id=request_id,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                    mode="sandbox",
+                )
                 raise OpenCodeServerClientError(f"OpenCode sandbox question response failed: {exc}") from exc
             ok = response.get("ok")
             if isinstance(ok, bool):
+                _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=ok, mode="sandbox")
                 return ok
+            _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=True, mode="sandbox")
             return True
 
         # Host/API mode: never bounce back through sandbox controller even if a sandbox_id is present.
@@ -308,6 +385,7 @@ class OpenCodeServerClient:
                 retries=0,
                 expect_json=False,
             )
+            _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=True, mode="host")
             return True
         except OpenCodeServerClientError:
             # Compatibility fallback for permission-shaped API variants.
@@ -321,7 +399,9 @@ class OpenCodeServerClient:
             if isinstance(response, dict):
                 ok = response.get("ok")
                 if isinstance(ok, bool):
+                    _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=ok, mode="host-fallback")
                     return ok
+            _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=True, mode="host-fallback")
             return True
 
     async def _start_run_official(
