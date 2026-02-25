@@ -525,6 +525,8 @@ class OpenCodeServerClient:
             "last_progress_at": time.monotonic(),
             "assistant_message_ids": assistant_message_ids,
             "message_submission_task": message_submission_task,
+            "workspace_path": workspace_path,
+            "sandbox_id": sandbox_id,
         }
         return session_id
 
@@ -573,6 +575,9 @@ class OpenCodeServerClient:
             yield event
 
     async def _stream_official_run_events_via_global_events(self, *, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
+        allow_synthetic_terminal = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_ALLOW_SYNTHETIC_TERMINAL", "0")
+        ).strip().lower() in {"1", "true", "yes", "on"}
         state = self._official_run_state.setdefault(
             session_id,
             {
@@ -589,6 +594,9 @@ class OpenCodeServerClient:
                 "completed": False,
                 "last_progress_at": time.monotonic(),
                 "assistant_message_ids": set(),
+                "workspace_path": "",
+                "sandbox_id": "",
+                "saw_tool_event": False,
             },
         )
         assistant_message_ids = state.setdefault("assistant_message_ids", set())
@@ -619,7 +627,11 @@ class OpenCodeServerClient:
 
         def _maybe_mark_settled_complete() -> bool:
             nonlocal terminal_event
+            if not allow_synthetic_terminal:
+                return False
             if terminal_event is not None or not saw_assistant_text:
+                return False
+            if bool(state.get("saw_tool_event")):
                 return False
             if any(str(item or "").strip() for item in pending_question_request_ids):
                 return False
@@ -703,6 +715,38 @@ class OpenCodeServerClient:
                         yield {"event": "tool.question", "payload": mapped_question}
                         continue
 
+                    if event_type == "permission.asked":
+                        mapped_permission = self._map_permission_asked_properties(properties)
+                        if mapped_permission is None:
+                            continue
+                        request_id = str(mapped_permission.get("request_id") or "").strip()
+                        if request_id:
+                            pending_question_request_ids.add(request_id)
+                        if request_id and self._should_auto_approve_permission_request(state=state):
+                            approved = await self._approve_permission_request(
+                                session_id=session_id,
+                                request_id=request_id,
+                            )
+                            _opencode_trace(
+                                "permission.auto_approved",
+                                session_id=session_id,
+                                request_id=request_id,
+                                approved=approved,
+                                workspace_path=str(state.get("workspace_path") or ""),
+                                sandbox_id=str(state.get("sandbox_id") or ""),
+                            )
+                            state["last_progress_at"] = time.monotonic()
+                            if approved:
+                                pending_question_request_ids.discard(request_id)
+                                yield {
+                                    "event": "tool.question.answered",
+                                    "payload": {"request_id": request_id, "answers": [["Allow"]]},
+                                }
+                                continue
+                        state["last_progress_at"] = time.monotonic()
+                        yield {"event": "tool.question", "payload": mapped_permission}
+                        continue
+
                     if event_type in {"question.replied", "question.rejected"}:
                         mapped_reply = self._map_question_reply_properties(properties)
                         request_id = str(mapped_reply.get("request_id") or "").strip()
@@ -710,6 +754,20 @@ class OpenCodeServerClient:
                             pending_question_request_ids.discard(request_id)
                         state["last_progress_at"] = time.monotonic()
                         mapped_event = "tool.question.answered" if event_type == "question.replied" else "tool.question.rejected"
+                        yield {"event": mapped_event, "payload": mapped_reply}
+                        continue
+
+                    if event_type in {"permission.replied", "permission.rejected"}:
+                        mapped_reply = self._map_question_reply_properties(properties)
+                        request_id = str(mapped_reply.get("request_id") or "").strip()
+                        if request_id:
+                            pending_question_request_ids.discard(request_id)
+                        state["last_progress_at"] = time.monotonic()
+                        mapped_event = (
+                            "tool.question.answered"
+                            if event_type == "permission.replied"
+                            else "tool.question.rejected"
+                        )
                         yield {"event": mapped_event, "payload": mapped_reply}
                         continue
 
@@ -757,6 +815,7 @@ class OpenCodeServerClient:
                                 continue
                             emitted_part_delta = False
                             for event in self._extract_incremental_tool_events(message=message, state=state):
+                                state["saw_tool_event"] = True
                                 state["last_progress_at"] = time.monotonic()
                                 yield event
                             for delta in self._extract_incremental_text_deltas(message=message, state=state):
@@ -874,6 +933,7 @@ class OpenCodeServerClient:
                             if part_type:
                                 part_types[part_id] = part_type
                         for event in self._extract_incremental_tool_events(message={"parts": [part]}, state=state):
+                            state["saw_tool_event"] = True
                             state["last_progress_at"] = time.monotonic()
                             yield event
                         for delta in self._extract_incremental_text_deltas(message={"parts": [part]}, state=state):
@@ -881,6 +941,34 @@ class OpenCodeServerClient:
                             state["last_progress_at"] = time.monotonic()
                             yield {"event": "assistant.delta", "payload": {"content": delta}}
                         continue
+
+                    if event_type in {"run.completed", "session.completed", "session.finished"}:
+                        if any(str(item or "").strip() for item in pending_question_request_ids):
+                            continue
+                        terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
+                        break
+
+                    if event_type in {"run.cancelled", "session.cancelled"}:
+                        terminal_event = {"event": "run.cancelled", "payload": {"status": "cancelled"}}
+                        break
+
+                    if event_type in {"run.paused", "session.paused"}:
+                        terminal_event = {"event": "run.paused", "payload": {"status": "paused"}}
+                        break
+
+                    if event_type in {"run.failed", "session.failed"}:
+                        failure_message = str(
+                            properties.get("error")
+                            or properties.get("message")
+                            or properties.get("reason")
+                            or "OpenCode run failed."
+                        ).strip()
+                        terminal_event = {
+                            "event": "run.failed",
+                            "payload": {"error": failure_message or "OpenCode run failed."},
+                            "code": "OPENCODE_RUN_FAILED_EVENT",
+                        }
+                        break
 
                     if event_type == "session.error":
                         details = self._compact_json_preview(properties)
@@ -921,6 +1009,7 @@ class OpenCodeServerClient:
                             if message_id:
                                 assistant_message_ids.add(message_id)
                             for event in self._extract_incremental_tool_events(message=message, state=state):
+                                state["saw_tool_event"] = True
                                 state["last_progress_at"] = time.monotonic()
                                 yield event
                             for delta in self._extract_incremental_text_deltas(message=message, state=state):
@@ -931,15 +1020,21 @@ class OpenCodeServerClient:
                             embedded_error = self._extract_assistant_info_error(message)
                             if embedded_error:
                                 last_info_error = self._sanitize_error_message(embedded_error)
-                        if saw_assistant_text:
-                            terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
-                        elif last_info_error:
+                        if last_info_error:
                             terminal_event = {
                                 "event": "run.failed",
                                 "payload": {"error": f"OpenCode assistant error: {last_info_error}"},
                                 "code": "OPENCODE_ASSISTANT_ERROR",
                             }
-                        else:
+                            break
+                        if (
+                            allow_synthetic_terminal
+                            and saw_assistant_text
+                            and not bool(state.get("saw_tool_event"))
+                        ):
+                            terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
+                            break
+                        if allow_synthetic_terminal:
                             detail_payload = messages_payload if isinstance(messages_payload, dict) else {"messages": messages_payload}
                             details = self._compact_json_preview(detail_payload)
                             terminal_event = {
@@ -947,7 +1042,8 @@ class OpenCodeServerClient:
                                 "payload": {"error": f"OpenCode response did not include assistant text. response={details}"},
                                 "code": "OPENCODE_EMPTY_RESPONSE",
                             }
-                        break
+                            break
+                        continue
 
         if terminal_event is None:
             _maybe_mark_settled_complete()
@@ -982,6 +1078,9 @@ class OpenCodeServerClient:
         )
 
     async def _stream_official_run_events_snapshot(self, *, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
+        allow_synthetic_terminal = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_ALLOW_SYNTHETIC_TERMINAL", "0")
+        ).strip().lower() in {"1", "true", "yes", "on"}
         state = self._official_run_state.setdefault(
             session_id,
             {
@@ -997,6 +1096,9 @@ class OpenCodeServerClient:
                 "emitted_question_request_ids": set(),
                 "completed": False,
                 "last_progress_at": time.monotonic(),
+                "workspace_path": "",
+                "sandbox_id": "",
+                "saw_tool_event": False,
             },
         )
         pending_question_request_ids = state.setdefault("question_pending_request_ids", set())
@@ -1013,6 +1115,30 @@ class OpenCodeServerClient:
             pending_questions = await self._list_pending_questions_for_session(session_id=session_id)
             observed_question_ids: set[str] = set()
             for question in pending_questions:
+                mapped_permission = self._map_permission_asked_properties(question)
+                permission_request_id = str(mapped_permission.get("request_id") or "").strip() if mapped_permission else ""
+                if permission_request_id and self._should_auto_approve_permission_request(state=state):
+                    approved = await self._approve_permission_request(
+                        session_id=session_id,
+                        request_id=permission_request_id,
+                    )
+                    _opencode_trace(
+                        "permission.auto_approved",
+                        session_id=session_id,
+                        request_id=permission_request_id,
+                        approved=approved,
+                        workspace_path=str(state.get("workspace_path") or ""),
+                        sandbox_id=str(state.get("sandbox_id") or ""),
+                        source="snapshot_polling",
+                    )
+                    if approved:
+                        pending_question_request_ids.discard(permission_request_id)
+                        state["last_progress_at"] = time.monotonic()
+                        yield {
+                            "event": "tool.question.answered",
+                            "payload": {"request_id": permission_request_id, "answers": [["Allow"]]},
+                        }
+                        continue
                 mapped_question = self._map_question_asked_properties(question)
                 if mapped_question is None:
                     continue
@@ -1083,6 +1209,7 @@ class OpenCodeServerClient:
                     last_assistant_info_error = self._sanitize_error_message(embedded_error)
 
                 for event in self._extract_incremental_tool_events(message=message, state=state):
+                    state["saw_tool_event"] = True
                     state["last_progress_at"] = time.monotonic()
                     yield event
                 for delta in self._extract_incremental_text_deltas(message=message, state=state):
@@ -1090,7 +1217,12 @@ class OpenCodeServerClient:
                     state["last_progress_at"] = time.monotonic()
                     yield {"event": "assistant.delta", "payload": {"content": delta}}
 
-            if bool(state.get("complete_on_initial_text")) and saw_assistant_text:
+            if (
+                allow_synthetic_terminal
+                and bool(state.get("complete_on_initial_text"))
+                and saw_assistant_text
+                and not bool(state.get("saw_tool_event"))
+            ):
                 yield {"event": "run.completed", "payload": {"status": "completed"}}
                 self._official_run_state.pop(session_id, None)
                 return
@@ -1102,9 +1234,11 @@ class OpenCodeServerClient:
             settle_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS") or "1.0").strip())
             last_progress_at = float(state.get("last_progress_at") or 0.0)
             if (
-                saw_assistant_text
+                allow_synthetic_terminal
+                and saw_assistant_text
                 and not has_running_tools
                 and not has_pending_questions
+                and not bool(state.get("saw_tool_event"))
                 and (time.monotonic() - last_progress_at) >= max(0.2, settle_seconds)
             ):
                 yield {"event": "run.completed", "payload": {"status": "completed"}}
@@ -1138,11 +1272,22 @@ class OpenCodeServerClient:
             self._official_run_state.pop(session_id, None)
             return
 
-        yield {
-            "event": "run.failed",
-            "payload": {"error": "OpenCode stream timed out before completion."},
-            "code": "OPENCODE_STREAM_TIMEOUT",
-        }
+        fail_on_stream_timeout = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_FORCE_FAIL_ON_STREAM_TIMEOUT", "0")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if fail_on_stream_timeout:
+            yield {
+                "event": "run.failed",
+                "payload": {"error": "OpenCode stream timed out before completion."},
+                "code": "OPENCODE_STREAM_TIMEOUT",
+            }
+        else:
+            _opencode_trace(
+                "opencode.snapshot_stream.timeout_nonterminal",
+                session_id=session_id,
+                saw_assistant_text=saw_assistant_text,
+                pending_question_count=len([item for item in pending_question_request_ids if str(item or "").strip()]),
+            )
         self._official_run_state.pop(session_id, None)
 
     @staticmethod
@@ -1228,6 +1373,65 @@ class OpenCodeServerClient:
         return payload
 
     @staticmethod
+    def _map_permission_asked_properties(properties: dict[str, Any]) -> dict[str, Any] | None:
+        type_hint = str(properties.get("type") or "").strip().lower()
+        has_permission_marker = any(
+            key in properties for key in ("permission", "pattern", "target", "path", "status", "action")
+        )
+        if not has_permission_marker and "permission" not in type_hint:
+            return None
+        request_id = str(
+            properties.get("id")
+            or properties.get("requestID")
+            or properties.get("requestId")
+            or properties.get("request_id")
+            or ""
+        ).strip()
+        permission_name = str(
+            properties.get("permission")
+            or properties.get("kind")
+            or properties.get("name")
+            or "permission"
+        ).strip()
+        pattern = str(
+            properties.get("pattern")
+            or properties.get("path")
+            or properties.get("target")
+            or ""
+        ).strip()
+        prompt = str(
+            properties.get("question")
+            or properties.get("prompt")
+            or properties.get("message")
+            or ""
+        ).strip()
+        if not prompt:
+            detail = f" ({pattern})" if pattern else ""
+            prompt = f"Allow `{permission_name or 'permission'}` request{detail}?"
+        if not request_id:
+            return None
+        return {
+            "request_id": request_id,
+            "questions": [
+                {
+                    "header": "Permission",
+                    "question": prompt,
+                    "multiple": False,
+                    "options": [
+                        {"label": "Allow", "description": "Allow this request for the current run."},
+                        {"label": "Deny", "description": "Reject this request and continue safely."},
+                    ],
+                }
+            ],
+            "tool": {
+                "call_id": str(properties.get("callID") or properties.get("callId") or "").strip() or None,
+                "message_id": str(properties.get("messageID") or properties.get("messageId") or "").strip() or None,
+            },
+            "permission": permission_name or None,
+            "pattern": pattern or None,
+        }
+
+    @staticmethod
     def _map_question_reply_properties(properties: dict[str, Any]) -> dict[str, Any]:
         request_id = str(
             properties.get("requestID")
@@ -1247,6 +1451,53 @@ class OpenCodeServerClient:
             "request_id": request_id,
             "answers": normalized_answers,
         }
+
+    @staticmethod
+    def _is_permission_auto_approve_enabled() -> bool:
+        raw = (os.getenv("APPS_CODING_AGENT_OPENCODE_AUTO_APPROVE_PERMISSION_ASK") or "1").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _is_stage_workspace_path(workspace_path: str) -> bool:
+        normalized = str(workspace_path or "").strip().replace("\\", "/")
+        if not normalized:
+            return False
+        return "/.talmudpedia/stage/" in normalized or normalized.endswith("/.talmudpedia/stage/shared/workspace")
+
+    def _should_auto_approve_permission_request(self, *, state: dict[str, Any]) -> bool:
+        if not self._is_permission_auto_approve_enabled():
+            return False
+        workspace_path = str(state.get("workspace_path") or "").strip()
+        return self._is_stage_workspace_path(workspace_path)
+
+    async def _approve_permission_request(self, *, session_id: str, request_id: str) -> bool:
+        if not request_id:
+            return False
+        try:
+            response = await self._request(
+                "POST",
+                f"/session/{session_id}/permissions/{request_id}",
+                json_payload={"status": "approved", "answers": [["Allow"]]},
+                retries=0,
+                expect_dict=False,
+            )
+            if isinstance(response, dict):
+                ok = response.get("ok")
+                if isinstance(ok, bool):
+                    return ok
+        except OpenCodeServerClientError:
+            try:
+                await self._request(
+                    "POST",
+                    f"/question/{request_id}/reply",
+                    json_payload={"answers": [["Allow"]]},
+                    retries=0,
+                    expect_json=False,
+                )
+                return True
+            except Exception:
+                return False
+        return True
 
     async def _list_pending_questions_for_session(self, *, session_id: str) -> list[dict[str, Any]]:
         try:

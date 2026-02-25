@@ -11,6 +11,18 @@ The coding-agent stack is now hard-cut to an OpenCode-first architecture:
 - Old replay/event-log orchestration has been removed.
 - Prompt queueing is frontend-owned (no backend durable queue orchestration).
 
+## Latest Applied Update (2026-02-25)
+
+This doc now reflects the current thin-wrapper defaults that were implemented in code:
+- Wrapper terminal policy is less aggressive by default (`fail_on_unrecovered_apply_patch` off unless explicitly enabled).
+- Tool event passthrough defaults to raw OpenCode semantics, with normalized remap available by env flag.
+- Runtime and monitor missing-terminal/inactivity fail-close behavior is opt-in, not default.
+- Frontend stream stall handling is non-destructive by default and reconciles backend state before any cancel action.
+- v2 stream is reconnectable with in-process replay (`from_seq`) and monitor-owned run-global monotonic `seq`.
+- Non-terminal disconnects are reconcile-first: transport closure triggers status reconciliation/reconnect rather than immediate failed terminalization.
+- Permission prompts from OpenCode (`permission.asked`) are mapped into question flow, with stage-sandbox auto-approval by default policy.
+- Mid-run assistant text no longer implies terminal completion: `session.idle` does not force `run.completed` in default reconcile-first mode.
+
 ## Pipeline Trace Logging (JSONL, New)
 
 To support postmortems of intermittent multi-run failures (stall/cancel races, missing terminal signals, tool-failure chains), the coding-agent stack now emits structured JSON lines to a dedicated trace sink.
@@ -38,6 +50,21 @@ Event model:
 - One JSON object per line, with `ts`, `pipeline`, `event`, `pid`, and run correlation fields (`run_id`, `app_id`, optional session/tool identifiers).
 - Logging is best-effort and non-blocking with failure swallow semantics (trace writes never break run execution).
 
+## Thin-Wrapper Behavior Controls (Current Defaults)
+
+To stay closer to OpenCode-native semantics, aggressive wrapper policies are now opt-in:
+- `APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH` defaults to disabled (`0`)
+  - when enabled, wrapper can still fail-close a run that terminal-completes after unrecovered `apply_patch` failures
+- `APPS_CODING_AGENT_OPENCODE_TOOL_EVENT_MODE` defaults to `raw`
+  - `raw`: preserves OpenCode tool event shape (`tool.completed` may include diagnostics when output contains `error`)
+  - `normalized`: maps `tool.completed` with `output.error` into `tool.failed` for legacy UI behavior
+- `APPS_CODING_AGENT_RUNTIME_FORCE_FAIL_MISSING_TERMINAL` defaults to disabled (`0`)
+  - runtime stream exits non-fatally when engine stream ends without terminal event
+- `APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_INACTIVITY` defaults to disabled (`0`)
+  - monitor no longer force-fails long silent windows by default
+- `APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_STREAM_END_WITHOUT_TERMINAL` defaults to disabled (`0`)
+  - monitor prefers stream reopen/reconciliation over immediate fail-close on non-terminal EOF
+
 ## v2 API Surface
 
 All coding-agent endpoints now live under:
@@ -58,7 +85,6 @@ Removed from public API:
 - Non-v2 `/coding-agent/*` endpoints
 - Run `resume` endpoint
 - Capabilities endpoint
-- Stream replay query semantics (`from_seq`, `replay`)
 
 ## Chat Session Detail Pagination (v2, Breaking Contract)
 
@@ -113,12 +139,13 @@ Responsibilities:
 - PostgreSQL advisory lock claim per `run_id` (when on PostgreSQL)
 - Consume OpenCode-mapped runtime events
 - Fan out mapped events to live SSE subscribers
-- Terminalize fail-closed if stream ends without terminal event
+- Reopen/reconcile on non-terminal stream EOF by default; fail-close policies are env-gated
 
 Design notes:
 - No DB event replay table
 - No seq conflict reconciliation layer
-- SSE `seq` is connection-local and assigned per stream response
+- SSE `seq` is run-global monotonic and assigned in monitor emit path
+- Replay is in-process via monitor backlog (`stream?from_seq=<n>`); stale cursors return `409` with `CODING_AGENT_STREAM_REPLAY_GAP`
 
 ### 2) Prompt Queue Ownership
 
@@ -140,6 +167,7 @@ Key updates:
 - Assistant deltas are passed through chunk-by-chunk
 - No assistant-delta coalescing in backend stream layer
 - Terminal path persists assistant message and releases lock
+- Missing-terminal stream endings are non-fatal by default (runtime defers terminal authority to persisted run status and monitor reconciliation)
 - Tool-call activity is persisted on the run (`output_result.tool_events`) so historical chat reload can reconstruct tool timeline rows (including inputs/results)
 - Write-intent telemetry is persisted per run (`has_workspace_writes=true` when write tools are observed)
 
@@ -221,8 +249,13 @@ Implemented frontend service updates:
 - Selector includes OpenCode free-model options and paid OpenCode coding models
 - Auto selection submits `opencode/big-pickle`
 - Engine resolver and engine selection path removed from send flow
-- Stream call no longer accepts replay params
+- Stream call accepts optional replay cursor (`fromSeq`) and reconnects with bounded backoff on non-terminal EOF/read errors
 - Stream rendering now handles assistant chunks without frontend coalescing
+- Frontend stall watchdog is non-destructive by default:
+  - no implicit cancel on stall/max-duration unless `NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_AUTO_CANCEL_RECOVERY_ENABLED=1`
+  - missing-terminal stream endings reconcile with backend status first and avoid forced cancel in default mode
+- Replay-gap (`409 CODING_AGENT_STREAM_REPLAY_GAP`) is handled by status reconciliation and resumed attachment from current cursor
+- Generic assistant fallback text is suppressed after non-terminal disconnect or tool-only progress to avoid misleading "mid-run stopped" UX
 - Builder lock state now uses:
   - `draft_dev.has_active_coding_runs`
   - `draft_dev.active_coding_run_count`

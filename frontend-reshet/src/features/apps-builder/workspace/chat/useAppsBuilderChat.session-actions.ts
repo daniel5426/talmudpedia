@@ -282,6 +282,10 @@ export function useAppsBuilderChatSessionActions({
       setSessionTitleHint(key, input);
     }
     await runPromptWithTimeline(key, input, selectedRunModelId, draftRunClientMessageId);
+    const latestSessionKey = normalizeSessionKey(activeChatSessionIdRef.current);
+    if (latestSessionKey && latestSessionKey !== key) {
+      await drainQueuedPrompts(latestSessionKey);
+    }
     await drainQueuedPrompts(key);
   }, [activeChatSessionIdRef, createClientMessageId, drainQueuedPrompts, getSession, mutateSession, promoteDraftSessionToLocalSession, runPromptWithTimeline, selectedRunModelId, setSessionTitleHint]);
 
@@ -339,15 +343,20 @@ export function useAppsBuilderChatSessionActions({
 
     const runIdToCancel = session.activeRunIdRef.current || session.lastKnownRunIdRef.current;
     const sessionIdToCancel = String(session.attachedRunSessionIdRef.current || activeChatSessionIdRef.current || "").trim();
-
-    if (runIdToCancel) {
+    const abortLocalStreamAfterConfirmedCancel = () => {
       session.intentionalAbortRef.current = true;
       const reader = session.abortReaderRef.current;
       session.abortReaderRef.current = null;
       if (reader && typeof reader.cancel === "function") {
         void reader.cancel().catch(() => undefined);
       }
+    };
+
+    if (runIdToCancel) {
       void requestCancelForRun(runIdToCancel, session)
+        .then(() => {
+          abortLocalStreamAfterConfirmedCancel();
+        })
         .catch((err) => {
           onError(err instanceof Error ? err.message : "Failed to cancel current run");
           session.pendingCancelRef.current = false;
@@ -363,11 +372,11 @@ export function useAppsBuilderChatSessionActions({
       return;
     }
 
-    const sessionId = String(activeChatSessionIdRef.current || "").trim();
+    const sessionId = String(session.attachedRunSessionIdRef.current || activeChatSessionIdRef.current || "").trim();
     if (!sessionId) {
       return;
     }
-    if (isLocalSessionKey(sessionId)) {
+    if (isLocalSessionKey(sessionId) && !session.attachedRunSessionIdRef.current) {
       return;
     }
 
@@ -376,6 +385,7 @@ export function useAppsBuilderChatSessionActions({
         const active = await publishedAppsService.findCodingAgentChatSessionActiveRun(appId, sessionId);
         if (active && !parseTerminalRunStatus(active.status)) {
           await requestCancelForRun(active.run_id, session);
+          abortLocalStreamAfterConfirmedCancel();
           void probeSessionRunActivity(sessionId);
         } else {
           forceClearSessionSendingState(key);

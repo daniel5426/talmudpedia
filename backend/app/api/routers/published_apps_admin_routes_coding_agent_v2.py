@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
@@ -371,6 +373,7 @@ async def stream_coding_agent_run(
     app_id: UUID,
     run_id: UUID,
     request: Request,
+    from_seq: Optional[int] = Query(default=None, ge=0),
     _: Dict[str, Any] = Depends(require_scopes("apps.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
@@ -382,6 +385,43 @@ async def stream_coding_agent_run(
     service = PublishedAppCodingAgentRuntimeService(db)
     run = await service.get_run_for_app(app_id=app.id, run_id=run_id)
     monitor = PublishedAppCodingRunMonitor(db)
+    normalized_from_seq = max(0, int(from_seq or 0))
+    if normalized_from_seq > 0:
+        next_replay_seq = await monitor.validate_replay_cursor(
+            app_id=app.id,
+            run_id=run.id,
+            from_seq=normalized_from_seq,
+        )
+        if next_replay_seq is not None:
+            pipeline_trace(
+                "stream.replay_gap",
+                pipeline="api_v2",
+                app_id=str(app.id),
+                run_id=str(run.id),
+                from_seq=normalized_from_seq,
+                next_replay_seq=next_replay_seq,
+            )
+            PublishedAppCodingRunMonitor._trace(
+                "stream.replay_gap",
+                app_id=str(app.id),
+                run_id=str(run.id),
+                from_seq=normalized_from_seq,
+                next_replay_seq=next_replay_seq,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CODING_AGENT_STREAM_REPLAY_GAP",
+                    "message": "Requested replay cursor is older than retained in-memory events.",
+                    "next_replay_seq": int(next_replay_seq),
+                },
+            )
+    heartbeat_raw = (os.getenv("APPS_CODING_AGENT_STREAM_HEARTBEAT_SECONDS") or "").strip()
+    try:
+        heartbeat_seconds = float(heartbeat_raw) if heartbeat_raw else 10.0
+    except Exception:
+        heartbeat_seconds = 10.0
+    heartbeat_seconds = max(1.0, min(heartbeat_seconds, 30.0))
 
     async def event_generator():
         pipeline_trace(
@@ -396,15 +436,53 @@ async def stream_coding_agent_run(
             run_id=str(run.id),
         )
         yield ": " + (" " * 2048) + "\n\n"
-        seq = 0
+        stream_iter = monitor.stream_events(
+            app_id=app.id,
+            run_id=run.id,
+            from_seq=normalized_from_seq if normalized_from_seq > 0 else None,
+        ).__aiter__()
+        pending_next: asyncio.Task | None = None
         try:
-            async for payload in monitor.stream_events(app_id=app.id, run_id=run.id):
-                seq += 1
-                framed = dict(payload)
-                framed["seq"] = seq
-                yield _sse(framed)
+            while True:
+                if pending_next is None:
+                    pending_next = asyncio.create_task(stream_iter.__anext__())
+                try:
+                    done, _ = await asyncio.wait({pending_next}, timeout=heartbeat_seconds)
+                except asyncio.CancelledError:
+                    if pending_next is not None and not pending_next.done():
+                        pending_next.cancel()
+                        with suppress(Exception):
+                            await pending_next
+                    raise
+                if not done:
+                    pipeline_trace(
+                        "api.stream.heartbeat",
+                        pipeline="api_v2",
+                        app_id=str(app.id),
+                        run_id=str(run.id),
+                    )
+                    PublishedAppCodingRunMonitor._trace(
+                        "api.stream.heartbeat",
+                        app_id=str(app.id),
+                        run_id=str(run.id),
+                    )
+                    yield ": ping\n\n"
+                    continue
+                task = done.pop()
+                pending_next = None
+                try:
+                    payload = task.result()
+                except StopAsyncIteration:
+                    break
+                yield _sse(dict(payload))
                 await asyncio.sleep(0)
         finally:
+            if pending_next is not None and not pending_next.done():
+                pending_next.cancel()
+                with suppress(Exception):
+                    await pending_next
+            with suppress(Exception):
+                await stream_iter.aclose()
             pipeline_trace(
                 "api.stream.closed",
                 pipeline="api_v2",

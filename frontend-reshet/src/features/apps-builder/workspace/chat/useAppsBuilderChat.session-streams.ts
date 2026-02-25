@@ -69,6 +69,11 @@ export async function consumeSessionRunStream({
     return;
   }
   const nextStreamAttachmentId = ++session.streamAttachmentIdRef.current;
+  const staleReader = session.abortReaderRef.current;
+  if (staleReader && typeof staleReader.cancel === "function") {
+    session.abortReaderRef.current = null;
+    void staleReader.cancel().catch(() => undefined);
+  }
   await consumeRunStreamImpl({
     appId,
     runId: normalizedRunId,

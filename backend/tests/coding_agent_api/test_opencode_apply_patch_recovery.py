@@ -143,3 +143,59 @@ async def test_opencode_engine_stops_consuming_stream_after_terminal_event(db_se
 
     assert events == []
     assert run.status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_opencode_engine_defaults_to_raw_tool_completed_event_when_output_contains_error(db_session):
+    run = _opencode_run()
+    app = SimpleNamespace(id=uuid4())
+
+    class _FakeOpenCodeClient:
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+            return "run-ref-raw-tool-event"
+
+        async def stream_run_events(self, *, run_ref):
+            assert run_ref == "run-ref-raw-tool-event"
+            yield {
+                "event": "tool.completed",
+                "payload": {
+                    "tool": "read",
+                    "output": {"error": "permission denied", "code": "EACCES"},
+                },
+            }
+            yield {"event": "run.completed", "payload": {"status": "completed"}}
+
+    engine = OpenCodePublishedAppCodingAgentEngine(db=db_session, client=_FakeOpenCodeClient())
+    events = [event async for event in engine.stream(ctx=SimpleNamespace(app=app, run=run, resume_payload=None))]
+
+    assert any(item.event == "tool.completed" for item in events)
+    assert not any(item.event == "tool.failed" for item in events)
+    assert run.status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_opencode_engine_can_enable_normalized_tool_failed_mapping(db_session, monkeypatch):
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_TOOL_EVENT_MODE", "normalized")
+    run = _opencode_run()
+    app = SimpleNamespace(id=uuid4())
+
+    class _FakeOpenCodeClient:
+        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+            return "run-ref-normalized-tool-event"
+
+        async def stream_run_events(self, *, run_ref):
+            assert run_ref == "run-ref-normalized-tool-event"
+            yield {
+                "event": "tool.completed",
+                "payload": {
+                    "tool": "read",
+                    "output": {"error": "permission denied", "code": "EACCES"},
+                },
+            }
+            yield {"event": "run.completed", "payload": {"status": "completed"}}
+
+    engine = OpenCodePublishedAppCodingAgentEngine(db=db_session, client=_FakeOpenCodeClient())
+    events = [event async for event in engine.stream(ctx=SimpleNamespace(app=app, run=run, resume_payload=None))]
+
+    assert any(item.event == "tool.failed" for item in events)
+    assert run.status == RunStatus.completed

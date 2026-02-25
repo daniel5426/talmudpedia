@@ -147,11 +147,19 @@ class OpenCodePublishedAppCodingAgentEngine:
         saw_apply_patch_success = False
         saw_recovery_edit_success = False
         fail_on_unrecovered_apply_patch = str(
-            os.getenv("APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH", "1")
+            os.getenv("APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH", "0")
         ).strip().lower() in {"1", "true", "yes", "on"}
+        force_fail_missing_terminal = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_FORCE_FAIL_MISSING_TERMINAL", "0")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        tool_event_mode = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_TOOL_EVENT_MODE", "raw")
+        ).strip().lower()
+        if tool_event_mode not in {"raw", "normalized"}:
+            tool_event_mode = "raw"
 
         async for raw in self._client.stream_run_events(run_ref=str(run.engine_run_ref)):
-            mapped = self._translate_event(raw)
+            mapped = self._translate_event(raw, tool_event_mode=tool_event_mode)
             if mapped is None:
                 continue
             if mapped.event != "assistant.delta":
@@ -168,6 +176,9 @@ class OpenCodePublishedAppCodingAgentEngine:
                 saw_apply_patch_failure = True
                 trace_engine("engine.stream.apply_patch_failed")
             elif mapped.event == "tool.completed":
+                if self._is_apply_patch_tool(mapped.payload) and self._tool_output_has_error(mapped.payload):
+                    saw_apply_patch_failure = True
+                    trace_engine("engine.stream.apply_patch_failed")
                 if self._is_successful_apply_patch(mapped.payload):
                     saw_apply_patch_success = True
                     saw_recovery_edit_success = True
@@ -260,22 +271,60 @@ class OpenCodePublishedAppCodingAgentEngine:
                 "OpenCode run completed after apply_patch failures without a successful follow-up edit."
             )
             trace_engine("engine.stream.force_failed_unrecovered_apply_patch")
-        if saw_terminal and not saw_failure:
-            if saw_cancelled:
-                persisted.status = RunStatus.cancelled
-            elif saw_paused:
-                persisted.status = RunStatus.paused
+        if saw_terminal:
+            if not saw_failure:
+                if saw_cancelled:
+                    persisted.status = RunStatus.cancelled
+                elif saw_paused:
+                    persisted.status = RunStatus.paused
+                else:
+                    persisted.status = RunStatus.completed
+                persisted.error_message = None
             else:
-                persisted.status = RunStatus.completed
-            persisted.error_message = None
-        else:
-            persisted.status = RunStatus.failed
-            if saw_terminal and saw_failure:
                 persisted.error_message = failure_message
-            else:
+                persisted.status = RunStatus.failed
+            persisted.completed_at = datetime.now(timezone.utc)
+            await self._db.commit()
+            trace_engine(
+                "engine.stream.closed",
+                status=(
+                    persisted.status.value
+                    if hasattr(persisted.status, "value")
+                    else str(persisted.status)
+                ),
+                saw_terminal=saw_terminal,
+                saw_failure=saw_failure,
+                saw_cancelled=saw_cancelled,
+                saw_paused=saw_paused,
+                saw_apply_patch_failure=saw_apply_patch_failure,
+                saw_apply_patch_success=saw_apply_patch_success,
+                saw_recovery_edit_success=saw_recovery_edit_success,
+                error=str(persisted.error_message or "") or None,
+            )
+            return
+
+        if force_fail_missing_terminal:
+            persisted.status = RunStatus.failed
+            if not str(persisted.error_message or "").strip():
                 persisted.error_message = "OpenCode stream ended without terminal completion event"
-        persisted.completed_at = datetime.now(timezone.utc)
-        await self._db.commit()
+            persisted.completed_at = datetime.now(timezone.utc)
+            await self._db.commit()
+        else:
+            trace_engine(
+                "engine.stream.closed_nonterminal",
+                status=(
+                    persisted.status.value
+                    if hasattr(persisted.status, "value")
+                    else str(persisted.status)
+                ),
+                saw_terminal=saw_terminal,
+                saw_failure=saw_failure,
+                saw_apply_patch_failure=saw_apply_patch_failure,
+                saw_apply_patch_success=saw_apply_patch_success,
+                saw_recovery_edit_success=saw_recovery_edit_success,
+            )
+            return
+
         trace_engine(
             "engine.stream.closed",
             status=(
@@ -469,6 +518,22 @@ class OpenCodePublishedAppCodingAgentEngine:
             return False
         return True
 
+    @staticmethod
+    def _tool_output_has_error(payload: dict[str, Any] | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        output = payload.get("output")
+        if not isinstance(output, dict):
+            return False
+        if output.get("error"):
+            return True
+        if output.get("ok") is False:
+            return True
+        result_payload = output.get("result")
+        if isinstance(result_payload, dict) and result_payload.get("ok") is False:
+            return True
+        return False
+
     @classmethod
     def _is_recovery_edit_tool(cls, payload: dict[str, Any] | None) -> bool:
         if not isinstance(payload, dict):
@@ -481,7 +546,7 @@ class OpenCodePublishedAppCodingAgentEngine:
         return any(hint in tool_name for hint in RECOVERY_EDIT_TOOL_HINTS)
 
     @staticmethod
-    def _translate_event(raw: dict[str, Any]) -> EngineStreamEvent | None:
+    def _translate_event(raw: dict[str, Any], *, tool_event_mode: str = "raw") -> EngineStreamEvent | None:
         event_type = str(raw.get("event") or raw.get("type") or "").strip().lower()
         payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
 
@@ -516,8 +581,19 @@ class OpenCodePublishedAppCodingAgentEngine:
                 diagnostics: list[dict[str, Any]] = [{"message": str(output.get("error"))}]
                 if output.get("code"):
                     diagnostics[0]["code"] = str(output.get("code"))
+                if tool_event_mode == "normalized":
+                    return EngineStreamEvent(
+                        event="tool.failed",
+                        stage="tool",
+                        payload={
+                            "tool": str(tool_name or ""),
+                            "span_id": raw.get("span_id") or payload.get("span_id"),
+                            "output": output,
+                        },
+                        diagnostics=diagnostics,
+                    )
                 return EngineStreamEvent(
-                    event="tool.failed",
+                    event="tool.completed",
                     stage="tool",
                     payload={
                         "tool": str(tool_name or ""),

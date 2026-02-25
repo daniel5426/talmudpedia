@@ -98,7 +98,7 @@ Coding-agent execution is now single-sandbox with internal stage/live workspaces
 - Shared stage workspace: `.talmudpedia/stage/shared/workspace` inside same sandbox.
 
 Run flow:
-1. Create run (`POST /coding-agent/runs`) and resolve active preview sandbox session.
+1. Submit prompt (`POST /coding-agent/v2/prompts`) and resolve active preview sandbox session.
 2. Compute active run count for `(surface=published_app_coding_agent, app_id, initiator_user_id)`.
 3. Prepare shared stage workspace:
    - `reset=true` when active count is `0` (new batch)
@@ -108,6 +108,16 @@ Run flow:
 6. On each run terminalization, invoke batch finalizer for the scope.
 7. Promote shared stage -> live only when scope becomes idle and there is at least one unfinalized completed run.
 8. Persist one revision/checkpoint for the batch owner run (latest completed in batch).
+
+### Streaming and Stall Ownership (Current Defaults)
+- Backend monitor owns forced terminalization policies; aggressive fail-close is env-gated.
+- Runtime stream missing-terminal behavior is non-fatal by default (`APPS_CODING_AGENT_RUNTIME_FORCE_FAIL_MISSING_TERMINAL=0`).
+- Monitor inactivity/EOF fail-close paths are disabled by default and can be enabled via:
+  - `APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_INACTIVITY`
+  - `APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_STREAM_END_WITHOUT_TERMINAL`
+- Frontend stream stall handler is non-destructive by default:
+  - does not auto-cancel stalled runs unless `NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_AUTO_CANCEL_RECOVERY_ENABLED=1`
+  - reconciles terminal state from backend first when stream ends without terminal event
 
 ### Locking and Idempotency
 - Builder writes are blocked while active coding run count for scope is `> 0` (`CODING_AGENT_RUN_ACTIVE`).
@@ -127,6 +137,8 @@ Current integration model:
 - Project-local custom tool bootstrap (`.opencode/*`) is seeded per run if needed.
 - `read_agent_context` is the consolidated custom tool for selected-agent context reads.
 - Run startup fails closed when required bootstrap/context seeding fails.
+- Tool event passthrough defaults to raw OpenCode semantics (`APPS_CODING_AGENT_OPENCODE_TOOL_EVENT_MODE=raw`), with optional normalized mapping mode for legacy UI behavior.
+- Wrapper apply-patch unrecovered fail-close is opt-in (`APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH=0` by default).
 
 Recent stability hardening reflected in code/docs:
 - Improved terminal event handling to reduce hanging runs.

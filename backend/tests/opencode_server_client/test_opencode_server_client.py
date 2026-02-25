@@ -468,6 +468,7 @@ async def test_official_mode_global_event_stream_emits_tool_events_and_increment
             },
         ),
         ("session.idle", {"sessionID": session_id}),
+        ("run.completed", {"sessionID": session_id}),
     ]
     sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
 
@@ -567,6 +568,7 @@ async def test_official_mode_global_event_stream_skips_reasoning_deltas(monkeypa
             },
         ),
         ("session.idle", {"sessionID": session_id}),
+        ("run.completed", {"sessionID": session_id}),
     ]
     sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
 
@@ -650,6 +652,7 @@ async def test_official_mode_global_event_stream_emits_deltas_from_message_updat
             },
         ),
         ("session.idle", {"sessionID": session_id}),
+        ("run.completed", {"sessionID": session_id}),
     ]
     sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
 
@@ -700,7 +703,117 @@ async def test_official_mode_global_event_stream_emits_deltas_from_message_updat
 
 
 @pytest.mark.asyncio
+async def test_official_mode_global_event_stream_keeps_running_after_session_idle_text_before_tool(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_id = "sess-global-idle-before-tool"
+    assistant_message_id = "msg-assistant-idle-before-tool"
+    user_message_id = "msg-user-idle-before-tool"
+    text_part_id = "part-text-idle-before-tool"
+    tool_part_id = "part-tool-idle-before-tool"
+
+    global_events = [
+        ("message.updated", {"info": {"id": user_message_id, "sessionID": session_id, "role": "user"}}),
+        (
+            "message.updated",
+            {"info": {"id": assistant_message_id, "sessionID": session_id, "role": "assistant", "parentID": user_message_id}},
+        ),
+        (
+            "message.part.updated",
+            {
+                "part": {
+                    "id": text_part_id,
+                    "sessionID": session_id,
+                    "messageID": assistant_message_id,
+                    "type": "text",
+                    "text": "Working on it...",
+                }
+            },
+        ),
+        ("session.idle", {"sessionID": session_id}),
+        (
+            "message.part.updated",
+            {
+                "part": {
+                    "id": tool_part_id,
+                    "sessionID": session_id,
+                    "messageID": assistant_message_id,
+                    "type": "tool",
+                    "tool": "read",
+                    "callID": "call-idle-before-tool",
+                    "state": {"status": "running", "input": {"filePath": "/tmp/a.txt"}},
+                }
+            },
+        ),
+        (
+            "message.part.updated",
+            {
+                "part": {
+                    "id": tool_part_id,
+                    "sessionID": session_id,
+                    "messageID": assistant_message_id,
+                    "type": "tool",
+                    "tool": "read",
+                    "callID": "call-idle-before-tool",
+                    "state": {"status": "completed", "input": {"filePath": "/tmp/a.txt"}, "output": {"text": "ok"}},
+                }
+            },
+        ),
+        ("run.completed", {"sessionID": session_id}),
+    ]
+    sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == f"/session/{session_id}/prompt_async":
+            return httpx.Response(204, text="")
+        if request.url.path == "/global/event":
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "info": {
+                            "id": assistant_message_id,
+                            "sessionID": session_id,
+                            "role": "assistant",
+                            "parentID": user_message_id,
+                            "time": {"created": 1, "completed": 2},
+                        },
+                        "parts": [{"id": text_part_id, "type": "text", "text": "Working on it..."}],
+                    }
+                ],
+            )
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+    client = _client()
+
+    run_ref = await client.start_run(
+        run_id="run-global-idle-before-tool",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="Continue with tool",
+        messages=[{"role": "user", "content": "Continue with tool"}],
+    )
+    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
+    event_names = [str(item.get("event") or "") for item in events]
+    assert "tool.started" in event_names
+    assert "tool.completed" in event_names
+    assert "run.completed" in event_names
+    assert event_names.index("tool.started") < event_names.index("run.completed")
+    assert event_names.index("tool.completed") < event_names.index("run.completed")
+
+
+@pytest.mark.asyncio
 async def test_official_mode_global_event_stream_settles_without_session_idle(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_ALLOW_SYNTHETIC_TERMINAL", "1")
     session_id = "sess-global-settle"
     assistant_message_id = "msg-assistant-settle"
     user_message_id = "msg-user-settle"
@@ -1308,6 +1421,128 @@ async def test_official_mode_prefers_assistant_candidate_with_text(monkeypatch: 
         item.get("event") == "assistant.delta" and "Earlier completed text" in str(item.get("payload", {}).get("content"))
         for item in events
     )
+
+
+@pytest.mark.asyncio
+async def test_official_mode_closed_no_terminal_recovers_via_snapshot_polling(monkeypatch: pytest.MonkeyPatch):
+    session_id = "sess-no-terminal"
+    global_events = [
+        ("message.updated", {"info": {"id": "msg-user", "sessionID": session_id, "role": "user"}}),
+    ]
+    sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == f"/session/{session_id}/prompt_async":
+            return httpx.Response(204, text="")
+        if request.url.path == "/global/event":
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == "/question":
+            return httpx.Response(200, json=[])
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "info": {"id": "msg-assistant", "sessionID": session_id, "role": "assistant"},
+                        "parts": [{"id": "part-text", "type": "text", "text": "Recovered after reconnect."}],
+                    }
+                ],
+            )
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_ALLOW_SYNTHETIC_TERMINAL", "1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_POLL_INTERVAL_SECONDS", "0.1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS", "0.2")
+    client = _client()
+
+    run_ref = await client.start_run(
+        run_id="run-no-terminal",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="Recover gracefully",
+        messages=[{"role": "user", "content": "Recover gracefully"}],
+    )
+    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
+    assert any(
+        item.get("event") == "assistant.delta"
+        and "Recovered after reconnect." in str(item.get("payload", {}).get("content") or "")
+        for item in events
+    )
+    assert events[-1].get("event") == "run.completed"
+    assert not any(item.get("event") == "run.failed" for item in events)
+
+
+@pytest.mark.asyncio
+async def test_official_mode_auto_approves_permission_asked_in_stage_workspace(monkeypatch: pytest.MonkeyPatch):
+    session_id = "sess-permission-auto"
+    permission_request_id = "perm-1"
+    approval_calls: list[str] = []
+    global_events = [
+        (
+            "permission.asked",
+            {
+                "sessionID": session_id,
+                "id": permission_request_id,
+                "permission": "filesystem",
+                "path": "/tmp/.talmudpedia/stage/shared/workspace/src/App.tsx",
+                "question": "Allow write?",
+            },
+        ),
+        ("session.idle", {"sessionID": session_id}),
+        ("run.completed", {"sessionID": session_id}),
+    ]
+    sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == f"/session/{session_id}/prompt_async":
+            return httpx.Response(204, text="")
+        if request.url.path == "/global/event":
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == f"/session/{session_id}/permissions/{permission_request_id}" and request.method == "POST":
+            approval_calls.append(request.url.path)
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "info": {"id": "msg-assistant", "sessionID": session_id, "role": "assistant"},
+                        "parts": [{"id": "part-text", "type": "text", "text": "Permission approved."}],
+                    }
+                ],
+            )
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_POLL_INTERVAL_SECONDS", "0.1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS", "0.2")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_AUTO_APPROVE_PERMISSION_ASK", "1")
+    client = _client()
+
+    run_ref = await client.start_run(
+        run_id="run-permission-auto",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/.talmudpedia/stage/shared/workspace",
+        model_id="",
+        prompt="Continue",
+        messages=[{"role": "user", "content": "Continue"}],
+    )
+    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
+    assert approval_calls == [f"/session/{session_id}/permissions/{permission_request_id}"]
+    assert any(item.get("event") == "tool.question.answered" for item in events)
+    assert events[-1].get("event") == "run.completed"
 
 
 @pytest.mark.asyncio

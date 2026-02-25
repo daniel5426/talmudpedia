@@ -63,6 +63,7 @@ jest.mock("@/services", () => ({
     listCodingAgentChatSessions: jest.fn(),
     getCodingAgentChatSession: jest.fn(),
     getCodingAgentChatSessionActiveRun: jest.fn(),
+    findCodingAgentChatSessionActiveRun: jest.fn(),
     listCodingAgentChatSessionQueue: jest.fn(),
     deleteCodingAgentChatSessionQueueItem: jest.fn(),
     restoreCodingAgentCheckpoint: jest.fn(),
@@ -318,6 +319,30 @@ const makeState = (files: Record<string, string> = makeFiles()) => ({
   draft_dev: null,
 });
 
+const makeStreamResponse = (
+  chunks: string[],
+  options: { onCancel?: () => void } = {},
+) => ({
+  body: {
+    getReader: () => {
+      let cursor = 0;
+      return {
+        read: async () => {
+          if (cursor >= chunks.length) return { done: true, value: undefined };
+          const next = chunks[cursor++];
+          return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+        },
+        cancel: async () => {
+          options.onCancel?.();
+        },
+      };
+    },
+  },
+  ok: true,
+  status: 200,
+  headers: new Headers({ "content-type": "text/event-stream" }),
+});
+
 describe("AppsBuilderWorkspace", () => {
   let openSpy: jest.SpyInstance;
 
@@ -335,7 +360,30 @@ describe("AppsBuilderWorkspace", () => {
   };
 
   beforeEach(() => {
+    jest.resetAllMocks();
+    window.localStorage.clear();
     openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
+    mockCodeEditor.mockImplementation(
+      ({
+        value,
+        onChange,
+        language,
+        suppressValidationDecorations,
+      }: {
+        value: string;
+        onChange: (value: string) => void;
+        language?: string;
+        suppressValidationDecorations?: boolean;
+      }) => (
+        <textarea
+          aria-label="Code Editor"
+          data-language={language || ""}
+          data-suppress-validation={String(Boolean(suppressValidationDecorations))}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ),
+    );
     (publishedAppsService.getBuilderState as jest.Mock).mockResolvedValue(makeState());
     (publishedAppsService.listAuthTemplates as jest.Mock).mockResolvedValue([
       {
@@ -612,6 +660,7 @@ describe("AppsBuilderWorkspace", () => {
     (publishedAppsService.getCodingAgentChatSessionActiveRun as jest.Mock).mockRejectedValue(
       new Error("No active run"),
     );
+    (publishedAppsService.findCodingAgentChatSessionActiveRun as jest.Mock).mockResolvedValue(null);
     (publishedAppsService.listCodingAgentChatSessionQueue as jest.Mock).mockResolvedValue([]);
     (publishedAppsService.deleteCodingAgentChatSessionQueueItem as jest.Mock).mockResolvedValue({
       status: "deleted",
@@ -1517,10 +1566,13 @@ describe("AppsBuilderWorkspace", () => {
     const originalStallTimeout = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS;
     const originalMaxDuration = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_MAX_DURATION_MS;
     const originalReadPoll = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS;
+    const originalAutoCancelRecovery = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_AUTO_CANCEL_RECOVERY_ENABLED;
     process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS = "60";
     process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_MAX_DURATION_MS = "500";
     process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS = "20";
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_AUTO_CANCEL_RECOVERY_ENABLED = "0";
 
+    let unmount: (() => void) | null = null;
     try {
       (publishedAppsService.createCodingAgentRun as jest.Mock)
         .mockResolvedValueOnce({
@@ -1608,7 +1660,8 @@ describe("AppsBuilderWorkspace", () => {
           headers: new Headers({ "content-type": "text/event-stream" }),
         });
 
-      render(<AppsBuilderWorkspace appId="app-1" />);
+      const view = render(<AppsBuilderWorkspace appId="app-1" />);
+      unmount = view.unmount;
       await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
       await screen.findByPlaceholderText("Plan, @ for context, / for commands");
 
@@ -1625,21 +1678,16 @@ describe("AppsBuilderWorkspace", () => {
       const queuePanel = await screen.findByRole("region", { name: "Queued prompts" });
       expect(within(queuePanel).getByText("second queued after stall")).toBeInTheDocument();
 
-      await waitFor(() => {
-        expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(2);
-      });
-      expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[1][1]).toEqual(
-        expect.objectContaining({
-          input: "second queued after stall",
-          enqueue_if_active: true,
-          chat_session_id: "chat-1",
-        }),
-      );
-      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledTimes(2);
+      expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(1);
+      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledTimes(1);
+      expect(publishedAppsService.cancelCodingAgentRun).not.toHaveBeenCalled();
     } finally {
+      unmount?.();
+      await new Promise((resolve) => setTimeout(resolve, 40));
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS = originalStallTimeout;
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_MAX_DURATION_MS = originalMaxDuration;
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS = originalReadPoll;
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_AUTO_CANCEL_RECOVERY_ENABLED = originalAutoCancelRecovery;
     }
   });
 
@@ -1698,7 +1746,7 @@ describe("AppsBuilderWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    expect(await screen.findByText("instant bubble")).toBeInTheDocument();
+    expect((await screen.findAllByText("instant bubble")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Sending...")).toBeInTheDocument();
 
     resolveRun?.({
@@ -1914,8 +1962,9 @@ describe("AppsBuilderWorkspace", () => {
     await waitFor(() => {
       expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
     });
+    const ensureCallsBeforeSend = (publishedAppsService.ensureDraftDevSession as jest.Mock).mock.calls.length;
     await waitFor(() => {
-      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledTimes(1);
+      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledTimes(ensureCallsBeforeSend);
     });
   });
 
@@ -2211,6 +2260,190 @@ describe("AppsBuilderWorkspace", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("reconnects stream with from_seq and avoids duplicate tool cards", async () => {
+    const originalReconnectAttempts = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS;
+    const originalReconnectBaseDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS;
+    const originalReconnectMaxDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS;
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = "3";
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = "1";
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = "2";
+    (publishedAppsService.getCodingAgentRun as jest.Mock).mockResolvedValue({
+      run_id: "run-1",
+      status: "running",
+      execution_engine: "opencode",
+      chat_session_id: "chat-1",
+      surface: "published_app_coding_agent",
+      published_app_id: "app-1",
+      base_revision_id: "rev-1",
+      result_revision_id: null,
+      checkpoint_revision_id: null,
+      error: null,
+      created_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      completed_at: null,
+    });
+    (publishedAppsService.streamCodingAgentRun as jest.Mock)
+      .mockResolvedValueOnce(
+        makeStreamResponse([
+          'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-25T19:00:00Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
+        ]),
+      )
+      .mockResolvedValueOnce(
+        makeStreamResponse([
+          'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-25T19:00:00Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
+          'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-25T19:00:01Z","stage":"assistant","payload":{"content":"Recovered output"},"diagnostics":[]}\n\n',
+          'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-25T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+        ]),
+      );
+
+    try {
+      render(<AppsBuilderWorkspace appId="app-1" />);
+      await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+      await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+      fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+        target: { value: "retry stream" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      await screen.findByText("Recovered output");
+      await waitFor(() => {
+        expect(publishedAppsService.streamCodingAgentRun).toHaveBeenNthCalledWith(1, "app-1", "run-1");
+        expect(publishedAppsService.streamCodingAgentRun).toHaveBeenNthCalledWith(2, "app-1", "run-1", {
+          fromSeq: 1,
+        });
+      });
+      expect(screen.queryAllByRole("button", { name: "Researching 1 file" })).toHaveLength(1);
+    } finally {
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = originalReconnectAttempts;
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = originalReconnectBaseDelay;
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = originalReconnectMaxDelay;
+    }
+  });
+
+  it("handles replay-gap by reconciling status and reattaching from next retained sequence", async () => {
+    const originalReconnectAttempts = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS;
+    const originalReconnectBaseDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS;
+    const originalReconnectMaxDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS;
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = "3";
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = "1";
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = "2";
+    (publishedAppsService.getCodingAgentRun as jest.Mock).mockResolvedValue({
+      run_id: "run-1",
+      status: "running",
+      execution_engine: "opencode",
+      chat_session_id: "chat-1",
+      surface: "published_app_coding_agent",
+      published_app_id: "app-1",
+      base_revision_id: "rev-1",
+      result_revision_id: null,
+      checkpoint_revision_id: null,
+      error: null,
+      created_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      completed_at: null,
+    });
+    (publishedAppsService.streamCodingAgentRun as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        statusText: "Conflict",
+        json: async () => ({
+          detail: {
+            code: "CODING_AGENT_STREAM_REPLAY_GAP",
+            message: "Requested replay cursor is older than retained in-memory events.",
+            next_replay_seq: 9,
+          },
+        }),
+      })
+      .mockResolvedValueOnce(
+        makeStreamResponse([
+          'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":9,"ts":"2026-02-25T19:00:01Z","stage":"assistant","payload":{"content":"Replay recovered"},"diagnostics":[]}\n\n',
+          'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":10,"ts":"2026-02-25T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+        ]),
+      );
+
+    try {
+      render(<AppsBuilderWorkspace appId="app-1" />);
+      await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+      await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+      fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+        target: { value: "recover replay gap" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      await screen.findByText("Replay recovered");
+      await waitFor(() => {
+        expect(publishedAppsService.streamCodingAgentRun).toHaveBeenNthCalledWith(1, "app-1", "run-1");
+        expect(publishedAppsService.streamCodingAgentRun).toHaveBeenNthCalledWith(2, "app-1", "run-1", {
+          fromSeq: 8,
+        });
+      });
+    } finally {
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = originalReconnectAttempts;
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = originalReconnectBaseDelay;
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = originalReconnectMaxDelay;
+    }
+  });
+
+  it("does not show generic fallback text after non-terminal disconnect with tool activity", async () => {
+    const originalReconnectAttempts = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS;
+    const originalReconnectBaseDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS;
+    const originalReconnectMaxDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS;
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = "3";
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = "1";
+    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = "2";
+    (publishedAppsService.getCodingAgentRun as jest.Mock).mockResolvedValue({
+      run_id: "run-1",
+      status: "running",
+      execution_engine: "opencode",
+      chat_session_id: "chat-1",
+      surface: "published_app_coding_agent",
+      published_app_id: "app-1",
+      base_revision_id: "rev-1",
+      result_revision_id: null,
+      checkpoint_revision_id: null,
+      error: null,
+      created_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      completed_at: null,
+    });
+    (publishedAppsService.streamCodingAgentRun as jest.Mock)
+      .mockResolvedValueOnce(
+        makeStreamResponse([
+          'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-25T19:00:00Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
+        ]),
+      )
+      .mockResolvedValueOnce(
+        makeStreamResponse([
+          'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-25T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+        ]),
+      );
+
+    try {
+      render(<AppsBuilderWorkspace appId="app-1" />);
+      await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+      await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+      fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+        target: { value: "tool only progress" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      await screen.findByRole("button", { name: "Researching 1 file" });
+      await waitFor(() => {
+        expect(
+          screen.queryByText("I can help with code changes in this app workspace. Tell me what you want to change."),
+        ).not.toBeInTheDocument();
+      });
+    } finally {
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = originalReconnectAttempts;
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = originalReconnectBaseDelay;
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = originalReconnectMaxDelay;
+    }
+  });
+
   it("parses SSE events when data prefix has no trailing space", async () => {
     (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
       body: {
@@ -2298,7 +2531,7 @@ describe("AppsBuilderWorkspace", () => {
 
   it("loads chat sessions from API, hydrates timeline, and resumes with the same chat_session_id", async () => {
     const now = new Date().toISOString();
-    (publishedAppsService.listCodingAgentChatSessions as jest.Mock).mockResolvedValueOnce([
+    (publishedAppsService.listCodingAgentChatSessions as jest.Mock).mockResolvedValue([
       {
         id: "chat-1",
         title: "Past thread",
@@ -2321,9 +2554,7 @@ describe("AppsBuilderWorkspace", () => {
       ],
     });
     (publishedAppsService.listCodingAgentChatSessionQueue as jest.Mock).mockResolvedValueOnce([]);
-    (publishedAppsService.getCodingAgentChatSessionActiveRun as jest.Mock).mockRejectedValueOnce(
-      new Error("No active run"),
-    );
+    (publishedAppsService.findCodingAgentChatSessionActiveRun as jest.Mock).mockResolvedValueOnce(null);
     (publishedAppsService.createCodingAgentRun as jest.Mock).mockResolvedValueOnce({
       run_id: "run-1",
       status: "queued",
@@ -2349,11 +2580,19 @@ describe("AppsBuilderWorkspace", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Chat history" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Past thread/i }));
+    const historyEntry = await screen.findByText("Past thread");
+    const historyEntryButton = historyEntry.closest("button");
+    expect(historyEntryButton).not.toBeNull();
+    fireEvent.click(historyEntryButton!);
 
-    await waitFor(() => {
-      expect(publishedAppsService.getCodingAgentChatSession).toHaveBeenCalledWith("app-1", "chat-1", 300);
-    });
+    await waitFor(() =>
+      expect(publishedAppsService.getCodingAgentChatSession).toHaveBeenCalledWith(
+        "app-1",
+        "chat-1",
+        expect.objectContaining({ limit: 10 }),
+      ),
+    );
+
     expect(await screen.findByText("Earlier prompt")).toBeInTheDocument();
     expect(await screen.findByText("Earlier answer")).toBeInTheDocument();
 

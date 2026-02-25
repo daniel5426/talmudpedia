@@ -932,7 +932,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       className="flex h-dvh min-h-0 w-full overflow-hidden gap-0 bg-background"
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border/50 px-3">
+        <header className="flex h-11 shrink-0 items-center gap-3 px-3">
           {/* Left: back + app name + status dot */}
           <div className="flex min-w-0 items-center gap-3">
             <Link

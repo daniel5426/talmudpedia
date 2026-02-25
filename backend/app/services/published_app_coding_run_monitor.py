@@ -20,6 +20,8 @@ from app.db.postgres.models.published_apps import PublishedApp
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_batch_finalizer import PublishedAppCodingBatchFinalizer
 from app.services.published_app_coding_run_monitor_config import (
+    monitor_force_terminal_on_inactivity,
+    monitor_force_terminal_on_stream_end_without_terminal,
     monitor_inactivity_timeout_seconds,
     monitor_max_runtime_seconds,
     monitor_poll_interval_seconds,
@@ -44,6 +46,7 @@ class _MonitorState:
     task: asyncio.Task
     subscribers: set[asyncio.Queue] = field(default_factory=set)
     event_backlog: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=6000))
+    next_seq: int = 1
 
 
 class PublishedAppCodingRunMonitor:
@@ -55,6 +58,10 @@ class PublishedAppCodingRunMonitor:
     _monitor_poll_interval_seconds = staticmethod(monitor_poll_interval_seconds)
     _monitor_max_runtime_seconds = staticmethod(monitor_max_runtime_seconds)
     _monitor_status_probe_interval_seconds = staticmethod(monitor_status_probe_interval_seconds)
+    _monitor_force_terminal_on_inactivity = staticmethod(monitor_force_terminal_on_inactivity)
+    _monitor_force_terminal_on_stream_end_without_terminal = staticmethod(
+        monitor_force_terminal_on_stream_end_without_terminal
+    )
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -111,14 +118,24 @@ class PublishedAppCodingRunMonitor:
     @classmethod
     async def _emit_to_subscribers(cls, *, run_id: UUID, payload: dict[str, Any]) -> None:
         run_key = str(run_id)
+        envelope = dict(payload)
         async with cls._monitors_lock:
             state = cls._monitors.get(run_key)
             if state is not None:
+                seq_value = envelope.get("seq")
+                try:
+                    seq = int(seq_value)
+                except Exception:
+                    seq = 0
+                if seq <= 0:
+                    seq = int(state.next_seq or 1)
+                envelope["seq"] = seq
+                state.next_seq = max(int(state.next_seq or 1), seq + 1)
                 # Keep an in-memory backlog so late stream subscribers can replay
                 # already-emitted events without DB replay semantics.
-                state.event_backlog.append(dict(payload))
+                state.event_backlog.append(dict(envelope))
             subscribers = list(state.subscribers) if state is not None else []
-        event_name = str(payload.get("event") or "").strip()
+        event_name = str(envelope.get("event") or "").strip()
         if event_name and event_name != "assistant.delta":
             cls._trace(
                 "monitor.emit",
@@ -127,7 +144,7 @@ class PublishedAppCodingRunMonitor:
                 subscriber_count=len(subscribers),
             )
             if event_name in _TERMINAL_EVENTS:
-                run_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                run_payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
                 cls._trace(
                     "monitor.terminal_payload",
                     run_id=run_key,
@@ -139,7 +156,7 @@ class PublishedAppCodingRunMonitor:
                 )
         for queue in subscribers:
             try:
-                queue.put_nowait(dict(payload))
+                queue.put_nowait(dict(envelope))
             except Exception as exc:
                 cls._trace(
                     "monitor.emit_queue_put_failed",
@@ -239,9 +256,55 @@ class PublishedAppCodingRunMonitor:
                 error_type=exc.__class__.__name__,
             )
 
-    async def stream_events(self, *, app_id: UUID, run_id: UUID) -> AsyncGenerator[dict[str, Any], None]:
+    async def validate_replay_cursor(self, *, app_id: UUID, run_id: UUID, from_seq: int) -> int | None:
+        normalized_from_seq = max(0, int(from_seq or 0))
+        if normalized_from_seq <= 0:
+            return None
         runtime = PublishedAppCodingAgentRuntimeService(self.db)
         run = await runtime.get_run_for_app(app_id=app_id, run_id=run_id)
+        run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+        if run_status in _TERMINAL_RUN_STATUSES:
+            return None
+        await self.ensure_monitor(app_id=app_id, run_id=run_id)
+        async with self.__class__._monitors_lock:
+            state = self.__class__._monitors.get(str(run_id))
+            if state is None:
+                return None
+            backlog = [dict(item) for item in state.event_backlog]
+        if not backlog:
+            return None
+        first_seq = 0
+        for item in backlog:
+            try:
+                candidate_seq = int(item.get("seq"))
+            except Exception:
+                candidate_seq = 0
+            if candidate_seq > 0:
+                first_seq = candidate_seq
+                break
+        if first_seq <= 0:
+            return None
+        if normalized_from_seq < (first_seq - 1):
+            return first_seq
+        return None
+
+    async def stream_events(
+        self,
+        *,
+        app_id: UUID,
+        run_id: UUID,
+        from_seq: int | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        runtime = PublishedAppCodingAgentRuntimeService(self.db)
+        run = await runtime.get_run_for_app(app_id=app_id, run_id=run_id)
+        replay_cursor = max(0, int(from_seq or 0))
+        if replay_cursor > 0:
+            self.__class__._trace(
+                "stream.reconnect_attempt",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                from_seq=replay_cursor,
+            )
 
         async def _load_run_fresh() -> AgentRun | None:
             dialect_name = str(getattr(getattr(self.db.get_bind(), "dialect", None), "name", "") or "").strip().lower()
@@ -298,7 +361,7 @@ class PublishedAppCodingRunMonitor:
             diagnostics: list[dict[str, Any]] = []
             if run_status == RunStatus.failed.value:
                 diagnostics = [{"message": run.error_message or "run failed"}]
-            yield self._envelope(
+            envelope = self._envelope(
                 event=self._terminal_event_for_status(run_status),
                 run_id=run.id,
                 app_id=UUID(str(app_id)),
@@ -306,6 +369,11 @@ class PublishedAppCodingRunMonitor:
                 payload=payload,
                 diagnostics=diagnostics,
             )
+            terminal_seq = int(envelope.get("seq") or 1)
+            envelope["seq"] = max(1, terminal_seq)
+            if replay_cursor >= int(envelope["seq"]):
+                return
+            yield envelope
             return
 
         state = await self.ensure_monitor(app_id=app_id, run_id=run_id)
@@ -320,7 +388,7 @@ class PublishedAppCodingRunMonitor:
             diagnostics: list[dict[str, Any]] = []
             if refreshed_status == RunStatus.failed.value:
                 diagnostics = [{"message": refreshed.error_message or "run failed"}]
-            yield self._envelope(
+            envelope = self._envelope(
                 event=self._terminal_event_for_status(refreshed_status),
                 run_id=refreshed.id,
                 app_id=UUID(str(app_id)),
@@ -328,6 +396,11 @@ class PublishedAppCodingRunMonitor:
                 payload=payload,
                 diagnostics=diagnostics,
             )
+            terminal_seq = int(envelope.get("seq") or 1)
+            envelope["seq"] = max(1, terminal_seq)
+            if replay_cursor >= int(envelope["seq"]):
+                return
+            yield envelope
             return
 
         # Keep subscriber queue unbounded so assistant deltas are never dropped
@@ -356,11 +429,49 @@ class PublishedAppCodingRunMonitor:
                 app_id=str(app_id),
             )
 
+        replayed_events = 0
         try:
+            first_backlog_seq = 0
+            for item in backlog_snapshot:
+                try:
+                    candidate_seq = int(item.get("seq"))
+                except Exception:
+                    candidate_seq = 0
+                if candidate_seq > 0:
+                    first_backlog_seq = candidate_seq
+                    break
+            if replay_cursor > 0 and first_backlog_seq > 0 and replay_cursor < (first_backlog_seq - 1):
+                self.__class__._trace(
+                    "stream.replay_gap",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    from_seq=replay_cursor,
+                    next_replay_seq=first_backlog_seq,
+                )
+                replay_cursor = first_backlog_seq - 1
             for payload in backlog_snapshot:
+                payload_seq = 0
+                try:
+                    payload_seq = int(payload.get("seq"))
+                except Exception:
+                    payload_seq = 0
+                if replay_cursor > 0 and payload_seq > 0 and payload_seq <= replay_cursor:
+                    continue
                 yield payload
+                replayed_events += 1
+                if payload_seq > 0:
+                    replay_cursor = payload_seq
                 if str(payload.get("event") or "") in _TERMINAL_EVENTS:
                     return
+            if replayed_events > 0:
+                self.__class__._trace(
+                    "stream.reconnect_resumed",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    replayed_events=replayed_events,
+                    from_seq=int(from_seq or 0),
+                    to_seq=replay_cursor,
+                )
             while True:
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=2.0)
@@ -373,7 +484,7 @@ class PublishedAppCodingRunMonitor:
                         diagnostics: list[dict[str, Any]] = []
                         if refreshed_status == RunStatus.failed.value:
                             diagnostics = [{"message": refreshed.error_message or "run failed"}]
-                        yield self._envelope(
+                        terminal_envelope = self._envelope(
                             event=self._terminal_event_for_status(refreshed_status),
                             run_id=refreshed.id,
                             app_id=UUID(str(app_id)),
@@ -381,11 +492,24 @@ class PublishedAppCodingRunMonitor:
                             payload=runtime.serialize_run(refreshed),
                             diagnostics=diagnostics,
                         )
+                        terminal_envelope["seq"] = max(1, replay_cursor + 1)
+                        if int(terminal_envelope["seq"]) > replay_cursor:
+                            replay_cursor = int(terminal_envelope["seq"])
+                            yield terminal_envelope
                         break
                     continue
                 if payload is None:
                     break
+                payload_seq = 0
+                try:
+                    payload_seq = int(payload.get("seq"))
+                except Exception:
+                    payload_seq = 0
+                if replay_cursor > 0 and payload_seq > 0 and payload_seq <= replay_cursor:
+                    continue
                 yield payload
+                if payload_seq > 0:
+                    replay_cursor = payload_seq
                 if str(payload.get("event") or "") in _TERMINAL_EVENTS:
                     break
         finally:
@@ -487,6 +611,10 @@ class PublishedAppCodingRunMonitor:
                 pending_next: asyncio.Task | None = None
                 monitor_started_at = time.monotonic()
                 max_runtime_seconds = cls._monitor_max_runtime_seconds()
+                force_terminal_on_inactivity = cls._monitor_force_terminal_on_inactivity()
+                force_terminal_on_stream_end_without_terminal = (
+                    cls._monitor_force_terminal_on_stream_end_without_terminal()
+                )
                 last_progress_at = monitor_started_at
                 last_status_probe_at = 0.0
                 last_plan_summary = ""
@@ -680,7 +808,11 @@ class PublishedAppCodingRunMonitor:
                                 break
 
                         idle_progress_seconds = max(0.0, now_monotonic - last_progress_at)
-                        if (not awaiting_question_prompt) and idle_progress_seconds >= inactivity_timeout_seconds:
+                        if (
+                            force_terminal_on_inactivity
+                            and (not awaiting_question_prompt)
+                            and idle_progress_seconds >= inactivity_timeout_seconds
+                        ):
                             terminalized = await _terminalize_stalled_run(
                                 message=(
                                     "OpenCode stream stalled before terminal event "
@@ -712,7 +844,11 @@ class PublishedAppCodingRunMonitor:
                                     await _emit_terminal_from_status(status=refreshed_for_timeout_status)
                                     break
                             idle_for_seconds = max(0.0, time.monotonic() - last_event_at)
-                            if (not awaiting_question_prompt) and idle_for_seconds >= inactivity_timeout_seconds:
+                            if (
+                                force_terminal_on_inactivity
+                                and (not awaiting_question_prompt)
+                                and idle_for_seconds >= inactivity_timeout_seconds
+                            ):
                                 terminalized = await _terminalize_stalled_run(
                                     message=(
                                         "OpenCode stream stalled before terminal event "
@@ -733,7 +869,22 @@ class PublishedAppCodingRunMonitor:
                         try:
                             envelope = pending_next.result()
                         except StopAsyncIteration:
-                            break
+                            refreshed_status_after_eof = await _read_run_status()
+                            if refreshed_status_after_eof is None:
+                                break
+                            if refreshed_status_after_eof in _TERMINAL_RUN_STATUSES:
+                                await _emit_terminal_from_status(status=refreshed_status_after_eof)
+                                break
+                            if force_terminal_on_stream_end_without_terminal:
+                                break
+                            cls._trace(
+                                "monitor.stream_reopen_after_nonterminal_eof",
+                                run_id=str(run_id),
+                                app_id=str(app_id),
+                            )
+                            run_event_stream = runtime.stream_run_events(app=app, run=run)
+                            run_event_iterator = run_event_stream.__aiter__()
+                            continue
                         finally:
                             pending_next = None
 
@@ -788,14 +939,23 @@ class PublishedAppCodingRunMonitor:
 
                 refreshed_status = refreshed_run.status.value if hasattr(refreshed_run.status, "value") else str(refreshed_run.status)
                 if refreshed_status not in _TERMINAL_RUN_STATUSES:
-                    await _terminalize_stalled_run(
-                        message="OpenCode stream ended before terminal event",
-                        log_reason="stream_ended_no_terminal",
-                    )
-                    refreshed_run = await _load_run_fresh()
-                    if refreshed_run is None:
+                    if force_terminal_on_stream_end_without_terminal:
+                        await _terminalize_stalled_run(
+                            message="OpenCode stream ended before terminal event",
+                            log_reason="stream_ended_no_terminal",
+                        )
+                        refreshed_run = await _load_run_fresh()
+                        if refreshed_run is None:
+                            return
+                        refreshed_status = refreshed_run.status.value if hasattr(refreshed_run.status, "value") else str(refreshed_run.status)
+                    else:
+                        cls._trace(
+                            "monitor.stream_ended_without_terminal_nonfatal",
+                            run_id=str(run_id),
+                            app_id=str(app_id),
+                            status=refreshed_status,
+                        )
                         return
-                    refreshed_status = refreshed_run.status.value if hasattr(refreshed_run.status, "value") else str(refreshed_run.status)
 
                 if not terminal_emitted:
                     terminal_payload = runtime.serialize_run(refreshed_run)

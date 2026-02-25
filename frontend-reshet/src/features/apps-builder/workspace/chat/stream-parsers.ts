@@ -20,6 +20,12 @@ export type CodingAgentRunActiveDetail = {
   next_replay_seq?: number;
 };
 
+export type CodingAgentStreamReplayGapDetail = {
+  code: "CODING_AGENT_STREAM_REPLAY_GAP";
+  message: string;
+  next_replay_seq: number;
+};
+
 export type TerminalRunStatus = "completed" | "failed" | "cancelled" | "paused";
 
 export type CodingAgentQuestionOption = {
@@ -180,6 +186,33 @@ export const parseRunActiveDetail = (detail: unknown): CodingAgentRunActiveDetai
     message: String(candidate.message || "A coding-agent run is already active for this preview session."),
     active_run_id: runId,
     chat_session_id: candidate.chat_session_id ? String(candidate.chat_session_id) : undefined,
+    next_replay_seq: nextReplaySeq,
+  };
+};
+
+export const parseStreamReplayGapDetail = (detail: unknown): CodingAgentStreamReplayGapDetail | null => {
+  let parsed: unknown = detail;
+  if (typeof parsed === "string") {
+    const text = parsed.trim();
+    if (!text) return null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const candidate = parsed as Partial<CodingAgentStreamReplayGapDetail>;
+  if (candidate.code !== "CODING_AGENT_STREAM_REPLAY_GAP") {
+    return null;
+  }
+  const nextReplayRaw = Number(candidate.next_replay_seq);
+  const nextReplaySeq = Number.isFinite(nextReplayRaw) ? Math.max(1, Math.floor(nextReplayRaw)) : 1;
+  return {
+    code: "CODING_AGENT_STREAM_REPLAY_GAP",
+    message: String(candidate.message || "Requested stream replay cursor is no longer retained."),
     next_replay_seq: nextReplaySeq,
   };
 };

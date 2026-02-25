@@ -1,4 +1,4 @@
-Last Updated: 2026-02-24
+Last Updated: 2026-02-25
 
 ## Scope
 - OpenCode server client transport compatibility for coding-agent engine runs.
@@ -21,6 +21,7 @@ Last Updated: 2026-02-24
 - Global event stream translation emits incremental `assistant.delta` tokens and tool lifecycle events (`tool.started` / `tool.completed` / `tool.failed`).
 - Global event parsing preserves early tool events even before assistant message-role metadata lands.
 - Global event `message.updated` payloads are now parsed for incremental assistant text/tool state, including fallback text-diff extraction when `message.part.delta` is absent.
+- Session `idle` no longer force-completes runs by default; streams now continue when assistant text is followed by later tool calls in the same run.
 - Reasoning parts are filtered out from user-visible assistant deltas.
 - Incremental text offset tracking prevents duplicate text when `/global/event` and `/session/{id}/message` overlap.
 - Official global-event streaming can settle to terminal completion without explicit `session.idle` when assistant text is complete and no tools are running.
@@ -32,6 +33,9 @@ Last Updated: 2026-02-24
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py -k "global_event_stream or closed_no_terminal or auto_approves_permission_asked or settles_without_session_idle"`
+- Date/Time: 2026-02-25 21:25 EET
+- Result: Pass (7 passed, 25 deselected, 1 warning)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py::test_host_mode_answer_question_ignores_sandbox_id_and_uses_api tests/opencode_server_client/test_opencode_server_client.py::test_host_mode_cancel_ignores_sandbox_id_and_uses_api tests/sandbox_controller/test_dev_shim.py::test_dev_shim_opencode_question_answer tests/coding_agent_api/test_v2_api.py::test_v2_answer_question_endpoint`
 - Date/Time: 2026-02-24
 - Result: Pass (4 passed, 6 warnings)

@@ -7,6 +7,7 @@ import {
   type CodingAgentPendingQuestion,
   parsePendingQuestionPayload,
   parseRunActiveDetail,
+  parseStreamReplayGapDetail,
   parseSse,
   parseTerminalRunStatus,
   resolvePositiveTimeoutMs,
@@ -161,6 +162,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
   let shouldSuppressErrors = false;
   let sawTerminalEvent = false;
   let terminalStatus: TerminalStatus | null = null;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   const logRunFailureDebug = (
     reason: string,
     details: Record<string, unknown> = {},
@@ -178,40 +180,14 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
   };
 
   try {
-    const response = await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId);
-    if (!response.ok) {
-      let message = `Failed to stream coding-agent run (${response.status})`;
-      let errorPayload: unknown = null;
-      try {
-        const payload = await response.json();
-        errorPayload = payload;
-        const detail = payload?.detail;
-        if (typeof detail === "string") {
-          message = detail;
-        } else if (detail && typeof detail === "object") {
-          message = JSON.stringify(detail);
-        }
-      } catch {
-        // keep fallback
-      }
-      logRunFailureDebug("stream_response_not_ok", {
-        status: response.status,
-        statusText: response.statusText,
-        responsePayload: errorPayload,
-      });
-      throw new Error(message);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error("Streaming reader unavailable");
-    }
-    abortReaderRef.current = reader;
-
     const decoder = new TextDecoder();
     let buffer = "";
     let assistantText = "";
     let sawAssistantOutput = false;
+    let sawToolActivity = false;
+    let sawNonTerminalDisconnect = false;
+    let lastSeenSeq = 0;
+    let reconnectAttempts = 0;
     let currentStreamId = `assistant-${normalizedRunId}`;
     let segmentCounter = 0;
     let latestSummary = "";
@@ -235,8 +211,29 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       STALL_TIMEOUT_MS,
       resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS, 2000),
     );
+    const reconnectAttemptsDefault = process.env.NODE_ENV === "test" ? 0 : 6;
+    const reconnectAttemptsRaw = Number(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS);
+    const RECONNECT_MAX_ATTEMPTS = Number.isFinite(reconnectAttemptsRaw)
+      ? Math.max(0, Math.min(20, Math.floor(reconnectAttemptsRaw)))
+      : reconnectAttemptsDefault;
+    const RECONNECT_BASE_DELAY_MS = resolvePositiveTimeoutMs(
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS,
+      500,
+    );
+    const RECONNECT_MAX_DELAY_MS = Math.max(
+      RECONNECT_BASE_DELAY_MS,
+      resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS, 4000),
+    );
+    const autoCancelRecoveryRaw = String(
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_AUTO_CANCEL_RECOVERY_ENABLED || "0",
+    )
+      .trim()
+      .toLowerCase();
+    const AUTO_CANCEL_RECOVERY_ENABLED = autoCancelRecoveryRaw === "1" || autoCancelRecoveryRaw === "true";
     const runStartedAt = Date.now();
     let lastEventAt = Date.now();
+    let maxDurationNoticeShown = false;
+    let stallNoticeShown = false;
     let pendingRead:
       | Promise<{ ok: true; result: ReadableStreamReadResult<Uint8Array> } | { ok: false; error: unknown }>
       | null = null;
@@ -255,8 +252,12 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     const readWithPollingTimeout = async (
       timeoutMs: number,
     ): Promise<ReadableStreamReadResult<Uint8Array> | null> => {
+      const activeReader = reader;
+      if (!activeReader) {
+        return null;
+      }
       if (!pendingRead) {
-        pendingRead = reader
+        pendingRead = activeReader
           .read()
           .then(
             (result) => ({ ok: true as const, result }),
@@ -280,6 +281,41 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         throw raced.error;
       }
       return raced.result;
+    };
+
+    const scheduleReconnect = async (
+      reason: string,
+      details: Record<string, unknown> = {},
+    ): Promise<boolean> => {
+      if (intentionalAbortRef.current || !isCurrentAttachment()) {
+        return false;
+      }
+      if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+        logRunFailureDebug("stream_reconnect_exhausted", {
+          reason,
+          attempts: reconnectAttempts,
+          lastSeenSeq,
+          ...details,
+        });
+        return false;
+      }
+      reconnectAttempts += 1;
+      sawNonTerminalDisconnect = true;
+      const delayMs = Math.min(
+        RECONNECT_MAX_DELAY_MS,
+        RECONNECT_BASE_DELAY_MS * Math.max(1, 2 ** (reconnectAttempts - 1)),
+      );
+      logRunFailureDebug("stream_reconnect_attempt", {
+        reason,
+        attempt: reconnectAttempts,
+        delayMs,
+        lastSeenSeq,
+        ...details,
+      });
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, delayMs);
+      });
+      return true;
     };
 
     const requestRecoveryCancel = async (): Promise<void> => {
@@ -332,6 +368,61 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       return false;
     };
 
+    const openStreamReader = async (): Promise<boolean> => {
+      const response = lastSeenSeq > 0
+        ? await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId, { fromSeq: lastSeenSeq })
+        : await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId);
+      if (!response.ok) {
+        let message = `Failed to stream coding-agent run (${response.status})`;
+        let errorPayload: unknown = null;
+        let responseDetail: unknown = null;
+        try {
+          const payload = await response.json();
+          errorPayload = payload;
+          responseDetail = (payload as { detail?: unknown } | null)?.detail ?? null;
+          if (typeof responseDetail === "string") {
+            message = responseDetail;
+          } else if (responseDetail && typeof responseDetail === "object") {
+            message = JSON.stringify(responseDetail);
+          }
+        } catch {
+          // keep fallback
+        }
+        const replayGap = response.status === 409
+          ? parseStreamReplayGapDetail(responseDetail || errorPayload)
+          : null;
+        if (replayGap) {
+          sawNonTerminalDisconnect = true;
+          const reconciled = await reconcileTerminalStateFromBackend();
+          if (reconciled) {
+            return false;
+          }
+          lastSeenSeq = Math.max(lastSeenSeq, Math.max(0, replayGap.next_replay_seq - 1));
+          return scheduleReconnect("stream_replay_gap", {
+            status: response.status,
+            nextReplaySeq: replayGap.next_replay_seq,
+          });
+        }
+        logRunFailureDebug("stream_response_not_ok", {
+          status: response.status,
+          statusText: response.statusText,
+          responsePayload: errorPayload,
+        });
+        throw new Error(message);
+      }
+      const nextReader = response.body?.getReader();
+      if (!nextReader) {
+        throw new Error("Streaming reader unavailable");
+      }
+      reader = nextReader;
+      abortReaderRef.current = nextReader;
+      pendingRead = null;
+      buffer = "";
+      lastEventAt = Date.now();
+      reconnectAttempts = 0;
+      return true;
+    };
+
     while (true) {
       if (intentionalAbortRef.current) {
         sawTerminalEvent = true;
@@ -343,32 +434,97 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         shouldSuppressErrors = true;
         break;
       }
+      if (!reader) {
+        const opened = await openStreamReader();
+        if (!opened) {
+          if (sawTerminalEvent || intentionalAbortRef.current || !isCurrentAttachment()) {
+            break;
+          }
+          continue;
+        }
+      }
+
       const now = Date.now();
       if (now - runStartedAt > MAX_RUN_DURATION_MS) {
         sawMaxDurationTimeout = true;
-        sawRunFailure = true;
-        await requestRecoveryCancel();
-        if (typeof reader.cancel === "function") {
-          void reader.cancel().catch(() => undefined);
+        if (AUTO_CANCEL_RECOVERY_ENABLED) {
+          sawRunFailure = true;
+          await requestRecoveryCancel();
+          if (reader && typeof reader.cancel === "function") {
+            void reader.cancel().catch(() => undefined);
+          }
+          break;
         }
-        break;
+        if (!maxDurationNoticeShown && isCurrentAttachment()) {
+          onError("Coding-agent run is still active beyond the local stream duration limit. Waiting for backend progress.");
+          maxDurationNoticeShown = true;
+        }
       }
       if (now - lastEventAt > STALL_TIMEOUT_MS) {
         sawInactivityTimeout = true;
-        sawRunFailure = true;
-        await requestRecoveryCancel();
-        if (typeof reader.cancel === "function") {
+        if (AUTO_CANCEL_RECOVERY_ENABLED) {
+          sawRunFailure = true;
+          await requestRecoveryCancel();
+          if (reader && typeof reader.cancel === "function") {
+            void reader.cancel().catch(() => undefined);
+          }
+          break;
+        }
+        // Non-destructive stall handling: keep the run alive and continue polling.
+        lastEventAt = now;
+        if (!stallNoticeShown && isCurrentAttachment()) {
+          onError("No stream updates yet. The run is still active; waiting for backend progress.");
+          stallNoticeShown = true;
+        }
+      }
+
+      let readResult: ReadableStreamReadResult<Uint8Array> | null = null;
+      try {
+        readResult = await readWithPollingTimeout(READ_POLL_TIMEOUT_MS);
+      } catch (readError) {
+        pendingRead = null;
+        sawNonTerminalDisconnect = true;
+        const reconciled = await reconcileTerminalStateFromBackend();
+        if (reconciled) {
+          break;
+        }
+        if (reader && typeof reader.cancel === "function") {
           void reader.cancel().catch(() => undefined);
+        }
+        reader = null;
+        abortReaderRef.current = null;
+        const shouldRetry = await scheduleReconnect("stream_read_error", {
+          error: readError instanceof Error ? readError.message : String(readError || ""),
+        });
+        if (shouldRetry) {
+          continue;
         }
         break;
       }
-
-      const readResult = await readWithPollingTimeout(READ_POLL_TIMEOUT_MS);
       if (!readResult) {
         continue;
       }
       const { done, value } = readResult;
-      if (done) break;
+      if (done) {
+        pendingRead = null;
+        if (!sawTerminalEvent && !intentionalAbortRef.current) {
+          sawNonTerminalDisconnect = true;
+          const reconciled = await reconcileTerminalStateFromBackend();
+          if (reconciled) {
+            break;
+          }
+          if (reader && typeof reader.cancel === "function") {
+            void reader.cancel().catch(() => undefined);
+          }
+          reader = null;
+          abortReaderRef.current = null;
+          const shouldRetry = await scheduleReconnect("stream_eof_without_terminal");
+          if (shouldRetry) {
+            continue;
+          }
+        }
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       let boundary = findSseFrameBoundary(buffer);
@@ -386,6 +542,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         parsedEventsInThisRead += 1;
         const seq = Number(parsed.seq || 0);
         if (seq > 0) {
+          lastSeenSeq = Math.max(lastSeenSeq, seq);
           const eventKey = `${normalizedRunId}:${seq}`;
           if (seenRunEventKeysRef.current.has(eventKey)) {
             boundary = findSseFrameBoundary(buffer);
@@ -415,7 +572,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           // the chat does not collapse all deltas into one final render.
           if (
             parsedEventsInThisRead > 1 &&
-            (parsedAssistantDeltasInThisRead <= 6 || parsedAssistantDeltasInThisRead % 4 === 0)
+            (parsedAssistantDeltasInThisRead <= 8 || parsedAssistantDeltasInThisRead % 2 === 0)
           ) {
             await yieldForPaint();
           }
@@ -432,6 +589,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         }
 
         if (parsed.event === "tool.started") {
+          sawToolActivity = true;
           const toolName = String(payload.tool || "tool");
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.input || payload);
@@ -445,6 +603,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         }
 
         if (parsed.event === "tool.completed") {
+          sawToolActivity = true;
           const toolName = String(payload.tool || "tool");
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.output || payload);
@@ -452,6 +611,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         }
 
         if (parsed.event === "tool.failed") {
+          sawToolActivity = true;
           const toolName = String(payload.tool || "tool");
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
           const toolPath = extractPrimaryToolPath(payload.output || payload);
@@ -459,6 +619,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         }
 
         if (parsed.event === "tool.question") {
+          sawToolActivity = true;
           const pendingQuestion = parsePendingQuestionPayload(payload);
           if (pendingQuestion) {
             onQuestionAsked(pendingQuestion);
@@ -466,8 +627,23 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         }
 
         if (parsed.event === "tool.question.answered" || parsed.event === "tool.question.rejected") {
+          sawToolActivity = true;
           const requestId = String(payload.request_id || payload.requestId || "").trim() || undefined;
           onQuestionResolved(requestId);
+        }
+
+        if (
+          parsedEventsInThisRead > 1 &&
+          (
+            parsed.event === "tool.started"
+            || parsed.event === "tool.completed"
+            || parsed.event === "tool.failed"
+            || parsed.event === "tool.question"
+            || parsed.event === "tool.question.answered"
+            || parsed.event === "tool.question.rejected"
+          )
+        ) {
+          await yieldForPaint();
         }
 
         if (parsed.event === "revision.created") {
@@ -537,9 +713,12 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         }
 
         if (sawTerminalEvent) {
-          if (typeof reader.cancel === "function") {
+          if (reader && typeof reader.cancel === "function") {
             void reader.cancel().catch(() => undefined);
           }
+          reader = null;
+          abortReaderRef.current = null;
+          pendingRead = null;
           break;
         }
 
@@ -553,20 +732,24 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         break;
       }
     }
-    if (sawMaxDurationTimeout && !intentionalAbortRef.current) {
+    if (sawMaxDurationTimeout && !sawTerminalEvent && !intentionalAbortRef.current) {
       if (isCurrentAttachment()) {
         onError(
-          recoveryCancelConfirmed
-            ? "Coding-agent run exceeded maximum duration. The run was stopped to recover."
-            : "Coding-agent run exceeded maximum duration and cancellation could not be confirmed.",
+          AUTO_CANCEL_RECOVERY_ENABLED
+            ? (recoveryCancelConfirmed
+              ? "Coding-agent run exceeded maximum duration. The run was stopped to recover."
+              : "Coding-agent run exceeded maximum duration and cancellation could not be confirmed.")
+            : "Coding-agent run exceeded the local stream duration limit. The run may still be active.",
         );
       }
-    } else if (sawInactivityTimeout && !intentionalAbortRef.current) {
+    } else if (sawInactivityTimeout && !sawTerminalEvent && !intentionalAbortRef.current) {
       if (isCurrentAttachment()) {
         onError(
-          recoveryCancelConfirmed
-            ? "Coding-agent stream stalled before completion. The run was stopped to recover."
-            : "Coding-agent stream stalled before completion and cancellation could not be confirmed.",
+          AUTO_CANCEL_RECOVERY_ENABLED
+            ? (recoveryCancelConfirmed
+              ? "Coding-agent stream stalled before completion. The run was stopped to recover."
+              : "Coding-agent stream stalled before completion and cancellation could not be confirmed.")
+            : "Coding-agent stream stalled before completion. The run may still be active.",
         );
       }
     } else if (!sawTerminalEvent && !intentionalAbortRef.current) {
@@ -576,16 +759,23 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         5000,
       );
       if (!reconciledImmediately) {
-        await requestRecoveryCancel();
-        const reconciledAfterRecovery = await waitForBackendTerminalState(TERMINAL_RECONCILE_TIMEOUT_MS);
-        if (!reconciledAfterRecovery) {
-          sawRunFailure = true;
-          if (isCurrentAttachment()) {
-            onError(
-              recoveryCancelConfirmed
-                ? "Coding-agent stream ended before a terminal event. The run was stopped to recover."
-                : "Coding-agent stream ended before a terminal event and cancellation could not be confirmed.",
-            );
+        if (AUTO_CANCEL_RECOVERY_ENABLED) {
+          await requestRecoveryCancel();
+          const reconciledAfterRecovery = await waitForBackendTerminalState(TERMINAL_RECONCILE_TIMEOUT_MS);
+          if (!reconciledAfterRecovery) {
+            sawRunFailure = true;
+            if (isCurrentAttachment()) {
+              onError(
+                recoveryCancelConfirmed
+                  ? "Coding-agent stream ended before a terminal event. The run was stopped to recover."
+                  : "Coding-agent stream ended before a terminal event and cancellation could not be confirmed.",
+              );
+            }
+          }
+        } else {
+          const reconciledAfterWait = await waitForBackendTerminalState(TERMINAL_RECONCILE_TIMEOUT_MS);
+          if (!reconciledAfterWait && isCurrentAttachment()) {
+            onError("Coding-agent stream disconnected before a terminal event. The run may still be active.");
           }
         }
       }
@@ -602,7 +792,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       }
     }
 
-    if (!intentionalAbortRef.current) {
+    if (!intentionalAbortRef.current && (sawRunFailure || sawTerminalEvent)) {
       finalizeRunningTools(sawRunFailure ? "failed" : "completed");
     }
 
@@ -610,7 +800,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       const finalAssistantText =
         assistantText.trim() ||
         latestSummary ||
-        (sawRunFailure || sawAssistantOutput
+        (sawRunFailure || sawAssistantOutput || sawToolActivity || sawNonTerminalDisconnect
           ? ""
           : "I can help with code changes in this app workspace. Tell me what you want to change.");
 
@@ -719,6 +909,10 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       onError(err instanceof Error ? err.message : "Failed to run coding agent");
     }
   } finally {
+    if (reader && typeof reader.cancel === "function") {
+      void reader.cancel().catch(() => undefined);
+    }
+    reader = null;
     if (!intentionalAbortRef.current && normalizedRunSessionId && onRunTerminalized) {
       try {
         await onRunTerminalized({

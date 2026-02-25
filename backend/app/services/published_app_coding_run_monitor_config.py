@@ -56,3 +56,13 @@ def monitor_status_probe_interval_seconds() -> float:
     except Exception:
         parsed = 0.5
     return max(0.1, min(parsed, 10.0))
+
+
+def monitor_force_terminal_on_inactivity() -> bool:
+    raw = (os.getenv("APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_INACTIVITY") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def monitor_force_terminal_on_stream_end_without_terminal() -> bool:
+    raw = (os.getenv("APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_STREAM_END_WITHOUT_TERMINAL") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
