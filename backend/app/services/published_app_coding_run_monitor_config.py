@@ -1,40 +1,25 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import json
 import os
 from typing import Any
 
+from app.services.published_app_coding_pipeline_trace import (
+    pipeline_trace,
+    pipeline_trace_enabled,
+    pipeline_trace_file_path,
+)
+
 
 def monitor_trace_enabled() -> bool:
-    raw = str(os.getenv("APPS_CODING_AGENT_DEBUG_TRACE_ENABLED", "1") or "1").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    return pipeline_trace_enabled()
 
 
 def monitor_trace_file_path() -> str:
-    return str(
-        os.getenv("APPS_CODING_AGENT_DEBUG_TRACE_FILE", "/tmp/talmudpedia-coding-agent-trace.log")
-        or "/tmp/talmudpedia-coding-agent-trace.log"
-    ).strip()
+    return pipeline_trace_file_path()
 
 
 def monitor_trace(event: str, **fields: Any) -> None:
-    if not monitor_trace_enabled():
-        return
-    payload: dict[str, Any] = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "event": event,
-        **fields,
-    }
-    try:
-        rendered = json.dumps(payload, sort_keys=True, default=str)
-    except Exception:
-        rendered = str(payload)
-    try:
-        with open(monitor_trace_file_path(), "a", encoding="utf-8") as handle:
-            handle.write(rendered + "\n")
-    except Exception:
-        pass
+    pipeline_trace(event, pipeline="monitor", **fields)
 
 
 def monitor_inactivity_timeout_seconds() -> float:

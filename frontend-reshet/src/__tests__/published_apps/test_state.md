@@ -15,6 +15,7 @@ Frontend coverage for:
 ## Test Files
 - `frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/chat_thread_tabs.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/chat_history_timeline.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/chat_model_path_parsing.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
@@ -61,7 +62,13 @@ Frontend coverage for:
 - Builder workspace retries coding-agent run creation once after `REVISION_CONFLICT` by refreshing state and resubmitting with `latest_revision_id`.
 - Builder workspace renders `assistant.delta` incrementally while a run is active (partial text appears before stream completion).
 - Builder workspace uses server-persisted chat sessions as the conversation source of truth (`chat_session_id`), and resumes the same thread on follow-up sends.
-- Builder workspace shows per-run model selector options (`Auto` + active chat models) and sends `model_id` on run creation.
+- Chat thread tabs keep running-session tabs visible and provisional titles stable across tab switches while the server chat-session list is still catching up.
+- Sending state now follows the same tab semantics as running state (tab stays visible, keeps title, and shows running indicator even before backend active-run reconciliation completes).
+- After draft-to-session migration, the draft tab is consumed (no automatic `New chat` tab appears). A new draft tab appears only when explicitly created via the new-chat action.
+- Session tab labels keep the optimistic non-default title after send completion until the backend emits a better non-default session title (no fallback bounce back to `New chat`).
+- When multiple local tabs are in sending mode simultaneously, switching between them preserves each tab’s original prompt-derived title (no cross-tab renaming).
+- Builder workspace shows per-run model selector options from internal OpenCode catalog (including free-model options) and sends `model_id` on run creation.
+- Builder workspace `Auto` model selection resolves to `opencode/big-pickle`.
 - Builder workspace supports changing model selection between messages and uses the new selection for the next run payload.
 - Builder workspace surfaces actionable model availability errors when backend returns `CODING_AGENT_MODEL_UNAVAILABLE`.
 - Builder workspace no longer renders execution-engine selection and relies on OpenCode-only backend runtime.
@@ -85,6 +92,33 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runInBand --watch=false --no-cache src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "model selector|selected model_id|model is unavailable"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 3 passed, 44 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "reuses returned chat_session_id for subsequent messages|still sends cancel when stop is clicked before create-run returns a run id"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 2 passed, 45 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/chat_thread_tabs.test.tsx`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 3 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "queues a prompt while run is active and supports removing queued items"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 1 passed, 46 skipped by `-t`; React act() warnings emitted in test logs)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "still sends cancel when stop is clicked before create-run returns a run id"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 1 passed, 46 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "reuses returned chat_session_id for subsequent messages"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 1 passed, 46 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/chat_thread_tabs.test.tsx`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 2 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand --silent src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "reuses returned chat_session_id for subsequent messages"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 1 passed, 46 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand --silent src/__tests__/published_apps/chat_thread_tabs.test.tsx`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 2 tests)
 - Command: `cd frontend-reshet && npm test -- --runTestsByPath src/__tests__/published_apps/chat_history_timeline.test.ts --watch=false --silent`
 - Date: 2026-02-25
 - Result: PASS (1 suite, 1 test)

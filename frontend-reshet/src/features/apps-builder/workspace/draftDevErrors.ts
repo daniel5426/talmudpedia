@@ -2,6 +2,36 @@
 
 const DRAFT_SANDBOX_NOT_RUNNING_MARKER = "draft dev sandbox is not running";
 const DRAFT_CONTROLLER_TIMEOUT_MARKERS = ["readtimeout", "timed out", "timeout"];
+const CODING_AGENT_RUN_ACTIVE_MARKER = "coding_agent_run_active";
+
+function parseErrorDetailPayload(error: unknown): unknown {
+  if (!error) return null;
+  if (typeof error === "string") {
+    const raw = error.trim();
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+  if (error instanceof Error) {
+    return parseErrorDetailPayload(error.message);
+  }
+  return error;
+}
+
+export function isCodingAgentRunActiveError(error: unknown): boolean {
+  const detail = parseErrorDetailPayload(error);
+  if (!detail) return false;
+  if (typeof detail === "string") {
+    const normalized = detail.toLowerCase();
+    return normalized.includes(CODING_AGENT_RUN_ACTIVE_MARKER);
+  }
+  if (typeof detail !== "object") return false;
+  const code = String((detail as Record<string, unknown>).code || "").trim().toUpperCase();
+  return code === "CODING_AGENT_RUN_ACTIVE";
+}
 
 export function isDraftSandboxNotRunningError(error: unknown): boolean {
   if (!error) return false;

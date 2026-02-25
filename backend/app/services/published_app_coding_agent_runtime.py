@@ -11,14 +11,12 @@ from typing import Any, AsyncGenerator
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
-from app.db.postgres.models.registry import ModelCapabilityType, ModelProviderType, ModelRegistry
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSessionStatus,
@@ -29,7 +27,6 @@ from app.db.postgres.models.published_apps import (
 from app.services.published_app_coding_agent_profile import (
     CODING_AGENT_PROFILE_SLUG,
     ensure_coding_agent_profile,
-    resolve_coding_agent_chat_model_id,
 )
 from app.services.published_app_coding_agent_engines.base import PublishedAppCodingAgentEngine
 from app.services.published_app_coding_agent_engines.opencode_engine import OpenCodePublishedAppCodingAgentEngine
@@ -37,6 +34,7 @@ from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_agent_integration_contract import build_published_app_agent_integration_contract
 from app.services.opencode_server_client import OpenCodeServerClient
+from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.api.routers.published_apps_admin_files import _filter_builder_snapshot_files, _validate_builder_project_or_raise
 from app.services.published_app_coding_agent_runtime_checkpoints import PublishedAppCodingAgentRuntimeCheckpointsMixin
 from app.services.published_app_coding_agent_runtime_sandbox import PublishedAppCodingAgentRuntimeSandboxMixin
@@ -45,6 +43,7 @@ from app.services.published_app_coding_agent_runtime_streaming import PublishedA
 logger = logging.getLogger(__name__)
 
 CODING_AGENT_ENGINE_OPENCODE = "opencode"
+CODING_AGENT_OPENCODE_AUTO_MODEL_ID = "opencode/big-pickle"
 _TERMINAL_RUN_STATUSES = {
     RunStatus.completed.value,
     RunStatus.failed.value,
@@ -92,10 +91,22 @@ class PublishedAppCodingAgentRuntimeService(
         )
 
     @staticmethod
+    def _trace(event: str, **fields: Any) -> None:
+        pipeline_trace(event, pipeline="runtime", **fields)
+
+    @staticmethod
     def serialize_run(run: AgentRun) -> dict[str, Any]:
         execution_engine = CODING_AGENT_ENGINE_OPENCODE
         input_params = run.input_params if isinstance(run.input_params, dict) else {}
         context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        requested_model_id = (
+            str(context.get("requested_model_id") or "").strip()
+            or (str(run.requested_model_id) if run.requested_model_id else "")
+        )
+        resolved_model_id = (
+            str(context.get("resolved_model_id") or "").strip()
+            or (str(run.resolved_model_id) if run.resolved_model_id else "")
+        )
         return {
             "run_id": str(run.id),
             "status": run.status.value if hasattr(run.status, "value") else str(run.status),
@@ -105,8 +116,8 @@ class PublishedAppCodingAgentRuntimeService(
             "base_revision_id": str(run.base_revision_id) if run.base_revision_id else None,
             "result_revision_id": str(run.result_revision_id) if run.result_revision_id else None,
             "checkpoint_revision_id": str(run.checkpoint_revision_id) if run.checkpoint_revision_id else None,
-            "requested_model_id": str(run.requested_model_id) if run.requested_model_id else None,
-            "resolved_model_id": str(run.resolved_model_id) if run.resolved_model_id else None,
+            "requested_model_id": requested_model_id or None,
+            "resolved_model_id": resolved_model_id or None,
             "error": run.error_message,
             "created_at": run.created_at,
             "started_at": run.started_at,
@@ -258,35 +269,6 @@ class PublishedAppCodingAgentRuntimeService(
             )
         return profile, False
 
-    async def _resolve_run_model_ids(
-        self,
-        *,
-        tenant_id: UUID,
-        requested_model_id: UUID | None,
-    ) -> tuple[UUID | None, UUID]:
-        if requested_model_id is None:
-            try:
-                resolved = await resolve_coding_agent_chat_model_id(self.db, tenant_id)
-            except Exception as exc:
-                raise self._model_unavailable_error("No active chat model is available for this tenant.") from exc
-            return None, UUID(str(resolved))
-
-        model = (
-            await self.db.execute(
-                select(ModelRegistry).where(
-                    and_(
-                        ModelRegistry.id == requested_model_id,
-                        ModelRegistry.is_active == True,
-                        ModelRegistry.capability_type == ModelCapabilityType.CHAT,
-                        or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id.is_(None)),
-                    )
-                )
-            )
-        ).scalar_one_or_none()
-        if model is None:
-            raise self._model_unavailable_error("Selected model is unavailable for this tenant.")
-        return requested_model_id, model.id
-
     @staticmethod
     def _normalize_execution_engine(value: str | None) -> str:
         engine_raw = str(value or CODING_AGENT_ENGINE_OPENCODE).strip().lower()
@@ -297,80 +279,27 @@ class PublishedAppCodingAgentRuntimeService(
         return CODING_AGENT_ENGINE_OPENCODE
 
     @staticmethod
-    def _opencode_provider_prefix(provider: ModelProviderType | str | None) -> str | None:
-        key = str(provider.value if hasattr(provider, "value") else provider or "").strip().lower()
-        if not key:
+    def _normalize_opencode_model_id(raw_model_id: str | None) -> str | None:
+        raw = str(raw_model_id or "").strip()
+        if not raw:
             return None
-        mapping = {
-            "openai": "openai",
-            "anthropic": "anthropic",
-            "google": "google",
-            "gemini": "google",
-            "groq": "groq",
-            "mistral": "mistral",
-            "together": "together",
-            "cohere": "cohere",
-        }
-        return mapping.get(key)
+        if "/" not in raw:
+            raw = f"{CODING_AGENT_ENGINE_OPENCODE}/{raw}"
+        provider, model = raw.split("/", 1)
+        provider = provider.strip().lower()
+        model = model.strip()
+        if provider != CODING_AGENT_ENGINE_OPENCODE or not model:
+            return None
+        return f"{provider}/{model}"
 
-    async def _resolve_opencode_model_id(
-        self,
-        *,
-        tenant_id: UUID,
-        resolved_model_id: UUID,
-    ) -> str:
-        resolved_model_str = str(resolved_model_id).strip()
-        if "/" in resolved_model_str:
-            return resolved_model_str
-
-        map_raw = (os.getenv("APPS_CODING_AGENT_OPENCODE_MODEL_MAP_JSON") or "").strip()
-        if map_raw:
-            try:
-                model_map = json.loads(map_raw)
-            except Exception:
-                model_map = {}
-            mapped = ""
-            if isinstance(model_map, dict):
-                mapped = str(model_map.get(resolved_model_str) or "").strip()
-            if mapped:
-                return mapped
-
-        model_row = (
-            await self.db.execute(
-                select(ModelRegistry)
-                .options(selectinload(ModelRegistry.providers))
-                .where(
-                    and_(
-                        ModelRegistry.id == resolved_model_id,
-                        ModelRegistry.is_active == True,
-                        ModelRegistry.capability_type == ModelCapabilityType.CHAT,
-                        or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id.is_(None)),
-                    )
-                )
+    def _resolve_requested_opencode_model_id(self, requested_model_id: str | None) -> tuple[str | None, str]:
+        requested = self._normalize_opencode_model_id(requested_model_id)
+        if requested_model_id and not requested:
+            raise self._model_unavailable_error(
+                "Selected model must be an OpenCode model id (for example: opencode/big-pickle)."
             )
-        ).scalar_one_or_none()
-        if model_row is not None:
-            tenant_bindings = [item for item in (model_row.providers or []) if item.is_enabled and item.tenant_id == tenant_id]
-            global_bindings = [item for item in (model_row.providers or []) if item.is_enabled and item.tenant_id is None]
-            for binding in sorted([*tenant_bindings, *global_bindings], key=lambda item: int(item.priority or 0)):
-                provider_model_id = str(binding.provider_model_id or "").strip()
-                if not provider_model_id:
-                    continue
-                if "/" in provider_model_id:
-                    return provider_model_id
-                prefix = self._opencode_provider_prefix(binding.provider)
-                if prefix:
-                    return f"{prefix}/{provider_model_id}"
-
-        default_model = (os.getenv("APPS_CODING_AGENT_OPENCODE_DEFAULT_MODEL") or "").strip()
-        if default_model:
-            return default_model
-
-        raise self._engine_unavailable_error(
-            "OpenCode model mapping unavailable for resolved model. "
-            "Configure provider bindings, APPS_CODING_AGENT_OPENCODE_MODEL_MAP_JSON, "
-            "or APPS_CODING_AGENT_OPENCODE_DEFAULT_MODEL."
-        )
+        fallback = CODING_AGENT_OPENCODE_AUTO_MODEL_ID
+        return requested, requested or fallback
 
     @staticmethod
     def _run_context(run: AgentRun) -> dict[str, Any]:
@@ -415,12 +344,21 @@ class PublishedAppCodingAgentRuntimeService(
         user_prompt: str,
         messages: list[dict[str, str]] | None = None,
         requested_scopes: list[str] | None = None,
-        requested_model_id: UUID | None = None,
+        requested_model_id: str | None = None,
         execution_engine: str | None = None,
         chat_session_id: UUID | None = None,
     ) -> AgentRun:
         create_run_started_at = time.monotonic()
         create_run_phase_metrics: dict[str, int] = {}
+        self._trace(
+            "runtime.create_run.requested",
+            app_id=str(app.id),
+            actor_id=str(actor_id) if actor_id else None,
+            chat_session_id=str(chat_session_id) if chat_session_id else None,
+            requested_model_id=str(requested_model_id or "") or None,
+            requested_engine=str(execution_engine or "") or None,
+            messages_count=len(messages or []),
+        )
 
         def _record_create_run_phase_metric(phase: str, started_at: float) -> int:
             duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
@@ -439,6 +377,12 @@ class PublishedAppCodingAgentRuntimeService(
             try:
                 await self._opencode_client.ensure_healthy()
             except Exception as exc:
+                self._trace(
+                    "runtime.create_run.opencode_unhealthy",
+                    app_id=str(app.id),
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                )
                 raise self._engine_unavailable_error(f"OpenCode engine is unavailable: {exc}") from exc
             create_run_phase_metrics["create_run_opencode_health"] = max(
                 0,
@@ -446,19 +390,9 @@ class PublishedAppCodingAgentRuntimeService(
             )
 
         resolve_model_started_at = time.monotonic()
-        requested_model_id, resolved_model_id = await self._resolve_run_model_ids(
-            tenant_id=app.tenant_id,
-            requested_model_id=requested_model_id,
-        )
+        requested_model_id, resolved_model_id = self._resolve_requested_opencode_model_id(requested_model_id)
         _record_create_run_phase_metric("create_run_model_resolve", resolve_model_started_at)
-        opencode_model_id: str | None = None
-        if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
-            opencode_model_started_at = time.monotonic()
-            opencode_model_id = await self._resolve_opencode_model_id(
-                tenant_id=app.tenant_id,
-                resolved_model_id=resolved_model_id,
-            )
-            _record_create_run_phase_metric("create_run_opencode_model_resolve", opencode_model_started_at)
+        create_run_phase_metrics["create_run_opencode_model_resolve"] = create_run_phase_metrics["create_run_model_resolve"]
         ensure_profile_started_at = time.monotonic()
         profile, profile_cache_hit = await self._resolve_cached_coding_agent_profile(tenant_id=app.tenant_id)
         _record_create_run_phase_metric("create_run_profile_resolve", ensure_profile_started_at)
@@ -516,9 +450,10 @@ class PublishedAppCodingAgentRuntimeService(
                 "app_id": str(app.id),
                 "base_revision_id": str(base_revision.id),
                 "entry_file": base_revision.entry_file,
-                "resolved_model_id": str(resolved_model_id),
+                "requested_model_id": requested_model_id,
+                "resolved_model_id": resolved_model_id,
                 "execution_engine": normalized_engine,
-                "opencode_model_id": opencode_model_id,
+                "opencode_model_id": resolved_model_id,
                 "chat_session_id": str(chat_session_id) if chat_session_id else None,
                 "selected_agent_contract": selected_agent_contract,
             },
@@ -538,6 +473,11 @@ class PublishedAppCodingAgentRuntimeService(
         load_run_started_at = time.monotonic()
         run = await self.db.get(AgentRun, run_id)
         if run is None:
+            self._trace(
+                "runtime.create_run.missing_run_after_start",
+                app_id=str(app.id),
+                run_id=str(run_id),
+            )
             raise RuntimeError("Failed to load created coding-agent run")
         _record_create_run_phase_metric("create_run_load_run", load_run_started_at)
 
@@ -549,8 +489,8 @@ class PublishedAppCodingAgentRuntimeService(
         run.has_workspace_writes = False
         run.batch_finalized_at = None
         run.batch_owner = False
-        run.requested_model_id = requested_model_id
-        run.resolved_model_id = resolved_model_id
+        run.requested_model_id = None
+        run.resolved_model_id = None
         run.execution_engine = normalized_engine
         run.engine_run_ref = None
         for metric_name, metric_value in create_run_phase_metrics.items():
@@ -571,12 +511,26 @@ class PublishedAppCodingAgentRuntimeService(
             run.error_message = message
             run.completed_at = datetime.now(timezone.utc)
             await self.db.commit()
+            self._trace(
+                "runtime.create_run.sandbox_init_failed",
+                app_id=str(app.id),
+                run_id=str(run.id),
+                error=message,
+                error_type="HTTPException",
+            )
             raise
         except Exception as exc:
             run.status = RunStatus.failed
             run.error_message = str(exc)
             run.completed_at = datetime.now(timezone.utc)
             await self.db.commit()
+            self._trace(
+                "runtime.create_run.sandbox_init_failed",
+                app_id=str(app.id),
+                run_id=str(run.id),
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
             raise self._engine_unsupported_runtime_error(f"Failed to initialize preview session: {exc}") from exc
 
         context = self._run_context(run)
@@ -612,6 +566,17 @@ class PublishedAppCodingAgentRuntimeService(
 
         await self.db.commit()
         await self.db.refresh(run)
+        self._trace(
+            "runtime.create_run.started",
+            app_id=str(app.id),
+            run_id=str(run.id),
+            chat_session_id=str(context.get("chat_session_id") or "") or None,
+            sandbox_id=str(context.get("preview_sandbox_id") or "") or None,
+            workspace_path=str(context.get("preview_workspace_stage_path") or "") or None,
+            resolved_model_id=str(context.get("resolved_model_id") or "") or None,
+            phase_metrics_ms=create_run_phase_metrics,
+            create_run_ms=create_run_ms,
+        )
         return run
 
     async def list_runs(self, *, app_id: UUID, limit: int = 25) -> list[AgentRun]:
@@ -683,7 +648,19 @@ class PublishedAppCodingAgentRuntimeService(
     async def cancel_run(self, run: AgentRun) -> AgentRun:
         status = run.status.value if hasattr(run.status, "value") else str(run.status)
         if status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
+            self._trace(
+                "runtime.cancel.skipped_terminal",
+                run_id=str(run.id),
+                app_id=str(run.published_app_id) if run.published_app_id else None,
+                status=status,
+            )
             return run
+        self._trace(
+            "runtime.cancel.requested",
+            run_id=str(run.id),
+            app_id=str(run.published_app_id) if run.published_app_id else None,
+            status=status,
+        )
         run.status = RunStatus.cancelled
         run.error_message = None
         context = self._run_context(run)
@@ -703,14 +680,32 @@ class PublishedAppCodingAgentRuntimeService(
             run.published_app_id,
             run.status.value if hasattr(run.status, "value") else str(run.status),
         )
+        self._trace(
+            "runtime.cancel.persisted",
+            run_id=str(run.id),
+            app_id=str(run.published_app_id) if run.published_app_id else None,
+            status=(run.status.value if hasattr(run.status, "value") else str(run.status)),
+        )
         try:
             engine = self._resolve_engine_for_run(run)
             # Provider abort is best-effort and must not delay local terminalization.
             async def _best_effort_cancel() -> None:
                 try:
                     await engine.cancel(run)
+                    self._trace(
+                        "runtime.cancel.engine_confirmed",
+                        run_id=str(run.id),
+                        app_id=str(run.published_app_id) if run.published_app_id else None,
+                    )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     logger.exception("OpenCode cancellation failed for run %s: %s", run.id, exc)
+                    self._trace(
+                        "runtime.cancel.engine_failed",
+                        run_id=str(run.id),
+                        app_id=str(run.published_app_id) if run.published_app_id else None,
+                        error=str(exc),
+                        error_type=exc.__class__.__name__,
+                    )
 
             asyncio.create_task(_best_effort_cancel())
         except Exception:
@@ -726,6 +721,12 @@ class PublishedAppCodingAgentRuntimeService(
     ) -> AgentRun:
         status = run.status.value if hasattr(run.status, "value") else str(run.status)
         if status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value, RunStatus.paused.value}:
+            self._trace(
+                "runtime.answer_question.rejected_terminal",
+                run_id=str(run.id),
+                app_id=str(run.published_app_id) if run.published_app_id else None,
+                status=status,
+            )
             raise HTTPException(status_code=409, detail="Coding-agent run is not active")
         request_id = str(question_id or "").strip()
         if not request_id:
@@ -738,6 +739,13 @@ class PublishedAppCodingAgentRuntimeService(
             normalized_answers.append(values)
         if not normalized_answers:
             raise HTTPException(status_code=400, detail="answers must contain at least one response")
+        self._trace(
+            "runtime.answer_question.requested",
+            run_id=str(run.id),
+            app_id=str(run.published_app_id) if run.published_app_id else None,
+            question_id=request_id,
+            answer_groups=len(normalized_answers),
+        )
         engine = self._resolve_engine_for_run(run)
         try:
             await engine.answer_question(
@@ -746,10 +754,31 @@ class PublishedAppCodingAgentRuntimeService(
                 answers=normalized_answers,
             )
         except HTTPException:
+            self._trace(
+                "runtime.answer_question.failed",
+                run_id=str(run.id),
+                app_id=str(run.published_app_id) if run.published_app_id else None,
+                question_id=request_id,
+                error_type="HTTPException",
+            )
             raise
         except Exception as exc:
+            self._trace(
+                "runtime.answer_question.failed",
+                run_id=str(run.id),
+                app_id=str(run.published_app_id) if run.published_app_id else None,
+                question_id=request_id,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
             raise HTTPException(status_code=502, detail=f"Failed to answer coding-agent question: {exc}") from exc
         await self.db.refresh(run)
+        self._trace(
+            "runtime.answer_question.queued",
+            run_id=str(run.id),
+            app_id=str(run.published_app_id) if run.published_app_id else None,
+            question_id=request_id,
+        )
         return run
 
     async def list_checkpoints(self, *, app_id: UUID, limit: int = 25) -> list[dict[str, Any]]:

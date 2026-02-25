@@ -1,12 +1,14 @@
 import { useCallback } from "react";
 
-import { publishedAppsService } from "@/services";
+import { OPENCODE_CODING_MODEL_AUTO_ID, publishedAppsService } from "@/services";
 import type { PublishedAppRevision } from "@/services";
 
 import {
   DRAFT_SESSION_KEY,
   appendUserTimeline,
+  createLocalSessionKey,
   createQueuedPrompt,
+  isLocalSessionKey,
   normalizeSessionKey,
   type SessionContainer,
 } from "./useAppsBuilderChat.session-state";
@@ -41,6 +43,9 @@ type SessionActionsDeps = {
   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;
   requestCancelForRun: (runId: string, session: SessionContainer) => Promise<void>;
   ensureSessionKeyByServerSessionId: (sessionKey: string, serverSessionId: string | null | undefined) => string;
+  promoteDraftSessionToLocalSession: (localSessionKey: string) => string;
+  setSessionTitleHint: (sessionKey: string, title: string) => void;
+  moveSessionTitleHint: (sourceSessionKey: string, targetSessionKey: string) => void;
   setActiveChatSessionId: (sessionId: string | null) => void;
   setSessionStopping: (sessionKey: string, next: boolean) => void;
   forceClearSessionSendingState: (sessionKey: string) => void;
@@ -64,6 +69,9 @@ export function useAppsBuilderChatSessionActions({
   consumeRunStreamForSession,
   requestCancelForRun,
   ensureSessionKeyByServerSessionId,
+  promoteDraftSessionToLocalSession,
+  setSessionTitleHint,
+  moveSessionTitleHint,
   setActiveChatSessionId,
   setSessionStopping,
   forceClearSessionSendingState,
@@ -73,7 +81,7 @@ export function useAppsBuilderChatSessionActions({
     const resolvedSessionKey = normalizeSessionKey(sessionKey);
     const promptText = input.trim();
     if (!promptText) return;
-    const resolvedModelId = modelId || null;
+    const resolvedModelId = String(modelId || "").trim() || OPENCODE_CODING_MODEL_AUTO_ID;
     const session = getSession(resolvedSessionKey);
 
     onError(null);
@@ -85,11 +93,13 @@ export function useAppsBuilderChatSessionActions({
     });
 
     let streamStarted = false;
-    const currentSessionId = resolvedSessionKey === DRAFT_SESSION_KEY ? null : resolvedSessionKey;
+    const currentSessionId = (resolvedSessionKey === DRAFT_SESSION_KEY || isLocalSessionKey(resolvedSessionKey))
+      ? null
+      : resolvedSessionKey;
     const submitPrompt = () =>
       publishedAppsService.submitCodingAgentPrompt(appId, {
         input: promptText,
-        model_id: resolvedModelId || undefined,
+        model_id: resolvedModelId,
         chat_session_id: currentSessionId || undefined,
         client_message_id: clientMessageId,
       });
@@ -108,9 +118,15 @@ export function useAppsBuilderChatSessionActions({
           const runActiveSessionId = String(runActive.chat_session_id || currentSessionId || "").trim();
           if (runActiveSessionId) {
             markSessionRunActive(runActiveSessionId, runActive.active_run_id, "running");
-            setActiveChatSessionId(runActiveSessionId);
+            if (normalizeSessionKey(activeChatSessionIdRef.current) === resolvedSessionKey) {
+              activeChatSessionIdRef.current = runActiveSessionId;
+              setActiveChatSessionId(runActiveSessionId);
+            }
           }
           const targetSessionKey = runActiveSessionId || resolvedSessionKey;
+          if (targetSessionKey !== resolvedSessionKey) {
+            moveSessionTitleHint(resolvedSessionKey, targetSessionKey);
+          }
           const targetSession = getSession(targetSessionKey);
           targetSession.seenRunEventKeysRef.current = new Set();
           streamStarted = true;
@@ -139,13 +155,30 @@ export function useAppsBuilderChatSessionActions({
       const run = submission.run;
       const runSessionId = String(run.chat_session_id || currentSessionId || "").trim();
       const targetSessionKey = ensureSessionKeyByServerSessionId(resolvedSessionKey, runSessionId || null);
+      if (targetSessionKey !== resolvedSessionKey) {
+        moveSessionTitleHint(resolvedSessionKey, targetSessionKey);
+      }
       if (runSessionId) {
         markSessionRunActive(runSessionId, run.run_id, "running");
-        setActiveChatSessionId(runSessionId);
+        if (normalizeSessionKey(activeChatSessionIdRef.current) === resolvedSessionKey) {
+          activeChatSessionIdRef.current = runSessionId;
+          setActiveChatSessionId(runSessionId);
+        }
       }
       mutateSession(targetSessionKey, (target) => {
         target.timeline = target.timeline.map((item) => item.id === userTimelineId ? { ...item, userDeliveryStatus: "sent" } : item);
       });
+
+      if (isLocalSessionKey(resolvedSessionKey)) {
+        const draftSession = getSession(DRAFT_SESSION_KEY);
+        if (draftSession.pendingCancelRef.current) {
+          session.pendingCancelRef.current = true;
+          mutateSession(DRAFT_SESSION_KEY, (draft) => {
+            draft.pendingCancelRef.current = false;
+            draft.isStopping = false;
+          });
+        }
+      }
 
       if (session.pendingCancelRef.current) {
         await requestCancelForRun(run.run_id, session);
@@ -171,12 +204,17 @@ export function useAppsBuilderChatSessionActions({
         });
       }
     }
-  }, [appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);
+  }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);
 
-  const runPromptWithTimeline = useCallback(async (sessionKey: string, input: string, modelId?: string | null) => {
+  const runPromptWithTimeline = useCallback(async (
+    sessionKey: string,
+    input: string,
+    modelId?: string | null,
+    clientMessageIdOverride?: string | null,
+  ) => {
     const normalizedInput = input.trim();
     if (!normalizedInput) return;
-    const clientMessageId = createClientMessageId();
+    const clientMessageId = String(clientMessageIdOverride || "").trim() || createClientMessageId();
     let userTimelineId = "";
     mutateSession(sessionKey, (session) => {
       const appended = appendUserTimeline(session.timeline, {
@@ -220,7 +258,19 @@ export function useAppsBuilderChatSessionActions({
   const sendBuilderChat = useCallback(async (rawInput: string) => {
     const input = rawInput.trim();
     if (!input) return;
-    const key = normalizeSessionKey(activeChatSessionIdRef.current);
+    let key = normalizeSessionKey(activeChatSessionIdRef.current);
+    const sourceSession = getSession(key);
+    if (sourceSession.isSendingRef.current || sourceSession.pendingCancelRef.current) {
+      mutateSession(key, (target) => {
+        target.queuedPrompts = [...target.queuedPrompts, createQueuedPrompt(input, selectedRunModelId)];
+      });
+      return;
+    }
+    let draftRunClientMessageId: string | null = null;
+    if (key === DRAFT_SESSION_KEY) {
+      draftRunClientMessageId = createClientMessageId();
+      key = promoteDraftSessionToLocalSession(createLocalSessionKey(draftRunClientMessageId));
+    }
     const session = getSession(key);
     if (session.isSendingRef.current || session.pendingCancelRef.current) {
       mutateSession(key, (target) => {
@@ -228,9 +278,12 @@ export function useAppsBuilderChatSessionActions({
       });
       return;
     }
-    await runPromptWithTimeline(key, input, selectedRunModelId);
+    if (isLocalSessionKey(key)) {
+      setSessionTitleHint(key, input);
+    }
+    await runPromptWithTimeline(key, input, selectedRunModelId, draftRunClientMessageId);
     await drainQueuedPrompts(key);
-  }, [activeChatSessionIdRef, drainQueuedPrompts, getSession, mutateSession, runPromptWithTimeline, selectedRunModelId]);
+  }, [activeChatSessionIdRef, createClientMessageId, drainQueuedPrompts, getSession, mutateSession, promoteDraftSessionToLocalSession, runPromptWithTimeline, selectedRunModelId, setSessionTitleHint]);
 
   const answerPendingQuestion = useCallback(async (answers: string[][]) => {
     const key = normalizeSessionKey(activeChatSessionIdRef.current);
@@ -314,6 +367,9 @@ export function useAppsBuilderChatSessionActions({
     if (!sessionId) {
       return;
     }
+    if (isLocalSessionKey(sessionId)) {
+      return;
+    }
 
     void (async () => {
       try {
@@ -353,8 +409,9 @@ export function useAppsBuilderChatSessionActions({
       draft.history.nextBeforeMessageId = null;
       draft.history.isLoadingOlder = false;
     });
+    activeChatSessionIdRef.current = null;
     setActiveChatSessionId(null);
-  }, [mutateSession, setActiveChatSessionId]);
+  }, [activeChatSessionIdRef, mutateSession, setActiveChatSessionId]);
 
   const revertToCheckpoint = useCallback(async (userItemId: string, checkpointId: string) => {
     const key = normalizeSessionKey(activeChatSessionIdRef.current);

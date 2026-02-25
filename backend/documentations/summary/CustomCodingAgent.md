@@ -33,12 +33,36 @@ Removed from public API:
 - Capabilities endpoint
 - Stream replay query semantics (`from_seq`, `replay`)
 
+## Chat Session Detail Pagination (v2, Breaking Contract)
+
+Endpoint:
+- `GET /coding-agent/v2/chat-sessions/{session_id}`
+
+Query params:
+- `before_message_id` (optional UUID cursor)
+- `limit` (optional, default `10`, min `1`, max `100`)
+
+Response shape:
+- `session`
+- `messages` (chronological within the returned page: oldest -> newest)
+- `run_events` (only for runs referenced by messages in the returned page)
+- `paging`:
+  - `has_more`
+  - `next_before_message_id`
+
+Semantics:
+- No cursor: returns latest page (newest activity slice).
+- With cursor: returns strictly older messages than cursor row.
+- Cursor chaining for older fetches uses the current page oldest message id.
+- Reverse paging query order is `created_at DESC, id DESC`, then page is reversed before response.
+- Backend default page size is fixed to `10`.
+
 ## Prompt Submission Contract (v2)
 
 `POST /coding-agent/v2/prompts` request:
 - `input` (required)
 - `chat_session_id` (optional)
-- `model_id` (optional)
+- `model_id` (optional, OpenCode model string such as `opencode/big-pickle`)
 - `client_message_id` (optional)
 
 Response:
@@ -46,6 +70,12 @@ Response:
 
 Active-run conflict:
 - Returns `409` with detail `{ code: "CODING_AGENT_RUN_ACTIVE", active_run_id, chat_session_id }`
+
+Model selection behavior (current):
+- Coding-agent model selection is decoupled from tenant/client `model_registry`.
+- Backend no longer resolves coding runs through logical model registry/provider bindings.
+- Auto model resolves to `opencode/big-pickle`.
+- Selected model IDs are passed as OpenCode model strings and persisted in run context.
 
 ## Backend Runtime Architecture
 
@@ -160,6 +190,9 @@ Downgrade behavior:
 Implemented frontend service updates:
 - Service endpoints switched to `/coding-agent/v2/*`
 - `submitCodingAgentPrompt` handles `started` response and `CODING_AGENT_RUN_ACTIVE` conflict
+- Coding model selector uses an internal OpenCode catalog (no `modelsService.listModels(...)` dependency)
+- Selector includes OpenCode free-model options and paid OpenCode coding models
+- Auto selection submits `opencode/big-pickle`
 - Engine resolver and engine selection path removed from send flow
 - Stream call no longer accepts replay params
 - Stream rendering now handles assistant chunks without frontend coalescing
@@ -169,6 +202,30 @@ Implemented frontend service updates:
   instead of `active_coding_run_id` pointer fields
 - Post-run refresh avoids per-run revision polling and only triggers preview refresh once no active runs remain in scope
 - Expected post-run `CODING_AGENT_RUN_ACTIVE` during parallel flow is treated as non-fatal
+- Chat history detail uses reverse pagination from newest activity with backend `paging` object (`limit=10` default)
+- Scroll-up pagination loads older pages via `before_message_id` and prepends while preserving viewport anchor
+
+### Frontend Session Container Model (UI Runtime)
+
+The chat UI now uses per-session runtime containers keyed by `sessionId` plus `__draft__`:
+- Timeline and page-cached history per session
+- Prompt queue and pending question per session
+- Sending/stopping/thinking state per session
+- Run attachment refs and stream refs per session
+
+Behavior guarantees:
+- Switching tabs renders immediately from container state (no forced cold refetch for initialized tabs)
+- Streaming continues in background for inactive tabs, but writes are scoped to owning session container only
+- Stale stream attachment writes are blocked per session
+- Draft-to-real migration moves `__draft__` runtime state to the returned `chat_session_id`
+
+### Draft Tab + Sending State UX Fix
+
+Resolved UI regression where "sending..." state caused draft/new tabs to disappear or reappear incorrectly:
+- Draft tab persistence is now independent from active tab selection during send/stream
+- Activating the draft tab no longer resets the draft state
+- Switching tabs while a message is sending no longer leaks stream/tool activity into other tabs
+- New-session tab remains visible throughout send lifecycle (including while `isSending=true`)
 
 ## Test Coverage (v2)
 

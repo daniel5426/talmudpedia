@@ -1,15 +1,28 @@
-import { useEffect, useMemo, useState, type WheelEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type WheelEvent } from "react";
 
 import type { CodingAgentChatSession } from "@/services";
 
 import type { TimelineItem } from "./chat-model";
 import { isUserTimelineItem } from "./chat-model";
+import {
+  DEFAULT_THREAD_TITLE,
+  isLocalSessionKey,
+  normalizeThreadTitle,
+} from "./useAppsBuilderChat.session-state";
+
+function deriveTitleFromTimeline(timeline: TimelineItem[]): string {
+  const lastUserPrompt = [...timeline]
+    .reverse()
+    .find((item) => isUserTimelineItem(item) && String(item.description || "").trim().length > 0);
+  return normalizeThreadTitle(lastUserPrompt?.description);
+}
 
 export type ThreadTab =
   | {
     id: string;
     kind: "session";
     session: CodingAgentChatSession;
+    title: string;
   }
   | {
     id: string;
@@ -26,7 +39,9 @@ export type ThreadTab =
 type UseAppsBuilderChatThreadTabsOptions = {
   chatSessions: CodingAgentChatSession[];
   activeChatSessionId: string | null;
+  runningSessionIds: string[];
   timeline: TimelineItem[];
+  sessionTitleHintsBySessionId?: Record<string, string>;
   onActivateDraftChat: () => void;
   onLoadChatSession: (sessionId: string) => Promise<void>;
   onStartNewChat: () => void;
@@ -35,7 +50,9 @@ type UseAppsBuilderChatThreadTabsOptions = {
 export function useAppsBuilderChatThreadTabs({
   chatSessions,
   activeChatSessionId,
+  runningSessionIds,
   timeline,
+  sessionTitleHintsBySessionId = {},
   onActivateDraftChat,
   onLoadChatSession,
   onStartNewChat,
@@ -43,6 +60,8 @@ export function useAppsBuilderChatThreadTabs({
   const [openThreadTabIds, setOpenThreadTabIds] = useState<string[]>([]);
   const [hasDraftThreadTab, setHasDraftThreadTab] = useState(false);
   const [sessionTitleHints, setSessionTitleHints] = useState<Record<string, string>>({});
+  const [lastDraftPromptTitle, setLastDraftPromptTitle] = useState<string>(DEFAULT_THREAD_TITLE);
+  const isDraftActive = String(activeChatSessionId || "").trim().length === 0;
 
   useEffect(() => {
     const normalizedActiveId = String(activeChatSessionId || "").trim();
@@ -50,20 +69,162 @@ export function useAppsBuilderChatThreadTabs({
     setOpenThreadTabIds((prev) => (prev.includes(normalizedActiveId) ? prev : [...prev, normalizedActiveId]));
   }, [activeChatSessionId]);
 
+  useEffect(() => {
+    if (!chatSessions.length) {
+      return;
+    }
+    setSessionTitleHints((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const session of chatSessions) {
+        const sessionId = String(session.id || "").trim();
+        const sessionTitle = String(session.title || "").trim();
+        if (!sessionId || !sessionTitle || next[sessionId] === sessionTitle) {
+          continue;
+        }
+        const existingTitle = String(next[sessionId] || "").trim();
+        if (existingTitle && existingTitle !== DEFAULT_THREAD_TITLE) {
+          continue;
+        }
+        next[sessionId] = sessionTitle;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [chatSessions]);
+
+  useEffect(() => {
+    const incoming = Object.entries(sessionTitleHintsBySessionId || {});
+    if (!incoming.length) {
+      return;
+    }
+    setSessionTitleHints((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [rawSessionId, rawTitle] of incoming) {
+        const sessionId = String(rawSessionId || "").trim();
+        const sessionTitle = normalizeThreadTitle(rawTitle);
+        if (!sessionId || next[sessionId] === sessionTitle) {
+          continue;
+        }
+        const existingTitle = String(next[sessionId] || "").trim();
+        if (existingTitle && existingTitle !== DEFAULT_THREAD_TITLE) {
+          continue;
+        }
+        next[sessionId] = sessionTitle;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [sessionTitleHintsBySessionId]);
+
   const draftThreadTitle = useMemo(() => {
-    const lastUserPrompt = [...timeline]
-      .reverse()
-      .find((item) => isUserTimelineItem(item) && String(item.description || "").trim().length > 0);
-    const raw = String(lastUserPrompt?.description || "").trim();
-    if (!raw) {
-      return "New chat";
+    if (!isDraftActive) {
+      return DEFAULT_THREAD_TITLE;
     }
-    const collapsed = raw.split(/\s+/).join(" ").trim();
-    if (!collapsed) {
-      return "New chat";
+    return deriveTitleFromTimeline(timeline);
+  }, [isDraftActive, timeline]);
+
+  useEffect(() => {
+    const nextDraftTitle = String(draftThreadTitle || "").trim();
+    if (!hasDraftThreadTab || !nextDraftTitle || nextDraftTitle === DEFAULT_THREAD_TITLE) {
+      return;
     }
-    return collapsed.length <= 80 ? collapsed : `${collapsed.slice(0, 77).trimEnd()}...`;
-  }, [timeline]);
+    setLastDraftPromptTitle((prev) => (prev === nextDraftTitle ? prev : nextDraftTitle));
+  }, [draftThreadTitle, hasDraftThreadTab]);
+
+  useEffect(() => {
+    const runningIds = Array.from(
+      new Set(
+        (runningSessionIds || [])
+          .map((id) => String(id || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!runningIds.length) {
+      return;
+    }
+
+    setOpenThreadTabIds((prev) => {
+      let changed = false;
+      const next = [...prev];
+      for (const runningId of runningIds) {
+        if (!next.includes(runningId)) {
+          next.push(runningId);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [runningSessionIds]);
+
+  useEffect(() => {
+    const activeId = String(activeChatSessionId || "").trim();
+    const runningSet = new Set(
+      (runningSessionIds || [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean),
+    );
+    setOpenThreadTabIds((prev) => {
+      const next = prev.filter((id) => {
+        if (!isLocalSessionKey(id)) {
+          return true;
+        }
+        if (id === activeId) {
+          return true;
+        }
+        return runningSet.has(id);
+      });
+      return next.length === prev.length ? prev : next;
+    });
+  }, [activeChatSessionId, runningSessionIds]);
+
+  useEffect(() => {
+    if (!hasDraftThreadTab) {
+      return;
+    }
+    const activeId = String(activeChatSessionId || "").trim();
+    let localSessionId = "";
+    if (activeId && isLocalSessionKey(activeId)) {
+      localSessionId = activeId;
+    }
+    if (!localSessionId) {
+      localSessionId = (runningSessionIds || [])
+        .map((id) => String(id || "").trim())
+        .find((id) => {
+          if (!isLocalSessionKey(id)) {
+            return false;
+          }
+          const externalTitle = normalizeThreadTitle(sessionTitleHintsBySessionId[id]);
+          const internalTitle = normalizeThreadTitle(sessionTitleHints[id]);
+          return externalTitle !== DEFAULT_THREAD_TITLE || internalTitle !== DEFAULT_THREAD_TITLE;
+        }) || "";
+    }
+    if (!localSessionId) {
+      return;
+    }
+    setOpenThreadTabIds((prev) => (prev.includes(localSessionId) ? prev : [...prev, localSessionId]));
+    setHasDraftThreadTab(false);
+  }, [
+    activeChatSessionId,
+    hasDraftThreadTab,
+    runningSessionIds,
+    sessionTitleHints,
+    sessionTitleHintsBySessionId,
+  ]);
+
+  const resolveThreadTitle = useCallback((sessionId: string, fallbackTitle?: string) => {
+    const normalizedId = String(sessionId || "").trim();
+    if (!normalizedId) {
+      return DEFAULT_THREAD_TITLE;
+    }
+    const hinted = String(sessionTitleHints[normalizedId] || "").trim();
+    if (hinted) {
+      return hinted;
+    }
+    const fallback = String(fallbackTitle || "").trim();
+    return fallback || DEFAULT_THREAD_TITLE;
+  }, [sessionTitleHints]);
 
   const threadTabs = useMemo<ThreadTab[]>(() => {
     if (chatSessions.length === 0 && !activeChatSessionId && !hasDraftThreadTab) {
@@ -78,10 +239,12 @@ export function useAppsBuilderChatThreadTabs({
       if (seen.has(sessionId)) continue;
       const session = byId.get(sessionId);
       if (session) {
+        const title = resolveThreadTitle(session.id, session.title);
         tabs.push({
           id: session.id,
           kind: "session",
           session,
+          title,
         });
         seen.add(session.id);
         continue;
@@ -90,7 +253,7 @@ export function useAppsBuilderChatThreadTabs({
         id: sessionId,
         kind: "provisional",
         sessionId,
-        title: String(sessionTitleHints[sessionId] || "").trim() || "New chat",
+        title: resolveThreadTitle(sessionId),
       });
       seen.add(sessionId);
     }
@@ -98,10 +261,12 @@ export function useAppsBuilderChatThreadTabs({
     if (activeId && !seen.has(activeId)) {
       const activeSession = byId.get(activeId);
       if (activeSession) {
+        const title = resolveThreadTitle(activeSession.id, activeSession.title);
         tabs.push({
           id: activeSession.id,
           kind: "session",
           session: activeSession,
+          title,
         });
         seen.add(activeSession.id);
       } else if (hasDraftThreadTab) {
@@ -109,10 +274,36 @@ export function useAppsBuilderChatThreadTabs({
           id: activeId,
           kind: "provisional",
           sessionId: activeId,
-          title: String(sessionTitleHints[activeId] || "").trim() || draftThreadTitle,
+          title: resolveThreadTitle(activeId, draftThreadTitle),
         });
         seen.add(activeId);
       }
+    }
+
+    for (const runningSessionId of runningSessionIds) {
+      const normalizedRunningId = String(runningSessionId || "").trim();
+      if (!normalizedRunningId || seen.has(normalizedRunningId)) {
+        continue;
+      }
+      const runningSession = byId.get(normalizedRunningId);
+      if (runningSession) {
+        const title = resolveThreadTitle(runningSession.id, runningSession.title);
+        tabs.push({
+          id: runningSession.id,
+          kind: "session",
+          session: runningSession,
+          title,
+        });
+        seen.add(runningSession.id);
+        continue;
+      }
+      tabs.push({
+        id: normalizedRunningId,
+        kind: "provisional",
+        sessionId: normalizedRunningId,
+        title: resolveThreadTitle(normalizedRunningId),
+      });
+      seen.add(normalizedRunningId);
     }
 
     if (hasDraftThreadTab) {
@@ -123,7 +314,16 @@ export function useAppsBuilderChatThreadTabs({
       });
     }
     return tabs;
-  }, [activeChatSessionId, chatSessions, draftThreadTitle, hasDraftThreadTab, openThreadTabIds, sessionTitleHints]);
+  }, [
+    activeChatSessionId,
+    chatSessions,
+    draftThreadTitle,
+    hasDraftThreadTab,
+    lastDraftPromptTitle,
+    openThreadTabIds,
+    resolveThreadTitle,
+    runningSessionIds,
+  ]);
 
   const handleOpenThreadTab = (sessionId: string) => {
     const normalizedId = String(sessionId || "").trim();
@@ -133,6 +333,10 @@ export function useAppsBuilderChatThreadTabs({
     const knownTitle = String(chatSessions.find((item) => item.id === normalizedId)?.title || "").trim();
     if (knownTitle) {
       setSessionTitleHints((prev) => {
+        const currentTitle = String(prev[normalizedId] || "").trim();
+        if (currentTitle && currentTitle !== DEFAULT_THREAD_TITLE) {
+          return prev;
+        }
         if (prev[normalizedId] === knownTitle) {
           return prev;
         }
@@ -156,12 +360,14 @@ export function useAppsBuilderChatThreadTabs({
         return false;
       });
       const activeTitle = activeTab
-        ? activeTab.kind === "session"
-          ? activeTab.session.title
-          : activeTab.title
-        : draftThreadTitle;
+        ? activeTab.title
+        : resolveThreadTitle(currentActiveSessionId, draftThreadTitle);
       setSessionTitleHints((prev) => {
-        const nextTitle = String(activeTitle || "").trim() || "New chat";
+        const nextTitle = String(activeTitle || "").trim() || DEFAULT_THREAD_TITLE;
+        const currentTitle = String(prev[currentActiveSessionId] || "").trim();
+        if (currentTitle && currentTitle !== DEFAULT_THREAD_TITLE && nextTitle === DEFAULT_THREAD_TITLE) {
+          return prev;
+        }
         if (prev[currentActiveSessionId] === nextTitle) {
           return prev;
         }

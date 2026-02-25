@@ -88,7 +88,7 @@ async def test_stream_fails_closed_when_run_has_no_preview_sandbox_context(clien
 
 
 @pytest.mark.asyncio
-async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, db_session, monkeypatch):
+async def test_stream_reuses_existing_preview_sandbox_without_stage_bootstrap(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
@@ -115,8 +115,8 @@ async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, 
     await db_session.commit()
     await db_session.refresh(run)
 
-    async def _fail_if_bootstrap(self, *, run, app):
-        raise AssertionError("stream should not bootstrap a second sandbox when preview_sandbox_id already exists")
+    async def _fail_stage_prepare(self, *, run, runtime_service, sandbox_id):
+        raise AssertionError("stream should not prepare a stage workspace when one is already present in run context")
 
     async def _fake_stream(self, ctx):
         yield EngineStreamEvent(
@@ -135,11 +135,7 @@ async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, 
     async def _skip_auto_apply(self, run):
         return None
 
-    monkeypatch.setattr(
-        PublishedAppCodingAgentRuntimeService,
-        "_recover_or_bootstrap_run_sandbox_context",
-        _fail_if_bootstrap,
-    )
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_prepare_run_stage_workspace_context", _fail_stage_prepare)
     monkeypatch.setattr(OpenCodePublishedAppCodingAgentEngine, "stream", _fake_stream)
     monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _skip_auto_apply)
 
@@ -149,6 +145,8 @@ async def test_stream_reuses_existing_preview_sandbox_without_bootstrap(client, 
     service = PublishedAppCodingAgentRuntimeService(db_session)
     events = [event async for event in service.stream_run_events(app=app, run=run)]
     assert events[-1]["event"] == "run.completed"
+    run_context = service._run_context(run)
+    assert run_context.get("opencode_workspace_path") == "/workspace/.talmudpedia/stage/run/workspace"
 
 
 @pytest.mark.asyncio

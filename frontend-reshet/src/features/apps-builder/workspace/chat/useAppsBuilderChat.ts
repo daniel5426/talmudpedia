@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  modelsService,
   publishedAppsService,
+  listOpenCodeCodingModels,
 } from "@/services";
 import type {
   CodingAgentChatSession,
-  LogicalModel,
+  OpenCodeCodingModelOption,
   PublishedAppRevision,
 } from "@/services";
 import { timelineId, type TimelineItem } from "./chat-model";
@@ -16,10 +16,13 @@ import {
 } from "./stream-parsers";
 import { readStoredChatSessionId, writeStoredChatSessionId } from "./chat-session-storage";
 import {
+  DEFAULT_THREAD_TITLE,
   DRAFT_SESSION_KEY,
+  isLocalSessionKey,
   attachCheckpointToLastUser,
   createSessionContainer,
   finalizeRunningTools,
+  normalizeThreadTitle,
   normalizeSessionKey,
   prependTimelineWithoutDuplicates,
   type QueuedPrompt,
@@ -36,6 +39,7 @@ export type UseAppsBuilderChatOptions = {
   activeTab: "preview" | "config";
   ensureDraftDevSession: () => Promise<void>;
   refreshStateSilently: () => Promise<void>;
+  onPostRunHydrationStateChange?: (inProgress: boolean) => void;
   onApplyRestoredRevision: (revision: PublishedAppRevision) => void;
   onSetCurrentRevisionId: (revisionId: string | null) => void;
   onError: (message: string | null) => void;
@@ -53,7 +57,7 @@ export type UseAppsBuilderChatResult = {
   chatSessions: CodingAgentChatSession[];
   activeChatSessionId: string | null;
   activateDraftChat: () => void;
-  chatModels: LogicalModel[];
+  chatModels: OpenCodeCodingModelOption[];
   selectedRunModelId: string | null;
   setSelectedRunModelId: (next: string | null) => void;
   isModelSelectorOpen: boolean;
@@ -63,6 +67,8 @@ export type UseAppsBuilderChatResult = {
   pendingQuestion: CodingAgentPendingQuestion | null;
   isAnsweringQuestion: boolean;
   runningSessionIds: string[];
+  sendingSessionIds: string[];
+  sessionTitleHintsBySessionId: Record<string, string>;
   hasOlderHistory: boolean;
   isLoadingOlderHistory: boolean;
   loadOlderHistory: () => Promise<void>;
@@ -93,6 +99,7 @@ export function useAppsBuilderChat({
   activeTab,
   ensureDraftDevSession,
   refreshStateSilently,
+  onPostRunHydrationStateChange,
   onApplyRestoredRevision,
   onSetCurrentRevisionId,
   onError,
@@ -102,9 +109,10 @@ export function useAppsBuilderChat({
   const [isUndoing, setIsUndoing] = useState(false);
   const [chatSessions, setChatSessions] = useState<CodingAgentChatSession[]>([]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
-  const [chatModels, setChatModels] = useState<LogicalModel[]>([]);
+  const [chatModels, setChatModels] = useState<OpenCodeCodingModelOption[]>([]);
   const [selectedRunModelId, setSelectedRunModelId] = useState<string | null>(null);
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
+  const [sessionTitleHintsBySessionId, setSessionTitleHintsBySessionId] = useState<Record<string, string>>({});
   const [, setRenderTick] = useState(0);
 
   const activeChatSessionIdRef = useRef<string | null>(null);
@@ -293,15 +301,66 @@ export function useAppsBuilderChat({
 
   useEffect(() => {
     activeChatSessionIdRef.current = activeChatSessionId;
-    writeStoredChatSessionId(appId, activeChatSessionId);
+    const persistedSessionId = isLocalSessionKey(activeChatSessionId) ? null : activeChatSessionId;
+    writeStoredChatSessionId(appId, persistedSessionId);
   }, [activeChatSessionId, appId]);
 
   useEffect(() => {
     sessionStoreRef.current = { [DRAFT_SESSION_KEY]: createSessionContainer(DRAFT_SESSION_KEY) };
     restoredLastSessionRef.current = false;
     setActiveChatSessionId(null);
+    setSessionTitleHintsBySessionId({});
     bumpRender();
   }, [appId, bumpRender]);
+
+  const setSessionTitleHint = useCallback((sessionKey: string, rawTitle: string) => {
+    const normalizedKey = String(sessionKey || "").trim();
+    if (!normalizedKey) {
+      return;
+    }
+    const nextTitle = normalizeThreadTitle(rawTitle);
+    setSessionTitleHintsBySessionId((prev) => {
+      const currentTitle = String(prev[normalizedKey] || "").trim();
+      if (currentTitle && currentTitle !== DEFAULT_THREAD_TITLE) {
+        return prev;
+      }
+      if (
+        currentTitle
+        && currentTitle !== DEFAULT_THREAD_TITLE
+        && nextTitle === DEFAULT_THREAD_TITLE
+      ) {
+        return prev;
+      }
+      if (currentTitle === nextTitle) {
+        return prev;
+      }
+      return { ...prev, [normalizedKey]: nextTitle };
+    });
+  }, []);
+
+  const moveSessionTitleHint = useCallback((sourceSessionKey: string, targetSessionKey: string) => {
+    const sourceKey = String(sourceSessionKey || "").trim();
+    const targetKey = String(targetSessionKey || "").trim();
+    if (!sourceKey || !targetKey || sourceKey === targetKey) {
+      return;
+    }
+    setSessionTitleHintsBySessionId((prev) => {
+      const sourceTitle = normalizeThreadTitle(prev[sourceKey]);
+      const targetTitle = normalizeThreadTitle(prev[targetKey]);
+      if (
+        sourceTitle === DEFAULT_THREAD_TITLE
+        || (targetTitle && targetTitle !== DEFAULT_THREAD_TITLE)
+        || targetTitle === sourceTitle
+      ) {
+        return prev;
+      }
+      const next = { ...prev, [targetKey]: sourceTitle };
+      if (sourceKey !== targetKey) {
+        delete next[sourceKey];
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -328,18 +387,13 @@ export function useAppsBuilderChat({
   }, []);
 
   const loadChatModels = useCallback(async () => {
-    try {
-      const response = await modelsService.listModels("chat", "active", 0, 200);
-      const models = (response.models || []).filter((item) => item.is_active !== false);
-      setChatModels(models);
-      setSelectedRunModelId((prev) => {
-        if (!prev) return prev;
-        return models.some((item) => item.id === prev) ? prev : null;
-      });
-    } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to load chat models");
-    }
-  }, [onError]);
+    const models = listOpenCodeCodingModels();
+    setChatModels(models);
+    setSelectedRunModelId((prev) => {
+      if (!prev) return prev;
+      return models.some((item) => item.id === prev) ? prev : null;
+    });
+  }, []);
 
   const loadChatSessions = useCallback(async (): Promise<CodingAgentChatSession[]> => {
     try {
@@ -365,6 +419,47 @@ export function useAppsBuilderChat({
     }
   }, [appId]);
 
+  const copySessionRuntimeState = useCallback((
+    source: SessionContainer,
+    target: SessionContainer,
+    attachedRunSessionId?: string | null,
+  ) => {
+    target.timeline = source.timeline;
+    target.queuedPrompts = source.queuedPrompts;
+    target.pendingQuestion = source.pendingQuestion;
+    target.isAnsweringQuestion = source.isAnsweringQuestion;
+    target.isSending = source.isSending;
+    target.isStopping = source.isStopping;
+    target.activeThinkingSummary = source.activeThinkingSummary;
+    target.history = source.history;
+    target.activeRunIdRef.current = source.activeRunIdRef.current;
+    target.lastKnownRunIdRef.current = source.lastKnownRunIdRef.current;
+    target.attachedRunIdRef.current = source.attachedRunIdRef.current;
+    target.attachedRunSessionIdRef.current = attachedRunSessionId ?? source.attachedRunSessionIdRef.current;
+    target.abortReaderRef.current = source.abortReaderRef.current;
+    target.pendingCancelRef.current = source.pendingCancelRef.current;
+    target.intentionalAbortRef.current = source.intentionalAbortRef.current;
+    target.isSendingRef.current = source.isSendingRef.current;
+    target.seenRunEventKeysRef.current = source.seenRunEventKeysRef.current;
+    target.streamAttachmentIdRef.current = source.streamAttachmentIdRef.current;
+    target.cancelInFlightRunIdRef.current = source.cancelInFlightRunIdRef.current;
+    target.isQueueDrainActiveRef.current = source.isQueueDrainActiveRef.current;
+  }, []);
+
+  const promoteDraftSessionToLocalSession = useCallback((localSessionKey: string): string => {
+    const normalizedLocalKey = String(localSessionKey || "").trim();
+    if (!isLocalSessionKey(normalizedLocalKey)) {
+      return DRAFT_SESSION_KEY;
+    }
+    const source = getSession(DRAFT_SESSION_KEY);
+    const target = getSession(normalizedLocalKey);
+    copySessionRuntimeState(source, target);
+    sessionStoreRef.current[DRAFT_SESSION_KEY] = createSessionContainer(DRAFT_SESSION_KEY);
+    activeChatSessionIdRef.current = normalizedLocalKey;
+    setActiveChatSessionId(normalizedLocalKey);
+    return normalizedLocalKey;
+  }, [copySessionRuntimeState, getSession]);
+
   const ensureSessionKeyByServerSessionId = useCallback((
     sessionKey: string,
     serverSessionId: string | null | undefined,
@@ -379,31 +474,22 @@ export function useAppsBuilderChat({
     }
     const source = getSession(sourceKey);
     const target = getSession(normalizedServerId);
-    if (sourceKey === DRAFT_SESSION_KEY) {
-      target.timeline = source.timeline;
-      target.queuedPrompts = source.queuedPrompts;
-      target.pendingQuestion = source.pendingQuestion;
-      target.isAnsweringQuestion = source.isAnsweringQuestion;
-      target.isSending = source.isSending;
-      target.isStopping = source.isStopping;
-      target.activeThinkingSummary = source.activeThinkingSummary;
-      target.history = source.history;
-      target.activeRunIdRef.current = source.activeRunIdRef.current;
-      target.lastKnownRunIdRef.current = source.lastKnownRunIdRef.current;
-      target.attachedRunIdRef.current = source.attachedRunIdRef.current;
-      target.attachedRunSessionIdRef.current = normalizedServerId;
-      target.abortReaderRef.current = source.abortReaderRef.current;
-      target.pendingCancelRef.current = source.pendingCancelRef.current;
-      target.intentionalAbortRef.current = source.intentionalAbortRef.current;
-      target.isSendingRef.current = source.isSendingRef.current;
-      target.seenRunEventKeysRef.current = source.seenRunEventKeysRef.current;
-      target.streamAttachmentIdRef.current = source.streamAttachmentIdRef.current;
-      target.cancelInFlightRunIdRef.current = source.cancelInFlightRunIdRef.current;
-      target.isQueueDrainActiveRef.current = source.isQueueDrainActiveRef.current;
-      sessionStoreRef.current[DRAFT_SESSION_KEY] = createSessionContainer(DRAFT_SESSION_KEY);
+    if (sourceKey === DRAFT_SESSION_KEY || isLocalSessionKey(sourceKey)) {
+      copySessionRuntimeState(source, target, normalizedServerId);
+      if (sourceKey === DRAFT_SESSION_KEY) {
+        sessionStoreRef.current[DRAFT_SESSION_KEY] = createSessionContainer(DRAFT_SESSION_KEY);
+      } else {
+        delete sessionStoreRef.current[sourceKey];
+      }
+      bumpRender();
+      const currentActiveKey = normalizeSessionKey(activeChatSessionIdRef.current);
+      if (currentActiveKey === sourceKey) {
+        activeChatSessionIdRef.current = normalizedServerId;
+        setActiveChatSessionId(normalizedServerId);
+      }
     }
     return normalizedServerId;
-  }, [getSession]);
+  }, [bumpRender, copySessionRuntimeState, getSession]);
 
   const consumeRunStreamForSession = useCallback(async (
     sessionKey: string,
@@ -433,6 +519,7 @@ export function useAppsBuilderChat({
       isMountedRef,
       onError,
       onSetCurrentRevisionId,
+      onPostRunHydrationStateChange,
       refreshStateSilently,
       ensureDraftDevSession,
       loadChatSessions,
@@ -449,7 +536,7 @@ export function useAppsBuilderChat({
       clearSessionRunActivity,
       probeSessionRunActivity,
     });
-  }, [activeTab, appId, attachCheckpointToSessionLastUser, clearSessionRunActivity, ensureDraftDevSession, ensureSessionKeyByServerSessionId, finalizeSessionRunningTools, getSession, loadChatSessions, markSessionRunActive, onError, onSetCurrentRevisionId, probeSessionRunActivity, pushSessionTimeline, refreshStateSilently, requestCancelForRun, setSessionPendingQuestion, setSessionSending, setSessionStopping, setSessionThinking, upsertSessionAssistantTimeline, upsertSessionToolTimeline]);
+  }, [activeTab, appId, attachCheckpointToSessionLastUser, clearSessionRunActivity, ensureDraftDevSession, ensureSessionKeyByServerSessionId, finalizeSessionRunningTools, getSession, loadChatSessions, markSessionRunActive, onError, onPostRunHydrationStateChange, onSetCurrentRevisionId, probeSessionRunActivity, pushSessionTimeline, refreshStateSilently, requestCancelForRun, setSessionPendingQuestion, setSessionSending, setSessionStopping, setSessionThinking, upsertSessionAssistantTimeline, upsertSessionToolTimeline]);
 
   const hydrateSessionHistory = useCallback(async (
     sessionId: string,
@@ -517,7 +604,7 @@ export function useAppsBuilderChat({
 
   const loadOlderHistory = useCallback(async () => {
     const sessionId = String(activeChatSessionIdRef.current || "").trim();
-    if (!sessionId) return;
+    if (!sessionId || isLocalSessionKey(sessionId)) return;
     const session = getSession(sessionId);
     if (session.history.isLoadingOlder || !session.history.hasMore || !session.history.nextBeforeMessageId) {
       return;
@@ -550,11 +637,18 @@ export function useAppsBuilderChat({
   const loadChatSession = useCallback(async (sessionId: string) => {
     const normalizedSessionId = String(sessionId || "").trim();
     if (!normalizedSessionId) return;
+    if (isLocalSessionKey(normalizedSessionId)) {
+      activeChatSessionIdRef.current = normalizedSessionId;
+      setActiveChatSessionId(normalizedSessionId);
+      return;
+    }
+    activeChatSessionIdRef.current = normalizedSessionId;
     setActiveChatSessionId(normalizedSessionId);
     await hydrateSessionHistory(normalizedSessionId, { attachActiveRun: true });
   }, [hydrateSessionHistory]);
 
   const activateDraftChat = useCallback(() => {
+    activeChatSessionIdRef.current = null;
     setActiveChatSessionId(null);
   }, []);
 
@@ -563,7 +657,7 @@ export function useAppsBuilderChat({
       const sessions = await loadChatSessions();
       const candidates = new Set<string>();
       const activeId = String(activeChatSessionIdRef.current || "").trim();
-      if (activeId) {
+      if (activeId && !isLocalSessionKey(activeId)) {
         candidates.add(activeId);
       }
       for (const sessionId of runningSessionIds) {
@@ -605,6 +699,9 @@ export function useAppsBuilderChat({
     consumeRunStreamForSession,
     requestCancelForRun,
     ensureSessionKeyByServerSessionId,
+    promoteDraftSessionToLocalSession,
+    setSessionTitleHint,
+    moveSessionTitleHint,
     setActiveChatSessionId,
     setSessionStopping,
     forceClearSessionSendingState,
@@ -719,7 +816,7 @@ export function useAppsBuilderChat({
         }
 
         const sessionId = key === DRAFT_SESSION_KEY ? null : key;
-        if (!sessionId) {
+        if (!sessionId || isLocalSessionKey(sessionId)) {
           continue;
         }
         void (async () => {
@@ -751,6 +848,9 @@ export function useAppsBuilderChat({
   const activeThinkingSummary = activeSession.activeThinkingSummary;
   const hasOlderHistory = activeSession.history.hasMore;
   const isLoadingOlderHistory = activeSession.history.isLoadingOlder;
+  const sendingSessionIds = Object.values(sessionStoreRef.current)
+    .filter((session) => session.key !== DRAFT_SESSION_KEY && session.isSendingRef.current)
+    .map((session) => session.key);
 
   return {
     isAgentPanelOpen,
@@ -773,6 +873,8 @@ export function useAppsBuilderChat({
     pendingQuestion,
     isAnsweringQuestion,
     runningSessionIds,
+    sendingSessionIds,
+    sessionTitleHintsBySessionId,
     hasOlderHistory,
     isLoadingOlderHistory,
     loadOlderHistory,

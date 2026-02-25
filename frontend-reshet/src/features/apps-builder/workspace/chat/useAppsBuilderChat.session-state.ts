@@ -8,6 +8,33 @@ import {
 } from "./chat-model";
 
 export const DRAFT_SESSION_KEY = "__draft__";
+export const LOCAL_SESSION_KEY_PREFIX = "__local__:";
+export const DEFAULT_THREAD_TITLE = "New chat";
+
+export function createLocalSessionKey(seed?: string): string {
+  const normalizedSeed = String(seed || "").trim();
+  if (normalizedSeed) {
+    return `${LOCAL_SESSION_KEY_PREFIX}${normalizedSeed}`;
+  }
+  return `${LOCAL_SESSION_KEY_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function isLocalSessionKey(sessionId: string | null | undefined): boolean {
+  const normalized = String(sessionId || "").trim();
+  return normalized.startsWith(LOCAL_SESSION_KEY_PREFIX);
+}
+
+export function normalizeThreadTitle(rawTitle: string | null | undefined): string {
+  const raw = String(rawTitle || "").trim();
+  if (!raw) {
+    return DEFAULT_THREAD_TITLE;
+  }
+  const collapsed = raw.split(/\s+/).join(" ").trim();
+  if (!collapsed) {
+    return DEFAULT_THREAD_TITLE;
+  }
+  return collapsed.length <= 80 ? collapsed : `${collapsed.slice(0, 77).trimEnd()}...`;
+}
 
 export type QueuedPrompt = {
   id: string;

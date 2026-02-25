@@ -49,6 +49,18 @@ _WORKSPACE_WRITE_TOOL_HINTS = (
 
 
 class PublishedAppCodingAgentRuntimeSandboxMixin:
+    @staticmethod
+    def _normalize_workspace_path(path: str | None) -> str:
+        return str(path or "").strip().rstrip("/")
+
+    @classmethod
+    def _workspace_paths_match(cls, left: str | None, right: str | None) -> bool:
+        normalized_left = cls._normalize_workspace_path(left)
+        normalized_right = cls._normalize_workspace_path(right)
+        if not normalized_left or not normalized_right:
+            return False
+        return normalized_left == normalized_right
+
     async def _count_active_runs_for_scope(
         self,
         *,
@@ -167,9 +179,11 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
         stage_workspace_path = str(
             stage_payload.get("stage_workspace_path")
             or stage_payload.get("workspace_path")
-            or live_workspace_path
-            or "/workspace"
         ).strip()
+        if not stage_workspace_path:
+            return None, "Stage workspace path is missing from sandbox stage preparation response."
+        if self._workspace_paths_match(stage_workspace_path, live_workspace_path):
+            return None, "Stage workspace path resolved to live workspace path."
         return (
             {
                 "preview_workspace_live_path": live_workspace_path or "/workspace",
@@ -244,9 +258,10 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
             if not str(context.get("opencode_sandbox_id") or "").strip():
                 context["opencode_sandbox_id"] = sandbox_id
                 changed = True
+            live_workspace_path = str(context.get("preview_workspace_live_path") or "").strip()
             stage_workspace_path = str(context.get("preview_workspace_stage_path") or "").strip()
             opencode_workspace_path = str(context.get("opencode_workspace_path") or "").strip()
-            if not stage_workspace_path or not opencode_workspace_path:
+            if not stage_workspace_path:
                 runtime_service = PublishedAppDraftDevRuntimeService(self.db)
                 stage_context, stage_error = await self._prepare_run_stage_workspace_context(
                     run=run,
@@ -260,9 +275,19 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
                     changed = True
                     stage_workspace_path = str(context.get("preview_workspace_stage_path") or "").strip()
                     opencode_workspace_path = str(context.get("opencode_workspace_path") or "").strip()
+                    live_workspace_path = str(context.get("preview_workspace_live_path") or "").strip()
             if stage_workspace_path and not opencode_workspace_path:
                 context["opencode_workspace_path"] = stage_workspace_path
+                opencode_workspace_path = stage_workspace_path
                 changed = True
+            if not stage_workspace_path or not opencode_workspace_path:
+                return None, "Preview sandbox session is required before execution (stage workspace missing)."
+            if opencode_workspace_path != stage_workspace_path:
+                context["opencode_workspace_path"] = stage_workspace_path
+                opencode_workspace_path = stage_workspace_path
+                changed = True
+            if self._workspace_paths_match(opencode_workspace_path, live_workspace_path):
+                return None, "Preview sandbox session is required before execution (stage workspace invalid)."
             if changed:
                 await self.db.commit()
             return sandbox_id, None
@@ -303,6 +328,15 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
                 return None, f"Preview sandbox session is required before execution ({stage_error})."
             if stage_context:
                 context.update(stage_context)
+            stage_workspace_path = str(context.get("preview_workspace_stage_path") or "").strip()
+            opencode_workspace_path = str(context.get("opencode_workspace_path") or "").strip()
+            live_workspace_path = str(context.get("preview_workspace_live_path") or "").strip()
+            if not stage_workspace_path or not opencode_workspace_path:
+                return None, "Preview sandbox session is required before execution (stage workspace missing)."
+            if opencode_workspace_path != stage_workspace_path:
+                context["opencode_workspace_path"] = stage_workspace_path
+            if self._workspace_paths_match(stage_workspace_path, live_workspace_path):
+                return None, "Preview sandbox session is required before execution (stage workspace invalid)."
         await self.db.commit()
         if sandbox_id:
             return sandbox_id, None

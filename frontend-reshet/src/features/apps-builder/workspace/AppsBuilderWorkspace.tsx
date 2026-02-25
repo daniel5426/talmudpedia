@@ -15,11 +15,13 @@ import {
   Lock,
   Monitor,
   Plus,
+  PanelRightClose,
   RefreshCw,
   Rocket,
   Save,
   Shield,
   Smartphone,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -65,6 +67,7 @@ import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel"
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
 import { LogoPickerDialog } from "@/features/apps-builder/workspace/LogoPickerDialog";
 import {
+  isCodingAgentRunActiveError,
   isDraftDevTransientBootstrapError,
   isDraftSandboxNotRunningError,
 } from "@/features/apps-builder/workspace/draftDevErrors";
@@ -213,6 +216,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [pendingUserUpdateId, setPendingUserUpdateId] = useState<string | null>(null);
   const [pendingDomainDeleteId, setPendingDomainDeleteId] = useState<string | null>(null);
   const hasActiveCodingRunLock = Boolean(state?.draft_dev?.has_active_coding_runs);
+  const [postRunHydrationPending, setPostRunHydrationPending] = useState(false);
+  const saveBlockedByBackendLock = hasActiveCodingRunLock || postRunHydrationPending;
   const [isPublishing, setIsPublishing] = useState(false);
   const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -244,6 +249,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setPreviewRoute("/");
     setPreviewReloadToken(0);
     setPreviewAuthToken(null);
+    setPostRunHydrationPending(false);
   }, [appId]);
 
   const appRoutes = useMemo(() => extractRoutesFromFiles(files), [files]);
@@ -418,6 +424,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setDraftDevError(null);
     setDraftDevStatus("starting");
     ensureDraftDevSession().catch((err) => {
+      if (isCodingAgentRunActiveError(err)) {
+        setDraftDevError(null);
+        return;
+      }
       setDraftDevError(err instanceof Error ? err.message : "Failed to start draft preview");
       setDraftDevStatus("error");
       setPreviewAssetUrl(null);
@@ -445,10 +455,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           syncFingerprintRef.current = fingerprint;
         })
         .catch((err) => {
+          if (isCodingAgentRunActiveError(err)) {
+            return;
+          }
           if (isDraftSandboxNotRunningError(err)) {
             setDraftDevError(null);
             setDraftDevStatus("starting");
             ensureDraftDevSession().catch((ensureErr) => {
+              if (isCodingAgentRunActiveError(ensureErr)) {
+                setDraftDevError(null);
+                return;
+              }
               setDraftDevError(ensureErr instanceof Error ? ensureErr.message : "Failed to start draft preview");
               setDraftDevStatus("error");
               setPreviewAssetUrl(null);
@@ -602,6 +619,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [appId]);
 
   const saveDraft = useCallback(async () => {
+    if (saveBlockedByBackendLock) {
+      setError("Save is temporarily locked while a coding-agent run is active or finalizing latest changes.");
+      return;
+    }
     if (!currentRevisionId && Object.keys(files).length === 0) return;
 
     setIsSaving(true);
@@ -647,7 +668,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState]);
+  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, saveBlockedByBackendLock]);
 
   const publish = useCallback(async () => {
     setIsPublishing(true);
@@ -755,6 +776,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     pendingQuestion,
     isAnsweringQuestion,
     runningSessionIds,
+    sendingSessionIds,
+    sessionTitleHintsBySessionId,
     hasOlderHistory,
     isLoadingOlderHistory,
     loadOlderHistory,
@@ -771,12 +794,15 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     activeTab,
     ensureDraftDevSession,
     refreshStateSilently,
+    onPostRunHydrationStateChange: setPostRunHydrationPending,
     onApplyRestoredRevision: applyRestoredRevision,
     onSetCurrentRevisionId: setCurrentRevisionId,
     onError: setError,
     initialActiveRunId: null,
   });
   const codeEditingLocked = isSending || hasActiveCodingRunLock;
+  const hasSessionRunActivity = runningSessionIds.length > 0 || sendingSessionIds.length > 0;
+  const saveBlockedByRunState = saveBlockedByBackendLock || hasSessionRunActivity;
 
   const openApp = useCallback(async () => {
     setError(null);
@@ -1013,6 +1039,23 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
               <TooltipContent side="bottom">{state.app.status === "published" ? "Open App" : "Open Preview"}</TooltipContent>
             </Tooltip>
 
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  onClick={() => setIsAgentPanelOpen(!isAgentPanelOpen)}
+                  aria-label={isAgentPanelOpen ? "Close coding agent panel" : "Open coding agent panel"}
+                >
+                  {isAgentPanelOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {isAgentPanelOpen ? "Close coding agent panel" : "Open coding agent panel"}
+              </TooltipContent>
+            </Tooltip>
+
             <DropdownMenu>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1054,14 +1097,18 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                   variant="ghost"
                   className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
                   onClick={saveDraft}
-                  disabled={isSaving}
+                  disabled={isSaving || saveBlockedByRunState}
                   aria-label="Save Draft"
                 >
                   {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                   Save
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">Save Draft</TooltipContent>
+              <TooltipContent side="bottom">
+                {saveBlockedByRunState
+                  ? "Save is locked while a coding-agent run is active or finalizing."
+                  : "Save Draft"}
+              </TooltipContent>
             </Tooltip>
 
             <Button
@@ -1524,7 +1571,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
           <AppsBuilderChatPanel
             isOpen={isAgentPanelOpen}
-            onOpenChange={setIsAgentPanelOpen}
             isSending={isSending}
             isStopping={isStopping}
             isUndoing={isUndoing}
@@ -1550,6 +1596,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             pendingQuestion={pendingQuestion}
             isAnsweringQuestion={isAnsweringQuestion}
             runningSessionIds={runningSessionIds}
+            sendingSessionIds={sendingSessionIds}
+            sessionTitleHintsBySessionId={sessionTitleHintsBySessionId}
             hasOlderHistory={hasOlderHistory}
             isLoadingOlderHistory={isLoadingOlderHistory}
             onLoadOlderHistory={loadOlderHistory}

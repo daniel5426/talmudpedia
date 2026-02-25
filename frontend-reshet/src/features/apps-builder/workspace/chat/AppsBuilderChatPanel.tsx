@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
-  PanelRightClose,
   Plus,
-  Sparkles,
   Square,
   Undo2,
   X,
@@ -38,7 +36,7 @@ import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "@/compon
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { CodingAgentChatSession, LogicalModel } from "@/services";
+import type { CodingAgentChatSession, OpenCodeCodingModelOption } from "@/services";
 
 import {
   TimelineItem,
@@ -54,7 +52,6 @@ import { useAppsBuilderChatThreadTabs } from "./useAppsBuilderChat.thread-tabs";
 
 type AppsBuilderChatPanelProps = {
   isOpen: boolean;
-  onOpenChange: (next: boolean) => void;
   isSending: boolean;
   isStopping: boolean;
   isUndoing: boolean;
@@ -69,7 +66,7 @@ type AppsBuilderChatPanelProps = {
   onSendMessage: (text: string) => Promise<void>;
   onStopRun: () => void;
   onRevertToCheckpoint: (userItemId: string, checkpointId: string) => Promise<void>;
-  chatModels: LogicalModel[];
+  chatModels: OpenCodeCodingModelOption[];
   selectedRunModelLabel: string;
   isModelSelectorOpen: boolean;
   onModelSelectorOpenChange: (next: boolean) => void;
@@ -78,6 +75,8 @@ type AppsBuilderChatPanelProps = {
   pendingQuestion: CodingAgentPendingQuestion | null;
   isAnsweringQuestion: boolean;
   runningSessionIds: string[];
+  sendingSessionIds: string[];
+  sessionTitleHintsBySessionId: Record<string, string>;
   hasOlderHistory: boolean;
   isLoadingOlderHistory: boolean;
   onLoadOlderHistory: () => Promise<void>;
@@ -87,7 +86,6 @@ type AppsBuilderChatPanelProps = {
 
 export function AppsBuilderChatPanel({
   isOpen,
-  onOpenChange,
   isSending,
   isStopping,
   isUndoing,
@@ -111,6 +109,8 @@ export function AppsBuilderChatPanel({
   pendingQuestion,
   isAnsweringQuestion,
   runningSessionIds,
+  sendingSessionIds,
+  sessionTitleHintsBySessionId,
   hasOlderHistory,
   isLoadingOlderHistory,
   onLoadOlderHistory,
@@ -131,7 +131,6 @@ export function AppsBuilderChatPanel({
     if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        setIsScrolled(!entry.isIntersecting);
         if (!entry.isIntersecting) {
           return;
         }
@@ -157,6 +156,21 @@ export function AppsBuilderChatPanel({
       observer.disconnect();
     };
   }, [hasOlderHistory, isLoadingOlderHistory, onLoadOlderHistory]);
+
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    if (!sentinel) return;
+    const scrollNode = sentinel.parentElement?.parentElement as HTMLElement | null;
+    if (!scrollNode) return;
+
+    const handleScroll = () => {
+      setIsScrolled(scrollNode.scrollTop > 5);
+    };
+
+    scrollNode.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => scrollNode.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const hasRunningTool = useMemo(
     () => timeline.some((item) => isToolTimelineItem(item) && item.toolStatus === "running"),
@@ -192,12 +206,17 @@ export function AppsBuilderChatPanel({
   } = useAppsBuilderChatThreadTabs({
     chatSessions,
     activeChatSessionId,
+    runningSessionIds: Array.from(new Set([...runningSessionIds, ...sendingSessionIds])),
     timeline,
+    sessionTitleHintsBySessionId,
     onActivateDraftChat,
     onLoadChatSession,
     onStartNewChat,
   });
-  const runningSessionIdSet = useMemo(() => new Set(runningSessionIds), [runningSessionIds]);
+  const runningSessionIdSet = useMemo(
+    () => new Set([...runningSessionIds, ...sendingSessionIds]),
+    [runningSessionIds, sendingSessionIds],
+  );
 
   useEffect(() => {
     setQuestionStepIndex(0);
@@ -431,21 +450,7 @@ export function AppsBuilderChatPanel({
   }, [isUndoing, onRevertToCheckpoint, timeline]);
 
   if (!isOpen) {
-    return (
-      <div className="flex h-full w-10 shrink-0 flex-col border-l border-border/60 bg-muted/20">
-        <div className="flex h-9 shrink-0 items-center justify-center border-b border-border/50">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => onOpenChange(true)}
-            aria-label="Open agent panel"
-          >
-            <Sparkles className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -469,7 +474,7 @@ export function AppsBuilderChatPanel({
                 : session.kind === "provisional"
                   ? session.sessionId
                   : "__draft__";
-              const sessionTitle = session.kind === "session" ? session.session.title : session.title;
+              const sessionTitle = session.title;
               const isActive = isSessionTab
                 ? activeChatSessionId === sessionId
                 : !activeChatSessionId;
@@ -480,7 +485,9 @@ export function AppsBuilderChatPanel({
                     size="sm"
                     className={cn(
                       "h-7 max-w-[150px] shrink-0 gap-1 rounded-md px-2 text-[12px]",
-                      isActive ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
+                      isActive
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground group-hover/thread:bg-muted group-hover/thread:text-foreground",
                     )}
                     onClick={() => {
                       if (session.kind === "draft") {
@@ -507,7 +514,7 @@ export function AppsBuilderChatPanel({
                       event.stopPropagation();
                       handleCloseThreadTab(sessionId);
                     }}
-                    className="absolute inset-y-0 bg-muted right-1 my-auto flex h-4 w-4 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/thread:opacity-100"
+                    className="absolute inset-y-0 bg-muted hover:bg-muted right-0.5 my-auto flex h-fit w-fit items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/thread:opacity-100"
                   >
                     <X className="h-2.5 w-2.5" />
                   </button>
@@ -537,18 +544,9 @@ export function AppsBuilderChatPanel({
         >
           <Clock className="h-3.5 w-3.5" />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={() => onOpenChange(false)}
-          aria-label="Close agent panel"
-        >
-          <PanelRightClose className="h-3.5 w-3.5" />
-        </Button>
       </div>
       <div className="flex min-h-0 pt-1 flex-1 flex-col px-3 pb-3">
-        <Conversation className="flex min-h-0 flex-1 flex-col transition-all">
+        <Conversation className="flex min-h-0 pb-[-200px] flex-1 flex-col transition-all">
           <ConversationContent className="gap-2 px-0 py-0 pb-3">
             <div ref={topSentinelRef} className="h-1 w-full shrink-0" />
             {isLoadingOlderHistory ? (
@@ -693,17 +691,17 @@ export function AppsBuilderChatPanel({
           </section>
         ) : null}
 
-        <div className="shrink-0 pt-1">
+        <div className="shrink-0 bg-transparent">
           <PromptInput
             onSubmit={async (message) => {
               await onSendMessage(message.text);
             }}
-            className="rounded-xl border border-border/40 bg-muted/30 shadow-none"
+            className="rounded-xl border border-border bg-transparent shadow-none"
           >
-            <PromptInputBody>
+            <PromptInputBody className="bg-transparent">
               <PromptInputTextarea
                 placeholder="Plan, @ for context, / for commands"
-                className="min-h-10 max-h-40 bg-transparent px-3 pt-2.5 text-sm"
+                className="min-h-15 max-h-40 bg-transparent px-3 pt-2.5 text-sm"
                 disabled={isAnsweringQuestion}
               />
             </PromptInputBody>
@@ -723,7 +721,7 @@ export function AppsBuilderChatPanel({
                 <ModelSelectorContent className="max-w-xs">
                   <ModelSelectorInput placeholder="Search models..." />
                   <ModelSelectorList>
-                    <ModelSelectorEmpty>No active chat models</ModelSelectorEmpty>
+                    <ModelSelectorEmpty>No OpenCode models</ModelSelectorEmpty>
                     <ModelSelectorGroup heading="Run model">
                       <ModelSelectorItem
                         value="auto"
@@ -737,7 +735,7 @@ export function AppsBuilderChatPanel({
                       {chatModels.map((model) => (
                         <ModelSelectorItem
                           key={model.id}
-                          value={`${model.name} ${model.slug}`}
+                          value={`${model.name} ${model.id}`}
                           onSelect={() => {
                             onSelectModelId(model.id);
                             onModelSelectorOpenChange(false);

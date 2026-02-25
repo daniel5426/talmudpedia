@@ -68,6 +68,7 @@ type ConsumeRunStreamOptions = {
     terminalStatus: TerminalStatus | null;
     sawTerminalEvent: boolean;
   }) => void | Promise<void>;
+  onPostRunHydrationStateChange?: (inProgress: boolean) => void;
 };
 
 function findSseFrameBoundary(buffer: string): { index: number; delimiterLength: number } | null {
@@ -123,6 +124,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     onQuestionResolved,
     shouldEnsureDraftPreviewAfterRun,
     onRunTerminalized,
+    onPostRunHydrationStateChange,
   } = options;
 
   const normalizedRunId = String(runId || "").trim();
@@ -159,13 +161,30 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
   let shouldSuppressErrors = false;
   let sawTerminalEvent = false;
   let terminalStatus: TerminalStatus | null = null;
+  const logRunFailureDebug = (
+    reason: string,
+    details: Record<string, unknown> = {},
+  ): void => {
+    if (typeof console === "undefined" || typeof console.error !== "function") {
+      return;
+    }
+    console.error("[coding-agent][run-failed]", {
+      reason,
+      appId,
+      runId: normalizedRunId,
+      runSessionId: normalizedRunSessionId || null,
+      ...details,
+    });
+  };
 
   try {
     const response = await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId);
     if (!response.ok) {
       let message = `Failed to stream coding-agent run (${response.status})`;
+      let errorPayload: unknown = null;
       try {
         const payload = await response.json();
+        errorPayload = payload;
         const detail = payload?.detail;
         if (typeof detail === "string") {
           message = detail;
@@ -175,6 +194,11 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       } catch {
         // keep fallback
       }
+      logRunFailureDebug("stream_response_not_ok", {
+        status: response.status,
+        statusText: response.statusText,
+        responsePayload: errorPayload,
+      });
       throw new Error(message);
     }
 
@@ -187,6 +211,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     const decoder = new TextDecoder();
     let buffer = "";
     let assistantText = "";
+    let sawAssistantOutput = false;
     let currentStreamId = `assistant-${normalizedRunId}`;
     let segmentCounter = 0;
     let latestSummary = "";
@@ -382,6 +407,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           assistantText += chunkText;
           parsedAssistantDeltasInThisRead += 1;
           if (assistantText.trim()) {
+            sawAssistantOutput = true;
             setActiveThinkingSummary("");
             upsertAssistantTimeline(currentStreamId, assistantText);
           }
@@ -468,9 +494,21 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           sawTerminalEvent = true;
           terminalStatus = "failed";
           finalizeRunningTools("failed");
+          const payloadFailureMessage = String(payload.error || payload.message || payload.reason || "").trim();
           const failureMessage = String(
-            parsed.diagnostics?.[0]?.message || payload.error || "Coding-agent run failed",
+            parsed.diagnostics?.[0]?.message || payloadFailureMessage || "Coding-agent run failed",
           );
+          latestBackendFailureMessage = failureMessage;
+          logRunFailureDebug("run.failed_event", {
+            event: parsed.event,
+            seq: parsed.seq,
+            ts: parsed.ts,
+            stage: parsed.stage,
+            streamEvent: parsed,
+            eventPayload: parsed.payload,
+            diagnostics: parsed.diagnostics,
+            resolvedFailureMessage: failureMessage,
+          });
           if (!intentionalAbortRef.current && !pendingCancelRef.current) {
             onError(failureMessage);
           } else {
@@ -560,7 +598,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       !pendingCancelRef.current
     ) {
       if (isCurrentAttachment()) {
-        onError("Coding-agent run failed");
+        onError(latestBackendFailureMessage || "Coding-agent run failed");
       }
     }
 
@@ -572,11 +610,12 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       const finalAssistantText =
         assistantText.trim() ||
         latestSummary ||
-        (sawRunFailure
+        (sawRunFailure || sawAssistantOutput
           ? ""
           : "I can help with code changes in this app workspace. Tell me what you want to change.");
 
       if (assistantText.trim()) {
+        sawAssistantOutput = true;
         upsertAssistantTimeline(currentStreamId, assistantText.trim());
       } else if (finalAssistantText) {
         pushTimeline({
@@ -641,16 +680,25 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       }
     };
 
-    if (process.env.NODE_ENV === "test") {
+    const finalizeAfterRunWithTracking = async () => {
+      onPostRunHydrationStateChange?.(true);
       try {
         await finalizeAfterRun();
+      } finally {
+        onPostRunHydrationStateChange?.(false);
+      }
+    };
+
+    if (process.env.NODE_ENV === "test") {
+      try {
+        await finalizeAfterRunWithTracking();
       } catch (err) {
         if (!intentionalAbortRef.current && canMutateUi() && !shouldSuppressErrors) {
           onError(err instanceof Error ? err.message : "Failed to refresh builder state after run");
         }
       }
     } else {
-      void finalizeAfterRun().catch((err) => {
+      void finalizeAfterRunWithTracking().catch((err) => {
         if (!intentionalAbortRef.current && canMutateUi() && !shouldSuppressErrors) {
           onError(err instanceof Error ? err.message : "Failed to refresh builder state after run");
         }
@@ -662,6 +710,11 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       err !== null &&
       "name" in err &&
       String((err as { name?: string }).name || "") === "AbortError";
+    if (!isAbortError) {
+      logRunFailureDebug("stream_consume_exception", {
+        error: err,
+      });
+    }
     if (!intentionalAbortRef.current && !isAbortError && !shouldSuppressErrors && isCurrentAttachment()) {
       onError(err instanceof Error ? err.message : "Failed to run coding agent");
     }

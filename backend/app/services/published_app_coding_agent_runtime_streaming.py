@@ -325,12 +325,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             yield emit("run.failed", "run", self.serialize_run(run), [{"message": failure_message}])
             return
 
-        run_context = self._run_context(run)
-        sandbox_id = str(run_context.get("preview_sandbox_id") or "").strip()
-        if not sandbox_id:
-            sandbox_id, sandbox_error = await self._recover_or_bootstrap_run_sandbox_context(run=run, app=app)
-        else:
-            sandbox_error = None
+        sandbox_id, sandbox_error = await self._recover_or_bootstrap_run_sandbox_context(run=run, app=app)
         if not sandbox_id:
             run.status = RunStatus.failed
             run.error_message = sandbox_error or "Preview sandbox session is required before execution."

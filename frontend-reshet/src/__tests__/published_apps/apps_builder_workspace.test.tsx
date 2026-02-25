@@ -3,7 +3,12 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { TextDecoder } from "util";
 
 import { AppsBuilderWorkspace } from "@/features/apps-builder/workspace/AppsBuilderWorkspace";
-import { modelsService, publishedAppsService, publishedRuntimeService, resolveAppsCodingAgentEngine } from "@/services";
+import {
+  listOpenCodeCodingModels,
+  publishedAppsService,
+  publishedRuntimeService,
+  resolveAppsCodingAgentEngine,
+} from "@/services";
 
 const setOpenMock = jest.fn();
 const mockCodeEditor = jest.fn(
@@ -66,9 +71,7 @@ jest.mock("@/services", () => ({
   publishedRuntimeService: {
     getPreviewRuntime: jest.fn(),
   },
-  modelsService: {
-    listModels: jest.fn(),
-  },
+  listOpenCodeCodingModels: jest.fn(),
 }));
 
 jest.mock("@/components/ui/sidebar", () => ({
@@ -491,8 +494,10 @@ describe("AppsBuilderWorkspace", () => {
     });
     (publishedAppsService.submitCodingAgentPrompt as jest.Mock).mockImplementation(
       async (appId: string, payload: Record<string, unknown>) => {
+        const normalizedModelId = String(payload.model_id || "").trim() || "opencode/big-pickle";
         const legacyPayload = {
           ...payload,
+          model_id: normalizedModelId,
           base_revision_id: "rev-1",
           engine: "opencode",
           enqueue_if_active: true,
@@ -613,45 +618,11 @@ describe("AppsBuilderWorkspace", () => {
       id: "queue-1",
     });
     (resolveAppsCodingAgentEngine as jest.Mock).mockReturnValue("opencode");
-    (modelsService.listModels as jest.Mock).mockResolvedValue({
-      models: [
-        {
-          id: "model-auto-a",
-          name: "GPT Test A",
-          slug: "gpt-test-a",
-          description: "",
-          capability_type: "chat",
-          metadata: {},
-          default_resolution_policy: {},
-          version: 1,
-          status: "active",
-          is_active: true,
-          is_default: true,
-          tenant_id: "tenant-1",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          providers: [],
-        },
-        {
-          id: "model-auto-b",
-          name: "GPT Test B",
-          slug: "gpt-test-b",
-          description: "",
-          capability_type: "chat",
-          metadata: {},
-          default_resolution_policy: {},
-          version: 1,
-          status: "active",
-          is_active: true,
-          is_default: false,
-          tenant_id: "tenant-1",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          providers: [],
-        },
-      ],
-      total: 2,
-    });
+    (listOpenCodeCodingModels as jest.Mock).mockReturnValue([
+      { id: "opencode/big-pickle", name: "Big Pickle", is_free: true },
+      { id: "opencode/minimax-m2.5-free", name: "MiniMax M2.5 Free", is_free: true },
+      { id: "opencode/gpt-5", name: "GPT 5", is_free: false },
+    ]);
     (publishedRuntimeService.getPreviewRuntime as jest.Mock).mockResolvedValue({
       app_id: "app-1",
       slug: "builder-app",
@@ -2198,6 +2169,48 @@ describe("AppsBuilderWorkspace", () => {
     expect(screen.queryByText(/Run accepted/i)).not.toBeInTheDocument();
   });
 
+  it("does not append default assistant text after tool calls when assistant already responded", async () => {
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"assistant","payload":{"content":"Implemented the update."},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.completed","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:02Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","output":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":4,"ts":"2026-02-16T19:00:03Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "apply update" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Implemented the update.")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText("I can help with code changes in this app workspace. Tell me what you want to change."),
+    ).not.toBeInTheDocument();
+  });
+
   it("parses SSE events when data prefix has no trailing space", async () => {
     (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
       body: {
@@ -2278,8 +2291,8 @@ describe("AppsBuilderWorkspace", () => {
 
     fireEvent.click(selectorTrigger);
     await waitFor(() => {
-      expect(screen.getByText("GPT Test A")).toBeInTheDocument();
-      expect(screen.getByText("GPT Test B")).toBeInTheDocument();
+      expect(screen.getByText("Big Pickle")).toBeInTheDocument();
+      expect(screen.getByText("MiniMax M2.5 Free")).toBeInTheDocument();
     });
   });
 
@@ -2381,7 +2394,7 @@ describe("AppsBuilderWorkspace", () => {
     await screen.findByPlaceholderText("Plan, @ for context, / for commands");
 
     fireEvent.click(screen.getByRole("button", { name: "Select run model" }));
-    fireEvent.click(await screen.findByText("GPT Test B"));
+    fireEvent.click(await screen.findByText("MiniMax M2.5 Free"));
 
     fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
       target: { value: "first request" },
@@ -2390,7 +2403,7 @@ describe("AppsBuilderWorkspace", () => {
 
     await waitFor(() => expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(1));
     expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[0][1]).toEqual(
-      expect.objectContaining({ model_id: "model-auto-b", engine: "opencode" }),
+      expect.objectContaining({ model_id: "opencode/minimax-m2.5-free", engine: "opencode" }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Select run model" }));
@@ -2404,7 +2417,7 @@ describe("AppsBuilderWorkspace", () => {
 
     await waitFor(() => expect(publishedAppsService.createCodingAgentRun).toHaveBeenCalledTimes(2));
     expect((publishedAppsService.createCodingAgentRun as jest.Mock).mock.calls[1][1]).toEqual(
-      expect.objectContaining({ model_id: null, engine: "opencode" }),
+      expect.objectContaining({ model_id: "opencode/big-pickle", engine: "opencode" }),
     );
   });
 
@@ -2425,7 +2438,7 @@ describe("AppsBuilderWorkspace", () => {
     await screen.findByPlaceholderText("Plan, @ for context, / for commands");
 
     fireEvent.click(screen.getByRole("button", { name: "Select run model" }));
-    fireEvent.click(await screen.findByText("GPT Test A"));
+    fireEvent.click(await screen.findByText("Big Pickle"));
 
     fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
       target: { value: "use selected model" },

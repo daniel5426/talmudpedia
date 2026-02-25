@@ -67,9 +67,13 @@ class OpenCodePublishedAppCodingAgentEngine:
         workspace_path = str(
             context.get("opencode_workspace_path")
             or context.get("preview_workspace_stage_path")
-            or context.get("preview_workspace_live_path")
             or ""
         ).strip()
+        live_workspace_path = str(context.get("preview_workspace_live_path") or "").strip()
+        if not workspace_path:
+            raise RuntimeError("OpenCode run requires a prepared stage workspace path.")
+        if live_workspace_path and workspace_path.rstrip("/") == live_workspace_path.rstrip("/"):
+            raise RuntimeError("OpenCode run workspace resolved to live workspace; stage workspace is required.")
         sandbox_id = str(
             context.get("opencode_sandbox_id")
             or context.get("preview_sandbox_id")
@@ -435,7 +439,14 @@ class OpenCodePublishedAppCodingAgentEngine:
 
         if event_type == "tool.failed":
             tool_name = raw.get("tool") or payload.get("tool") or raw.get("name")
-            message = payload.get("error") or raw.get("error") or "Tool failed"
+            message = (
+                payload.get("error")
+                or payload.get("message")
+                or payload.get("reason")
+                or raw.get("error")
+                or raw.get("message")
+                or "Tool failed"
+            )
             diagnostics = [{"message": str(message)}]
             code = payload.get("code") or raw.get("code")
             if code:
@@ -516,7 +527,14 @@ class OpenCodePublishedAppCodingAgentEngine:
             )
 
         if event_type == "run.failed":
-            message = payload.get("error") or raw.get("error") or "OpenCode run failed"
+            message = (
+                payload.get("error")
+                or payload.get("message")
+                or payload.get("reason")
+                or raw.get("error")
+                or raw.get("message")
+                or "OpenCode run failed"
+            )
             diagnostics = [{"message": str(message)}]
             code = payload.get("code") or raw.get("code")
             if code:

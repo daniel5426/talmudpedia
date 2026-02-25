@@ -12,6 +12,7 @@ type ConsumeSessionRunStreamOptions = {
   isMountedRef: { current: boolean };
   onError: (message: string | null) => void;
   onSetCurrentRevisionId: (revisionId: string | null) => void;
+  onPostRunHydrationStateChange?: (inProgress: boolean) => void;
   refreshStateSilently: () => Promise<void>;
   ensureDraftDevSession: () => Promise<void>;
   loadChatSessions: () => Promise<unknown[]>;
@@ -46,6 +47,7 @@ export async function consumeSessionRunStream({
   isMountedRef,
   onError,
   onSetCurrentRevisionId,
+  onPostRunHydrationStateChange,
   refreshStateSilently,
   ensureDraftDevSession,
   loadChatSessions,
@@ -88,6 +90,7 @@ export async function consumeSessionRunStream({
     seenRunEventKeysRef: session.seenRunEventKeysRef,
     onError,
     onSetCurrentRevisionId,
+    onPostRunHydrationStateChange,
     pushTimeline: (item) => pushSessionTimeline(session.key, item),
     upsertAssistantTimeline: (assistantStreamId, description) => upsertSessionAssistantTimeline(session.key, assistantStreamId, description),
     upsertToolTimeline: (toolCallId, title, status, toolName, toolPath) =>

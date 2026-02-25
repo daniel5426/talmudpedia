@@ -108,4 +108,50 @@ describe("buildTimelineFromChatHistory", () => {
     expect(toolRows[0].toolStatus).toBe("completed");
     expect(toolRows[0].tone).toBe("success");
   });
+
+  it("keeps multiple terminal tool events when span_id is missing", () => {
+    const detail = {
+      session: {
+        id: "chat-1",
+        title: "History",
+        created_at: "2026-02-25T10:00:00Z",
+        updated_at: "2026-02-25T10:00:00Z",
+        last_message_at: "2026-02-25T10:00:00Z",
+      },
+      messages: [
+        {
+          id: "m1",
+          run_id: "run-1",
+          role: "assistant" as const,
+          content: "Done.",
+          created_at: "2026-02-25T10:00:02Z",
+        },
+      ],
+      run_events: [
+        {
+          run_id: "run-1",
+          event: "tool.completed" as const,
+          stage: "tool",
+          payload: { tool: "glob", output: { path: "index.html" } },
+          diagnostics: [],
+          ts: "2026-02-25T10:00:01Z",
+        },
+        {
+          run_id: "run-1",
+          event: "tool.completed" as const,
+          stage: "tool",
+          payload: { tool: "glob", output: { path: "src/main.tsx" } },
+          diagnostics: [],
+          ts: "2026-02-25T10:00:02Z",
+        },
+      ],
+    };
+
+    const timeline = buildTimelineFromChatHistory(detail);
+    const toolRows = timeline.filter((item) => item.kind === "tool");
+
+    expect(toolRows).toHaveLength(2);
+    expect(toolRows[0].toolStatus).toBe("completed");
+    expect(toolRows[1].toolStatus).toBe("completed");
+  });
 });

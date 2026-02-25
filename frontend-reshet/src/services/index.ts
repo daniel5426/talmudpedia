@@ -55,6 +55,11 @@ export { toolsService } from "./tools";
 export { credentialsService } from "./credentials";
 export { publishedAppsService } from "./published-apps";
 export { publishedRuntimeService } from "./published-runtime";
+export {
+  OPENCODE_CODING_MODELS,
+  OPENCODE_CODING_MODEL_AUTO_ID,
+  listOpenCodeCodingModels,
+} from "./coding-agent-models";
 export { LLM_PROVIDER_OPTIONS, VECTOR_STORE_PROVIDER_OPTIONS, TOOL_PROVIDER_OPTIONS } from "./provider-catalog";
 
 export type {
@@ -116,6 +121,7 @@ export type {
   CreateBuilderRevisionRequest,
   UpdatePublishedAppRequest,
 } from "./published-apps";
+export type { OpenCodeCodingModelOption } from "./coding-agent-models";
 
 export type {
   PublishedRuntimeConfig,

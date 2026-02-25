@@ -22,7 +22,7 @@ from app.services.published_app_templates import (
     OPENCODE_BOOTSTRAP_CONTEXT_PATH,
     build_opencode_bootstrap_files,
 )
-from app.services.published_app_coding_run_monitor_config import monitor_trace
+from app.services.published_app_coding_pipeline_trace import pipeline_trace
 
 
 class OpenCodeServerClientError(Exception):
@@ -38,7 +38,7 @@ OPENCODE_DEPRECATED_TOOL_PATHS = (
 
 
 def _opencode_trace(event: str, **fields: Any) -> None:
-    monitor_trace(event, **fields)
+    pipeline_trace(event, pipeline="opencode_client", **fields)
 
 
 @dataclass(frozen=True)

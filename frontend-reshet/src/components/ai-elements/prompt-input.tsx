@@ -778,7 +778,7 @@ export const PromptInput = ({
         onSubmit={handleSubmit}
         {...props}
       >
-        <InputGroup className="overflow-hidden relative">
+        <InputGroup className="overflow-hidden relative border-none shadow-none !ring-0 focus-within:!ring-0 has-[:focus-visible]:!ring-0 bg-transparent">
           {children}
           {isListening && (
             <div className="absolute inset-0 flex items-center justify-center bg-primary-soft z-10 rounded-md">

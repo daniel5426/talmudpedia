@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 class CodingAgentSubmitPromptRequest(BaseModel):
     input: str
     chat_session_id: Optional[UUID] = None
-    model_id: Optional[UUID] = None
+    model_id: Optional[str] = None
     client_message_id: Optional[str] = None
 
 
@@ -296,7 +296,7 @@ async def submit_coding_agent_prompt(
         actor_id=actor_id,
         user_prompt=user_prompt,
         messages=run_messages,
-        requested_model_id=payload.model_id,
+        requested_model_id=(str(payload.model_id or "").strip() or None),
         chat_session_id=resolved_session_id,
     )
 

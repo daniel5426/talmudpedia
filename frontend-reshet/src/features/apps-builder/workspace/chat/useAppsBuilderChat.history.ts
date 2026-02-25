@@ -40,8 +40,10 @@ function buildToolTimelineItemsForRun(runId: string, runEvents: CodingAgentRunEv
         if (runningIds.length > 0) {
           toolCallId = runningIds[0];
         } else {
-          const knownIds = allCallIdsByToolName.get(normalizedToolName) || [];
-          toolCallId = knownIds[knownIds.length - 1] || `${runId}-tool-${syntheticCallCounter++}`;
+          // Some historical payloads only include terminal tool events without a span id.
+          // In that case, treat each event as an independent call instead of collapsing
+          // repeated tool names into a single timeline row.
+          toolCallId = `${runId}-tool-${syntheticCallCounter++}`;
         }
       }
     }
