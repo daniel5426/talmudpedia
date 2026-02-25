@@ -149,9 +149,6 @@ class OpenCodePublishedAppCodingAgentEngine:
         fail_on_unrecovered_apply_patch = str(
             os.getenv("APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH", "0")
         ).strip().lower() in {"1", "true", "yes", "on"}
-        force_fail_missing_terminal = str(
-            os.getenv("APPS_CODING_AGENT_OPENCODE_FORCE_FAIL_MISSING_TERMINAL", "0")
-        ).strip().lower() in {"1", "true", "yes", "on"}
         tool_event_mode = str(
             os.getenv("APPS_CODING_AGENT_OPENCODE_TOOL_EVENT_MODE", "raw")
         ).strip().lower()
@@ -303,30 +300,8 @@ class OpenCodePublishedAppCodingAgentEngine:
             )
             return
 
-        if force_fail_missing_terminal:
-            persisted.status = RunStatus.failed
-            if not str(persisted.error_message or "").strip():
-                persisted.error_message = "OpenCode stream ended without terminal completion event"
-            persisted.completed_at = datetime.now(timezone.utc)
-            await self._db.commit()
-        else:
-            trace_engine(
-                "engine.stream.closed_nonterminal",
-                status=(
-                    persisted.status.value
-                    if hasattr(persisted.status, "value")
-                    else str(persisted.status)
-                ),
-                saw_terminal=saw_terminal,
-                saw_failure=saw_failure,
-                saw_apply_patch_failure=saw_apply_patch_failure,
-                saw_apply_patch_success=saw_apply_patch_success,
-                saw_recovery_edit_success=saw_recovery_edit_success,
-            )
-            return
-
         trace_engine(
-            "engine.stream.closed",
+            "engine.stream.closed_nonterminal",
             status=(
                 persisted.status.value
                 if hasattr(persisted.status, "value")
@@ -334,13 +309,11 @@ class OpenCodePublishedAppCodingAgentEngine:
             ),
             saw_terminal=saw_terminal,
             saw_failure=saw_failure,
-            saw_cancelled=saw_cancelled,
-            saw_paused=saw_paused,
             saw_apply_patch_failure=saw_apply_patch_failure,
             saw_apply_patch_success=saw_apply_patch_success,
             saw_recovery_edit_success=saw_recovery_edit_success,
-            error=str(persisted.error_message or "") or None,
         )
+        return
 
     async def cancel(self, run: AgentRun) -> EngineCancelResult:
         if not run.engine_run_ref:

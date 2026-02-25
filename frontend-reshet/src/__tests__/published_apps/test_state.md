@@ -42,6 +42,7 @@ Frontend coverage for:
 - Chat-model path parser normalizes temp draft-dev absolute paths with UUID workspace roots (e.g. `/private/tmp/.../<uuid>/src/...`) into workspace-relative read labels.
 - Builder workspace coding-agent panel uses Cursor-style composer placeholder contract (`Plan, @ for context, / for commands`) with run submission preserved.
 - Builder workspace coding-agent panel now uses AI elements `Conversation` scrolling model + `ConversationScrollButton`, with minimal/no-card event presentation and lightweight shimmering `Thinking...` text.
+- Builder workspace no longer injects synthetic generic assistant fallback text when streams end without assistant deltas (thin-wrapper behavior).
 - Builder workspace shows `Reasoning...` fallback only when no tool is actively running; active tool rows own the shimmer state while executing.
 - Builder workspace scopes `Reasoning...` fallback to the active prompt so second/subsequent prompts still show immediate shimmer before first stream activity.
 - Builder workspace shows FIFO queued prompts in a minimalist queue panel above the composer when user submits during active runs, with per-item remove action.
@@ -92,6 +93,12 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "does not inject fallback assistant text when stream emits no assistant delta|does not append default assistant text after tool calls when assistant already responded|does not show generic fallback text after non-terminal disconnect with tool activity"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 3 passed, 48 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "reconnects stream with from_seq and avoids duplicate tool cards"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 1 passed, 50 skipped by `-t`)
 - Command: `cd frontend-reshet && npm test -- --runInBand --watch=false --no-cache src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "model selector|selected model_id|model is unavailable"`
 - Date: 2026-02-25
 - Result: PASS (1 suite, 3 passed, 44 skipped by `-t`)

@@ -782,6 +782,7 @@ async def test_official_mode_global_event_stream_keeps_running_after_session_idl
                             "sessionID": session_id,
                             "role": "assistant",
                             "parentID": user_message_id,
+                            "finish": "tool-calls",
                             "time": {"created": 1, "completed": 2},
                         },
                         "parts": [{"id": text_part_id, "type": "text", "text": "Working on it..."}],
@@ -813,7 +814,6 @@ async def test_official_mode_global_event_stream_keeps_running_after_session_idl
 
 @pytest.mark.asyncio
 async def test_official_mode_global_event_stream_settles_without_session_idle(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_ALLOW_SYNTHETIC_TERMINAL", "1")
     session_id = "sess-global-settle"
     assistant_message_id = "msg-assistant-settle"
     user_message_id = "msg-user-settle"
@@ -867,6 +867,25 @@ async def test_official_mode_global_event_stream_settles_without_session_idle(mo
             return httpx.Response(204, text="")
         if request.url.path == "/global/event":
             return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == "/question":
+            return httpx.Response(200, json=[])
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "info": {
+                            "id": assistant_message_id,
+                            "sessionID": session_id,
+                            "role": "assistant",
+                            "parentID": user_message_id,
+                            "finish": "stop",
+                            "time": {"created": 1, "completed": 2},
+                        },
+                        "parts": [{"id": text_part_id, "type": "text", "text": "Done!"}],
+                    }
+                ],
+            )
         raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
 
     _patch_async_client(monkeypatch, handler)
@@ -884,6 +903,76 @@ async def test_official_mode_global_event_stream_settles_without_session_idle(mo
     events = [item async for item in client.stream_run_events(run_ref=run_ref)]
     assistant_text = "".join(str(item.get("payload", {}).get("content") or "") for item in events if item.get("event") == "assistant.delta")
     assert assistant_text.startswith("Done")
+    assert events[-1].get("event") == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_official_mode_global_event_stream_completes_from_session_status_idle(monkeypatch: pytest.MonkeyPatch):
+    session_id = "sess-global-status-idle"
+    assistant_message_id = "msg-assistant-status-idle"
+    user_message_id = "msg-user-status-idle"
+    text_part_id = "part-text-status-idle"
+
+    global_events = [
+        ("message.updated", {"info": {"id": user_message_id, "sessionID": session_id, "role": "user"}}),
+        (
+            "message.updated",
+            {
+                "info": {
+                    "id": assistant_message_id,
+                    "sessionID": session_id,
+                    "role": "assistant",
+                    "parentID": user_message_id,
+                },
+                "parts": [{"id": text_part_id, "type": "text", "text": "Done"}],
+            },
+        ),
+        ("session.status", {"sessionID": session_id, "status": {"type": "idle"}}),
+    ]
+    sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == f"/session/{session_id}/prompt_async":
+            return httpx.Response(204, text="")
+        if request.url.path == "/global/event":
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "info": {
+                            "id": assistant_message_id,
+                            "sessionID": session_id,
+                            "role": "assistant",
+                            "parentID": user_message_id,
+                            "finish": "stop",
+                            "time": {"created": 1, "completed": 2},
+                        },
+                        "parts": [{"id": text_part_id, "type": "text", "text": "Done"}],
+                    }
+                ],
+            )
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+    client = _client()
+
+    run_ref = await client.start_run(
+        run_id="run-global-status-idle",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="Reply with Done",
+        messages=[{"role": "user", "content": "Reply with Done"}],
+    )
+    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
+    assert any(item.get("event") == "assistant.delta" for item in events)
     assert events[-1].get("event") == "run.completed"
 
 
@@ -1455,7 +1544,6 @@ async def test_official_mode_closed_no_terminal_recovers_via_snapshot_polling(mo
         raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
 
     _patch_async_client(monkeypatch, handler)
-    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_ALLOW_SYNTHETIC_TERMINAL", "1")
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_POLL_INTERVAL_SECONDS", "0.1")
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS", "0.2")
     client = _client()

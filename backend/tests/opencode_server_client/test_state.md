@@ -25,6 +25,8 @@ Last Updated: 2026-02-25
 - Reasoning parts are filtered out from user-visible assistant deltas.
 - Incremental text offset tracking prevents duplicate text when `/global/event` and `/session/{id}/message` overlap.
 - Official global-event streaming can settle to terminal completion without explicit `session.idle` when assistant text is complete and no tools are running.
+- Official global-event streaming now treats `session.status(type=idle)` as canonical completion signal when latest assistant finish is terminal (`finish != tool-calls|unknown`).
+- Idle handling does not prematurely complete mid-run tool continuations (`finish=tool-calls` remains non-terminal).
 - Recoverable tool-step errors in earlier assistant turns no longer force terminal run failure when a later assistant turn succeeds.
 - Snapshot polling fallback remains compatible (empty response recovery, wrapped payloads, missing `parentID`, read-timeout recovery).
 - Session creation includes workspace external-directory permission rules.
@@ -33,6 +35,9 @@ Last Updated: 2026-02-25
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py -k "global_event_stream_keeps_running_after_session_idle_text_before_tool or global_event_stream_settles_without_session_idle or global_event_stream_completes_from_session_status_idle or closed_no_terminal_recovers_via_snapshot_polling or start_run_buffers_assistant_events"`
+- Date/Time: 2026-02-25
+- Result: Pass (5 passed, 28 deselected, 1 warning)
 - Command: `pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py -k "global_event_stream or closed_no_terminal or auto_approves_permission_asked or settles_without_session_idle"`
 - Date/Time: 2026-02-25 21:25 EET
 - Result: Pass (7 passed, 25 deselected, 1 warning)

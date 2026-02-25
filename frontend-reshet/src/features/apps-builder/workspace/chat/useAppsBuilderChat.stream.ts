@@ -799,10 +799,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     if (!intentionalAbortRef.current) {
       const finalAssistantText =
         assistantText.trim() ||
-        latestSummary ||
-        (sawRunFailure || sawAssistantOutput || sawToolActivity || sawNonTerminalDisconnect
-          ? ""
-          : "I can help with code changes in this app workspace. Tell me what you want to change.");
+        latestSummary;
 
       if (assistantText.trim()) {
         sawAssistantOutput = true;

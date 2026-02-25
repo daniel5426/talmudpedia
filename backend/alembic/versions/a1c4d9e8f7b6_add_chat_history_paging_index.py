@@ -28,7 +28,7 @@ def upgrade() -> None:
     if "published_app_coding_chat_messages" not in inspector.get_table_names():
         return
 
-    index_name = "ix_published_app_coding_chat_messages_session_created_at_id_desc"
+    index_name = "ix_pacm_session_created_id_desc"
     if not _index_exists(inspector, "published_app_coding_chat_messages", index_name):
         op.create_index(
             index_name,
@@ -44,6 +44,6 @@ def downgrade() -> None:
     if "published_app_coding_chat_messages" not in inspector.get_table_names():
         return
 
-    index_name = "ix_published_app_coding_chat_messages_session_created_at_id_desc"
+    index_name = "ix_pacm_session_created_id_desc"
     if _index_exists(inspector, "published_app_coding_chat_messages", index_name):
         op.drop_index(index_name, table_name="published_app_coding_chat_messages")

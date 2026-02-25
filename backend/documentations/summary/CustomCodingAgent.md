@@ -7,7 +7,7 @@ Last Updated: 2026-02-25
 The coding-agent stack is now hard-cut to an OpenCode-first architecture:
 - OpenCode is the only execution engine.
 - Backend is a thin product adapter for auth, sandbox binding, chat history, and checkpoint promotion.
-- Run lifecycle authority is based on OpenCode terminal events (`run.completed`, `run.failed`, `run.cancelled`, `run.paused`).
+- Run lifecycle authority converges from OpenCode session state (`session.status`) and assistant finish semantics (not only explicit `run.completed`).
 - Old replay/event-log orchestration has been removed.
 - Prompt queueing is frontend-owned (no backend durable queue orchestration).
 
@@ -22,6 +22,19 @@ This doc now reflects the current thin-wrapper defaults that were implemented in
 - Non-terminal disconnects are reconcile-first: transport closure triggers status reconciliation/reconnect rather than immediate failed terminalization.
 - Permission prompts from OpenCode (`permission.asked`) are mapped into question flow, with stage-sandbox auto-approval by default policy.
 - Mid-run assistant text no longer implies terminal completion: `session.idle` does not force `run.completed` in default reconcile-first mode.
+
+## OpenCode Protocol Evidence (2026-02-25 Deep-Dive)
+
+Local direct protocol probes against `opencode-ai serve` confirmed:
+- Global SSE commonly ends runs with `session.status={type:\"idle\"}` + `session.idle`, without explicit `run.completed`.
+- Tool-interleaved runs split into multiple assistant messages:
+  - intermediate assistant can complete with `info.finish=\"tool-calls\"` (non-terminal),
+  - follow-up assistant later completes with `info.finish=\"stop\"` (terminal-candidate).
+- Therefore, wrapper logic must not terminalize on assistant text completion or `finish=\"tool-calls\"`.
+- Wrapper completion convergence should treat explicit run terminal events as preferred, but reconcile using OpenCode idle/message-finish semantics when terminal events are missing.
+
+Reference notes:
+- `backend/documentations/summary/OpenCodeProtocolInvestigation_2026-02-25.md`
 
 ## Pipeline Trace Logging (JSONL, New)
 
@@ -58,8 +71,6 @@ To stay closer to OpenCode-native semantics, aggressive wrapper policies are now
 - `APPS_CODING_AGENT_OPENCODE_TOOL_EVENT_MODE` defaults to `raw`
   - `raw`: preserves OpenCode tool event shape (`tool.completed` may include diagnostics when output contains `error`)
   - `normalized`: maps `tool.completed` with `output.error` into `tool.failed` for legacy UI behavior
-- `APPS_CODING_AGENT_RUNTIME_FORCE_FAIL_MISSING_TERMINAL` defaults to disabled (`0`)
-  - runtime stream exits non-fatally when engine stream ends without terminal event
 - `APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_INACTIVITY` defaults to disabled (`0`)
   - monitor no longer force-fails long silent windows by default
 - `APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_STREAM_END_WITHOUT_TERMINAL` defaults to disabled (`0`)

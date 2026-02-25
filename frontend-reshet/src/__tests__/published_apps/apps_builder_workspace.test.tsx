@@ -2178,7 +2178,7 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
-  it("shows default assistant text when stream emits no assistant delta", async () => {
+  it("does not inject fallback assistant text when stream emits no assistant delta", async () => {
     (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
       body: {
         getReader: () => {
@@ -2211,11 +2211,11 @@ describe("AppsBuilderWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(
-        screen.getByText("I can help with code changes in this app workspace. Tell me what you want to change."),
-      ).toBeInTheDocument();
+      expect(screen.queryByText(/Run accepted/i)).not.toBeInTheDocument();
     });
-    expect(screen.queryByText(/Run accepted/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("I can help with code changes in this app workspace. Tell me what you want to change."),
+    ).not.toBeInTheDocument();
   });
 
   it("does not append default assistant text after tool calls when assistant already responded", async () => {

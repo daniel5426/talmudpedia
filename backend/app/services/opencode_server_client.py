@@ -575,9 +575,6 @@ class OpenCodeServerClient:
             yield event
 
     async def _stream_official_run_events_via_global_events(self, *, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
-        allow_synthetic_terminal = str(
-            os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_ALLOW_SYNTHETIC_TERMINAL", "0")
-        ).strip().lower() in {"1", "true", "yes", "on"}
         state = self._official_run_state.setdefault(
             session_id,
             {
@@ -610,9 +607,6 @@ class OpenCodeServerClient:
         global_read_timeout = max(2.0, global_read_timeout)
         saw_assistant_text = False
         terminal_event: dict[str, Any] | None = None
-        settle_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS") or "1.0").strip())
-        settle_seconds = max(0.2, settle_seconds)
-        running_statuses = {"running", "pending", "in_progress", "started"}
         global_event_seen = 0
         global_event_matched_session = 0
         assistant_delta_emitted = 0
@@ -625,25 +619,73 @@ class OpenCodeServerClient:
             session_id=session_id,
         )
 
-        def _maybe_mark_settled_complete() -> bool:
+        async def _evaluate_idle_signal(source_event: str) -> tuple[list[dict[str, Any]], bool]:
             nonlocal terminal_event
-            if not allow_synthetic_terminal:
-                return False
-            if terminal_event is not None or not saw_assistant_text:
-                return False
-            if bool(state.get("saw_tool_event")):
-                return False
+            nonlocal saw_assistant_text
+            nonlocal assistant_delta_emitted
+            emitted_events: list[dict[str, Any]] = []
             if any(str(item or "").strip() for item in pending_question_request_ids):
-                return False
-            tool_status = state.get("tool_status") if isinstance(state.get("tool_status"), dict) else {}
-            has_running_tools = any(str(value or "").strip().lower() in running_statuses for value in tool_status.values())
-            if has_running_tools:
-                return False
-            last_progress_at = float(state.get("last_progress_at") or 0.0)
-            if (time.monotonic() - last_progress_at) < settle_seconds:
-                return False
-            terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
-            return True
+                return emitted_events, False
+            messages_payload = await self._request(
+                "GET",
+                f"/session/{session_id}/message",
+                json_payload={},
+                retries=0,
+                expect_dict=False,
+            )
+            candidates = self._collect_official_assistant_candidates(messages_payload)
+            if parent_message_id:
+                filtered = [
+                    item
+                    for item in candidates
+                    if self._extract_candidate_parent_id(item) in {"", parent_message_id}
+                ]
+                if filtered:
+                    candidates = filtered
+            candidates = self._sort_assistant_candidates(candidates)
+            last_info_error = ""
+            for message in candidates:
+                info = message.get("info") if isinstance(message.get("info"), dict) else {}
+                message_id = str(info.get("id") or "").strip()
+                role = str(info.get("role") or "").strip().lower()
+                if message_id and role:
+                    message_roles[message_id] = role
+                if message_id:
+                    assistant_message_ids.add(message_id)
+                for event in self._extract_incremental_tool_events(message=message, state=state):
+                    state["saw_tool_event"] = True
+                    state["last_progress_at"] = time.monotonic()
+                    emitted_events.append(event)
+                for delta in self._extract_incremental_text_deltas(message=message, state=state):
+                    saw_assistant_text = True
+                    state["last_progress_at"] = time.monotonic()
+                    assistant_delta_emitted += 1
+                    emitted_events.append({"event": "assistant.delta", "payload": {"content": delta}})
+                embedded_error = self._extract_assistant_info_error(message)
+                if embedded_error:
+                    last_info_error = self._sanitize_error_message(embedded_error)
+            if last_info_error:
+                terminal_event = {
+                    "event": "run.failed",
+                    "payload": {"error": f"OpenCode assistant error: {last_info_error}"},
+                    "code": "OPENCODE_ASSISTANT_ERROR",
+                }
+                return emitted_events, True
+            if self._is_session_completion_ready(
+                state=state,
+                pending_question_request_ids=pending_question_request_ids,
+                candidates=candidates,
+            ):
+                terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
+                return emitted_events, True
+            _opencode_trace(
+                "opencode.idle_nonterminal",
+                session_id=session_id,
+                source_event=source_event,
+                candidate_count=len(candidates),
+                pending_question_count=len([item for item in pending_question_request_ids if str(item or "").strip()]),
+            )
+            return emitted_events, False
 
         initial_payload = state.get("initial_payload")
         if isinstance(initial_payload, dict):
@@ -676,8 +718,6 @@ class OpenCodeServerClient:
                     )
                 async for line in response.aiter_lines():
                     if time.monotonic() >= deadline:
-                        break
-                    if _maybe_mark_settled_complete():
                         break
                     raw = (line or "").strip()
                     if not raw or raw.startswith(":"):
@@ -979,74 +1019,24 @@ class OpenCodeServerClient:
                         }
                         break
 
+                    if event_type == "session.status":
+                        status_type = self._extract_session_status_type(properties)
+                        if status_type == "idle":
+                            emitted_events, completed = await _evaluate_idle_signal("session.status")
+                            for emitted in emitted_events:
+                                yield emitted
+                            if completed:
+                                break
+                        continue
+
                     if event_type == "session.idle":
-                        if any(str(item or "").strip() for item in pending_question_request_ids):
-                            continue
-                        messages_payload = await self._request(
-                            "GET",
-                            f"/session/{session_id}/message",
-                            json_payload={},
-                            retries=0,
-                            expect_dict=False,
-                        )
-                        candidates = self._collect_official_assistant_candidates(messages_payload)
-                        if parent_message_id:
-                            filtered = [
-                                item
-                                for item in candidates
-                                if self._extract_candidate_parent_id(item) in {"", parent_message_id}
-                            ]
-                            if filtered:
-                                candidates = filtered
-                        candidates = self._sort_assistant_candidates(candidates)
-                        last_info_error = ""
-                        for message in candidates:
-                            info = message.get("info") if isinstance(message.get("info"), dict) else {}
-                            message_id = str(info.get("id") or "").strip()
-                            role = str(info.get("role") or "").strip().lower()
-                            if message_id and role:
-                                message_roles[message_id] = role
-                            if message_id:
-                                assistant_message_ids.add(message_id)
-                            for event in self._extract_incremental_tool_events(message=message, state=state):
-                                state["saw_tool_event"] = True
-                                state["last_progress_at"] = time.monotonic()
-                                yield event
-                            for delta in self._extract_incremental_text_deltas(message=message, state=state):
-                                saw_assistant_text = True
-                                state["last_progress_at"] = time.monotonic()
-                                assistant_delta_emitted += 1
-                                yield {"event": "assistant.delta", "payload": {"content": delta}}
-                            embedded_error = self._extract_assistant_info_error(message)
-                            if embedded_error:
-                                last_info_error = self._sanitize_error_message(embedded_error)
-                        if last_info_error:
-                            terminal_event = {
-                                "event": "run.failed",
-                                "payload": {"error": f"OpenCode assistant error: {last_info_error}"},
-                                "code": "OPENCODE_ASSISTANT_ERROR",
-                            }
-                            break
-                        if (
-                            allow_synthetic_terminal
-                            and saw_assistant_text
-                            and not bool(state.get("saw_tool_event"))
-                        ):
-                            terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
-                            break
-                        if allow_synthetic_terminal:
-                            detail_payload = messages_payload if isinstance(messages_payload, dict) else {"messages": messages_payload}
-                            details = self._compact_json_preview(detail_payload)
-                            terminal_event = {
-                                "event": "run.failed",
-                                "payload": {"error": f"OpenCode response did not include assistant text. response={details}"},
-                                "code": "OPENCODE_EMPTY_RESPONSE",
-                            }
+                        emitted_events, completed = await _evaluate_idle_signal("session.idle")
+                        for emitted in emitted_events:
+                            yield emitted
+                        if completed:
                             break
                         continue
 
-        if terminal_event is None:
-            _maybe_mark_settled_complete()
         if terminal_event is not None:
             top_event_types = sorted(event_type_counts.items(), key=lambda item: item[1], reverse=True)[:12]
             _opencode_trace(
@@ -1078,9 +1068,6 @@ class OpenCodeServerClient:
         )
 
     async def _stream_official_run_events_snapshot(self, *, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
-        allow_synthetic_terminal = str(
-            os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_ALLOW_SYNTHETIC_TERMINAL", "0")
-        ).strip().lower() in {"1", "true", "yes", "on"}
         state = self._official_run_state.setdefault(
             session_id,
             {
@@ -1217,33 +1204,19 @@ class OpenCodeServerClient:
                     state["last_progress_at"] = time.monotonic()
                     yield {"event": "assistant.delta", "payload": {"content": delta}}
 
-            if (
-                allow_synthetic_terminal
-                and bool(state.get("complete_on_initial_text"))
-                and saw_assistant_text
-                and not bool(state.get("saw_tool_event"))
+            if self._is_session_completion_ready(
+                state=state,
+                pending_question_request_ids=pending_question_request_ids,
+                candidates=candidates,
+                allow_text_fallback=True,
             ):
                 yield {"event": "run.completed", "payload": {"status": "completed"}}
                 self._official_run_state.pop(session_id, None)
                 return
-
-            running_statuses = {"running", "pending", "in_progress", "started"}
-            tool_status = state.get("tool_status") if isinstance(state.get("tool_status"), dict) else {}
-            has_running_tools = any(str(value or "").strip().lower() in running_statuses for value in tool_status.values())
             has_pending_questions = any(str(item or "").strip() for item in pending_question_request_ids)
+            has_running_tools = self._has_running_tool_states(state=state)
             settle_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS") or "1.0").strip())
             last_progress_at = float(state.get("last_progress_at") or 0.0)
-            if (
-                allow_synthetic_terminal
-                and saw_assistant_text
-                and not has_running_tools
-                and not has_pending_questions
-                and not bool(state.get("saw_tool_event"))
-                and (time.monotonic() - last_progress_at) >= max(0.2, settle_seconds)
-            ):
-                yield {"event": "run.completed", "payload": {"status": "completed"}}
-                self._official_run_state.pop(session_id, None)
-                return
             if (
                 (not saw_assistant_text)
                 and last_assistant_info_error
@@ -1300,6 +1273,71 @@ class OpenCodeServerClient:
         if raw_payload.get("type"):
             return raw_payload
         return None
+
+    @staticmethod
+    def _extract_session_status_type(properties: dict[str, Any]) -> str:
+        status = properties.get("status")
+        if isinstance(status, dict):
+            return str(status.get("type") or status.get("status") or "").strip().lower()
+        if isinstance(status, str):
+            return str(status).strip().lower()
+        return str(properties.get("type") or properties.get("state") or "").strip().lower()
+
+    @staticmethod
+    def _assistant_finish_value(message: dict[str, Any]) -> str:
+        info = message.get("info") if isinstance(message.get("info"), dict) else {}
+        return str(info.get("finish") or "").strip().lower()
+
+    @staticmethod
+    def _assistant_message_completed_at(message: dict[str, Any]) -> int:
+        info = message.get("info") if isinstance(message.get("info"), dict) else {}
+        time_data = info.get("time") if isinstance(info.get("time"), dict) else {}
+        try:
+            return int(time_data.get("completed") or 0)
+        except Exception:
+            return 0
+
+    @classmethod
+    def _assistant_message_is_final(cls, message: dict[str, Any]) -> bool:
+        finish = cls._assistant_finish_value(message)
+        if finish:
+            return finish not in {"tool-calls", "unknown"}
+        return cls._assistant_message_completed_at(message) > 0
+
+    @classmethod
+    def _latest_assistant_candidate(cls, candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not candidates:
+            return None
+        ordered = cls._sort_assistant_candidates(candidates)
+        return ordered[-1] if ordered else None
+
+    @staticmethod
+    def _has_running_tool_states(*, state: dict[str, Any]) -> bool:
+        running_statuses = {"running", "pending", "in_progress", "started"}
+        tool_status = state.get("tool_status") if isinstance(state.get("tool_status"), dict) else {}
+        return any(str(value or "").strip().lower() in running_statuses for value in tool_status.values())
+
+    @classmethod
+    def _is_session_completion_ready(
+        cls,
+        *,
+        state: dict[str, Any],
+        pending_question_request_ids: set[Any],
+        candidates: list[dict[str, Any]],
+        allow_text_fallback: bool = False,
+    ) -> bool:
+        if any(str(item or "").strip() for item in pending_question_request_ids):
+            return False
+        if cls._has_running_tool_states(state=state):
+            return False
+        latest_assistant = cls._latest_assistant_candidate(candidates)
+        if latest_assistant is None:
+            return False
+        if cls._assistant_message_is_final(latest_assistant):
+            return True
+        if allow_text_fallback and (not bool(state.get("saw_tool_event"))):
+            return bool(cls._extract_text_from_message_payload(latest_assistant))
+        return False
 
     @staticmethod
     def _extract_session_id_from_global_event_properties(properties: dict[str, Any]) -> str:

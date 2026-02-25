@@ -360,8 +360,7 @@ export function AppsBuilderChatPanel({
           <Message key={item.id} from="assistant" className="max-w-full">
             <MessageContent className="bg-transparent px-0 py-0">
               <MessageResponse>
-                {item.description ||
-                  "I can help with code changes in this app workspace. Tell me what you want to change."}
+                {item.description}
               </MessageResponse>
             </MessageContent>
           </Message>

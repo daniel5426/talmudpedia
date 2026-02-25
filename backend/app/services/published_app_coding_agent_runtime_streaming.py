@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import os
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
@@ -391,9 +390,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         terminal_engine_event: str | None = None
         terminal_engine_payload: dict[str, Any] = {}
         terminal_engine_diagnostics: list[dict[str, Any]] | None = None
-        force_fail_missing_terminal = str(
-            os.getenv("APPS_CODING_AGENT_RUNTIME_FORCE_FAIL_MISSING_TERMINAL", "0")
-        ).strip().lower() in {"1", "true", "yes", "on"}
 
         try:
             engine = self._resolve_engine_for_run(run)
@@ -479,24 +475,12 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 )
 
             if status not in _TERMINAL_RUN_STATUSES:
-                if force_fail_missing_terminal:
-                    run.status = RunStatus.failed
-                    run.error_message = "OpenCode stream ended before a terminal event"
-                    run.completed_at = datetime.now(timezone.utc)
-                    await self.db.commit()
-                    status = RunStatus.failed.value
-                    trace_stream(
-                        "runtime_stream.force_failed_missing_terminal",
-                        status=status,
-                        error=run.error_message,
-                    )
-                else:
-                    trace_stream(
-                        "runtime_stream.missing_terminal_nonfatal",
-                        status=status,
-                        mapped_terminal_event=terminal_engine_event,
-                    )
-                    return
+                trace_stream(
+                    "runtime_stream.missing_terminal_nonfatal",
+                    status=status,
+                    mapped_terminal_event=terminal_engine_event,
+                )
+                return
 
             if status == RunStatus.completed.value:
                 await finalize_sandbox("stopped")

@@ -133,13 +133,9 @@ async def _normalize_tool_status_values(db):
     Align any lowercase tool status values with the uppercase ENUM literals
     used by the database. Safe for Postgres and SQLite.
     """
-    mappings = {
-        "draft": "DRAFT",
-        "published": "PUBLISHED",
-        "deprecated": "DEPRECATED",
-        "disabled": "DISABLED",
-    }
-    for old, new in mappings.items():
+    labels = await _get_enum_labels(db, "toolstatus")
+    for old in ("draft", "published", "deprecated", "disabled"):
+        new = _resolve_enum_value(labels, old)
         await db.execute(
             text("UPDATE tool_registry SET status=:new WHERE lower(status::text)=:old"),
             {"new": new, "old": old},
@@ -151,17 +147,9 @@ async def _normalize_tool_impl_values(db):
     """
     Align lowercase implementation_type values with uppercase ENUM literals.
     """
-    mappings = {
-        "internal": "INTERNAL",
-        "http": "HTTP",
-        "rag_retrieval": "RAG_RETRIEVAL",
-        "agent_call": "AGENT_CALL",
-        "function": "FUNCTION",
-        "custom": "CUSTOM",
-        "artifact": "ARTIFACT",
-        "mcp": "MCP",
-    }
-    for old, new in mappings.items():
+    labels = await _get_enum_labels(db, "toolimplementationtype")
+    for old in ("internal", "http", "rag_retrieval", "agent_call", "function", "custom", "artifact", "mcp"):
+        new = _resolve_enum_value(labels, old)
         await db.execute(
             text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type::text)=:old"),
             {"new": new, "old": old},
