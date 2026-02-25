@@ -111,7 +111,7 @@ Run flow:
 
 ### Streaming and Stall Ownership (Current Defaults)
 - Backend monitor owns forced terminalization policies; aggressive fail-close is env-gated.
-- Runtime stream missing-terminal behavior is non-fatal by default (`APPS_CODING_AGENT_RUNTIME_FORCE_FAIL_MISSING_TERMINAL=0`).
+- Runtime stream missing-terminal behavior is non-fatal by default (reconcile-first, no runtime force-fail toggle).
 - Monitor inactivity/EOF fail-close paths are disabled by default and can be enabled via:
   - `APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_INACTIVITY`
   - `APPS_CODING_AGENT_MONITOR_FORCE_TERMINAL_ON_STREAM_END_WITHOUT_TERMINAL`

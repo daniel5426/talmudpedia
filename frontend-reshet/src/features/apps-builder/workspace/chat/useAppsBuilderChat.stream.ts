@@ -7,7 +7,6 @@ import {
   type CodingAgentPendingQuestion,
   parsePendingQuestionPayload,
   parseRunActiveDetail,
-  parseStreamReplayGapDetail,
   parseSse,
   parseTerminalRunStatus,
   resolvePositiveTimeoutMs,
@@ -185,9 +184,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     let assistantText = "";
     let sawAssistantOutput = false;
     let sawToolActivity = false;
-    let sawNonTerminalDisconnect = false;
-    let lastSeenSeq = 0;
-    let reconnectAttempts = 0;
     let currentStreamId = `assistant-${normalizedRunId}`;
     let segmentCounter = 0;
     let latestSummary = "";
@@ -210,19 +206,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     const READ_POLL_TIMEOUT_MS = Math.min(
       STALL_TIMEOUT_MS,
       resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_READ_POLL_TIMEOUT_MS, 2000),
-    );
-    const reconnectAttemptsDefault = process.env.NODE_ENV === "test" ? 0 : 6;
-    const reconnectAttemptsRaw = Number(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS);
-    const RECONNECT_MAX_ATTEMPTS = Number.isFinite(reconnectAttemptsRaw)
-      ? Math.max(0, Math.min(20, Math.floor(reconnectAttemptsRaw)))
-      : reconnectAttemptsDefault;
-    const RECONNECT_BASE_DELAY_MS = resolvePositiveTimeoutMs(
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS,
-      500,
-    );
-    const RECONNECT_MAX_DELAY_MS = Math.max(
-      RECONNECT_BASE_DELAY_MS,
-      resolvePositiveTimeoutMs(process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS, 4000),
     );
     const autoCancelRecoveryRaw = String(
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_AUTO_CANCEL_RECOVERY_ENABLED || "0",
@@ -283,41 +266,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       return raced.result;
     };
 
-    const scheduleReconnect = async (
-      reason: string,
-      details: Record<string, unknown> = {},
-    ): Promise<boolean> => {
-      if (intentionalAbortRef.current || !isCurrentAttachment()) {
-        return false;
-      }
-      if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
-        logRunFailureDebug("stream_reconnect_exhausted", {
-          reason,
-          attempts: reconnectAttempts,
-          lastSeenSeq,
-          ...details,
-        });
-        return false;
-      }
-      reconnectAttempts += 1;
-      sawNonTerminalDisconnect = true;
-      const delayMs = Math.min(
-        RECONNECT_MAX_DELAY_MS,
-        RECONNECT_BASE_DELAY_MS * Math.max(1, 2 ** (reconnectAttempts - 1)),
-      );
-      logRunFailureDebug("stream_reconnect_attempt", {
-        reason,
-        attempt: reconnectAttempts,
-        delayMs,
-        lastSeenSeq,
-        ...details,
-      });
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, delayMs);
-      });
-      return true;
-    };
-
     const requestRecoveryCancel = async (): Promise<void> => {
       if (pendingCancelRef.current || recoveryCancelAttempted) {
         return;
@@ -369,9 +317,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     };
 
     const openStreamReader = async (): Promise<boolean> => {
-      const response = lastSeenSeq > 0
-        ? await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId, { fromSeq: lastSeenSeq })
-        : await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId);
+      const response = await publishedAppsService.streamCodingAgentRun(appId, normalizedRunId);
       if (!response.ok) {
         let message = `Failed to stream coding-agent run (${response.status})`;
         let errorPayload: unknown = null;
@@ -387,21 +333,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           }
         } catch {
           // keep fallback
-        }
-        const replayGap = response.status === 409
-          ? parseStreamReplayGapDetail(responseDetail || errorPayload)
-          : null;
-        if (replayGap) {
-          sawNonTerminalDisconnect = true;
-          const reconciled = await reconcileTerminalStateFromBackend();
-          if (reconciled) {
-            return false;
-          }
-          lastSeenSeq = Math.max(lastSeenSeq, Math.max(0, replayGap.next_replay_seq - 1));
-          return scheduleReconnect("stream_replay_gap", {
-            status: response.status,
-            nextReplaySeq: replayGap.next_replay_seq,
-          });
         }
         logRunFailureDebug("stream_response_not_ok", {
           status: response.status,
@@ -419,7 +350,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       pendingRead = null;
       buffer = "";
       lastEventAt = Date.now();
-      reconnectAttempts = 0;
       return true;
     };
 
@@ -483,7 +413,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         readResult = await readWithPollingTimeout(READ_POLL_TIMEOUT_MS);
       } catch (readError) {
         pendingRead = null;
-        sawNonTerminalDisconnect = true;
         const reconciled = await reconcileTerminalStateFromBackend();
         if (reconciled) {
           break;
@@ -493,12 +422,9 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         }
         reader = null;
         abortReaderRef.current = null;
-        const shouldRetry = await scheduleReconnect("stream_read_error", {
+        logRunFailureDebug("stream_read_error", {
           error: readError instanceof Error ? readError.message : String(readError || ""),
         });
-        if (shouldRetry) {
-          continue;
-        }
         break;
       }
       if (!readResult) {
@@ -508,7 +434,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       if (done) {
         pendingRead = null;
         if (!sawTerminalEvent && !intentionalAbortRef.current) {
-          sawNonTerminalDisconnect = true;
           const reconciled = await reconcileTerminalStateFromBackend();
           if (reconciled) {
             break;
@@ -518,10 +443,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           }
           reader = null;
           abortReaderRef.current = null;
-          const shouldRetry = await scheduleReconnect("stream_eof_without_terminal");
-          if (shouldRetry) {
-            continue;
-          }
         }
         break;
       }
@@ -542,7 +463,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         parsedEventsInThisRead += 1;
         const seq = Number(parsed.seq || 0);
         if (seq > 0) {
-          lastSeenSeq = Math.max(lastSeenSeq, seq);
           const eventKey = `${normalizedRunId}:${seq}`;
           if (seenRunEventKeysRef.current.has(eventKey)) {
             boundary = findSseFrameBoundary(buffer);

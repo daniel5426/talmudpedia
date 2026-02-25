@@ -373,7 +373,6 @@ async def stream_coding_agent_run(
     app_id: UUID,
     run_id: UUID,
     request: Request,
-    from_seq: Optional[int] = Query(default=None, ge=0),
     _: Dict[str, Any] = Depends(require_scopes("apps.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
@@ -385,37 +384,6 @@ async def stream_coding_agent_run(
     service = PublishedAppCodingAgentRuntimeService(db)
     run = await service.get_run_for_app(app_id=app.id, run_id=run_id)
     monitor = PublishedAppCodingRunMonitor(db)
-    normalized_from_seq = max(0, int(from_seq or 0))
-    if normalized_from_seq > 0:
-        next_replay_seq = await monitor.validate_replay_cursor(
-            app_id=app.id,
-            run_id=run.id,
-            from_seq=normalized_from_seq,
-        )
-        if next_replay_seq is not None:
-            pipeline_trace(
-                "stream.replay_gap",
-                pipeline="api_v2",
-                app_id=str(app.id),
-                run_id=str(run.id),
-                from_seq=normalized_from_seq,
-                next_replay_seq=next_replay_seq,
-            )
-            PublishedAppCodingRunMonitor._trace(
-                "stream.replay_gap",
-                app_id=str(app.id),
-                run_id=str(run.id),
-                from_seq=normalized_from_seq,
-                next_replay_seq=next_replay_seq,
-            )
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "CODING_AGENT_STREAM_REPLAY_GAP",
-                    "message": "Requested replay cursor is older than retained in-memory events.",
-                    "next_replay_seq": int(next_replay_seq),
-                },
-            )
     heartbeat_raw = (os.getenv("APPS_CODING_AGENT_STREAM_HEARTBEAT_SECONDS") or "").strip()
     try:
         heartbeat_seconds = float(heartbeat_raw) if heartbeat_raw else 10.0
@@ -439,7 +407,6 @@ async def stream_coding_agent_run(
         stream_iter = monitor.stream_events(
             app_id=app.id,
             run_id=run.id,
-            from_seq=normalized_from_seq if normalized_from_seq > 0 else None,
         ).__aiter__()
         pending_next: asyncio.Task | None = None
         try:

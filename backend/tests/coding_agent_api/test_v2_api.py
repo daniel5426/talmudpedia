@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -12,7 +11,7 @@ from sqlalchemy import select
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
-from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor, _MonitorState
+from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
 
@@ -438,154 +437,3 @@ async def test_v2_cancel_closes_stream_when_runtime_keeps_non_terminal_events(cl
     await asyncio.wait_for(consumer_task, timeout=3.0)
     assert "run.cancelled" in observed_events
 
-
-@pytest.mark.asyncio
-async def test_v2_stream_replays_only_unseen_events_from_from_seq(client, db_session):
-    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
-
-    run = AgentRun(
-        tenant_id=tenant.id,
-        agent_id=agent.id,
-        user_id=user.id,
-        initiator_user_id=user.id,
-        status=RunStatus.running,
-        input_params={
-            "input": "Replay stream",
-            "context": {
-                "chat_session_id": str(uuid4()),
-                "preview_sandbox_id": "sandbox-test",
-                "preview_sandbox_status": "running",
-            },
-        },
-        surface=CODING_AGENT_SURFACE,
-        published_app_id=UUID(app_id),
-        base_revision_id=UUID(draft_revision_id),
-        execution_engine="opencode",
-    )
-    db_session.add(run)
-    await db_session.commit()
-    await db_session.refresh(run)
-
-    idle_task = asyncio.create_task(asyncio.Event().wait())
-    state = _MonitorState(run_id=str(run.id), task=idle_task)
-    state.event_backlog.extend(
-        [
-            {
-                "event": "run.accepted",
-                "run_id": str(run.id),
-                "app_id": app_id,
-                "seq": 1,
-                "ts": "2026-02-25T19:00:00Z",
-                "stage": "run",
-                "payload": {"status": "queued"},
-                "diagnostics": [],
-            },
-            {
-                "event": "assistant.delta",
-                "run_id": str(run.id),
-                "app_id": app_id,
-                "seq": 2,
-                "ts": "2026-02-25T19:00:01Z",
-                "stage": "assistant",
-                "payload": {"content": "hello"},
-                "diagnostics": [],
-            },
-            {
-                "event": "assistant.delta",
-                "run_id": str(run.id),
-                "app_id": app_id,
-                "seq": 3,
-                "ts": "2026-02-25T19:00:02Z",
-                "stage": "assistant",
-                "payload": {"content": " world"},
-                "diagnostics": [],
-            },
-            {
-                "event": "run.completed",
-                "run_id": str(run.id),
-                "app_id": app_id,
-                "seq": 4,
-                "ts": "2026-02-25T19:00:03Z",
-                "stage": "run",
-                "payload": {"status": "completed"},
-                "diagnostics": [],
-            },
-        ]
-    )
-    async with PublishedAppCodingRunMonitor._monitors_lock:
-        PublishedAppCodingRunMonitor._monitors[str(run.id)] = state
-
-    response = await client.get(
-        f"/admin/apps/{app_id}/coding-agent/v2/runs/{run.id}/stream?from_seq=2",
-        headers=headers,
-    )
-    assert response.status_code == 200
-    events: list[dict[str, object]] = []
-    for frame in response.text.split("\n\n"):
-        raw = frame.strip()
-        if not raw.startswith("data: "):
-            continue
-        events.append(json.loads(raw[6:]))
-    seqs = [int(event.get("seq") or 0) for event in events]
-    assert seqs == [3, 4]
-
-
-@pytest.mark.asyncio
-async def test_v2_stream_replay_gap_returns_409_with_next_seq(client, db_session):
-    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
-
-    run = AgentRun(
-        tenant_id=tenant.id,
-        agent_id=agent.id,
-        user_id=user.id,
-        initiator_user_id=user.id,
-        status=RunStatus.running,
-        input_params={
-            "input": "Replay gap",
-            "context": {
-                "chat_session_id": str(uuid4()),
-                "preview_sandbox_id": "sandbox-test",
-                "preview_sandbox_status": "running",
-            },
-        },
-        surface=CODING_AGENT_SURFACE,
-        published_app_id=UUID(app_id),
-        base_revision_id=UUID(draft_revision_id),
-        execution_engine="opencode",
-    )
-    db_session.add(run)
-    await db_session.commit()
-    await db_session.refresh(run)
-
-    idle_task = asyncio.create_task(asyncio.Event().wait())
-    state = _MonitorState(run_id=str(run.id), task=idle_task)
-    state.event_backlog.extend(
-        [
-            {
-                "event": "assistant.delta",
-                "run_id": str(run.id),
-                "app_id": app_id,
-                "seq": 10,
-                "ts": "2026-02-25T19:00:10Z",
-                "stage": "assistant",
-                "payload": {"content": "recent"},
-                "diagnostics": [],
-            },
-        ]
-    )
-    async with PublishedAppCodingRunMonitor._monitors_lock:
-        PublishedAppCodingRunMonitor._monitors[str(run.id)] = state
-
-    response = await client.get(
-        f"/admin/apps/{app_id}/coding-agent/v2/runs/{run.id}/stream?from_seq=2",
-        headers=headers,
-    )
-    assert response.status_code == 409
-    payload = response.json()
-    detail = payload.get("detail") or {}
-    assert detail.get("code") == "CODING_AGENT_STREAM_REPLAY_GAP"
-    assert int(detail.get("next_replay_seq") or 0) == 10

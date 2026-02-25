@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -45,7 +44,6 @@ class _MonitorState:
     run_id: str
     task: asyncio.Task
     subscribers: set[asyncio.Queue] = field(default_factory=set)
-    event_backlog: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=6000))
     next_seq: int = 1
 
 
@@ -131,9 +129,6 @@ class PublishedAppCodingRunMonitor:
                     seq = int(state.next_seq or 1)
                 envelope["seq"] = seq
                 state.next_seq = max(int(state.next_seq or 1), seq + 1)
-                # Keep an in-memory backlog so late stream subscribers can replay
-                # already-emitted events without DB replay semantics.
-                state.event_backlog.append(dict(envelope))
             subscribers = list(state.subscribers) if state is not None else []
         event_name = str(envelope.get("event") or "").strip()
         if event_name and event_name != "assistant.delta":
@@ -256,55 +251,14 @@ class PublishedAppCodingRunMonitor:
                 error_type=exc.__class__.__name__,
             )
 
-    async def validate_replay_cursor(self, *, app_id: UUID, run_id: UUID, from_seq: int) -> int | None:
-        normalized_from_seq = max(0, int(from_seq or 0))
-        if normalized_from_seq <= 0:
-            return None
-        runtime = PublishedAppCodingAgentRuntimeService(self.db)
-        run = await runtime.get_run_for_app(app_id=app_id, run_id=run_id)
-        run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
-        if run_status in _TERMINAL_RUN_STATUSES:
-            return None
-        await self.ensure_monitor(app_id=app_id, run_id=run_id)
-        async with self.__class__._monitors_lock:
-            state = self.__class__._monitors.get(str(run_id))
-            if state is None:
-                return None
-            backlog = [dict(item) for item in state.event_backlog]
-        if not backlog:
-            return None
-        first_seq = 0
-        for item in backlog:
-            try:
-                candidate_seq = int(item.get("seq"))
-            except Exception:
-                candidate_seq = 0
-            if candidate_seq > 0:
-                first_seq = candidate_seq
-                break
-        if first_seq <= 0:
-            return None
-        if normalized_from_seq < (first_seq - 1):
-            return first_seq
-        return None
-
     async def stream_events(
         self,
         *,
         app_id: UUID,
         run_id: UUID,
-        from_seq: int | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         runtime = PublishedAppCodingAgentRuntimeService(self.db)
         run = await runtime.get_run_for_app(app_id=app_id, run_id=run_id)
-        replay_cursor = max(0, int(from_seq or 0))
-        if replay_cursor > 0:
-            self.__class__._trace(
-                "stream.reconnect_attempt",
-                run_id=str(run_id),
-                app_id=str(app_id),
-                from_seq=replay_cursor,
-            )
 
         async def _load_run_fresh() -> AgentRun | None:
             dialect_name = str(getattr(getattr(self.db.get_bind(), "dialect", None), "name", "") or "").strip().lower()
@@ -369,10 +323,6 @@ class PublishedAppCodingRunMonitor:
                 payload=payload,
                 diagnostics=diagnostics,
             )
-            terminal_seq = int(envelope.get("seq") or 1)
-            envelope["seq"] = max(1, terminal_seq)
-            if replay_cursor >= int(envelope["seq"]):
-                return
             yield envelope
             return
 
@@ -396,10 +346,6 @@ class PublishedAppCodingRunMonitor:
                 payload=payload,
                 diagnostics=diagnostics,
             )
-            terminal_seq = int(envelope.get("seq") or 1)
-            envelope["seq"] = max(1, terminal_seq)
-            if replay_cursor >= int(envelope["seq"]):
-                return
             yield envelope
             return
 
@@ -407,19 +353,16 @@ class PublishedAppCodingRunMonitor:
         # under transient plan/tool event bursts.
         queue: asyncio.Queue = asyncio.Queue()
         attached = False
-        backlog_snapshot: list[dict[str, Any]] = []
         async with self.__class__._monitors_lock:
             current = self.__class__._monitors.get(str(run_id))
             if current is not None:
                 current.subscribers.add(queue)
-                backlog_snapshot = [dict(item) for item in current.event_backlog]
                 attached = True
                 self.__class__._trace(
                     "monitor.subscriber_attached",
                     run_id=str(run_id),
                     app_id=str(app_id),
                     subscriber_count=len(current.subscribers),
-                    backlog_size=len(backlog_snapshot),
                 )
 
         if not attached:
@@ -429,49 +372,7 @@ class PublishedAppCodingRunMonitor:
                 app_id=str(app_id),
             )
 
-        replayed_events = 0
         try:
-            first_backlog_seq = 0
-            for item in backlog_snapshot:
-                try:
-                    candidate_seq = int(item.get("seq"))
-                except Exception:
-                    candidate_seq = 0
-                if candidate_seq > 0:
-                    first_backlog_seq = candidate_seq
-                    break
-            if replay_cursor > 0 and first_backlog_seq > 0 and replay_cursor < (first_backlog_seq - 1):
-                self.__class__._trace(
-                    "stream.replay_gap",
-                    run_id=str(run_id),
-                    app_id=str(app_id),
-                    from_seq=replay_cursor,
-                    next_replay_seq=first_backlog_seq,
-                )
-                replay_cursor = first_backlog_seq - 1
-            for payload in backlog_snapshot:
-                payload_seq = 0
-                try:
-                    payload_seq = int(payload.get("seq"))
-                except Exception:
-                    payload_seq = 0
-                if replay_cursor > 0 and payload_seq > 0 and payload_seq <= replay_cursor:
-                    continue
-                yield payload
-                replayed_events += 1
-                if payload_seq > 0:
-                    replay_cursor = payload_seq
-                if str(payload.get("event") or "") in _TERMINAL_EVENTS:
-                    return
-            if replayed_events > 0:
-                self.__class__._trace(
-                    "stream.reconnect_resumed",
-                    run_id=str(run_id),
-                    app_id=str(app_id),
-                    replayed_events=replayed_events,
-                    from_seq=int(from_seq or 0),
-                    to_seq=replay_cursor,
-                )
             while True:
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=2.0)
@@ -492,24 +393,12 @@ class PublishedAppCodingRunMonitor:
                             payload=runtime.serialize_run(refreshed),
                             diagnostics=diagnostics,
                         )
-                        terminal_envelope["seq"] = max(1, replay_cursor + 1)
-                        if int(terminal_envelope["seq"]) > replay_cursor:
-                            replay_cursor = int(terminal_envelope["seq"])
-                            yield terminal_envelope
+                        yield terminal_envelope
                         break
                     continue
                 if payload is None:
                     break
-                payload_seq = 0
-                try:
-                    payload_seq = int(payload.get("seq"))
-                except Exception:
-                    payload_seq = 0
-                if replay_cursor > 0 and payload_seq > 0 and payload_seq <= replay_cursor:
-                    continue
                 yield payload
-                if payload_seq > 0:
-                    replay_cursor = payload_seq
                 if str(payload.get("event") or "") in _TERMINAL_EVENTS:
                     break
         finally:

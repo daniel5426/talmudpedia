@@ -1,6 +1,6 @@
 # Coding Agent API Tests
 
-Last Updated: 2026-02-24
+Last Updated: 2026-02-25
 
 ## Scope of the feature
 - v2 coding-agent admin API under `/admin/apps/{app_id}/coding-agent/v2/*`.
@@ -15,6 +15,7 @@ Last Updated: 2026-02-24
 - Prompt submission starts a run when no active run exists for the chat session.
 - Prompt submission rejects with `CODING_AGENT_RUN_ACTIVE` when a run is active for the chat session.
 - Stream layer emits one `assistant.delta` per upstream chunk (no backend coalescing).
+- Stream endpoint is live-only (no replay cursor contract) with reconcile-first missing-terminal handling.
 - Terminal transitions are persisted and old non-v2 route is removed (`/coding-agent/runs` => 404).
 - Removed backend queue routes return `404` (`/coding-agent/v2/chat-sessions/{session_id}/queue*`).
 - Cancel endpoint marks run `cancelled`.
@@ -23,6 +24,9 @@ Last Updated: 2026-02-24
 - OpenCode apply-patch recovery/fail-closed semantics remain covered in engine-level tests.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py::test_v2_submit_prompt_started_then_run_active tests/coding_agent_api/test_v2_api.py::test_v2_stream_missing_terminal_does_not_force_fail_by_default tests/coding_agent_api/test_v2_api.py::test_v2_cancel_marks_cancelled tests/coding_agent_api/test_v2_api.py::test_v2_cancel_closes_stream_when_runtime_keeps_non_terminal_events`
+- Date: 2026-02-25
+- Result: PASS (4 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py`
 - Date: 2026-02-24
 - Result: PASS (5 passed, 6 warnings)

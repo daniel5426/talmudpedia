@@ -503,7 +503,6 @@ export const publishedAppsService = {
   async streamCodingAgentRun(
     appId: string,
     runId: string,
-    options: { fromSeq?: number } = {},
   ): Promise<Response> {
     // Bypass Next.js rewrite proxy for SSE because it can buffer chunked responses.
     const streamBase = String(process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || "").trim();
@@ -531,10 +530,6 @@ export const publishedAppsService = {
       `/admin/apps/${encodeURIComponent(appId)}/coding-agent/v2/runs/${encodeURIComponent(runId)}/stream`,
       directBackendUrl,
     );
-    const fromSeq = Number(options.fromSeq);
-    if (Number.isFinite(fromSeq) && fromSeq > 0) {
-      url.searchParams.set("from_seq", String(Math.floor(fromSeq)));
-    }
     return fetch(url.toString(), {
       method: "GET",
       headers,

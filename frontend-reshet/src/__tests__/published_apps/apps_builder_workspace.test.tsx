@@ -2260,188 +2260,43 @@ describe("AppsBuilderWorkspace", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("reconnects stream with from_seq and avoids duplicate tool cards", async () => {
-    const originalReconnectAttempts = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS;
-    const originalReconnectBaseDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS;
-    const originalReconnectMaxDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS;
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = "3";
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = "1";
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = "2";
-    (publishedAppsService.getCodingAgentRun as jest.Mock).mockResolvedValue({
-      run_id: "run-1",
-      status: "running",
-      execution_engine: "opencode",
-      chat_session_id: "chat-1",
-      surface: "published_app_coding_agent",
-      published_app_id: "app-1",
-      base_revision_id: "rev-1",
-      result_revision_id: null,
-      checkpoint_revision_id: null,
-      error: null,
-      created_at: new Date().toISOString(),
-      started_at: new Date().toISOString(),
-      completed_at: null,
-    });
-    (publishedAppsService.streamCodingAgentRun as jest.Mock)
-      .mockResolvedValueOnce(
-        makeStreamResponse([
-          'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-25T19:00:00Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
-        ]),
-      )
-      .mockResolvedValueOnce(
-        makeStreamResponse([
-          'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-25T19:00:00Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
-          'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-25T19:00:01Z","stage":"assistant","payload":{"content":"Recovered output"},"diagnostics":[]}\n\n',
-          'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-25T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
-        ]),
-      );
-
-    try {
-      render(<AppsBuilderWorkspace appId="app-1" />);
-      await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-      await screen.findByPlaceholderText("Plan, @ for context, / for commands");
-
-      fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
-        target: { value: "retry stream" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-      await screen.findByText("Recovered output");
-      await waitFor(() => {
-        expect(publishedAppsService.streamCodingAgentRun).toHaveBeenNthCalledWith(1, "app-1", "run-1");
-        expect(publishedAppsService.streamCodingAgentRun).toHaveBeenNthCalledWith(2, "app-1", "run-1", {
-          fromSeq: 1,
-        });
-      });
-      expect(screen.queryAllByRole("button", { name: "Researching 1 file" })).toHaveLength(1);
-    } finally {
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = originalReconnectAttempts;
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = originalReconnectBaseDelay;
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = originalReconnectMaxDelay;
-    }
-  });
-
-  it("handles replay-gap by reconciling status and reattaching from next retained sequence", async () => {
-    const originalReconnectAttempts = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS;
-    const originalReconnectBaseDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS;
-    const originalReconnectMaxDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS;
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = "3";
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = "1";
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = "2";
-    (publishedAppsService.getCodingAgentRun as jest.Mock).mockResolvedValue({
-      run_id: "run-1",
-      status: "running",
-      execution_engine: "opencode",
-      chat_session_id: "chat-1",
-      surface: "published_app_coding_agent",
-      published_app_id: "app-1",
-      base_revision_id: "rev-1",
-      result_revision_id: null,
-      checkpoint_revision_id: null,
-      error: null,
-      created_at: new Date().toISOString(),
-      started_at: new Date().toISOString(),
-      completed_at: null,
-    });
-    (publishedAppsService.streamCodingAgentRun as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 409,
-        statusText: "Conflict",
-        json: async () => ({
-          detail: {
-            code: "CODING_AGENT_STREAM_REPLAY_GAP",
-            message: "Requested replay cursor is older than retained in-memory events.",
-            next_replay_seq: 9,
-          },
-        }),
-      })
-      .mockResolvedValueOnce(
-        makeStreamResponse([
-          'data: {"event":"assistant.delta","run_id":"run-1","app_id":"app-1","seq":9,"ts":"2026-02-25T19:00:01Z","stage":"assistant","payload":{"content":"Replay recovered"},"diagnostics":[]}\n\n',
-          'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":10,"ts":"2026-02-25T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
-        ]),
-      );
-
-    try {
-      render(<AppsBuilderWorkspace appId="app-1" />);
-      await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-      await screen.findByPlaceholderText("Plan, @ for context, / for commands");
-
-      fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
-        target: { value: "recover replay gap" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-      await screen.findByText("Replay recovered");
-      await waitFor(() => {
-        expect(publishedAppsService.streamCodingAgentRun).toHaveBeenNthCalledWith(1, "app-1", "run-1");
-        expect(publishedAppsService.streamCodingAgentRun).toHaveBeenNthCalledWith(2, "app-1", "run-1", {
-          fromSeq: 8,
-        });
-      });
-    } finally {
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = originalReconnectAttempts;
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = originalReconnectBaseDelay;
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = originalReconnectMaxDelay;
-    }
-  });
-
   it("does not show generic fallback text after non-terminal disconnect with tool activity", async () => {
-    const originalReconnectAttempts = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS;
-    const originalReconnectBaseDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS;
-    const originalReconnectMaxDelay = process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS;
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = "3";
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = "1";
-    process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = "2";
     (publishedAppsService.getCodingAgentRun as jest.Mock).mockResolvedValue({
       run_id: "run-1",
-      status: "running",
+      status: "completed",
       execution_engine: "opencode",
       chat_session_id: "chat-1",
       surface: "published_app_coding_agent",
       published_app_id: "app-1",
       base_revision_id: "rev-1",
-      result_revision_id: null,
+      result_revision_id: "rev-2",
       checkpoint_revision_id: null,
       error: null,
       created_at: new Date().toISOString(),
       started_at: new Date().toISOString(),
-      completed_at: null,
+      completed_at: new Date().toISOString(),
     });
-    (publishedAppsService.streamCodingAgentRun as jest.Mock)
-      .mockResolvedValueOnce(
-        makeStreamResponse([
-          'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-25T19:00:00Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
-        ]),
-      )
-      .mockResolvedValueOnce(
-        makeStreamResponse([
-          'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-25T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
-        ]),
-      );
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce(
+      makeStreamResponse([
+        'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-25T19:00:00Z","stage":"tool","payload":{"tool":"read","span_id":"call-1","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
+      ]),
+    );
 
-    try {
-      render(<AppsBuilderWorkspace appId="app-1" />);
-      await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
-      await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
 
-      fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
-        target: { value: "tool only progress" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "tool only progress" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-      await screen.findByRole("button", { name: "Researching 1 file" });
-      await waitFor(() => {
-        expect(
-          screen.queryByText("I can help with code changes in this app workspace. Tell me what you want to change."),
-        ).not.toBeInTheDocument();
-      });
-    } finally {
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_ATTEMPTS = originalReconnectAttempts;
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_BASE_DELAY_MS = originalReconnectBaseDelay;
-      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_RECONNECT_MAX_DELAY_MS = originalReconnectMaxDelay;
-    }
+    await screen.findByRole("button", { name: "Researching 1 file" });
+    await waitFor(() => {
+      expect(
+        screen.queryByText("I can help with code changes in this app workspace. Tell me what you want to change."),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("parses SSE events when data prefix has no trailing space", async () => {

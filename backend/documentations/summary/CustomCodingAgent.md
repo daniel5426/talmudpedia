@@ -18,8 +18,8 @@ This doc now reflects the current thin-wrapper defaults that were implemented in
 - Tool event passthrough defaults to raw OpenCode semantics, with normalized remap available by env flag.
 - Runtime and monitor missing-terminal/inactivity fail-close behavior is opt-in, not default.
 - Frontend stream stall handling is non-destructive by default and reconciles backend state before any cancel action.
-- v2 stream is reconnectable with in-process replay (`from_seq`) and monitor-owned run-global monotonic `seq`.
-- Non-terminal disconnects are reconcile-first: transport closure triggers status reconciliation/reconnect rather than immediate failed terminalization.
+- v2 stream is live-only (no wrapper reconnect/replay cursor path).
+- Non-terminal disconnects are reconcile-first: transport closure triggers status reconciliation against backend run status rather than immediate failed terminalization.
 - Permission prompts from OpenCode (`permission.asked`) are mapped into question flow, with stage-sandbox auto-approval by default policy.
 - Mid-run assistant text no longer implies terminal completion: `session.idle` does not force `run.completed` in default reconcile-first mode.
 
@@ -156,7 +156,7 @@ Design notes:
 - No DB event replay table
 - No seq conflict reconciliation layer
 - SSE `seq` is run-global monotonic and assigned in monitor emit path
-- Replay is in-process via monitor backlog (`stream?from_seq=<n>`); stale cursors return `409` with `CODING_AGENT_STREAM_REPLAY_GAP`
+- No cursor-based replay path in v2 stream endpoint
 
 ### 2) Prompt Queue Ownership
 
@@ -260,12 +260,11 @@ Implemented frontend service updates:
 - Selector includes OpenCode free-model options and paid OpenCode coding models
 - Auto selection submits `opencode/big-pickle`
 - Engine resolver and engine selection path removed from send flow
-- Stream call accepts optional replay cursor (`fromSeq`) and reconnects with bounded backoff on non-terminal EOF/read errors
+- Stream call is live-only and does not use reconnect/replay cursor semantics
 - Stream rendering now handles assistant chunks without frontend coalescing
 - Frontend stall watchdog is non-destructive by default:
   - no implicit cancel on stall/max-duration unless `NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_AUTO_CANCEL_RECOVERY_ENABLED=1`
   - missing-terminal stream endings reconcile with backend status first and avoid forced cancel in default mode
-- Replay-gap (`409 CODING_AGENT_STREAM_REPLAY_GAP`) is handled by status reconciliation and resumed attachment from current cursor
 - Generic assistant fallback text is suppressed after non-terminal disconnect or tool-only progress to avoid misleading "mid-run stopped" UX
 - Builder lock state now uses:
   - `draft_dev.has_active_coding_runs`
