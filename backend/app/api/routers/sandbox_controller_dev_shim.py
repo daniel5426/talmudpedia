@@ -144,6 +144,7 @@ class RunCommandRequest(BaseModel):
     command: list[str]
     timeout_seconds: int = 180
     max_output_bytes: int = 12000
+    workspace_path: str | None = None
 
 
 class OpenCodeStartRequest(BaseModel):
@@ -175,6 +176,24 @@ class StageSnapshotRequest(BaseModel):
 
 class StagePromoteRequest(BaseModel):
     pass
+
+
+class PublishPrepareRequest(BaseModel):
+    pass
+
+
+class PublishDependenciesPrepareRequest(BaseModel):
+    workspace_path: str
+
+
+class WorkspaceArchiveRequest(BaseModel):
+    workspace_path: str
+    format: str = "tar.gz"
+
+
+class WorkspaceSyncRequest(BaseModel):
+    workspace_path: str
+    files: dict[str, str] = Field(default_factory=dict)
 
 
 def _build_host_opencode_client() -> OpenCodeServerClient:
@@ -697,6 +716,31 @@ async def promote_stage_workspace(sandbox_id: str, payload: StagePromoteRequest)
         raise _translate_runtime_error(exc) from exc
 
 
+@router.post("/sessions/{sandbox_id}/publish/prepare")
+async def prepare_publish_workspace(sandbox_id: str, payload: PublishPrepareRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        _ = payload
+        return await manager.prepare_publish_workspace(sandbox_id=sandbox_id)
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/publish/dependencies/prepare")
+async def prepare_publish_dependencies(
+    sandbox_id: str,
+    payload: PublishDependenciesPrepareRequest,
+) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        return await manager.prepare_publish_dependencies(
+            sandbox_id=sandbox_id,
+            workspace_path=payload.workspace_path,
+        )
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
 @router.post("/sessions/{sandbox_id}/commands/run")
 async def run_command(sandbox_id: str, payload: RunCommandRequest) -> dict[str, Any]:
     manager = get_local_draft_dev_runtime_manager()
@@ -706,6 +750,33 @@ async def run_command(sandbox_id: str, payload: RunCommandRequest) -> dict[str, 
             command=payload.command,
             timeout_seconds=payload.timeout_seconds,
             max_output_bytes=payload.max_output_bytes,
+            workspace_path=payload.workspace_path,
+        )
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/workspace/archive")
+async def export_workspace_archive(sandbox_id: str, payload: WorkspaceArchiveRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        return await manager.export_workspace_archive(
+            sandbox_id=sandbox_id,
+            workspace_path=payload.workspace_path,
+            format=payload.format,
+        )
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/workspace/sync")
+async def sync_workspace_files(sandbox_id: str, payload: WorkspaceSyncRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        return await manager.sync_workspace_files(
+            sandbox_id=sandbox_id,
+            workspace_path=payload.workspace_path,
+            files=payload.files,
         )
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc

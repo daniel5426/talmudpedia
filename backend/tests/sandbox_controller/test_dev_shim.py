@@ -36,8 +36,37 @@ async def test_dev_shim_session_lifecycle_and_file_routes(client, monkeypatch):
         async def snapshot_files(self, *, sandbox_id):
             return {"sandbox_id": sandbox_id, "files": {"src/main.tsx": "export {}"}, "file_count": 1}
 
-        async def run_command(self, *, sandbox_id, command, timeout_seconds=180, max_output_bytes=12000):
-            return {"sandbox_id": sandbox_id, "code": 0, "stdout": "ok", "stderr": "", "command": command}
+        async def run_command(self, *, sandbox_id, command, timeout_seconds=180, max_output_bytes=12000, workspace_path=None):
+            return {
+                "sandbox_id": sandbox_id,
+                "code": 0,
+                "stdout": "ok",
+                "stderr": "",
+                "command": command,
+                "workspace_path": workspace_path,
+            }
+
+        async def prepare_publish_workspace(self, *, sandbox_id):
+            return {
+                "sandbox_id": sandbox_id,
+                "workspace_path": f"/tmp/talmudpedia-draft-dev/{sandbox_id}/.talmudpedia/publish/current/workspace",
+                "publish_workspace_path": f"/tmp/talmudpedia-draft-dev/{sandbox_id}/.talmudpedia/publish/current/workspace",
+                "live_workspace_path": f"/tmp/talmudpedia-draft-dev/{sandbox_id}",
+                "files": {"src/main.tsx": "export {}"},
+                "file_count": 1,
+            }
+
+        async def export_workspace_archive(self, *, sandbox_id, workspace_path, format="tar.gz"):
+            return {
+                "sandbox_id": sandbox_id,
+                "workspace_path": workspace_path,
+                "format": format,
+                "archive_base64": "",
+                "size_bytes": 0,
+            }
+
+        async def sync_workspace_files(self, *, sandbox_id, workspace_path, files):
+            return {"sandbox_id": sandbox_id, "workspace_path": workspace_path, "file_count": len(files or {})}
 
         async def resolve_project_dir(self, *, sandbox_id):
             return f"/tmp/talmudpedia-draft-dev/{sandbox_id}"
@@ -110,6 +139,32 @@ async def test_dev_shim_session_lifecycle_and_file_routes(client, monkeypatch):
     )
     assert command_response.status_code == 200
     assert command_response.json()["code"] == 0
+
+    publish_prepare_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-1/publish/prepare",
+        headers=headers,
+        json={},
+    )
+    assert publish_prepare_response.status_code == 200
+    assert publish_prepare_response.json()["file_count"] == 1
+
+    workspace_sync_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-1/workspace/sync",
+        headers=headers,
+        json={
+            "workspace_path": "/workspace/.talmudpedia/publish/current/workspace",
+            "files": {"src/main.tsx": "export {}"},
+        },
+    )
+    assert workspace_sync_response.status_code == 200
+
+    archive_response = await client.post(
+        "/internal/sandbox-controller/sessions/sandbox-1/workspace/archive",
+        headers=headers,
+        json={"workspace_path": "/workspace/.talmudpedia/publish/current/workspace/dist", "format": "tar.gz"},
+    )
+    assert archive_response.status_code == 200
+    assert archive_response.json()["format"] == "tar.gz"
 
     stop_response = await client.post(
         "/internal/sandbox-controller/sessions/sandbox-1/stop",

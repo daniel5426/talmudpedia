@@ -13,6 +13,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppCustomDomain,
     PublishedAppDraftDevSession,
     PublishedAppPublishJob,
+    PublishedAppPublishJobStatus,
     PublishedAppRevision,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
@@ -248,6 +249,30 @@ async def _get_publish_job_for_app(
     if job is None:
         raise HTTPException(status_code=404, detail="Publish job not found")
     return job
+
+
+async def _get_active_publish_job_for_app(
+    db: AsyncSession,
+    *,
+    app_id: UUID,
+) -> Optional[PublishedAppPublishJob]:
+    result = await db.execute(
+        select(PublishedAppPublishJob)
+        .where(
+            and_(
+                PublishedAppPublishJob.published_app_id == app_id,
+                PublishedAppPublishJob.status.in_(
+                    [
+                        PublishedAppPublishJobStatus.queued,
+                        PublishedAppPublishJobStatus.running,
+                    ]
+                ),
+            )
+        )
+        .order_by(PublishedAppPublishJob.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _get_custom_domain_for_app(

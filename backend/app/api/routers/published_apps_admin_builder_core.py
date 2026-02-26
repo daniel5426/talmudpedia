@@ -287,6 +287,20 @@ def _enqueue_publish_job(
     job: PublishedAppPublishJob,
 ) -> Optional[str]:
     try:
+        from app.services.published_app_publish_runtime import (
+            dispatch_sandbox_publish_job,
+            sandbox_publish_enabled,
+        )
+    except Exception:
+        dispatch_sandbox_publish_job = None
+        sandbox_publish_enabled = None
+
+    if sandbox_publish_enabled and sandbox_publish_enabled():
+        if dispatch_sandbox_publish_job is None:
+            return "Sandbox publish runtime is unavailable"
+        return dispatch_sandbox_publish_job(job_id=job.id)
+
+    try:
         from app.workers.tasks import publish_published_app_task
     except Exception as exc:
         return f"Publish worker task import failed: {exc}"

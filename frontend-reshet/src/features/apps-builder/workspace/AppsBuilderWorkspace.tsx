@@ -59,6 +59,7 @@ import type {
   PublishedAppDomain,
   PublishedAppRevision,
   PublishedAppUser,
+  RevisionConflictResponse,
 } from "@/services";
 import { cn } from "@/lib/utils";
 import { sortTemplates } from "@/features/apps-builder/templates";
@@ -291,6 +292,25 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     });
   }, []);
 
+  const syncCurrentRevisionFromDraftDevSession = useCallback((session?: DraftDevSessionResponse | null) => {
+    const revisionId = session?.revision_id?.trim();
+    if (!revisionId) return;
+    setCurrentRevisionId(revisionId);
+    setState((prev) => {
+      if (!prev) return prev;
+      if (prev.app.current_draft_revision_id === revisionId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        app: {
+          ...prev.app,
+          current_draft_revision_id: revisionId,
+        },
+      };
+    });
+  }, []);
+
   const hydrateFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
     const nextFiles = revision?.files || {};
     const nextEntry = revision?.entry_file || "src/main.tsx";
@@ -369,6 +389,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       try {
         const session = await publishedAppsService.ensureDraftDevSession(appId);
         applyDraftDevSession(session);
+        syncCurrentRevisionFromDraftDevSession(session);
         setState((prev) => {
           if (!prev) return prev;
           return {
@@ -388,7 +409,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       }
     }
     throw (lastError instanceof Error ? lastError : new Error("Failed to recover draft dev session"));
-  }, [appId, applyDraftDevSession]);
+  }, [appId, applyDraftDevSession, syncCurrentRevisionFromDraftDevSession]);
 
   const syncDraftDevSession = useCallback(async () => {
     if (!currentRevisionId) return;
@@ -398,6 +419,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       revision_id: currentRevisionId,
     });
     applyDraftDevSession(session);
+    syncCurrentRevisionFromDraftDevSession(session);
     setState((prev) => {
       if (!prev) return prev;
       return {
@@ -405,7 +427,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         draft_dev: session,
       };
     });
-  }, [appId, applyDraftDevSession, currentRevisionId, entryFile, files]);
+  }, [appId, applyDraftDevSession, currentRevisionId, entryFile, files, syncCurrentRevisionFromDraftDevSession]);
 
   useEffect(() => {
     draftDevSnapshotRef.current = {
@@ -716,7 +738,25 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       await loadState();
       setPublishStatus("succeeded");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to publish app");
+      let message = err instanceof Error ? err.message : "Failed to publish app";
+      try {
+        const parsed = JSON.parse(message) as RevisionConflictResponse & { code?: string; message?: string };
+        if (parsed.code === "DRAFT_DEV_SESSION_REQUIRED_FOR_PUBLISH") {
+          message = parsed.message || "Open preview / start preview session before publishing.";
+        } else if (parsed.code === "PUBLISH_JOB_ACTIVE") {
+          message = parsed.message || "A publish is already running for this app.";
+        } else if (parsed.code === "REVISION_CONFLICT") {
+          setError(`Revision conflict. Latest revision is ${parsed.latest_revision_id}. Reloading state...`);
+          await loadState();
+          setPublishStatus(null);
+          return;
+        } else if (parsed.message) {
+          message = parsed.message;
+        }
+      } catch {
+        // ignore non-JSON errors
+      }
+      setError(message);
       setPublishStatus("failed");
     } finally {
       setIsPublishing(false);

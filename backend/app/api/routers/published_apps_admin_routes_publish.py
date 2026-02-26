@@ -9,18 +9,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppDraftDevSessionStatus,
     PublishedAppPublishJob,
     PublishedAppPublishJobStatus,
     PublishedAppStatus,
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
+from app.services.published_app_draft_dev_runtime import (
+    PublishedAppDraftDevRuntimeDisabled,
+    PublishedAppDraftDevRuntimeService,
+)
+from app.services.published_app_publish_runtime import sandbox_publish_enabled
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
+    _count_active_coding_runs_for_scope,
     _create_draft_revision_snapshot,
     _ensure_current_draft_revision,
     _get_app_for_tenant,
+    _get_active_publish_job_for_app,
+    _get_draft_dev_session_for_scope,
     _get_publish_job_for_app,
     _resolve_tenant_admin_context,
     _validate_agent,
@@ -131,6 +140,8 @@ async def publish_published_app(
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     await _validate_agent(db, ctx["tenant_id"], app.agent_id)
     actor_id = ctx["user"].id if ctx["user"] else None
+    if actor_id is None:
+        raise HTTPException(status_code=403, detail="Publish requires a user principal")
 
     payload = payload or PublishRequest()
     current_draft = await _ensure_current_draft_revision(db, app, actor_id)
@@ -145,33 +156,97 @@ async def publish_published_app(
             },
         )
 
-    source_revision = current_draft
+    publish_diagnostics: list[dict[str, Any]] = []
     saved_draft_revision_id: Optional[UUID] = None
-    if payload.files is not None or payload.entry_file is not None:
-        files = _coerce_files_payload(payload.files or dict(current_draft.files or {}))
-        next_entry = _normalize_builder_path(payload.entry_file or current_draft.entry_file)
-        _assert_builder_path_allowed(next_entry, field="entry_file")
-        _validate_builder_project_or_raise(files, next_entry)
-        source_revision = await _create_draft_revision_snapshot(
-            db=db,
-            app=app,
-            current=current_draft,
-            actor_id=actor_id,
-            files=files,
-            entry_file=next_entry,
-        )
-        saved_draft_revision_id = source_revision.id
+    source_revision_id: Optional[UUID] = current_draft.id
+    if sandbox_publish_enabled():
+        runtime_service = PublishedAppDraftDevRuntimeService(db)
+        await runtime_service.expire_idle_sessions(app_id=app.id, user_id=actor_id)
+        draft_session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor_id)
+        if (
+            draft_session is None
+            or draft_session.status != PublishedAppDraftDevSessionStatus.running
+            or not str(draft_session.sandbox_id or "").strip()
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "DRAFT_DEV_SESSION_REQUIRED_FOR_PUBLISH",
+                    "message": "Start the draft preview session before publishing.",
+                },
+            )
+
+        active_publish = await _get_active_publish_job_for_app(db, app_id=app.id)
+        if active_publish is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "PUBLISH_JOB_ACTIVE",
+                    "active_publish_job_id": str(active_publish.id),
+                    "message": "A publish job is already running for this app.",
+                },
+            )
+
+        if payload.files is not None or payload.entry_file is not None:
+            files = _coerce_files_payload(payload.files or dict(current_draft.files or {}))
+            next_entry = _normalize_builder_path(payload.entry_file or current_draft.entry_file)
+            _assert_builder_path_allowed(next_entry, field="entry_file")
+            _validate_builder_project_or_raise(files, next_entry)
+            publish_diagnostics.append({"kind": "publish_request", "entry_file": next_entry})
+            active_coding_runs = await _count_active_coding_runs_for_scope(
+                db,
+                app_id=app.id,
+                user_id=actor_id,
+            )
+            if active_coding_runs > 0:
+                publish_diagnostics.append(
+                    {
+                        "kind": "payload_sync_skipped",
+                        "code": "CODING_AGENT_RUN_ACTIVE",
+                        "message": "Publish request files were ignored because a coding-agent run is active; publishing current live preview snapshot.",
+                    }
+                )
+            else:
+                try:
+                    await runtime_service.sync_session(
+                        app=app,
+                        revision=current_draft,
+                        user_id=actor_id,
+                        files=files,
+                        entry_file=next_entry,
+                    )
+                except PublishedAppDraftDevRuntimeDisabled as exc:
+                    raise HTTPException(status_code=409, detail=str(exc))
+        source_revision_id = None
+    else:
+        if payload.files is not None or payload.entry_file is not None:
+            files = _coerce_files_payload(payload.files or dict(current_draft.files or {}))
+            next_entry = _normalize_builder_path(payload.entry_file or current_draft.entry_file)
+            _assert_builder_path_allowed(next_entry, field="entry_file")
+            _validate_builder_project_or_raise(files, next_entry)
+            source_revision = await _create_draft_revision_snapshot(
+                db=db,
+                app=app,
+                current=current_draft,
+                actor_id=actor_id,
+                files=files,
+                entry_file=next_entry,
+            )
+            source_revision_id = source_revision.id
+            saved_draft_revision_id = source_revision.id
 
     publish_job = PublishedAppPublishJob(
         published_app_id=app.id,
         tenant_id=app.tenant_id,
         requested_by=actor_id,
-        source_revision_id=source_revision.id,
+        source_revision_id=source_revision_id,
         saved_draft_revision_id=saved_draft_revision_id,
         published_revision_id=None,
         status=PublishedAppPublishJobStatus.queued,
+        stage="queued",
         error=None,
-        diagnostics=[],
+        diagnostics=publish_diagnostics,
+        last_heartbeat_at=None,
         started_at=None,
         finished_at=None,
     )
@@ -185,7 +260,9 @@ async def publish_published_app(
         publish_job.status = PublishedAppPublishJobStatus.failed
         publish_job.error = enqueue_error
         publish_job.finished_at = datetime.now(timezone.utc)
+        publish_job.stage = "failed"
         publish_job.diagnostics = [{"message": enqueue_error}]
+        publish_job.last_heartbeat_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(publish_job)
 

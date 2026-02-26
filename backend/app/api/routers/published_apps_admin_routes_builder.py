@@ -33,6 +33,7 @@ from .published_apps_admin_access import (
     _ensure_current_draft_revision,
     _get_app_for_tenant,
     _get_draft_dev_session_for_scope,
+    _get_active_publish_job_for_app,
     _get_revision,
     _get_revision_for_app,
     _resolve_tenant_admin_context,
@@ -493,6 +494,16 @@ async def heartbeat_builder_draft_dev_session(
     session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor.id)
     if session is None:
         raise HTTPException(status_code=404, detail="Draft dev session not found")
+    active_publish = await _get_active_publish_job_for_app(db, app_id=app.id)
+    if active_publish is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PUBLISH_ACTIVE_SESSION_LOCKED",
+                "active_publish_job_id": str(active_publish.id),
+                "message": "Cannot stop the draft preview session while publish is running.",
+            },
+        )
 
     runtime_service = PublishedAppDraftDevRuntimeService(db)
     try:

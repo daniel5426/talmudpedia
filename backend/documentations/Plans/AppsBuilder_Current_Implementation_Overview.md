@@ -1,6 +1,6 @@
 # Apps Builder Current Implementation Overview
 
-Last Updated: 2026-02-25
+Last Updated: 2026-02-26
 
 ## Purpose
 This document is the current-state overview of the Apps Builder system (not a future implementation plan). It summarizes how the builder works today across backend, frontend, runtime, coding-agent, revision persistence, and publish/runtime delivery.
@@ -161,18 +161,28 @@ Service:
 Publish is asynchronous and deterministic.
 
 Flow:
-1. Optional autosave payload accepted at publish request.
+1. Optional publish payload (`files`/`entry_file`) is accepted.
 2. Publish job created/enqueued.
-3. Clean build runs for publish target revision.
-4. Dist artifacts uploaded to immutable storage prefix.
-5. Publish pointer/url updates only on successful completion.
+3. Publish execution path is feature-flagged:
+   - Default/fallback: Celery worker build from draft revision snapshot (legacy/current fallback path).
+   - Sandbox path (`APPS_PUBLISH_USE_SANDBOX_BUILD=1`): build from current draft-dev live preview sandbox.
+4. Sandbox path requires an active user draft-dev session and snapshots live preview -> isolated publish workspace (`.talmudpedia/publish/current/workspace`) before build.
+5. Sandbox path creates a draft checkpoint revision from that frozen live snapshot (audit/history) and publishes from the isolated workspace build output.
+6. Dist artifacts uploaded to immutable storage prefix.
+7. Publish pointer/url updates only on successful completion.
 
 Key endpoints:
 - `POST /admin/apps/{app_id}/publish`
 - `GET /admin/apps/{app_id}/publish/jobs/{job_id}`
 
 Worker/runtime plumbing:
-- Celery app and tasks are under `backend/app/workers/`.
+- Celery app/tasks remain available as fallback under `backend/app/workers/`.
+- Sandbox publish runner service (in-process async dispatch) is implemented in:
+  - `backend/app/services/published_app_publish_runtime.py`
+
+Publish job observability (current additions):
+- Polling response includes optional `stage` (for example `snapshot`, `install`, `build`, `upload`, `finalize`).
+- Publish jobs record `last_heartbeat_at` for long-running sandbox publishes.
 
 ## Public Runtime Delivery
 Published runtime is static-only delivery with runtime descriptor APIs and a canonical runtime bootstrap contract.

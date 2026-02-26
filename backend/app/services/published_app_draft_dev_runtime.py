@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -19,6 +19,8 @@ from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
+    PublishedAppPublishJob,
+    PublishedAppPublishJobStatus,
     PublishedAppRevision,
 )
 from app.services.published_app_draft_dev_runtime_client import (
@@ -436,6 +438,22 @@ class PublishedAppDraftDevRuntimeService:
         session.last_error = None
         return session
 
+    async def get_publish_ready_session(
+        self,
+        *,
+        app_id: UUID,
+        user_id: UUID,
+    ) -> Optional[PublishedAppDraftDevSession]:
+        await self.expire_idle_sessions(app_id=app_id, user_id=user_id)
+        session = await self.get_session(app_id=app_id, user_id=user_id)
+        if session is None:
+            return None
+        if session.status != PublishedAppDraftDevSessionStatus.running:
+            return None
+        if not str(session.sandbox_id or "").strip():
+            return None
+        return session
+
     async def stop_session(
         self,
         *,
@@ -481,6 +499,23 @@ class PublishedAppDraftDevRuntimeService:
             .where(and_(*filters))
         )
         rows = list(result.scalars().all())
+        expired_count = 0
         for row in rows:
+            active_publish_result = await self.db.execute(
+                select(func.count(PublishedAppPublishJob.id)).where(
+                    and_(
+                        PublishedAppPublishJob.published_app_id == row.published_app_id,
+                        PublishedAppPublishJob.status.in_(
+                            [
+                                PublishedAppPublishJobStatus.queued,
+                                PublishedAppPublishJobStatus.running,
+                            ]
+                        ),
+                    )
+                )
+            )
+            if int(active_publish_result.scalar() or 0) > 0:
+                continue
             await self.stop_session(session=row, reason=PublishedAppDraftDevSessionStatus.expired)
-        return len(rows)
+            expired_count += 1
+        return expired_count

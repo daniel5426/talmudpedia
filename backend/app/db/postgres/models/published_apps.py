@@ -564,6 +564,8 @@ class PublishedAppPublishJob(Base):
     )
     error = Column(Text, nullable=True)
     diagnostics = Column(JSONB, nullable=False, default=list)
+    stage = Column(String(64), nullable=True)
+    last_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)

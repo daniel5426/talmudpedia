@@ -361,6 +361,7 @@ class PublishJobResponse(BaseModel):
     job_id: str
     app_id: str
     status: str
+    stage: Optional[str] = None
     source_revision_id: Optional[str] = None
     saved_draft_revision_id: Optional[str] = None
     published_revision_id: Optional[str] = None
@@ -712,6 +713,7 @@ def _publish_job_to_response(job: PublishedAppPublishJob) -> PublishJobResponse:
         job_id=str(job.id),
         app_id=str(job.published_app_id),
         status=job.status.value if hasattr(job.status, "value") else str(job.status),
+        stage=str(job.stage) if getattr(job, "stage", None) else None,
         source_revision_id=str(job.source_revision_id) if job.source_revision_id else None,
         saved_draft_revision_id=str(job.saved_draft_revision_id) if job.saved_draft_revision_id else None,
         published_revision_id=str(job.published_revision_id) if job.published_revision_id else None,
