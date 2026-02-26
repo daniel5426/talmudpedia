@@ -215,6 +215,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [domainNotesInput, setDomainNotesInput] = useState("");
   const [pendingUserUpdateId, setPendingUserUpdateId] = useState<string | null>(null);
   const [pendingDomainDeleteId, setPendingDomainDeleteId] = useState<string | null>(null);
+  const [hasUnsavedManualCodeChanges, setHasUnsavedManualCodeChanges] = useState(false);
   const hasActiveCodingRunLock = Boolean(state?.draft_dev?.has_active_coding_runs);
   const [postRunHydrationPending, setPostRunHydrationPending] = useState(false);
   const saveBlockedByBackendLock = hasActiveCodingRunLock || postRunHydrationPending;
@@ -227,6 +228,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [isLogoDialogOpen, setIsLogoDialogOpen] = useState(false);
   const [domainCopied, setDomainCopied] = useState(false);
   const syncFingerprintRef = useRef<string>("");
+  const lastSavedCodeFingerprintRef = useRef<string>("");
   const draftDevSnapshotRef = useRef<{
     sessionId: string | null;
     status: DraftDevSessionStatus | null;
@@ -297,6 +299,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setSelectedFile(Object.keys(nextFiles).sort()[0] || null);
     setCurrentRevisionId(revision?.id || null);
     syncFingerprintRef.current = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
+    lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
+    setHasUnsavedManualCodeChanges(false);
   }, []);
 
   const loadState = useCallback(async ({ showInitialSkeleton = false }: { showInitialSkeleton?: boolean } = {}) => {
@@ -637,6 +641,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         entry: entryFile,
         files,
       });
+      lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(entryFile, files);
+      setHasUnsavedManualCodeChanges(false);
       setCurrentRevisionId(revision.id);
       setState((prev) => {
         if (!prev) return prev;
@@ -884,6 +890,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setFiles((prev) => {
       const next = { ...prev };
       delete next[path];
+      const fingerprint = buildDraftDevSyncFingerprint(entryFile, next);
+      setHasUnsavedManualCodeChanges(fingerprint !== lastSavedCodeFingerprintRef.current);
       return next;
     });
     if (selectedFile === path) {
@@ -1090,27 +1098,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
             <div className="mx-0.5 h-4 w-px bg-border/60" />
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={saveDraft}
-                  disabled={isSaving || saveBlockedByRunState}
-                  aria-label="Save Draft"
-                >
-                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                  Save
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {saveBlockedByRunState
-                  ? "Save is locked while a coding-agent run is active or finalizing."
-                  : "Save Draft"}
-              </TooltipContent>
-            </Tooltip>
-
             <Button
               size="sm"
               className="h-7 gap-1.5 px-2.5 text-xs"
@@ -1155,6 +1142,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     selectedFile={selectedFile}
                     onSelectFile={setSelectedFile}
                     onDeleteFile={deleteFile}
+                    showCodeSaveButton={hasUnsavedManualCodeChanges}
+                    onSaveCodeDraft={() => {
+                      void saveDraft();
+                    }}
+                    isSavingCodeDraft={isSaving}
+                    disableCodeSave={saveBlockedByRunState}
                   />
 
                   <section className={cn("min-w-0 flex-1", configSection === "code" ? "overflow-hidden" : "overflow-auto")}>
@@ -1558,7 +1551,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                         selectedFile={selectedFile}
                         onUpdateFile={(path, content) => {
                           if (codeEditingLocked) return;
-                          setFiles((prev) => ({ ...prev, [path]: content }));
+                          setFiles((prev) => {
+                            const next = { ...prev, [path]: content };
+                            const fingerprint = buildDraftDevSyncFingerprint(entryFile, next);
+                            setHasUnsavedManualCodeChanges(fingerprint !== lastSavedCodeFingerprintRef.current);
+                            return next;
+                          });
                         }}
                         readOnly={codeEditingLocked}
                       />

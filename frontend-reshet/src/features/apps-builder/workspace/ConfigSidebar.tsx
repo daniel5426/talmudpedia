@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowLeft, Code, Globe, LayoutDashboard, Users } from "lucide-react";
+import { ArrowLeft, Code, Globe, LayoutDashboard, Loader2, Save, Users } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { FileTree } from "@/features/apps-builder/editor/FileTree";
@@ -23,6 +24,10 @@ type ConfigSidebarProps = {
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
   onDeleteFile: (path: string) => void;
+  showCodeSaveButton?: boolean;
+  onSaveCodeDraft?: () => void;
+  isSavingCodeDraft?: boolean;
+  disableCodeSave?: boolean;
 };
 
 export function ConfigSidebar({
@@ -33,21 +38,37 @@ export function ConfigSidebar({
   selectedFile,
   onSelectFile,
   onDeleteFile,
+  showCodeSaveButton = false,
+  onSaveCodeDraft,
+  isSavingCodeDraft = false,
+  disableCodeSave = false,
 }: ConfigSidebarProps) {
   if (configSection === "code") {
     return (
       <aside className="flex w-72 shrink-0 flex-col border-r border-border/60 bg-muted/20">
-        <div className="px-3 py-2.5">
-          <button
-            type="button"
+        <div className="flex items-center justify-between gap-2 px-3 py-2.5">
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={onBackFromCode}
-            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="inline-flex items-center gap-1.5 text-xs"
           >
             <ArrowLeft className="h-3 w-3" />
             Back to Config
-          </button>
+          </Button>
+          {showCodeSaveButton ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-6 gap-1.5 px-2 text-[11px]"
+              onClick={onSaveCodeDraft}
+              disabled={isSavingCodeDraft || disableCodeSave}
+            >
+              {isSavingCodeDraft ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              Save
+            </Button>
+          ) : null}
         </div>
-        <Separator />
         <FileTree
           files={files}
           selectedFile={selectedFile}
