@@ -2,7 +2,9 @@ import type { CodingAgentChatMessage, CodingAgentChatSessionDetail, CodingAgentR
 
 import {
   describeToolIntent,
-  extractPrimaryToolPath,
+  extractToolTitleForEvent,
+  extractToolPathForEvent,
+  isCommandToolName,
   type TimelineItem,
 } from "./chat-model";
 
@@ -59,18 +61,28 @@ function buildToolTimelineItemsForRun(runId: string, runEvents: CodingAgentRunEv
     }
     const nextStatus = normalizeToolStatus(event.event);
     const tone = normalizeToolTone(nextStatus);
-    const pathSource =
-      event.event === "tool.started"
-        ? ((payload as Record<string, unknown>).input ?? payload)
-        : ((payload as Record<string, unknown>).output ?? payload);
-    const nextPath = extractPrimaryToolPath(pathSource);
+    const nextPath = extractToolPathForEvent(toolName, payload);
     const existing = toolByCallId.get(toolCallId);
+    const previousTitle = String(existing?.title || "").trim();
+    let nextTitle = extractToolTitleForEvent(toolName, payload, nextStatus, nextPath || existing?.toolPath || undefined);
+    if (
+      isCommandToolName(toolName)
+      && nextStatus === "completed"
+      && (!nextTitle || nextTitle === "Running command")
+      && previousTitle
+    ) {
+      if (/^run\s+/i.test(previousTitle)) {
+        nextTitle = `Ran ${previousTitle.replace(/^run\s+/i, "").trim()}`;
+      } else if (previousTitle !== "Running command") {
+        nextTitle = `Ran ${previousTitle}`;
+      }
+    }
     toolByCallId.set(toolCallId, {
       id: existing?.id || `history-tool-${runId}-${toolByCallId.size + 1}`,
       kind: "tool",
       toolCallId,
       toolStatus: nextStatus,
-      title: describeToolIntent(toolName),
+      title: nextTitle || existing?.title || describeToolIntent(toolName),
       tone,
       toolName,
       toolPath: nextPath || existing?.toolPath || undefined,

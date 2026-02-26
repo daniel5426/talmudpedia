@@ -42,7 +42,11 @@ import {
   TimelineItem,
   formatToolPathLabel,
   formatToolReadPath,
+  isEditToolName,
+  isExplorationToolName,
   isAssistantTimelineItem,
+  isReadToolName,
+  isSearchToolName,
   isToolTimelineItem,
   isUserTimelineItem,
 } from "./chat-model";
@@ -282,12 +286,9 @@ export function AppsBuilderChatPanel({
       return "Failed";
     };
 
-    const isReadTool = (toolName?: string) => {
-      const normalized = String(toolName || "").trim().toLowerCase();
-      return normalized === "read" || normalized.includes("read_file");
-    };
     const renderStandardToolRow = (item: TimelineItem) => {
       const status = item.toolStatus || "completed";
+      const showPathBadge = item.toolPath && !isEditToolName(String(item.toolName || ""));
       return (
         <Message key={item.id} from="assistant" className="max-w-full">
           <MessageContent className="bg-transparent px-0 py-0 text-sm">
@@ -301,12 +302,14 @@ export function AppsBuilderChatPanel({
                 {status === "running" ? (
                   <Shimmer className="flex items-center gap-2 text-sm">
                     <span>{item.title}</span>
-                    {item.toolPath ? <TaskItemFile>{formatToolPathLabel(item.toolPath)}</TaskItemFile> : null}
+                    {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(item.toolPath || ""))}</TaskItemFile> : null}
+                    {item.toolDetail ? <TaskItemFile>{item.toolDetail}</TaskItemFile> : null}
                   </Shimmer>
                 ) : (
                   <>
                     <span>{item.title}</span>
-                    {item.toolPath ? <TaskItemFile>{formatToolPathLabel(item.toolPath)}</TaskItemFile> : null}
+                    {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(item.toolPath || ""))}</TaskItemFile> : null}
+                    {item.toolDetail ? <TaskItemFile>{item.toolDetail}</TaskItemFile> : null}
                   </>
                 )}
               </TaskItem>
@@ -370,23 +373,33 @@ export function AppsBuilderChatPanel({
       }
 
       if (isToolTimelineItem(item)) {
-        if (isReadTool(item.toolName)) {
-          const readStreak: TimelineItem[] = [];
+        if (isExplorationToolName(String(item.toolName || ""))) {
+          const explorationStreak: TimelineItem[] = [];
           while (index < timeline.length) {
-            const maybeRead = timeline[index];
-            if (!isToolTimelineItem(maybeRead) || !isReadTool(maybeRead.toolName)) {
+            const candidate = timeline[index];
+            if (!isToolTimelineItem(candidate) || !isExplorationToolName(String(candidate.toolName || ""))) {
               break;
             }
-            readStreak.push(maybeRead);
+            explorationStreak.push(candidate);
             index += 1;
           }
 
-          const readCount = readStreak.length;
-          const hasRunningRead = readStreak.some((entry) => (entry.toolStatus || "completed") === "running");
-          const headerText = `Researching ${readCount} ${readCount === 1 ? "file" : "files"}`;
+          const readItems = explorationStreak.filter((entry) => isReadToolName(String(entry.toolName || "")));
+          const searchItems = explorationStreak.filter((entry) => isSearchToolName(String(entry.toolName || "")));
+          const readCount = readItems.length;
+          const searchCount = searchItems.length;
+          const hasRunningExplore = explorationStreak.some((entry) => (entry.toolStatus || "completed") === "running");
+          const headerParts: string[] = [];
+          if (readCount > 0) {
+            headerParts.push(`${readCount} ${readCount === 1 ? "file" : "files"}`);
+          }
+          if (searchCount > 0) {
+            headerParts.push(`${searchCount} ${searchCount === 1 ? "search" : "searches"}`);
+          }
+          const headerText = `Exploring ${headerParts.join(", ") || "workspace"}`;
 
           renderedItems.push(
-            <Message key={`read-group-${readStreak[0].id}`} from="assistant" className="max-w-full">
+            <Message key={`explore-group-${explorationStreak[0].id}`} from="assistant" className="max-w-full">
               <MessageContent className="bg-transparent px-0 py-0 text-sm">
                 <Task defaultOpen={false} className="w-full">
                   <TaskTrigger asChild title={headerText}>
@@ -394,7 +407,7 @@ export function AppsBuilderChatPanel({
                       type="button"
                       className="group flex w-full items-center justify-between gap-2 rounded-md px-0 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
                     >
-                      {hasRunningRead ? (
+                      {hasRunningExplore ? (
                         <Shimmer className="text-sm">{headerText}</Shimmer>
                       ) : (
                         <span className="text-sm">{headerText}</span>
@@ -402,19 +415,28 @@ export function AppsBuilderChatPanel({
                     </button>
                   </TaskTrigger>
                   <TaskContent className="mt-1">
-                    {readStreak.map((readEntry) => {
-                      const readStatus = readEntry.toolStatus || "completed";
-                      const readPath = formatToolReadPath(String(readEntry.toolPath || ""));
-                      const readTitle = readPath ? `Reading file ${readPath}` : "Reading file";
+                    {explorationStreak.map((entry) => {
+                      const toolStatus = entry.toolStatus || "completed";
+                      const isRead = isReadToolName(String(entry.toolName || ""));
+                      const readPath = isRead ? formatToolReadPath(String(entry.toolPath || "")) : "";
+                      const searchDetail = String(entry.toolDetail || "").trim();
+                      const searchPath = String(entry.toolPath || "").trim();
+                      const rowTitle = isRead
+                        ? (readPath ? `Reading file ${readPath}` : "Reading file")
+                        : (searchDetail
+                          ? `Searching code ${searchDetail}`
+                          : searchPath
+                            ? `Searching code ${formatToolPathLabel(searchPath)}`
+                            : "Searching code");
                       return (
                         <TaskItem
-                          key={readEntry.id}
-                          className={cn("flex items-center gap-2 text-sm", readStatus === "failed" ? "text-destructive" : "text-muted-foreground")}
+                          key={entry.id}
+                          className={cn("flex items-center gap-2 text-sm", toolStatus === "failed" ? "text-destructive" : "text-muted-foreground")}
                         >
-                          {readStatus === "running" ? (
-                            <Shimmer className="text-sm">{readTitle}</Shimmer>
+                          {toolStatus === "running" ? (
+                            <Shimmer className="text-sm">{rowTitle}</Shimmer>
                           ) : (
-                            <span>{readTitle}</span>
+                            <span>{rowTitle}</span>
                           )}
                         </TaskItem>
                       );

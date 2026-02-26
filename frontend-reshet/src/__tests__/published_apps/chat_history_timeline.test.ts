@@ -154,4 +154,99 @@ describe("buildTimelineFromChatHistory", () => {
     expect(toolRows[0].toolStatus).toBe("completed");
     expect(toolRows[1].toolStatus).toBe("completed");
   });
+
+  it("does not treat command output banners as tool file paths in history", () => {
+    const detail = {
+      session: {
+        id: "chat-1",
+        title: "History",
+        created_at: "2026-02-25T10:00:00Z",
+        updated_at: "2026-02-25T10:00:00Z",
+        last_message_at: "2026-02-25T10:00:00Z",
+      },
+      messages: [
+        {
+          id: "m1",
+          run_id: "run-1",
+          role: "assistant" as const,
+          content: "Done.",
+          created_at: "2026-02-25T10:00:02Z",
+        },
+      ],
+      run_events: [
+        {
+          run_id: "run-1",
+          event: "tool.completed" as const,
+          stage: "tool",
+          payload: {
+            tool: "command",
+            span_id: "call-1",
+            output: "talmudpedia-published-app-template@0.0.1",
+          },
+          diagnostics: [],
+          ts: "2026-02-25T10:00:01Z",
+        },
+      ],
+    };
+
+    const timeline = buildTimelineFromChatHistory(detail);
+    const toolRows = timeline.filter((item) => item.kind === "tool");
+
+    expect(toolRows).toHaveLength(1);
+    expect(toolRows[0].toolName).toBe("command");
+    expect(toolRows[0].toolPath).toBeUndefined();
+  });
+
+  it("keeps command title semantics from run to ran in restored history", () => {
+    const detail = {
+      session: {
+        id: "chat-1",
+        title: "History",
+        created_at: "2026-02-25T10:00:00Z",
+        updated_at: "2026-02-25T10:00:00Z",
+        last_message_at: "2026-02-25T10:00:00Z",
+      },
+      messages: [
+        {
+          id: "m1",
+          run_id: "run-1",
+          role: "assistant" as const,
+          content: "Done.",
+          created_at: "2026-02-25T10:00:02Z",
+        },
+      ],
+      run_events: [
+        {
+          run_id: "run-1",
+          event: "tool.started" as const,
+          stage: "tool",
+          payload: {
+            tool: "bash",
+            span_id: "call-1",
+            input: { description: "Run TypeScript type checking", command: "npm run typecheck" },
+          },
+          diagnostics: [],
+          ts: "2026-02-25T10:00:01Z",
+        },
+        {
+          run_id: "run-1",
+          event: "tool.completed" as const,
+          stage: "tool",
+          payload: {
+            tool: "bash",
+            span_id: "call-1",
+            output: "talmudpedia-published-app-template@0.0.1",
+          },
+          diagnostics: [],
+          ts: "2026-02-25T10:00:02Z",
+        },
+      ],
+    };
+
+    const timeline = buildTimelineFromChatHistory(detail);
+    const toolRows = timeline.filter((item) => item.kind === "tool");
+
+    expect(toolRows).toHaveLength(1);
+    expect(toolRows[0].title).toBe("Ran TypeScript type checking");
+  });
 });

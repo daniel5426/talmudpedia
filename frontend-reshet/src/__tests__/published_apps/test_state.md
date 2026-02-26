@@ -37,7 +37,11 @@ Frontend coverage for:
 - Builder workspace keeps the editor/workspace mounted during post-run state refresh (no full-page loading fallback after each reply).
 - Builder workspace renders tool calls as dedicated rows (no raw JSON payload blocks), with running shimmer state and persisted completed/failed visual states.
 - Builder workspace renders tool calls via AI Elements `Task` rows, including normalized intent labels and file-path chips extracted from tool payloads.
-- Builder workspace running `read_file` calls now show filename directly in the title (`Reading file <path>`) and prepend a live grouped summary (`Researching N file(s)`) across consecutive read streaks.
+- Builder workspace groups consecutive `read` + search tools into one expandable summary (`Exploring <files>, <searches>`) and lists both `Reading file ...` and `Searching code ...` rows inside the group.
+- Edit-tool rows use explicit lifecycle titles with file context (`Editing <file>` while running, `Edited <file>` when completed) and avoid duplicate path badges.
+- Command-tool rows suppress noisy output banners (for example `package@version`) and stack-trace path snippets from file/path badges.
+- Command-tool titles preserve meaningful running labels and switch to past-tense completion labels (`Run ...` -> `Ran ...`) instead of collapsing back to generic `Running command`.
+- Reloaded chat history preserves command-tool semantic titles as well (`Run ...` -> `Ran ...`), not only live-stream rows.
 - Builder workspace sanitizes read-path labels from wrapped and malformed payload text (e.g. `<path>...</path>`, `path>... </path`) and ignores package specifiers (e.g. `@radix-ui/react-slot`) so file read titles only show valid workspace paths.
 - Chat-model path parser normalizes temp draft-dev absolute paths with UUID workspace roots (e.g. `/private/tmp/.../<uuid>/src/...`) into workspace-relative read labels.
 - Builder workspace coding-agent panel uses Cursor-style composer placeholder contract (`Plan, @ for context, / for commands`) with run submission preserved.
@@ -54,6 +58,7 @@ Frontend coverage for:
 - Builder workspace keeps queued prompt progression frontend-local when terminal SSE is missing by draining local queue after run-state recovery.
 - Builder workspace renders user prompt bubbles immediately on submit before `create-run` resolves, with delivery-state labels (`Sending...`, `Failed`) while queued prompts remain in the queue panel (not in chat timeline).
 - Builder workspace retries `ensureDraftDevSession` after terminal SSE when backend briefly reports `CODING_AGENT_RUN_ACTIVE` for the same run, and avoids surfacing lock-conflict noise to users.
+- Builder workspace post-run hydration now retries builder-state reconciliation until `active_coding_run_count` reaches zero, then resumes preview ensure/state refresh without requiring a page reload.
 - Coding-agent stream consumer renders one `assistant.delta` chunk at a time (no frontend delta coalescing).
 - Builder workspace no longer depends on coding-agent capabilities/engine selection in chat flow.
 - Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
@@ -94,9 +99,27 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/chat_history_timeline.test.ts`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 5 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "keeps command title semantics from run to ran on completion|does not render command output package banner as a file label"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 2 passed, 52 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx src/__tests__/published_apps/chat_history_timeline.test.ts`
+- Date: 2026-02-25
+- Result: PASS (2 suites, 57 tests; React act() warnings emitted in logs)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx src/__tests__/published_apps/chat_model_path_parsing.test.ts`
+- Date: 2026-02-25
+- Result: PASS (2 suites, 54 tests; React act() warnings emitted in logs)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "streams coding-agent run with assistant response and tool calls only|groups search and read tools under a single exploring section|does not render bash stacktrace paths as command file labels"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 3 passed, 49 skipped by `-t`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "does not inject fallback assistant text when stream emits no assistant delta|does not append default assistant text after tool calls when assistant already responded|does not show generic fallback text after non-terminal disconnect with tool activity|parses SSE events when data prefix has no trailing space"`
 - Date: 2026-02-25
 - Result: PASS (1 suite, 4 passed, 45 skipped by `-t`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "skips post-run preview ensure while another run is still active|retries post-run hydration until run scope becomes idle"`
+- Date: 2026-02-25
+- Result: PASS (1 suite, 2 passed, 48 skipped by `-t`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "does not inject fallback assistant text when stream emits no assistant delta|does not append default assistant text after tool calls when assistant already responded|does not show generic fallback text after non-terminal disconnect with tool activity"`
 - Date: 2026-02-25
 - Result: PASS (1 suite, 3 passed, 48 skipped by `-t`)

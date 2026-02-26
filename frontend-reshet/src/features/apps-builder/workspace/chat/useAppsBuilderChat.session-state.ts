@@ -212,6 +212,7 @@ export function upsertToolTimeline(
   status: ToolRunStatus,
   toolName: string,
   toolPath?: string | null,
+  toolDetail?: string | null,
 ): TimelineItem[] {
   const existingIndex = timeline.findIndex((item) => item.kind === "tool" && item.toolCallId === toolCallId);
   const nextTone: TimelineTone | undefined = status === "failed" ? "error" : status === "completed" ? "success" : undefined;
@@ -224,6 +225,7 @@ export function upsertToolTimeline(
       tone: nextTone,
       toolName,
       toolPath: toolPath || next[existingIndex].toolPath,
+      toolDetail: toolDetail || next[existingIndex].toolDetail,
     };
     return next;
   }
@@ -238,6 +240,7 @@ export function upsertToolTimeline(
       tone: nextTone,
       toolName,
       toolPath: toolPath || undefined,
+      toolDetail: toolDetail || undefined,
     },
   ];
 }

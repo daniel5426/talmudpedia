@@ -19,6 +19,8 @@ Last Updated: 2026-02-25
 - Sandbox-controller mode seeds custom tools via sandbox file APIs before OpenCode start and fails closed on seed-write failures.
 - Host mode fails closed when `workspace_path` is missing/invalid for custom-tool bootstrap.
 - Global event stream translation emits incremental `assistant.delta` tokens and tool lifecycle events (`tool.started` / `tool.completed` / `tool.failed`).
+- Incremental tool mapping refreshes `tool.started` when `pending -> running` introduces real tool input (for accurate edit-path UI labels).
+- Incremental tool terminal events (`tool.completed`/`tool.failed`) include both `input` and `output` payloads so frontend path extraction remains stable.
 - Global event parsing preserves early tool events even before assistant message-role metadata lands.
 - Global event `message.updated` payloads are now parsed for incremental assistant text/tool state, including fallback text-diff extraction when `message.part.delta` is absent.
 - Session `idle` no longer force-completes runs by default; streams now continue when assistant text is followed by later tool calls in the same run.
@@ -35,6 +37,9 @@ Last Updated: 2026-02-25
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k "extract_incremental_tool_events_refreshes_started_after_pending_with_real_input or extract_incremental_tool_events_completed_payload_includes_input or official_mode_global_event_stream_emits_tool_events_and_incremental_text"`
+- Date/Time: 2026-02-25
+- Result: Pass (3 passed, 32 deselected, 1 warning)
 - Command: `pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py -k "global_event_stream_keeps_running_after_session_idle_text_before_tool or global_event_stream_settles_without_session_idle or global_event_stream_completes_from_session_status_idle or closed_no_terminal_recovers_via_snapshot_polling or start_run_buffers_assistant_events"`
 - Date/Time: 2026-02-25
 - Result: Pass (5 passed, 28 deselected, 1 warning)

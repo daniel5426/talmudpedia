@@ -2,7 +2,13 @@ import type { MutableRefObject } from "react";
 
 import { publishedAppsService } from "@/services";
 
-import { describeToolIntent, extractPrimaryToolPath, timelineId } from "./chat-model";
+import {
+  extractToolDetailForEvent,
+  extractToolPathForEvent,
+  extractToolTitleForEvent,
+  isCommandToolName,
+  timelineId,
+} from "./chat-model";
 import {
   type CodingAgentPendingQuestion,
   parsePendingQuestionPayload,
@@ -48,6 +54,7 @@ type ConsumeRunStreamOptions = {
     status: "running" | "completed" | "failed",
     toolName: string,
     toolPath?: string | null,
+    toolDetail?: string | null,
   ) => void;
   finalizeRunningTools: (status: "completed" | "failed") => void;
   attachCheckpointToLastUser: (checkpointId: string) => void;
@@ -194,6 +201,8 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     let sawMaxDurationTimeout = false;
     let recoveryCancelAttempted = false;
     let recoveryCancelConfirmed = false;
+    const toolPathByCallId = new Map<string, string>();
+    const toolTitleByCallId = new Map<string, string>();
 
     const STALL_TIMEOUT_MS = resolvePositiveTimeoutMs(
       process.env.NEXT_PUBLIC_APPS_CODING_AGENT_STREAM_STALL_TIMEOUT_MS,
@@ -213,6 +222,14 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       .trim()
       .toLowerCase();
     const AUTO_CANCEL_RECOVERY_ENABLED = autoCancelRecoveryRaw === "1" || autoCancelRecoveryRaw === "true";
+    const POST_RUN_IDLE_WAIT_TIMEOUT_MS = resolvePositiveTimeoutMs(
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_IDLE_WAIT_TIMEOUT_MS,
+      process.env.NODE_ENV === "test" ? 250 : 3000,
+    );
+    const POST_RUN_IDLE_POLL_MS = resolvePositiveTimeoutMs(
+      process.env.NEXT_PUBLIC_APPS_CODING_AGENT_POST_RUN_IDLE_POLL_MS,
+      process.env.NODE_ENV === "test" ? 25 : 250,
+    );
     const runStartedAt = Date.now();
     let lastEventAt = Date.now();
     let maxDurationNoticeShown = false;
@@ -512,30 +529,56 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           sawToolActivity = true;
           const toolName = String(payload.tool || "tool");
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
-          const toolPath = extractPrimaryToolPath(payload.input || payload);
+          const toolPath = extractToolPathForEvent(toolName, payload);
+          if (toolPath) {
+            toolPathByCallId.set(toolCallId, toolPath);
+          }
+          const toolTitle = extractToolTitleForEvent(toolName, payload, "running", toolPath);
+          const toolDetail = extractToolDetailForEvent(toolName, payload);
           if (assistantText.trim()) {
             upsertAssistantTimeline(currentStreamId, assistantText.trim());
           }
           assistantText = "";
           segmentCounter += 1;
           currentStreamId = `assistant-${normalizedRunId}-seg${segmentCounter}`;
-          upsertToolTimeline(toolCallId, describeToolIntent(toolName), "running", toolName, toolPath);
+          toolTitleByCallId.set(toolCallId, toolTitle);
+          upsertToolTimeline(toolCallId, toolTitle, "running", toolName, toolPath, toolDetail);
         }
 
         if (parsed.event === "tool.completed") {
           sawToolActivity = true;
           const toolName = String(payload.tool || "tool");
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
-          const toolPath = extractPrimaryToolPath(payload.output || payload);
-          upsertToolTimeline(toolCallId, describeToolIntent(toolName), "completed", toolName, toolPath);
+          const toolPath = extractToolPathForEvent(toolName, payload) || toolPathByCallId.get(toolCallId) || null;
+          if (toolPath) {
+            toolPathByCallId.set(toolCallId, toolPath);
+          }
+          const previousTitle = String(toolTitleByCallId.get(toolCallId) || "").trim();
+          let toolTitle = extractToolTitleForEvent(toolName, payload, "completed", toolPath);
+          if (isCommandToolName(toolName) && (!toolTitle || toolTitle === "Running command")) {
+            if (/^run\s+/i.test(previousTitle)) {
+              toolTitle = `Ran ${previousTitle.replace(/^run\s+/i, "").trim()}`;
+            } else if (previousTitle && previousTitle !== "Running command") {
+              toolTitle = `Ran ${previousTitle}`;
+            }
+          }
+          const toolDetail = extractToolDetailForEvent(toolName, payload);
+          toolTitleByCallId.set(toolCallId, toolTitle);
+          upsertToolTimeline(toolCallId, toolTitle, "completed", toolName, toolPath, toolDetail);
         }
 
         if (parsed.event === "tool.failed") {
           sawToolActivity = true;
           const toolName = String(payload.tool || "tool");
           const toolCallId = String(payload.span_id || `${toolName}-${timelineId("call")}`);
-          const toolPath = extractPrimaryToolPath(payload.output || payload);
-          upsertToolTimeline(toolCallId, describeToolIntent(toolName), "failed", toolName, toolPath);
+          const toolPath = extractToolPathForEvent(toolName, payload) || toolPathByCallId.get(toolCallId) || null;
+          if (toolPath) {
+            toolPathByCallId.set(toolCallId, toolPath);
+          }
+          const toolTitle = extractToolTitleForEvent(toolName, payload, "failed", toolPath);
+          const toolDetail = extractToolDetailForEvent(toolName, payload);
+          toolTitleByCallId.set(toolCallId, toolTitle);
+          upsertToolTimeline(toolCallId, toolTitle, "failed", toolName, toolPath, toolDetail);
         }
 
         if (parsed.event === "tool.question") {
@@ -739,15 +782,33 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         String(activeRunIdRef.current || "").trim() === normalizedRunId;
       const parseRunActiveFromError = (err: unknown) =>
         parseRunActiveDetail(err instanceof Error ? err.message : String(err || ""));
-      let activeRunCount: number | null = null;
-      if (isCurrentAttachment() && isAttachedRun()) {
-        try {
-          const state = await publishedAppsService.getBuilderState(appId);
-          activeRunCount = Number(state?.draft_dev?.active_coding_run_count || 0);
-        } catch {
-          activeRunCount = null;
+      const resolveActiveRunCountAfterTerminal = async (): Promise<number | null> => {
+        if (!isCurrentAttachment() || !isAttachedRun()) {
+          return null;
         }
-      }
+        const deadline = Date.now() + POST_RUN_IDLE_WAIT_TIMEOUT_MS;
+        let lastObservedCount: number | null = null;
+        while (isCurrentAttachment() && isAttachedRun() && !intentionalAbortRef.current) {
+          try {
+            const state = await publishedAppsService.getBuilderState(appId);
+            lastObservedCount = Number(state?.draft_dev?.active_coding_run_count || 0);
+            if (lastObservedCount <= 0) {
+              return lastObservedCount;
+            }
+          } catch {
+            lastObservedCount = null;
+          }
+          if (Date.now() >= deadline) {
+            return lastObservedCount;
+          }
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, POST_RUN_IDLE_POLL_MS);
+          });
+        }
+        return lastObservedCount;
+      };
+
+      const activeRunCount = await resolveActiveRunCountAfterTerminal();
       const hasActiveRunsInScope = activeRunCount !== null && activeRunCount > 0;
       if (isCurrentAttachment() && isAttachedRun() && !hasActiveRunsInScope) {
         try {

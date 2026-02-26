@@ -519,6 +519,64 @@ async def test_official_mode_global_event_stream_emits_tool_events_and_increment
     assert events[-1].get("event") == "run.completed"
 
 
+def test_extract_incremental_tool_events_refreshes_started_after_pending_with_real_input():
+    state: dict[str, object] = {}
+    pending_message = {
+        "parts": [
+            {
+                "type": "tool",
+                "tool": "apply_patch",
+                "callID": "call-1",
+                "state": {"status": "pending", "input": {}},
+            }
+        ]
+    }
+    running_message = {
+        "parts": [
+            {
+                "type": "tool",
+                "tool": "apply_patch",
+                "callID": "call-1",
+                "state": {
+                    "status": "running",
+                    "input": {"patchText": "*** Begin Patch\n*** Update File: src/App.tsx\n*** End Patch"},
+                },
+            }
+        ]
+    }
+
+    pending_events = OpenCodeServerClient._extract_incremental_tool_events(message=pending_message, state=state)
+    running_events = OpenCodeServerClient._extract_incremental_tool_events(message=running_message, state=state)
+
+    assert [event.get("event") for event in pending_events] == ["tool.started"]
+    assert [event.get("event") for event in running_events] == ["tool.started"]
+    assert running_events[0].get("payload", {}).get("input", {}).get("patchText")
+
+
+def test_extract_incremental_tool_events_completed_payload_includes_input():
+    state: dict[str, object] = {}
+    completed_message = {
+        "parts": [
+            {
+                "type": "tool",
+                "tool": "apply_patch",
+                "callID": "call-1",
+                "state": {
+                    "status": "completed",
+                    "input": {"patchText": "*** Begin Patch\n*** Update File: src/App.tsx\n*** End Patch"},
+                    "output": {"ok": True},
+                },
+            }
+        ]
+    }
+
+    events = OpenCodeServerClient._extract_incremental_tool_events(message=completed_message, state=state)
+    assert [event.get("event") for event in events] == ["tool.started", "tool.completed"]
+    completed_payload = events[1].get("payload", {})
+    assert completed_payload.get("input", {}).get("patchText")
+    assert completed_payload.get("output", {}).get("ok") is True
+
+
 @pytest.mark.asyncio
 async def test_official_mode_global_event_stream_skips_reasoning_deltas(monkeypatch: pytest.MonkeyPatch):
     session_id = "sess-global-reasoning"

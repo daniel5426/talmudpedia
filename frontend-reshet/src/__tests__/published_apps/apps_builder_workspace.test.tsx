@@ -1091,8 +1091,7 @@ describe("AppsBuilderWorkspace", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Editing file")).toBeInTheDocument();
-      expect(screen.getByText("src/App.tsx")).toBeInTheDocument();
+      expect(screen.getByText("Edited src/App.tsx")).toBeInTheDocument();
       expect(screen.getByText("Applying patch")).toBeInTheDocument();
     });
     expect(screen.queryByText(/Revision created/i)).not.toBeInTheDocument();
@@ -1167,13 +1166,13 @@ describe("AppsBuilderWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    const researchingHeader = await screen.findByRole("button", { name: "Researching 1 file" });
-    expect(researchingHeader).toBeInTheDocument();
+    const exploringHeader = await screen.findByRole("button", { name: "Exploring 1 file" });
+    expect(exploringHeader).toBeInTheDocument();
     expect(screen.queryByText("Reading file src/main.tsx")).not.toBeInTheDocument();
-    fireEvent.click(researchingHeader);
+    fireEvent.click(exploringHeader);
     expect(screen.getByText("Reading file src/main.tsx")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Researching 1 file" }).closest("[data-shimmer]")).toBeNull();
+      expect(screen.getByRole("button", { name: "Exploring 1 file" }).closest("[data-shimmer]")).toBeNull();
     });
   });
 
@@ -1209,8 +1208,8 @@ describe("AppsBuilderWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    const researchingHeader = await screen.findByRole("button", { name: "Researching 1 file" });
-    fireEvent.click(researchingHeader);
+    const exploringHeader = await screen.findByRole("button", { name: "Exploring 1 file" });
+    fireEvent.click(exploringHeader);
     expect(screen.getByText("Reading file src/utils/parser.ts")).toBeInTheDocument();
   });
 
@@ -1249,10 +1248,10 @@ describe("AppsBuilderWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    const researchingHeader = await screen.findByRole("button", { name: "Researching 4 files" });
-    expect(researchingHeader.className).toContain("px-0");
-    expect(researchingHeader.className).not.toContain("px-1");
-    fireEvent.click(researchingHeader);
+    const exploringHeader = await screen.findByRole("button", { name: "Exploring 4 files" });
+    expect(exploringHeader.className).toContain("px-0");
+    expect(exploringHeader.className).not.toContain("px-1");
+    fireEvent.click(exploringHeader);
     expect(screen.getByText("Reading file workspace")).toBeInTheDocument();
     expect(screen.getByText("Reading file src")).toBeInTheDocument();
     expect(screen.getByText("Reading file src/App.tsx")).toBeInTheDocument();
@@ -1306,20 +1305,173 @@ describe("AppsBuilderWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    const researchingHeader = await screen.findByRole("button", { name: "Researching 2 files" });
-    fireEvent.click(researchingHeader);
+    const exploringHeader = await screen.findByRole("button", { name: "Exploring 2 files" });
+    fireEvent.click(exploringHeader);
     expect(screen.getByText("Reading file src/App.tsx")).toBeInTheDocument();
 
     releaseSecondRead();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Researching 2 files" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Exploring 2 files" })).toBeInTheDocument();
     });
-    const persistedHeader = screen.getByRole("button", { name: "Researching 2 files" });
+    const persistedHeader = screen.getByRole("button", { name: "Exploring 2 files" });
     expect(persistedHeader.closest("[data-shimmer]")).toBeNull();
     await waitFor(() => {
-      expect(screen.getByText("Editing file")).toBeInTheDocument();
+      expect(screen.getByText("Editing src/App.tsx")).toBeInTheDocument();
     });
+  });
+
+  it("groups search and read tools under a single exploring section", async () => {
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"tool","payload":{"tool":"grep","span_id":"call-1","input":{"pattern":"consumeRunStream","path":"frontend-reshet/src/features/apps-builder/workspace/chat"}},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:00Z","stage":"tool","payload":{"tool":"grep","span_id":"call-1","output":{"title":"consumeRunStream"}},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:01Z","stage":"tool","payload":{"tool":"read","span_id":"call-2","input":{"path":"src/main.tsx"}},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":4,"ts":"2026-02-16T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "explore files" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const exploringHeader = await screen.findByRole("button", { name: "Exploring 1 file, 1 search" });
+    fireEvent.click(exploringHeader);
+    expect(screen.getByText("Searching code consumeRunStream")).toBeInTheDocument();
+    expect(screen.getByText("Reading file src/main.tsx")).toBeInTheDocument();
+  });
+
+  it("does not render bash stacktrace paths as command file labels", async () => {
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"tool","payload":{"tool":"bash","span_id":"call-1","input":{"description":"Run parser test","command":"node -e \\"throw new Error(\'boom\')\\""}},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"tool","payload":{"tool":"bash","span_id":"call-1","output":"Error: boom\\n    at lib/parser.js:454:16\\n    at chunks/dep-CDnG8rE7.js:36141:11\\n"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "run parser test" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Running command");
+    expect(screen.queryByText("lib/parser.js:454:16")).not.toBeInTheDocument();
+    expect(screen.queryByText("chunks/dep-CDnG8rE7.js:36141:11")).not.toBeInTheDocument();
+  });
+
+  it("does not render command output package banner as a file label", async () => {
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"tool","payload":{"tool":"command","span_id":"call-1","input":{"command":"npm run build"}},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"tool","payload":{"tool":"command","span_id":"call-1","output":"talmudpedia-published-app-template@0.0.1"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "run build" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Running command");
+    expect(screen.queryByText("talmudpedia-published-app-template@0.0.1")).not.toBeInTheDocument();
+  });
+
+  it("keeps command title semantics from run to ran on completion", async () => {
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"tool.started","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"tool","payload":{"tool":"bash","span_id":"call-1","input":{"description":"Run TypeScript type checking","command":"npm run typecheck"}},"diagnostics":[]}\n\n',
+            'data: {"event":"tool.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"tool","payload":{"tool":"bash","span_id":"call-1","output":"talmudpedia-published-app-template@0.0.1"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":3,"ts":"2026-02-16T19:00:02Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "run typecheck" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Ran TypeScript type checking");
+    expect(screen.queryByText("Run TypeScript type checking")).not.toBeInTheDocument();
+    expect(screen.queryByText("talmudpedia-published-app-template@0.0.1")).not.toBeInTheDocument();
   });
 
   it("renders chat input without capabilities endpoint dependency", async () => {
@@ -1968,6 +2120,108 @@ describe("AppsBuilderWorkspace", () => {
     });
   });
 
+  it("retries post-run hydration until run scope becomes idle", async () => {
+    const sessionPayload = {
+      session_id: "session-1",
+      app_id: "app-1",
+      revision_id: "rev-1",
+      status: "running",
+      has_active_coding_runs: false,
+      active_coding_run_count: 0,
+      preview_url: "https://preview.local/sandbox/session-1/",
+      preview_auth_token: "preview-auth-token-1",
+      preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
+      idle_timeout_seconds: 180,
+      last_activity_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 180_000).toISOString(),
+      last_error: null,
+    };
+    const initialState = {
+      ...makeState(),
+      draft_dev: sessionPayload,
+    };
+    const activeScopeState = {
+      ...makeState(),
+      draft_dev: {
+        ...sessionPayload,
+        has_active_coding_runs: true,
+        active_coding_run_count: 1,
+      },
+    };
+    const idleScopeState = {
+      ...makeState({
+        "index.html": "<!doctype html><html><body><div id='root'></div></body></html>",
+        "src/main.tsx": "import './App';",
+        "src/App.tsx": "export function App() { return <div>Updated by run</div>; }",
+      }),
+      app: {
+        ...makeState().app,
+        current_draft_revision_id: "rev-2",
+      },
+      current_draft_revision: {
+        ...makeState().current_draft_revision,
+        id: "rev-2",
+        files: {
+          "index.html": "<!doctype html><html><body><div id='root'></div></body></html>",
+          "src/main.tsx": "import './App';",
+          "src/App.tsx": "export function App() { return <div>Updated by run</div>; }",
+        },
+      },
+      draft_dev: {
+        ...sessionPayload,
+        revision_id: "rev-2",
+        has_active_coding_runs: false,
+        active_coding_run_count: 0,
+      },
+    };
+    (publishedAppsService.getBuilderState as jest.Mock)
+      .mockResolvedValueOnce(initialState)
+      .mockResolvedValueOnce(activeScopeState)
+      .mockResolvedValueOnce(idleScopeState)
+      .mockResolvedValue(idleScopeState);
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockResolvedValue(sessionPayload);
+
+    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValueOnce({
+      body: {
+        getReader: () => {
+          const chunks = [
+            'data: {"event":"run.accepted","run_id":"run-1","app_id":"app-1","seq":1,"ts":"2026-02-16T19:00:00Z","stage":"run","payload":{"status":"queued"},"diagnostics":[]}\n\n',
+            'data: {"event":"run.completed","run_id":"run-1","app_id":"app-1","seq":2,"ts":"2026-02-16T19:00:01Z","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+          ];
+          let cursor = 0;
+          return {
+            read: async () => {
+              if (cursor >= chunks.length) return { done: true, value: undefined };
+              const next = chunks[cursor++];
+              return { done: false, value: new Uint8Array(Buffer.from(next, "utf-8")) };
+            },
+          };
+        },
+      },
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+    });
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
+    await screen.findByPlaceholderText("Plan, @ for context, / for commands");
+
+    fireEvent.change(screen.getByPlaceholderText("Plan, @ for context, / for commands"), {
+      target: { value: "wait until idle then hydrate" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
+    });
+
+    const ensureCallsBeforeSend = (publishedAppsService.ensureDraftDevSession as jest.Mock).mock.calls.length;
+    await waitFor(() => {
+      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledTimes(ensureCallsBeforeSend + 1);
+    });
+  });
+
   it("reuses returned chat_session_id for subsequent messages", async () => {
     (publishedAppsService.createCodingAgentRun as jest.Mock)
       .mockResolvedValueOnce({
@@ -2172,7 +2426,7 @@ describe("AppsBuilderWorkspace", () => {
     });
 
     releaseSecondRunStart();
-    await screen.findByRole("button", { name: "Researching 1 file" });
+    await screen.findByRole("button", { name: "Exploring 1 file" });
     await waitFor(() => {
       expect(screen.queryByText("Reasoning...")).not.toBeInTheDocument();
     });
@@ -2291,7 +2545,7 @@ describe("AppsBuilderWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    await screen.findByRole("button", { name: "Researching 1 file" });
+    await screen.findByRole("button", { name: "Exploring 1 file" });
     await waitFor(() => {
       expect(
         screen.queryByText("I can help with code changes in this app workspace. Tell me what you want to change."),

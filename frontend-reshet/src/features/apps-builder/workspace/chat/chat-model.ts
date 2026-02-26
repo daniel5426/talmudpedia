@@ -13,6 +13,7 @@ export type TimelineItem = {
   toolStatus?: ToolRunStatus;
   toolName?: string;
   toolPath?: string;
+  toolDetail?: string;
   assistantStreamId?: string;
   checkpointId?: string;
   userDeliveryStatus?: UserDeliveryStatus;
@@ -32,10 +33,10 @@ export function describeToolIntent(toolName: string): string {
   const normalized = normalizeToolName(toolName);
   if (normalized === "read" || normalized.includes("read_file")) return "Reading file";
   if (normalized.includes("read_agent_context")) return "Reading agent context";
-  if (normalized === "bash" || normalized.includes("run_command")) return "Running command";
-  if (normalized === "grep" || normalized.includes("search_code")) return "Searching code";
+  if (normalized === "bash" || normalized.includes("run_command") || normalized === "command") return "Running command";
+  if (normalized === "grep" || normalized.includes("search_code") || normalized === "glob" || normalized === "codesearch") return "Searching code";
   if (normalized.includes("todowrite")) return "Updating plan";
-  if (normalized.includes("apply_patch")) return "Applying code changes";
+  if (normalized.includes("apply_patch")) return "Running edit";
   if (normalized.includes("write_file")) return "Editing file";
   if (normalized.includes("list_files")) return "Listing files";
   if (normalized.includes("rename_file")) return "Renaming file";
@@ -44,6 +45,30 @@ export function describeToolIntent(toolName: string): string {
   if (normalized.includes("run_targeted_tests")) return "Running tests";
   if (normalized.includes("build_worker_precheck")) return "Running build precheck";
   return `Running ${toolName || "tool"}`;
+}
+
+export function isReadToolName(toolName: string): boolean {
+  const normalized = normalizeToolName(toolName);
+  return normalized === "read" || normalized.includes("read_file");
+}
+
+export function isSearchToolName(toolName: string): boolean {
+  const normalized = normalizeToolName(toolName);
+  return normalized === "grep" || normalized === "glob" || normalized === "codesearch" || normalized.includes("search_code");
+}
+
+export function isExplorationToolName(toolName: string): boolean {
+  return isReadToolName(toolName) || isSearchToolName(toolName);
+}
+
+export function isEditToolName(toolName: string): boolean {
+  const normalized = normalizeToolName(toolName);
+  return normalized.includes("apply_patch") || normalized.includes("write_file") || normalized === "edit";
+}
+
+export function isCommandToolName(toolName: string): boolean {
+  const normalized = normalizeToolName(toolName);
+  return normalized === "bash" || normalized.includes("run_command") || normalized === "command";
 }
 
 const DIRECT_PATH_KEYS = [
@@ -276,6 +301,89 @@ function extractPrimaryToolPathInternal(value: unknown, seen: Set<unknown>): str
 
 export function extractPrimaryToolPath(value: unknown): string | null {
   return extractPrimaryToolPathInternal(value, new Set<unknown>());
+}
+
+function extractPatchFilePath(patchText: string): string | null {
+  const lines = patchText.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const match = line.match(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s+(.+)$/i);
+    if (!match) continue;
+    const candidate = normalizeExtractedPath(match[1] || "");
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+export function extractToolPathForEvent(toolName: string, payload: unknown): string | null {
+  const normalized = normalizeToolName(toolName);
+  const source = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const inputPath = extractPrimaryToolPath(source.input);
+  if (inputPath) return inputPath;
+  if (normalized.includes("apply_patch")) {
+    const patchText = String(((source.input as Record<string, unknown> | undefined)?.patchText) || "").trim();
+    if (patchText) {
+      const patchPath = extractPatchFilePath(patchText);
+      if (patchPath) return patchPath;
+    }
+  }
+  if (isCommandToolName(toolName)) {
+    return null;
+  }
+  return extractPrimaryToolPath(source.output ?? source);
+}
+
+function firstNonEmptyString(values: unknown[]): string {
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+export function extractToolTitleForEvent(
+  toolName: string,
+  payload: unknown,
+  status: ToolRunStatus,
+  toolPath?: string | null,
+): string {
+  if (isEditToolName(toolName)) {
+    const pathLabel = formatToolPathLabel(String(toolPath || ""));
+    if (status === "completed") {
+      return pathLabel ? `Edited ${pathLabel}` : "Edited file";
+    }
+    if (status === "running") {
+      return pathLabel ? `Editing ${pathLabel}` : "Editing file";
+    }
+  }
+  const source = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const input = (source.input && typeof source.input === "object" ? source.input : {}) as Record<string, unknown>;
+  const output = (source.output && typeof source.output === "object" ? source.output : {}) as Record<string, unknown>;
+  const title = firstNonEmptyString([
+    source.title,
+    output.title,
+    output.description,
+    input.title,
+    input.description,
+  ]);
+  return title || describeToolIntent(toolName);
+}
+
+export function extractToolDetailForEvent(toolName: string, payload: unknown): string | null {
+  const normalized = normalizeToolName(toolName);
+  if (!isSearchToolName(normalized)) return null;
+  const source = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const input = (source.input && typeof source.input === "object" ? source.input : {}) as Record<string, unknown>;
+  const output = (source.output && typeof source.output === "object" ? source.output : {}) as Record<string, unknown>;
+  const detail = firstNonEmptyString([
+    source.title,
+    input.pattern,
+    input.query,
+    input.path,
+    input.filePath,
+    output.title,
+  ]);
+  return detail || null;
 }
 
 export function formatToolPathLabel(path: string): string {

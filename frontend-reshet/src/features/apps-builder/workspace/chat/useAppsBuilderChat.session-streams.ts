@@ -29,6 +29,7 @@ type ConsumeSessionRunStreamOptions = {
     status: "running" | "completed" | "failed",
     toolName: string,
     toolPath?: string | null,
+    toolDetail?: string | null,
   ) => void;
   finalizeSessionRunningTools: (sessionKey: string, status: "completed" | "failed") => void;
   attachCheckpointToSessionLastUser: (sessionKey: string, checkpointId: string) => void;
@@ -98,8 +99,8 @@ export async function consumeSessionRunStream({
     onPostRunHydrationStateChange,
     pushTimeline: (item) => pushSessionTimeline(session.key, item),
     upsertAssistantTimeline: (assistantStreamId, description) => upsertSessionAssistantTimeline(session.key, assistantStreamId, description),
-    upsertToolTimeline: (toolCallId, title, status, toolName, toolPath) =>
-      upsertSessionToolTimeline(session.key, toolCallId, title, status, toolName, toolPath),
+    upsertToolTimeline: (toolCallId, title, status, toolName, toolPath, toolDetail) =>
+      upsertSessionToolTimeline(session.key, toolCallId, title, status, toolName, toolPath, toolDetail),
     finalizeRunningTools: (status) => finalizeSessionRunningTools(session.key, status),
     attachCheckpointToLastUser: (checkpointId) => attachCheckpointToSessionLastUser(session.key, checkpointId),
     refreshStateSilently,

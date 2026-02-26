@@ -26,6 +26,12 @@ Scripts executed:
 - `/tmp/opencode_idle_position_probe_short.py`
 - `/tmp/opencode_finish_status_probe.py`
 
+Captured JSON artifacts:
+- `backend/documentations/summary/opencode_tools_protocol_probe_2026-02-25.json`
+  - fresh multi-scenario tools probe (per-scenario session, raw event tails, message snapshots)
+- `backend/documentations/summary/opencode_tools_protocol_probe_legacy_2026-02-25.json`
+  - earlier tools probe artifact preserved for comparison
+
 ## Ground-Truth Findings
 
 1. OpenCode global SSE does not reliably emit `run.completed`.
@@ -55,6 +61,18 @@ Scripts executed:
 - Tool and reasoning structure appears in `message.part.updated` with part types like:
   - `step-start`, `reasoning`, `tool`, `text`, `step-finish`.
 
+6. Tool event shapes from direct tools probe (`--mode tools`):
+- Tool progress appears as repeated `message.part.updated` for one `part.id` with:
+  - `part.type = "tool"`, `part.tool`, `part.callID`
+  - `part.state.status` transitions (`pending` -> `running` -> `completed`)
+- For completed tools, OpenCode populates stable display data in:
+  - `part.state.title` (preferred UI label)
+  - `part.state.input` (tool args)
+  - `part.state.output` (stringified output for grep/read/glob/bash in sampled runs)
+  - `part.state.metadata` (includes command exit/truncation for bash)
+- `apply_patch` to `/tmp/...` raised `permission.asked` (`external_directory`, pattern `/tmp/*`) and stalled without a reply/auto-approve path.
+- `codesearch` may resolve as assistant text-only fallback (`CODESEARCH_UNAVAILABLE`) with no `tool` part emitted.
+
 ## Example Evidence (Representative)
 
 From finish-vs-status probe snapshots:
@@ -73,6 +91,7 @@ This sequence repeated consistently in sampled tool-interleaved runs.
 2. Do not infer terminal from assistant message with `finish="tool-calls"`.
 3. Prefer `session.status=idle` + `session.idle` + settled message state as completion signal when explicit run terminal events are absent.
 4. Continue reconciling after transport EOF (`closed_no_terminal`) because OpenCode may have completed despite missing terminal event on stream.
+5. For tool row labels, prefer `part.state.title` (and tool input metadata) over parsing arbitrary lines from `part.state.output`; stacktrace/file-reference lines in bash output are not the tool identity.
 
 ## Upstream Source Confirmation (sst/opencode)
 

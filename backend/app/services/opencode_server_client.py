@@ -2100,6 +2100,7 @@ class OpenCodeServerClient:
     def _extract_incremental_tool_events(*, message: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
         parts = message.get("parts") if isinstance(message.get("parts"), list) else []
         tool_status = state.setdefault("tool_status", {})
+        tool_input_snapshot = state.setdefault("tool_input_snapshot", {})
         events: list[dict[str, Any]] = []
         for index, part in enumerate(parts):
             if not isinstance(part, dict) or str(part.get("type") or "").strip().lower() != "tool":
@@ -2112,9 +2113,17 @@ class OpenCodeServerClient:
             input_payload = state_payload.get("input")
             output_payload = state_payload.get("output")
             error_payload = str(state_payload.get("error") or state_payload.get("message") or "Tool failed").strip()
+            input_signature = repr(input_payload) if input_payload is not None else ""
+            previous_input_signature = str(tool_input_snapshot.get(call_id) or "")
+            should_refresh_started = (
+                previous in {"pending"}
+                and status in {"running", "in_progress", "started"}
+                and bool(input_signature)
+                and input_signature != previous_input_signature
+            )
 
             if status in {"running", "pending", "in_progress", "started"}:
-                if previous not in {"running", "pending", "in_progress", "started"}:
+                if previous not in {"running", "pending", "in_progress", "started"} or should_refresh_started:
                     events.append({"event": "tool.started", "payload": {"tool": tool_name, "span_id": call_id, "input": input_payload}})
             elif status in {"completed", "success", "done", "finished"}:
                 if previous not in {"running", "pending", "in_progress", "started", "completed", "success", "done", "finished"}:
@@ -2123,7 +2132,12 @@ class OpenCodeServerClient:
                     events.append(
                         {
                             "event": "tool.completed",
-                            "payload": {"tool": tool_name, "span_id": call_id, "output": output_payload},
+                            "payload": {
+                                "tool": tool_name,
+                                "span_id": call_id,
+                                "input": input_payload,
+                                "output": output_payload,
+                            },
                         }
                     )
             elif status in {"failed", "error", "cancelled"}:
@@ -2133,11 +2147,18 @@ class OpenCodeServerClient:
                     events.append(
                         {
                             "event": "tool.failed",
-                            "payload": {"tool": tool_name, "span_id": call_id, "error": error_payload, "output": output_payload},
+                            "payload": {
+                                "tool": tool_name,
+                                "span_id": call_id,
+                                "error": error_payload,
+                                "input": input_payload,
+                                "output": output_payload,
+                            },
                             "code": str(state_payload.get("code") or "").strip() or None,
                         }
                     )
             tool_status[call_id] = status
+            tool_input_snapshot[call_id] = input_signature
         return events
 
     @staticmethod
@@ -2193,7 +2214,12 @@ class OpenCodeServerClient:
                 events.append(
                     {
                         "event": "tool.completed",
-                        "payload": {"tool": tool_name, "span_id": call_id, "output": output_payload},
+                        "payload": {
+                            "tool": tool_name,
+                            "span_id": call_id,
+                            "input": input_payload,
+                            "output": output_payload,
+                        },
                     }
                 )
                 continue
@@ -2204,7 +2230,12 @@ class OpenCodeServerClient:
                 events.append(
                     {
                         "event": "tool.failed",
-                        "payload": {"tool": tool_name, "span_id": call_id, "output": output_payload},
+                        "payload": {
+                            "tool": tool_name,
+                            "span_id": call_id,
+                            "input": input_payload,
+                            "output": output_payload,
+                        },
                         "code": str(state.get("code") or "").strip() or None,
                         "diagnostics": [{"message": message}],
                     }

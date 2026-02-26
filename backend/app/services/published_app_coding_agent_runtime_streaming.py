@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
+from sqlalchemy import select
+
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
@@ -185,11 +187,18 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
     ) -> None:
         if event not in {"tool.started", "tool.completed", "tool.failed"}:
             return
-        persisted = await self.db.get(AgentRun, run.id) or run
+        # Refresh with row lock to prevent lost updates when multiple run monitors/sessions
+        # append tool history concurrently for the same run.
+        persisted_row = await self.db.execute(
+            select(AgentRun)
+            .where(AgentRun.id == run.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        persisted = persisted_row.scalar_one_or_none() or run
         output_result = dict(persisted.output_result) if isinstance(persisted.output_result, dict) else {}
-        events = output_result.get("tool_events")
-        if not isinstance(events, list):
-            events = []
+        raw_events = output_result.get("tool_events")
+        events = list(raw_events) if isinstance(raw_events, list) else []
         events.append(
             {
                 "event": event,

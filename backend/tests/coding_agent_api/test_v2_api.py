@@ -269,6 +269,89 @@ async def test_v2_stream_missing_terminal_does_not_force_fail_by_default(db_sess
 
 
 @pytest.mark.asyncio
+async def test_v2_tool_event_history_append_preserves_external_updates(db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    _ = org_unit
+
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={
+            "input": "Persist tool events",
+            "context": {
+                "chat_session_id": str(uuid4()),
+                "preview_sandbox_id": "sandbox-test",
+                "preview_sandbox_status": "running",
+                "preview_workspace_stage_path": "/workspace",
+            },
+        },
+        surface=CODING_AGENT_SURFACE,
+        published_app_id=uuid4(),
+        base_revision_id=uuid4(),
+        execution_engine="opencode",
+    )
+    db_session.add(run)
+    await db_session.commit()
+    await db_session.refresh(run)
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+    await service._persist_tool_event_for_history(
+        run=run,
+        event="tool.started",
+        stage="tool",
+        payload={"tool": "read", "span_id": "span-1"},
+        diagnostics=[],
+    )
+
+    from app.db.postgres.engine import sessionmaker as get_sessionmaker
+
+    async with get_sessionmaker() as external_db:
+        external_run = await external_db.get(AgentRun, run.id)
+        assert external_run is not None
+        external_output = dict(external_run.output_result) if isinstance(external_run.output_result, dict) else {}
+        external_events = list(external_output.get("tool_events") or [])
+        external_events.append(
+            {
+                "event": "tool.started",
+                "stage": "tool",
+                "payload": {"tool": "glob", "span_id": "span-2"},
+                "diagnostics": [],
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        external_output["tool_events"] = external_events
+        external_run.output_result = external_output
+        await external_db.commit()
+
+    # Local db_session still has a stale identity-map copy; append must merge with
+    # latest DB value, not overwrite it.
+    await service._persist_tool_event_for_history(
+        run=run,
+        event="tool.completed",
+        stage="tool",
+        payload={"tool": "read", "span_id": "span-1"},
+        diagnostics=[],
+    )
+
+    refreshed_row = await db_session.execute(
+        select(AgentRun)
+        .where(AgentRun.id == run.id)
+        .execution_options(populate_existing=True)
+    )
+    refreshed = refreshed_row.scalar_one()
+    tool_events = list((refreshed.output_result or {}).get("tool_events") or [])
+    assert len(tool_events) == 3
+    assert [event.get("payload", {}).get("span_id") for event in tool_events] == [
+        "span-1",
+        "span-2",
+        "span-1",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_v2_answer_question_endpoint(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -436,4 +519,3 @@ async def test_v2_cancel_closes_stream_when_runtime_keeps_non_terminal_events(cl
 
     await asyncio.wait_for(consumer_task, timeout=3.0)
     assert "run.cancelled" in observed_events
-

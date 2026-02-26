@@ -251,6 +251,7 @@ export function useAppsBuilderChat({
     status: "running" | "completed" | "failed",
     toolName: string,
     toolPath?: string | null,
+    toolDetail?: string | null,
   ) => {
     mutateSession(sessionKey, (session) => {
       const existingIndex = session.timeline.findIndex((item) => item.kind === "tool" && item.toolCallId === toolCallId);
@@ -264,6 +265,7 @@ export function useAppsBuilderChat({
           tone: nextTone,
           toolName,
           toolPath: toolPath || next[existingIndex].toolPath,
+          toolDetail: toolDetail || next[existingIndex].toolDetail,
         };
         session.timeline = next;
         return;
@@ -279,6 +281,7 @@ export function useAppsBuilderChat({
           tone: nextTone,
           toolName,
           toolPath: toolPath || undefined,
+          toolDetail: toolDetail || undefined,
         },
       ];
     });

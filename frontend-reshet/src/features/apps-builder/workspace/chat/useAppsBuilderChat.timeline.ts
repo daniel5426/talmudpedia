@@ -122,6 +122,7 @@ export function useAppsBuilderChatTimelineState() {
       status: ToolRunStatus,
       toolName: string,
       toolPath?: string | null,
+      toolDetail?: string | null,
     ) => {
       setTimeline((prev) => {
         const existingIndex = prev.findIndex(
@@ -137,6 +138,7 @@ export function useAppsBuilderChatTimelineState() {
             tone: nextTone,
             toolName,
             toolPath: toolPath || next[existingIndex].toolPath,
+            toolDetail: toolDetail || next[existingIndex].toolDetail,
           };
           return next;
         }
@@ -151,6 +153,7 @@ export function useAppsBuilderChatTimelineState() {
             tone: nextTone,
             toolName,
             toolPath: toolPath || undefined,
+            toolDetail: toolDetail || undefined,
           },
         ];
       });

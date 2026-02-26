@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -30,6 +31,71 @@ class ProbeResult:
     question_asked_payload: dict[str, Any] | None = None
     question_replied_payload: dict[str, Any] | None = None
     final_assistant_text: str = ""
+
+
+@dataclass
+class ToolScenario:
+    name: str
+    prompt: str
+
+
+TOOL_SCENARIOS: list[ToolScenario] = [
+    ToolScenario(
+        name="grep_search",
+        prompt=(
+            "Use the grep tool exactly once to search for pattern `consumeRunStream` under "
+            "`frontend-reshet/src/features/apps-builder/workspace/chat`. "
+            "After the tool call, respond with exactly: DONE_GREP"
+        ),
+    ),
+    ToolScenario(
+        name="glob_search",
+        prompt=(
+            "Use the glob tool exactly once to find `*.ts` files under "
+            "`frontend-reshet/src/features/apps-builder/workspace/chat`. "
+            "After the tool call, respond with exactly: DONE_GLOB"
+        ),
+    ),
+    ToolScenario(
+        name="read_file",
+        prompt=(
+            "Use the read tool exactly once to read the first 25 lines of "
+            "`frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. "
+            "After the tool call, respond with exactly: DONE_READ"
+        ),
+    ),
+    ToolScenario(
+        name="edit_file",
+        prompt=(
+            "Use the edit tool exactly once on `/tmp/opencode_tool_probe_edit.txt` to replace the text "
+            "`ORIGINAL_LINE` with `UPDATED_LINE`. Do not use write, only edit. "
+            "After the tool call, respond with exactly: DONE_EDIT"
+        ),
+    ),
+    ToolScenario(
+        name="bash_success",
+        prompt=(
+            "Use the bash tool exactly once and run: `printf 'BASH_OK_FROM_TOOL'`. "
+            "After the tool call, respond with exactly: DONE_BASH_OK"
+        ),
+    ),
+    ToolScenario(
+        name="bash_error_stack",
+        prompt=(
+            "Use the bash tool exactly once and run this command exactly: "
+            "`node -e \"throw new Error('probe stack line')\"`. "
+            "After the tool call, respond with exactly: DONE_BASH_ERR"
+        ),
+    ),
+    ToolScenario(
+        name="codesearch",
+        prompt=(
+            "Use the codesearch tool exactly once with query `consumeRunStream`. "
+            "If codesearch is unavailable, explicitly say `CODESEARCH_UNAVAILABLE`. "
+            "Then respond with exactly: DONE_CODESEARCH"
+        ),
+    ),
+]
 
 
 class OpenCodeQuestionProbe:
@@ -252,6 +318,235 @@ class OpenCodeQuestionProbe:
         return result
 
 
+class OpenCodeToolsProbe:
+    def __init__(self, *, base_url: str, timeout_seconds: float, verbose: bool) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self.verbose = verbose
+        self._session_id = ""
+        self._events: list[dict[str, Any]] = []
+        self._events_lock = threading.Lock()
+        self._stop_event = threading.Event()
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            print(message, flush=True)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_payload: dict[str, Any] | None = None,
+        timeout: float = 30.0,
+        expect_json: bool = True,
+    ) -> Any:
+        url = f"{self.base_url}{path}"
+        response = requests.request(method=method, url=url, json=json_payload, timeout=timeout)
+        if response.status_code >= 400:
+            raise RuntimeError(f"{method} {path} failed ({response.status_code}): {response.text[:400]}")
+        if not expect_json:
+            return response.text
+        content_type = response.headers.get("content-type", "")
+        if "application/json" not in content_type and not response.text.strip().startswith(("{", "[")):
+            raise RuntimeError(f"{method} {path} returned unexpected content-type: {content_type}")
+        return response.json()
+
+    def _wait_for_server(self, max_wait_seconds: float = 20.0) -> None:
+        deadline = time.time() + max_wait_seconds
+        last_error = "unknown"
+        while time.time() < deadline:
+            try:
+                payload = self._request("GET", "/session", timeout=5.0)
+                if isinstance(payload, list):
+                    return
+                last_error = f"unexpected payload type: {type(payload).__name__}"
+            except Exception as exc:
+                last_error = str(exc)
+            time.sleep(0.4)
+        raise RuntimeError(f"OpenCode server did not become ready: {last_error}")
+
+    def _event_stream_worker(self) -> None:
+        headers = {"Accept": "text/event-stream"}
+        url = f"{self.base_url}/global/event"
+        with requests.get(url, headers=headers, stream=True, timeout=(10, None)) as response:
+            if response.status_code >= 400:
+                raise RuntimeError(f"GET /global/event failed ({response.status_code}): {response.text[:300]}")
+            for raw_line in response.iter_lines(decode_unicode=True):
+                if self._stop_event.is_set():
+                    return
+                line = (raw_line or "").strip()
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                if not line:
+                    continue
+                try:
+                    wrapper = json.loads(line)
+                except Exception:
+                    continue
+                payload = wrapper.get("payload") if isinstance(wrapper, dict) else None
+                if not isinstance(payload, dict):
+                    continue
+                properties = payload.get("properties") if isinstance(payload.get("properties"), dict) else {}
+                if self._extract_session_id(properties) != self._session_id:
+                    continue
+                with self._events_lock:
+                    self._events.append(payload)
+
+    @staticmethod
+    def _extract_session_id(properties: dict[str, Any]) -> str:
+        direct = str(properties.get("sessionID") or properties.get("sessionId") or "").strip()
+        if direct:
+            return direct
+        info = properties.get("info")
+        if isinstance(info, dict):
+            nested = str(info.get("sessionID") or info.get("sessionId") or "").strip()
+            if nested:
+                return nested
+        part = properties.get("part")
+        if isinstance(part, dict):
+            nested = str(part.get("sessionID") or part.get("sessionId") or "").strip()
+            if nested:
+                return nested
+        return ""
+
+    def _events_snapshot(self) -> list[dict[str, Any]]:
+        with self._events_lock:
+            return list(self._events)
+
+    def _wait_for_next_idle(self, *, previous_idle_count: int) -> int:
+        deadline = time.time() + self.timeout_seconds
+        while time.time() < deadline:
+            current_idle = sum(1 for e in self._events_snapshot() if str(e.get("type") or "") == "session.idle")
+            if current_idle > previous_idle_count:
+                return current_idle
+            time.sleep(0.2)
+        raise RuntimeError("Timed out waiting for next session.idle")
+
+    @staticmethod
+    def _compact_part(part: dict[str, Any]) -> dict[str, Any]:
+        keys = ["id", "type", "state", "tool", "callID", "messageID", "input", "output", "title", "text", "delta", "error"]
+        out: dict[str, Any] = {}
+        for key in keys:
+            if key in part:
+                out[key] = part.get(key)
+        return out
+
+    @classmethod
+    def _summarize_messages(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        summary: list[dict[str, Any]] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            info = message.get("info") if isinstance(message.get("info"), dict) else {}
+            parts = message.get("parts") if isinstance(message.get("parts"), list) else []
+            summary.append(
+                {
+                    "message_id": info.get("id"),
+                    "role": info.get("role"),
+                    "finish": info.get("finish"),
+                    "time": info.get("time"),
+                    "parts": [cls._compact_part(part) for part in parts if isinstance(part, dict)],
+                }
+            )
+        return summary
+
+    def run(self) -> dict[str, Any]:
+        Path("/tmp/opencode_tool_probe_edit.txt").write_text("ORIGINAL_LINE\n", encoding="utf-8")
+        self._wait_for_server()
+        self._log("OpenCode server is ready for tools probe.")
+        scenario_results: list[dict[str, Any]] = []
+        all_events: list[dict[str, Any]] = []
+
+        for scenario in TOOL_SCENARIOS:
+            self._log(f"Running scenario: {scenario.name}")
+            session = self._request(
+                "POST",
+                "/session",
+                json_payload={"title": f"tools-probe-{scenario.name}-{uuid.uuid4().hex[:6]}"},
+                timeout=30.0,
+            )
+            if not isinstance(session, dict):
+                raise RuntimeError("POST /session returned an unexpected payload")
+            self._session_id = str(session.get("id") or "").strip()
+            if not self._session_id:
+                raise RuntimeError("POST /session response is missing id")
+
+            with self._events_lock:
+                self._events = []
+            self._stop_event = threading.Event()
+            stream_thread = threading.Thread(target=self._event_stream_worker, name=f"opencode-tools-{scenario.name}", daemon=True)
+            stream_thread.start()
+            time.sleep(0.2)
+            scenario_error = ""
+            try:
+                message_id = f"msg-{uuid.uuid4().hex[:8]}"
+                self._request(
+                    "POST",
+                    f"/session/{self._session_id}/prompt_async",
+                    json_payload={"messageID": message_id, "parts": [{"type": "text", "text": scenario.prompt}]},
+                    timeout=30.0,
+                    expect_json=False,
+                )
+                self._wait_for_next_idle(previous_idle_count=0)
+                time.sleep(0.8)
+            except Exception as exc:
+                scenario_error = str(exc)
+            finally:
+                self._stop_event.set()
+                stream_thread.join(timeout=1.0)
+
+            scenario_events = self._events_snapshot()
+            all_events.extend(scenario_events)
+            counts: dict[str, int] = {}
+            toolish_message_events: list[dict[str, Any]] = []
+            for event in scenario_events:
+                event_type = str(event.get("type") or "")
+                counts[event_type] = counts.get(event_type, 0) + 1
+                if not event_type.startswith("message"):
+                    continue
+                properties = event.get("properties") if isinstance(event.get("properties"), dict) else {}
+                info = properties.get("info") if isinstance(properties.get("info"), dict) else {}
+                part = properties.get("part") if isinstance(properties.get("part"), dict) else {}
+                if part:
+                    toolish_message_events.append(
+                        {
+                            "event_type": event_type,
+                            "message_id": info.get("id"),
+                            "role": info.get("role"),
+                            "part": self._compact_part(part),
+                        }
+                    )
+
+            messages_payload = self._request("GET", f"/session/{self._session_id}/message", timeout=30.0)
+            messages = messages_payload if isinstance(messages_payload, list) else []
+            scenario_results.append(
+                {
+                    "scenario": scenario.name,
+                    "session_id": self._session_id,
+                    "prompt": scenario.prompt,
+                    "error": scenario_error or None,
+                    "event_counts": counts,
+                    "toolish_message_events": toolish_message_events,
+                    "messages": self._summarize_messages(messages),
+                }
+            )
+
+        edited_file_content = ""
+        try:
+            edited_file_content = Path("/tmp/opencode_tool_probe_edit.txt").read_text(encoding="utf-8")
+        except Exception:
+            edited_file_content = ""
+
+        return {
+            "scenarios": scenario_results,
+            "raw_events_tail": all_events[-300:],
+            "edited_file_content": edited_file_content,
+        }
+
+
 def launch_local_opencode_server(*, port: int, cwd: str) -> subprocess.Popen[str]:
     command = ["npx", "-y", "opencode-ai", "serve", "--hostname", "127.0.0.1", "--port", str(port)]
     process = subprocess.Popen(
@@ -328,6 +623,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Reduce progress logging.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["question", "tools"],
+        default="question",
+        help="Probe mode: question tool flow or broader tools flow.",
+    )
+    parser.add_argument(
+        "--output-file",
+        default="",
+        help="Optional output JSON path for tools mode. Defaults to /tmp/opencode-tools-probe-<timestamp>.json",
+    )
     return parser.parse_args()
 
 
@@ -352,19 +658,29 @@ def main() -> int:
             )
             output_thread.start()
 
-        probe = OpenCodeQuestionProbe(base_url=base_url, timeout_seconds=float(args.timeout_seconds), verbose=verbose)
-        result = probe.run(answer=str(args.answer))
+        if args.mode == "question":
+            probe = OpenCodeQuestionProbe(base_url=base_url, timeout_seconds=float(args.timeout_seconds), verbose=verbose)
+            result = probe.run(answer=str(args.answer))
 
-        print("\n=== Probe Summary ===", flush=True)
-        print(f"session_id: {result.session_id}", flush=True)
-        print(f"question_id: {result.question_id}", flush=True)
-        print(f"event_counts: {json.dumps(result.event_counts, sort_keys=True)}", flush=True)
-        print("question.asked payload:", flush=True)
-        print(json.dumps(result.question_asked_payload, ensure_ascii=True, sort_keys=True, indent=2), flush=True)
-        print("question.replied payload:", flush=True)
-        print(json.dumps(result.question_replied_payload, ensure_ascii=True, sort_keys=True, indent=2), flush=True)
-        print("final assistant text preview:", flush=True)
-        print((result.final_assistant_text or "")[:500], flush=True)
+            print("\n=== Probe Summary ===", flush=True)
+            print(f"session_id: {result.session_id}", flush=True)
+            print(f"question_id: {result.question_id}", flush=True)
+            print(f"event_counts: {json.dumps(result.event_counts, sort_keys=True)}", flush=True)
+            print("question.asked payload:", flush=True)
+            print(json.dumps(result.question_asked_payload, ensure_ascii=True, sort_keys=True, indent=2), flush=True)
+            print("question.replied payload:", flush=True)
+            print(json.dumps(result.question_replied_payload, ensure_ascii=True, sort_keys=True, indent=2), flush=True)
+            print("final assistant text preview:", flush=True)
+            print((result.final_assistant_text or "")[:500], flush=True)
+        else:
+            probe = OpenCodeToolsProbe(base_url=base_url, timeout_seconds=float(args.timeout_seconds), verbose=verbose)
+            result = probe.run()
+            output_path = args.output_file.strip() or f"/tmp/opencode-tools-probe-{int(time.time())}.json"
+            Path(output_path).write_text(json.dumps(result, ensure_ascii=True, indent=2), encoding="utf-8")
+            print("\n=== Tools Probe Summary ===", flush=True)
+            print(f"session_id: {result.get('session_id')}", flush=True)
+            print(f"scenario_count: {len(result.get('scenarios') or [])}", flush=True)
+            print(f"output_file: {output_path}", flush=True)
         return 0
     except Exception as exc:
         print(f"Probe failed: {exc}", flush=True)
