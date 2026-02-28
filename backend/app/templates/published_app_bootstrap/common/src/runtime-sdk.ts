@@ -33,7 +33,6 @@ type RuntimeConfig = {
   bootstrap_path?: string;
 };
 
-const TOKEN_PREFIX = "published-app-auth-token";
 const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 const config = (runtimeConfig || {}) as RuntimeConfig;
 
@@ -179,10 +178,8 @@ function resolveTokenProvider(basePath?: string) {
     bindPreviewAuthChannel();
     if (explicitToken) return explicitToken;
     if (isPreviewMode) return previewAuthToken;
-    if (typeof window === "undefined") return null;
-    const appSlug = String(config.app_slug || "").trim();
-    if (!appSlug) return null;
-    return window.localStorage.getItem(`${TOKEN_PREFIX}:${appSlug}`);
+    // Published runtime auth uses same-origin HttpOnly cookies via the host runtime gateway.
+    return null;
   };
 }
 

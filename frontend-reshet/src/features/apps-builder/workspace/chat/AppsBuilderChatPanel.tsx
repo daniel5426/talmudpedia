@@ -200,6 +200,20 @@ export function AppsBuilderChatPanel({
     }
     return false;
   }, [lastUserIndex, timeline]);
+  const lastToolAfterCurrentUser = useMemo(() => {
+    if (lastUserIndex < 0) return null;
+    for (let index = timeline.length - 1; index > lastUserIndex; index -= 1) {
+      const item = timeline[index];
+      if (isToolTimelineItem(item)) {
+        return item;
+      }
+    }
+    return null;
+  }, [lastUserIndex, timeline]);
+  const lastToolAfterCurrentUserIsExploration = useMemo(
+    () => Boolean(lastToolAfterCurrentUser && isExplorationToolName(String(lastToolAfterCurrentUser.toolName || ""))),
+    [lastToolAfterCurrentUser],
+  );
   const {
     threadTabs,
     handleOpenThreadTab,
@@ -389,6 +403,13 @@ export function AppsBuilderChatPanel({
           const readCount = readItems.length;
           const searchCount = searchItems.length;
           const hasRunningExplore = explorationStreak.some((entry) => (entry.toolStatus || "completed") === "running");
+          const keepExploreHeaderShimmer =
+            hasRunningExplore
+            || (
+              isSending
+              && lastToolAfterCurrentUserIsExploration
+              && explorationStreak.some((entry) => entry.id === lastToolAfterCurrentUser?.id)
+            );
           const headerParts: string[] = [];
           if (readCount > 0) {
             headerParts.push(`${readCount} ${readCount === 1 ? "file" : "files"}`);
@@ -407,7 +428,7 @@ export function AppsBuilderChatPanel({
                       type="button"
                       className="group flex w-full items-center justify-between gap-2 rounded-md px-0 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
                     >
-                      {hasRunningExplore ? (
+                      {keepExploreHeaderShimmer ? (
                         <Shimmer className="text-sm">{headerText}</Shimmer>
                       ) : (
                         <span className="text-sm">{headerText}</span>
@@ -574,7 +595,7 @@ export function AppsBuilderChatPanel({
               <div className="py-1 text-center text-[11px] text-muted-foreground">Loading older messages...</div>
             ) : null}
             {renderedTimeline}
-            {isSending && !hasRunningTool && !hasCurrentRunAssistantStream ? (
+            {isSending && !hasRunningTool && !hasCurrentRunAssistantStream && !lastToolAfterCurrentUserIsExploration ? (
               <Message from="assistant" className="max-w-full">
                 <MessageContent className="bg-transparent px-0 py-0 text-sm text-muted-foreground">
                   <Shimmer className="text-sm">

@@ -116,6 +116,16 @@ class PublicChatStreamRequest(BaseModel):
     context: Optional[dict[str, Any]] = None
 
 
+def _published_host_runtime_only_error() -> HTTPException:
+    return HTTPException(
+        status_code=410,
+        detail={
+            "code": "PUBLISHED_RUNTIME_PATH_MODE_REMOVED",
+            "message": "Published app runtime/auth/chat path endpoints are removed; use the published app host with /_talmudpedia/* endpoints",
+        },
+    )
+
+
 def _is_enabled(flag_name: str, default: str = "1") -> bool:
     return os.getenv(flag_name, default).strip().lower() not in {"0", "false", "off", "no"}
 
@@ -555,18 +565,8 @@ async def get_published_runtime(
     app_slug: str,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    revision = await _get_published_ui_revision(db, app)
-    published_url = app.published_url
-    return PublicAppRuntimeResponse(
-        app_id=str(app.id),
-        slug=app.slug,
-        revision_id=str(revision.id),
-        runtime_mode=revision.template_runtime or "vite_static",
-        published_url=published_url,
-        asset_base_url=published_url,
-        api_base_path="/api/py",
-    )
+    _ = (app_slug, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
@@ -575,9 +575,8 @@ async def get_published_runtime_bootstrap(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    revision = await _get_published_ui_revision(db, app)
-    return _build_published_bootstrap(request=request, app=app, revision=revision)
+    _ = (app_slug, request, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/assets/{asset_path:path}")
@@ -587,70 +586,8 @@ async def get_published_asset(
     asset_path: str,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    revision = await _get_published_ui_revision(db, app)
-
-    dist_prefix = (revision.dist_storage_prefix or "").strip()
-    if not dist_prefix:
-        raise HTTPException(status_code=404, detail="Published assets are unavailable for this app")
-
-    entry_html = "index.html"
-    manifest = revision.dist_manifest or {}
-    if isinstance(manifest, dict):
-        manifest_entry = manifest.get("entry_html")
-        if isinstance(manifest_entry, str) and manifest_entry.strip():
-            entry_html = manifest_entry.lstrip("/")
-
-    normalized_asset_path = (asset_path or "").strip().lstrip("/") or "index.html"
-    if normalized_asset_path == "index.html":
-        normalized_asset_path = entry_html
-
-    try:
-        storage = PublishedAppBundleStorage.from_env()
-        payload, content_type = storage.read_asset_bytes(
-            dist_storage_prefix=dist_prefix,
-            asset_path=normalized_asset_path,
-        )
-    except PublishedAppBundleAssetNotFound:
-        # Client-side app routes should resolve to index.html when the requested
-        # path is not a concrete static asset.
-        if _is_probable_asset_path(normalized_asset_path):
-            raise HTTPException(status_code=404, detail="Published asset not found")
-        try:
-            storage = PublishedAppBundleStorage.from_env()
-            payload, content_type = storage.read_asset_bytes(
-                dist_storage_prefix=dist_prefix,
-                asset_path=entry_html,
-            )
-        except PublishedAppBundleAssetNotFound:
-            raise HTTPException(status_code=404, detail="Published runtime entry is missing")
-        except PublishedAppBundleStorageNotConfigured as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-        except PublishedAppBundleStorageError as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to load published runtime entry: {exc}")
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-    except PublishedAppBundleStorageNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    except PublishedAppBundleStorageError as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to load published asset: {exc}")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    if content_type.startswith("text/html"):
-        try:
-            html = payload.decode("utf-8")
-            bootstrap = _build_published_bootstrap(request=request, app=app, revision=revision)
-            html = _inject_runtime_context_into_html(html, bootstrap)
-            payload = html.encode("utf-8")
-        except Exception:
-            pass
-
-    return Response(
-        content=payload,
-        media_type=content_type,
-        headers={"Cache-Control": "public, max-age=60"},
-    )
+    _ = (request, app_slug, asset_path, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/ui")
@@ -849,33 +786,8 @@ async def signup(
     payload: PublicAuthRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if not app.auth_enabled:
-        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
-    providers = set(app.auth_providers or [])
-    if "password" not in providers:
-        raise HTTPException(status_code=400, detail="Password auth is disabled for this app")
-
-    auth_service = PublishedAppAuthService(db)
-    try:
-        result = await auth_service.signup_with_password(
-            app=app,
-            email=payload.email.lower(),
-            password=payload.password,
-            full_name=payload.full_name,
-        )
-    except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {
-        "token": result.token,
-        "token_type": "bearer",
-        "user": {
-            "id": str(result.user.id),
-            "email": result.user.email,
-            "full_name": result.user.full_name,
-            "avatar": result.user.avatar,
-        },
-    }
+    _ = (app_slug, payload, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.post("/{app_slug}/auth/login")
@@ -884,32 +796,8 @@ async def login(
     payload: PublicAuthRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if not app.auth_enabled:
-        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
-    providers = set(app.auth_providers or [])
-    if "password" not in providers:
-        raise HTTPException(status_code=400, detail="Password auth is disabled for this app")
-
-    auth_service = PublishedAppAuthService(db)
-    try:
-        result = await auth_service.login_with_password(
-            app=app,
-            email=payload.email.lower(),
-            password=payload.password,
-        )
-    except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {
-        "token": result.token,
-        "token_type": "bearer",
-        "user": {
-            "id": str(result.user.id),
-            "email": result.user.email,
-            "full_name": result.user.full_name,
-            "avatar": result.user.avatar,
-        },
-    }
+    _ = (app_slug, payload, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.post("/{app_slug}/auth/exchange")
@@ -918,24 +806,8 @@ async def exchange_auth_token(
     payload: PublicAuthExchangeRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if not app.auth_enabled:
-        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
-    auth_service = PublishedAppAuthService(db)
-    try:
-        result = await auth_service.exchange_external_oidc(app=app, token=payload.token)
-    except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {
-        "token": result.token,
-        "token_type": "bearer",
-        "user": {
-            "id": str(result.user.id),
-            "email": result.user.email,
-            "full_name": result.user.full_name,
-            "avatar": result.user.avatar,
-        },
-    }
+    _ = (app_slug, payload, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/auth/google/start")
@@ -945,35 +817,8 @@ async def google_start(
     return_to: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _is_enabled("PUBLISHED_APPS_GOOGLE_AUTH_ENABLED", "1"):
-        raise HTTPException(status_code=404, detail="Google auth is disabled")
-
-    app = await _assert_published(db, app_slug)
-    if not app.auth_enabled:
-        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
-    providers = set(app.auth_providers or [])
-    if "google" not in providers:
-        raise HTTPException(status_code=400, detail="Google auth is disabled for this app")
-
-    auth_service = PublishedAppAuthService(db)
-    credential = await auth_service.get_google_credential(app.tenant_id)
-    if credential is None:
-        raise HTTPException(status_code=400, detail="Tenant Google OAuth credentials are missing")
-
-    creds = credential.credentials or {}
-    client_id = creds.get("client_id")
-    redirect_uri = creds.get("redirect_uri")
-    if not client_id or not redirect_uri:
-        raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
-
-    target = _normalize_return_to(request, return_to, app_slug)
-    auth_url = auth_service.build_google_auth_url(
-        client_id=client_id,
-        redirect_uri=redirect_uri,
-        app_slug=app_slug,
-        return_to=target,
-    )
-    return RedirectResponse(url=auth_url, status_code=302)
+    _ = (app_slug, request, return_to, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/auth/google/callback")
@@ -983,54 +828,8 @@ async def google_callback(
     state: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    auth_service = PublishedAppAuthService(db)
-
-    credential = await auth_service.get_google_credential(app.tenant_id)
-    if credential is None:
-        raise HTTPException(status_code=400, detail="Tenant Google OAuth credentials are missing")
-
-    creds = credential.credentials or {}
-    client_id = creds.get("client_id")
-    client_secret = creds.get("client_secret")
-    redirect_uri = creds.get("redirect_uri")
-    if not client_id or not client_secret or not redirect_uri:
-        raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
-
-    try:
-        state_payload = auth_service.parse_google_state(state)
-        if state_payload.get("app_slug") != app_slug:
-            raise PublishedAppAuthError("OAuth state app slug mismatch")
-        token_response = auth_service.exchange_google_code(
-            code=code,
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-        )
-        profile = auth_service.verify_google_id_token(
-            token_value=token_response["id_token"],
-            client_id=client_id,
-        )
-        user = await auth_service.get_or_create_google_user(
-            email=str(profile.get("email", "")).lower(),
-            google_id=str(profile.get("sub")),
-            full_name=profile.get("name"),
-            avatar=profile.get("picture"),
-        )
-        result = await auth_service.issue_auth_result(
-            app=app,
-            user=user,
-            provider="google",
-            metadata={"google_sub": str(profile.get("sub"))},
-        )
-    except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    callback_url = _append_query(
-        state_payload["return_to"],
-        {"token": result.token, "appSlug": app.slug},
-    )
-    return RedirectResponse(url=callback_url, status_code=302)
+    _ = (app_slug, code, state, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/auth/me")
@@ -1038,17 +837,8 @@ async def auth_me(
     app_slug: str,
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
-    if principal["app_slug"] != app_slug:
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    user = principal["user"]
-    return {
-        "id": str(user.id),
-        "email": user.email,
-        "full_name": user.full_name,
-        "avatar": user.avatar,
-        "app_id": principal["app_id"],
-        "app_slug": principal["app_slug"],
-    }
+    _ = (app_slug, principal)
+    raise _published_host_runtime_only_error()
 
 
 @router.post("/{app_slug}/auth/logout")
@@ -1057,15 +847,8 @@ async def auth_logout(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    if principal["app_slug"] != app_slug:
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    service = PublishedAppAuthService(db)
-    await service.revoke_session(
-        session_id=UUID(principal["session_id"]),
-        user_id=UUID(principal["user_id"]),
-        app_id=UUID(principal["app_id"]),
-    )
-    return {"status": "logged_out"}
+    _ = (app_slug, principal, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/chats")
@@ -1074,34 +857,8 @@ async def list_chats(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if principal["app_id"] != str(app.id):
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    user_id = UUID(principal["user_id"])
-    result = await db.execute(
-        select(Chat)
-        .where(
-            and_(
-                Chat.published_app_id == app.id,
-                Chat.user_id == user_id,
-            )
-        )
-        .order_by(Chat.updated_at.desc())
-        .limit(50)
-    )
-    chats = result.scalars().all()
-    return {
-        "items": [
-            {
-                "id": str(chat.id),
-                "title": chat.title,
-                "created_at": chat.created_at,
-                "updated_at": chat.updated_at,
-                "is_archived": chat.is_archived,
-            }
-            for chat in chats
-        ]
-    }
+    _ = (app_slug, principal, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/chats/{chat_id}")
@@ -1111,33 +868,8 @@ async def get_chat(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if principal["app_id"] != str(app.id):
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    user_id = UUID(principal["user_id"])
-    result = await db.execute(
-        select(Chat).where(
-            and_(
-                Chat.id == chat_id,
-                Chat.published_app_id == app.id,
-                Chat.user_id == user_id,
-            )
-        ).limit(1)
-    )
-    chat = result.scalar_one_or_none()
-    if chat is None:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    msg_result = await db.execute(
-        select(Message).where(Message.chat_id == chat.id).order_by(Message.index.asc())
-    )
-    messages = msg_result.scalars().all()
-    return {
-        "id": str(chat.id),
-        "title": chat.title,
-        "messages": [_chat_message_to_payload(message) for message in messages],
-        "created_at": chat.created_at,
-        "updated_at": chat.updated_at,
-    }
+    _ = (app_slug, chat_id, principal, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.post("/{app_slug}/chat/stream")
@@ -1147,16 +879,5 @@ async def chat_stream(
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _is_enabled("PUBLISHED_APPS_ENABLED", "1"):
-        raise HTTPException(status_code=404, detail="Published apps are disabled")
-
-    app = await _assert_published(db, app_slug)
-    return await _stream_chat_for_app(
-        app=app,
-        payload=payload,
-        db=db,
-        principal=principal,
-        enforce_app_auth=True,
-        allow_chat_persistence=True,
-        request_user_id=_normalize_optional_user_id(principal.get("user_id")) if principal else None,
-    )
+    _ = (app_slug, payload, principal, db)
+    raise _published_host_runtime_only_error()

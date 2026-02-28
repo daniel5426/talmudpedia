@@ -20,8 +20,6 @@ type RuntimeContext = {
   previewToken?: string | null;
 };
 
-const TOKEN_PREFIX = "published-app-auth-token";
-
 const getRuntimeContextFromQuery = (): RuntimeContext => {
   if (typeof window === "undefined") return {};
   const query = new URLSearchParams(window.location.search);
@@ -56,8 +54,8 @@ const resolveBasePath = (): string | null => {
 const resolveToken = (): string | null => {
   const ctx = getRuntimeContext();
   if (ctx.token) return ctx.token;
-  if (typeof window === "undefined" || !ctx.appSlug) return null;
-  return window.localStorage.getItem(`${TOKEN_PREFIX}:${ctx.appSlug}`);
+  // Published runtime auth uses same-origin HttpOnly cookies via the host runtime gateway.
+  return null;
 };
 
 const resolvePreviewToken = (): string | null => {

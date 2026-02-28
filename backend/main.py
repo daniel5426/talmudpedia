@@ -770,7 +770,7 @@ app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 # Add Middlewares
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from app.middleware import PublishedAppsCORSMiddleware
+from app.middleware import PublishedAppsCORSMiddleware, PublishedAppsHostRuntimeMiddleware
 
 # app.add_middleware(GZipMiddleware, minimum_size=500)
 
@@ -804,6 +804,9 @@ app.add_middleware(
 # App-level CORS allowlist for /public/apps/{slug} endpoints.
 # This middleware is registered after CORSMiddleware so it runs first.
 app.add_middleware(PublishedAppsCORSMiddleware)
+# Host-aware same-URL published runtime/auth gate for *.apps domains.
+# Registered after CORS so it runs first for app-host requests.
+app.add_middleware(PublishedAppsHostRuntimeMiddleware)
 
 from app.api.routers import auth, chat, general, search, stt, texts, library, admin, tts, rag_admin, agent
 from app.api.routers.agents import router as agents_router
@@ -822,6 +825,7 @@ from app.api.routers import orchestration_internal as orchestration_internal_rou
 from app.api.routers import workload_security as workload_security_router
 from app.api.routers import published_apps_admin as published_apps_admin_router
 from app.api.routers import published_apps_public as published_apps_public_router
+from app.api.routers import published_apps_host_runtime as published_apps_host_runtime_router
 from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -841,6 +845,7 @@ app.include_router(internal_auth_router.jwks_router)
 app.include_router(orchestration_internal_router.router)
 app.include_router(published_apps_admin_router.router)
 app.include_router(published_apps_public_router.router)
+app.include_router(published_apps_host_runtime_router.router)
 app.include_router(sandbox_controller_dev_shim_router.router)
 
 from app.api.routers import knowledge_stores as knowledge_stores_router

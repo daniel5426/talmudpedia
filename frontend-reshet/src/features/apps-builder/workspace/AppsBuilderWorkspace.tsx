@@ -61,6 +61,7 @@ import type {
   PublishedAppUser,
   RevisionConflictResponse,
 } from "@/services";
+import { filterAppsBuilderFiles, isAppsBuilderBlockedFilePath } from "@/services/apps-builder-file-filter";
 import { cn } from "@/lib/utils";
 import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
@@ -312,7 +313,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, []);
 
   const hydrateFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
-    const nextFiles = revision?.files || {};
+    const nextFiles = filterAppsBuilderFiles(revision?.files || {});
     const nextEntry = revision?.entry_file || "src/main.tsx";
     setFiles(nextFiles);
     setEntryFile(nextEntry);
@@ -414,7 +415,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const syncDraftDevSession = useCallback(async () => {
     if (!currentRevisionId) return;
     const session = await publishedAppsService.syncDraftDevSession(appId, {
-      files,
+      files: filterAppsBuilderFiles(files),
       entry_file: entryFile,
       revision_id: currentRevisionId,
     });
@@ -656,7 +657,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     try {
       const revision = await publishedAppsService.createRevision(appId, {
         base_revision_id: currentRevisionId || undefined,
-        files,
+        files: filterAppsBuilderFiles(files),
         entry_file: entryFile,
       });
       syncFingerprintRef.current = JSON.stringify({
@@ -703,9 +704,26 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setError(null);
     setPublishStatus("queued");
     try {
+      let publishBaseRevisionId = currentRevisionId || undefined;
+      // Always re-read the latest server draft revision before publish to avoid races
+      // with post-run/debounced draft-dev sync creating a newer draft revision.
+      const latestBuilderState = await publishedAppsService.getBuilderState(appId);
+      publishBaseRevisionId = latestBuilderState.current_draft_revision?.id || publishBaseRevisionId;
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          app: {
+            ...prev.app,
+            current_draft_revision_id:
+              latestBuilderState.current_draft_revision?.id || prev.app.current_draft_revision_id,
+          },
+        };
+      });
+
       const job = await publishedAppsService.publish(appId, {
-        base_revision_id: currentRevisionId || undefined,
-        files,
+        base_revision_id: publishBaseRevisionId,
+        files: filterAppsBuilderFiles(files),
         entry_file: entryFile,
       });
 
@@ -761,7 +779,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsPublishing(false);
     }
-  }, [appId, currentRevisionId, entryFile, files, loadState]);
+  }, [
+    appId,
+    currentRevisionId,
+    entryFile,
+    files,
+    loadState,
+  ]);
 
   const resetTemplate = useCallback(
     async (templateKey: string) => {
@@ -980,7 +1004,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       className="flex h-dvh min-h-0 w-full overflow-hidden gap-0 bg-background"
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex h-11 shrink-0 items-center gap-3 px-3">
+        <header className="flex h-11 border-b shrink-0  items-center gap-3 px-3">
           {/* Left: back + app name + status dot */}
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -1142,7 +1166,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
               size="sm"
               className="h-7 gap-1.5 px-2.5 text-xs"
               onClick={publish}
-              disabled={isPublishing}
+              disabled={isPublishing || postRunHydrationPending}
             >
               {isPublishing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Rocket className="h-3 w-3" />}
               Publish
@@ -1591,6 +1615,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                         selectedFile={selectedFile}
                         onUpdateFile={(path, content) => {
                           if (codeEditingLocked) return;
+                          if (isAppsBuilderBlockedFilePath(path)) return;
                           setFiles((prev) => {
                             const next = { ...prev, [path]: content };
                             const fingerprint = buildDraftDevSyncFingerprint(entryFile, next);

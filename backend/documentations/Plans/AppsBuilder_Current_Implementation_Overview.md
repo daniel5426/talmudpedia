@@ -167,9 +167,17 @@ Flow:
    - Default/fallback: Celery worker build from draft revision snapshot (legacy/current fallback path).
    - Sandbox path (`APPS_PUBLISH_USE_SANDBOX_BUILD=1`): build from current draft-dev live preview sandbox.
 4. Sandbox path requires an active user draft-dev session and snapshots live preview -> isolated publish workspace (`.talmudpedia/publish/current/workspace`) before build.
-5. Sandbox path creates a draft checkpoint revision from that frozen live snapshot (audit/history) and publishes from the isolated workspace build output.
-6. Dist artifacts uploaded to immutable storage prefix.
-7. Publish pointer/url updates only on successful completion.
+5. In sandbox mode, live preview sandbox is the source of truth for publish:
+   - publish request `files` payload is ignored (no pre-publish sync back into live sandbox)
+   - publish request `entry_file` may be recorded in diagnostics/request metadata
+   - stale `base_revision_id` conflict checks are bypassed for sandbox mode because publish uses the live snapshot, not a draft DB revision snapshot
+6. Sandbox path creates a draft checkpoint revision from that frozen live snapshot (audit/history) and publishes from the isolated workspace build output.
+7. Sandbox path attempts dependency reuse for the isolated publish workspace:
+   - prepares publish workspace dependencies from the live sandbox workspace `node_modules`
+   - prefers symlink reuse, then copy fallback
+   - falls back to `npm ci` (if lockfile exists) or `npm install --no-audit --no-fund` only when reuse is unavailable/incompatible
+8. Dist artifacts uploaded to immutable storage prefix.
+9. Publish pointer/url updates only on successful completion.
 
 Key endpoints:
 - `POST /admin/apps/{app_id}/publish`
@@ -183,25 +191,42 @@ Worker/runtime plumbing:
 Publish job observability (current additions):
 - Polling response includes optional `stage` (for example `snapshot`, `install`, `build`, `upload`, `finalize`).
 - Publish jobs record `last_heartbeat_at` for long-running sandbox publishes.
+- Sandbox publish diagnostics may include payload-sync skip metadata indicating live-preview snapshot source-of-truth semantics.
+
+Recent publish correctness fixes reflected in code:
+- Fixed false `npm install` failure on success (`exit code 0`) in sandbox publish command result handling.
+- Sandbox publish no longer regresses/reverts preview state by syncing stale frontend payload files into the live sandbox before snapshot.
+- Sandbox publish route no longer rejects with `REVISION_CONFLICT` solely because a newer draft revision was created while the live sandbox snapshot is still the intended publish source.
 
 ## Public Runtime Delivery
-Published runtime is static-only delivery with runtime descriptor APIs and a canonical runtime bootstrap contract.
+Published runtime is static bundle delivery with a host-gated runtime/auth shell and a canonical runtime bootstrap contract.
 
-Public endpoints:
-- `GET /public/apps/{slug}/runtime`
-- `GET /public/apps/{slug}/runtime/bootstrap`
-- `GET /public/apps/preview/revisions/{revision_id}/runtime`
-- `GET /public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
-- `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
-- `POST /public/apps/{slug}/auth/exchange` (external OIDC JWT -> platform session token)
+Current published runtime entry/auth model (latest hard-cut):
+- Same-URL host-gated runtime is handled by backend host-aware middleware/router for `*.{APPS_BASE_DOMAIN}`.
+- Auth-enabled published apps render a centralized backend auth shell at the app URL (no iframe, no frontend `/published/{slug}` auth pages).
+- Published app auth now uses an HttpOnly per-app cookie session (`published_app_session`) as the runtime source of truth.
+- Published runtime chat uses same-host internal endpoints under `/_talmudpedia/*` and cookie auth (no published-mode localStorage bearer token requirement).
+
+Public endpoints (current):
+- Host runtime/auth on app domain (`https://{slug}.{APPS_BASE_DOMAIN}`):
+  - same-URL document/asset delivery via host-aware middleware/router
+  - `/_talmudpedia/auth/*`
+  - `/_talmudpedia/chat/stream`
+  - `/_talmudpedia/runtime/bootstrap`
+- Preview/runtime APIs (builder preview path mode retained):
+  - `GET /public/apps/preview/revisions/{revision_id}/runtime`
+  - `GET /public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
+  - `GET /public/apps/preview/revisions/{revision_id}/assets/{asset_path:path}`
 
 Runtime delivery behavior:
 - HTML runtime responses inject `window.__APP_RUNTIME_CONTEXT` using the same bootstrap payload schema as `/runtime/bootstrap`.
 - Published public runtime endpoints now enforce per-app CORS allowlist (`allowed_origins`, plus published URL).
+- Host-gated published runtime HTML (same app host path) injects runtime bootstrap pointing chat stream to `/_talmudpedia/chat/stream`.
 - Preview runtime/bootstrap/assets return tokenless URLs and no longer support query-token auth.
 - Preview auth is bearer/cookie only, and preview runtime responses set preview cookie from the authenticated principal token for tokenless browser navigation.
 
 Removed path behavior:
+- Published runtime/auth/chat path endpoints under `/public/apps/{slug}/*` return `410 PUBLISHED_RUNTIME_PATH_MODE_REMOVED`.
 - `GET /public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED`.
 
 ## Builder Dependency and Project Validation
@@ -234,10 +259,13 @@ Current policy highlights:
 
 ### Publish
 - Async publish job performs deterministic build and artifact upload.
+- In sandbox publish mode, click-time publish uses the current live preview sandbox snapshot (WYSIWYG) and does not require frontend local draft revision state to be perfectly in sync with the latest backend draft revision ID.
+- Frontend may still send publish payload `files`/`entry_file`, but backend sandbox publish ignores file payloads and publishes the current live snapshot.
 - App published pointer moves when job succeeds.
 
 ### Open Runtime
 - Published runtime resolves through runtime descriptor/static artifact URL.
+- On the published app host itself, backend now serves either the centralized auth shell or the published runtime HTML at the same URL based on cookie auth state.
 
 ## Operational and Testing Notes
 Relevant active test areas:

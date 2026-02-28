@@ -144,8 +144,13 @@ async def publish_published_app(
         raise HTTPException(status_code=403, detail="Publish requires a user principal")
 
     payload = payload or PublishRequest()
+    use_sandbox_publish = sandbox_publish_enabled()
     current_draft = await _ensure_current_draft_revision(db, app, actor_id)
-    if payload.base_revision_id and str(payload.base_revision_id) != str(current_draft.id):
+    if (
+        not use_sandbox_publish
+        and payload.base_revision_id
+        and str(payload.base_revision_id) != str(current_draft.id)
+    ):
         raise HTTPException(
             status_code=409,
             detail={
@@ -159,7 +164,7 @@ async def publish_published_app(
     publish_diagnostics: list[dict[str, Any]] = []
     saved_draft_revision_id: Optional[UUID] = None
     source_revision_id: Optional[UUID] = current_draft.id
-    if sandbox_publish_enabled():
+    if use_sandbox_publish:
         runtime_service = PublishedAppDraftDevRuntimeService(db)
         await runtime_service.expire_idle_sessions(app_id=app.id, user_id=actor_id)
         draft_session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor_id)
@@ -188,35 +193,27 @@ async def publish_published_app(
             )
 
         if payload.files is not None or payload.entry_file is not None:
-            files = _coerce_files_payload(payload.files or dict(current_draft.files or {}))
-            next_entry = _normalize_builder_path(payload.entry_file or current_draft.entry_file)
-            _assert_builder_path_allowed(next_entry, field="entry_file")
-            _validate_builder_project_or_raise(files, next_entry)
-            publish_diagnostics.append({"kind": "publish_request", "entry_file": next_entry})
+            if payload.entry_file is not None:
+                next_entry = _normalize_builder_path(payload.entry_file or current_draft.entry_file)
+                _assert_builder_path_allowed(next_entry, field="entry_file")
+                publish_diagnostics.append({"kind": "publish_request", "entry_file": next_entry})
+
             active_coding_runs = await _count_active_coding_runs_for_scope(
                 db,
                 app_id=app.id,
                 user_id=actor_id,
             )
-            if active_coding_runs > 0:
-                publish_diagnostics.append(
-                    {
-                        "kind": "payload_sync_skipped",
-                        "code": "CODING_AGENT_RUN_ACTIVE",
-                        "message": "Publish request files were ignored because a coding-agent run is active; publishing current live preview snapshot.",
-                    }
-                )
-            else:
-                try:
-                    await runtime_service.sync_session(
-                        app=app,
-                        revision=current_draft,
-                        user_id=actor_id,
-                        files=files,
-                        entry_file=next_entry,
-                    )
-                except PublishedAppDraftDevRuntimeDisabled as exc:
-                    raise HTTPException(status_code=409, detail=str(exc))
+            publish_diagnostics.append(
+                {
+                    "kind": "payload_sync_skipped",
+                    "code": "LIVE_SNAPSHOT_SOURCE_OF_TRUTH",
+                    "message": (
+                        "Publish request files were ignored in sandbox publish mode; "
+                        "publishing current live preview snapshot."
+                    ),
+                    "active_coding_run_count": str(active_coding_runs),
+                }
+            )
         source_revision_id = None
     else:
         if payload.files is not None or payload.entry_file is not None:

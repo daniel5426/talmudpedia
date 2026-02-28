@@ -22,6 +22,7 @@ backend/app/api/dependencies.py
 backend/app/api/routers/
 backend/app/api/routers/sandbox_controller_dev_shim.py
 backend/app/api/routers/published_apps_admin_routes_coding_agent_v2.py
+backend/app/api/routers/published_apps_host_runtime.py
 backend/app/api/schemas/
 
 backend/app/core/
@@ -112,6 +113,7 @@ backend/app/services/orchestration_lineage_service.py
 backend/app/services/mcp_client.py
 backend/app/services/web_search.py
 backend/app/services/published_app_auth_service.py
+backend/app/services/published_app_auth_shell_renderer.py
 backend/app/services/published_app_bundle_storage.py
 backend/app/services/published_app_draft_dev_runtime.py
 backend/app/services/published_app_draft_dev_local_runtime.py
@@ -144,6 +146,7 @@ backend/app/services/voice/
 
 backend/app/middleware/
 backend/app/middleware/published_apps_cors.py
+backend/app/middleware/published_apps_host_runtime.py
 
 backend/app/workers/
 backend/app/workers/celery_app.py
