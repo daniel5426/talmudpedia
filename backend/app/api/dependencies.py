@@ -343,6 +343,10 @@ async def get_optional_published_app_preview_principal(
     if cookie_token and cookie_token not in token_candidates:
         token_candidates.append(cookie_token)
 
+    query_token = (request.query_params.get("runtime_token") or "").strip()
+    if query_token and query_token not in token_candidates:
+        token_candidates.append(query_token)
+
     if not token_candidates:
         return None
 

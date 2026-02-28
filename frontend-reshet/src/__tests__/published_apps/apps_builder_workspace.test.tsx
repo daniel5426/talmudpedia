@@ -6,7 +6,6 @@ import { AppsBuilderWorkspace } from "@/features/apps-builder/workspace/AppsBuil
 import {
   listOpenCodeCodingModels,
   publishedAppsService,
-  publishedRuntimeService,
   resolveAppsCodingAgentEngine,
 } from "@/services";
 
@@ -53,6 +52,7 @@ jest.mock("@/services", () => ({
     ensureDraftDevSession: jest.fn(),
     syncDraftDevSession: jest.fn(),
     heartbeatDraftDevSession: jest.fn(),
+    heartbeatDraftDevSessionQuiet: jest.fn(),
     resetTemplate: jest.fn(),
     createCodingAgentRun: jest.fn(),
     submitCodingAgentPrompt: jest.fn(),
@@ -69,9 +69,6 @@ jest.mock("@/services", () => ({
     restoreCodingAgentCheckpoint: jest.fn(),
   },
   resolveAppsCodingAgentEngine: jest.fn(() => "opencode"),
-  publishedRuntimeService: {
-    getPreviewRuntime: jest.fn(),
-  },
   listOpenCodeCodingModels: jest.fn(),
 }));
 
@@ -476,6 +473,24 @@ describe("AppsBuilderWorkspace", () => {
       expires_at: new Date(Date.now() + 180_000).toISOString(),
       last_error: null,
     });
+    (publishedAppsService.heartbeatDraftDevSessionQuiet as jest.Mock).mockResolvedValue({
+      session: {
+        session_id: "session-1",
+        app_id: "app-1",
+        revision_id: "rev-1",
+        status: "running",
+        has_active_coding_runs: false,
+        active_coding_run_count: 0,
+        preview_url: "https://preview.local/sandbox/session-1/",
+        preview_auth_token: "preview-auth-token-2",
+        preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
+        idle_timeout_seconds: 180,
+        last_activity_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 180_000).toISOString(),
+        last_error: null,
+      },
+      publish_locked: false,
+    });
     (publishedAppsService.createRevision as jest.Mock).mockResolvedValue({
       id: "rev-2",
       published_app_id: "app-1",
@@ -672,15 +687,6 @@ describe("AppsBuilderWorkspace", () => {
       { id: "opencode/minimax-m2.5-free", name: "MiniMax M2.5 Free", is_free: true },
       { id: "opencode/gpt-5", name: "GPT 5", is_free: false },
     ]);
-    (publishedRuntimeService.getPreviewRuntime as jest.Mock).mockResolvedValue({
-      app_id: "app-1",
-      slug: "builder-app",
-      revision_id: "rev-3",
-      runtime_mode: "vite_static",
-      preview_url: "http://127.0.0.1:8000/api/py/public/apps/preview/revisions/rev-3/assets/index.html",
-      asset_base_url: "http://127.0.0.1:8000/api/py/public/apps/preview/revisions/rev-3/assets/",
-      api_base_path: "/api/py",
-    });
     jest.spyOn(window, "confirm").mockReturnValue(true);
   });
 
@@ -696,8 +702,12 @@ describe("AppsBuilderWorkspace", () => {
     await screen.findByRole("tab", { name: "Preview" });
     expect(screen.getByRole("tab", { name: "Config" })).toBeInTheDocument();
     expect(setOpenMock).toHaveBeenCalledWith(false);
-
-    fireEvent.click(screen.getByRole("button", { name: /save draft/i }));
+    await openCodeSection();
+    const editor = await screen.findByLabelText("Code Editor");
+    fireEvent.change(editor, {
+      target: { value: "import './App';\nconsole.log('save draft test');" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
       expect(publishedAppsService.createRevision).toHaveBeenCalledWith(
@@ -886,6 +896,85 @@ describe("AppsBuilderWorkspace", () => {
     expect(screen.queryByText("Starting draft preview...")).not.toBeInTheDocument();
   });
 
+  it("keeps sandbox sync active while editing in config tab", async () => {
+    render(<AppsBuilderWorkspace appId="app-1" />);
+
+    await waitFor(() => expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledWith("app-1"));
+    await openCodeSection();
+    const editor = await screen.findByLabelText("Code Editor");
+    fireEvent.change(editor, {
+      target: { value: "import './App';\nconsole.log('config edit sync');" },
+    });
+
+    await waitFor(() => expect(publishedAppsService.syncDraftDevSession).toHaveBeenCalled());
+  });
+
+  it("disables publish and send while sandbox is loading but keeps composer editable", async () => {
+    let resolveEnsure: (value: unknown) => void = () => {};
+    const pendingEnsure = new Promise((resolve) => {
+      resolveEnsure = resolve;
+    });
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockReturnValueOnce(pendingEnsure);
+
+    render(<AppsBuilderWorkspace appId="app-1" />);
+    await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalledWith("app-1"));
+
+    const publishButton = await screen.findByRole("button", { name: /publish/i });
+    const sendButton = screen.getByRole("button", { name: "Send" });
+    const composer = screen.getByPlaceholderText("Plan, @ for context, / for commands");
+
+    expect(publishButton).toBeDisabled();
+    expect(sendButton).toBeDisabled();
+    expect(composer).not.toBeDisabled();
+
+    resolveEnsure({
+      session_id: "session-1",
+      app_id: "app-1",
+      revision_id: "rev-1",
+      status: "running",
+      has_active_coding_runs: false,
+      active_coding_run_count: 0,
+      preview_url: "https://preview.local/sandbox/session-1/",
+      preview_auth_token: "preview-auth-token-1",
+      preview_auth_expires_at: new Date(Date.now() + 7200_000).toISOString(),
+      idle_timeout_seconds: 180,
+      last_activity_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 180_000).toISOString(),
+      last_error: null,
+    });
+
+    await waitFor(() => expect(publishButton).not.toBeDisabled());
+    fireEvent.change(composer, {
+      target: { value: "ready to send" },
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled());
+  });
+
+  it("treats publish-lock heartbeat responses as expected flow", async () => {
+    jest.useFakeTimers();
+    try {
+      (publishedAppsService.heartbeatDraftDevSessionQuiet as jest.Mock)
+        .mockResolvedValueOnce({
+          session: null,
+          publish_locked: true,
+          code: "PUBLISH_ACTIVE_SESSION_LOCKED",
+          message: "Cannot stop the draft preview session while publish is running.",
+        });
+
+      render(<AppsBuilderWorkspace appId="app-1" />);
+      await waitFor(() => expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledWith("app-1"));
+
+      await act(async () => {
+        jest.advanceTimersByTime(45_100);
+      });
+
+      await waitFor(() => expect(publishedAppsService.heartbeatDraftDevSessionQuiet).toHaveBeenCalled());
+      expect(screen.queryByText("Cannot stop the draft preview session while publish is running.")).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("keeps preview iframe src stable when heartbeat rotates preview auth token", async () => {
     jest.useFakeTimers();
     try {
@@ -900,7 +989,7 @@ describe("AppsBuilderWorkspace", () => {
         jest.advanceTimersByTime(45_100);
       });
 
-      await waitFor(() => expect(publishedAppsService.heartbeatDraftDevSession).toHaveBeenCalled());
+      await waitFor(() => expect(publishedAppsService.heartbeatDraftDevSessionQuiet).toHaveBeenCalled());
       expect(previewFrame).toHaveAttribute("src", initialSrc || "");
     } finally {
       jest.useRealTimers();
@@ -1394,7 +1483,7 @@ describe("AppsBuilderWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    await screen.findByText("Running command");
+    await screen.findByText(/(Running|Ran) (command|parser test)/i);
     expect(screen.queryByText("lib/parser.js:454:16")).not.toBeInTheDocument();
     expect(screen.queryByText("chunks/dep-CDnG8rE7.js:36141:11")).not.toBeInTheDocument();
   });
@@ -2216,9 +2305,8 @@ describe("AppsBuilderWorkspace", () => {
       expect(publishedAppsService.streamCodingAgentRun).toHaveBeenCalledWith("app-1", "run-1");
     });
 
-    const ensureCallsBeforeSend = (publishedAppsService.ensureDraftDevSession as jest.Mock).mock.calls.length;
     await waitFor(() => {
-      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledTimes(ensureCallsBeforeSend + 1);
+      expect((publishedAppsService.getBuilderState as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(3);
     });
   });
 
@@ -2856,9 +2944,9 @@ describe("AppsBuilderWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /open preview/i }));
 
     await waitFor(() => {
-      expect(publishedAppsService.ensureDraftDevSession).toHaveBeenCalledWith("app-1");
+      expect(publishedAppsService.ensureDraftDevSession).not.toHaveBeenCalled();
       expect(window.open).toHaveBeenCalledWith(
-        "https://preview.local/sandbox/session-1/",
+        "https://preview.local/sandbox/session-1/?runtime_token=preview-auth-token-1",
         "_blank",
         "noopener,noreferrer",
       );
@@ -2888,34 +2976,31 @@ describe("AppsBuilderWorkspace", () => {
       );
     });
     expect(publishedAppsService.ensureDraftDevSession).not.toHaveBeenCalled();
-    expect(publishedRuntimeService.getPreviewRuntime).not.toHaveBeenCalled();
   });
 
-  it("opens published revision via preview runtime proxy for local apps domains", async () => {
+  it("opens local published app URL when app is published", async () => {
     const publishedState = makeState();
     publishedState.app.status = "published";
     publishedState.app.published_url = "https://support-app.apps.localhost";
-    publishedState.app.current_published_revision_id = "rev-3";
-    publishedState.preview_token = "preview-token";
     (publishedAppsService.getBuilderState as jest.Mock).mockResolvedValueOnce(publishedState);
 
     render(<AppsBuilderWorkspace appId="app-1" />);
 
     await waitFor(() => expect(publishedAppsService.getBuilderState).toHaveBeenCalled());
     await screen.findByRole("button", { name: /open app/i });
+    (publishedAppsService.ensureDraftDevSession as jest.Mock).mockClear();
     openSpy.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: /open app/i }));
 
     await waitFor(() => {
-      expect(publishedAppsService.createRevisionPreviewToken).toHaveBeenCalledWith("app-1", "rev-3");
-      expect(publishedRuntimeService.getPreviewRuntime).toHaveBeenCalledWith("rev-3", "published-preview-token");
       expect(window.open).toHaveBeenCalledWith(
-        "http://127.0.0.1:8000/api/py/public/apps/preview/revisions/rev-3/assets/index.html",
+        "https://support-app.apps.localhost",
         "_blank",
         "noopener,noreferrer",
       );
     });
+    expect(publishedAppsService.ensureDraftDevSession).not.toHaveBeenCalled();
   });
 
 });

@@ -3,6 +3,20 @@ import { useAuthStore } from "@/lib/store/useAuthStore";
 class HttpClient {
   constructor(public readonly baseUrl: string) {}
 
+  private shouldSuppressErrorLogging(message: unknown): boolean {
+    let normalized = "";
+    if (typeof message === "string") {
+      normalized = message;
+    } else {
+      try {
+        normalized = JSON.stringify(message || "");
+      } catch {
+        normalized = String(message || "");
+      }
+    }
+    return normalized.includes("PUBLISH_ACTIVE_SESSION_LOCKED");
+  }
+
   buildHeaders(headers?: HeadersInit, body?: BodyInit | null): HeadersInit {
     const token = useAuthStore.getState().token;
     const nextHeaders: Record<string, string> = {};
@@ -44,14 +58,22 @@ class HttpClient {
           useAuthStore.getState().logout();
         }
         let message: any = "Request failed";
+        let parsedErrorPayload: unknown = null;
         try {
           const data = await response.json();
-          console.error(`[HttpClient] Error Data for ${url}:`, data);
+          parsedErrorPayload = data;
           message = data.detail || data.message || message;
         } catch {
           message = response.statusText || message;
         }
         const errorMsg = typeof message === 'object' ? JSON.stringify(message) : String(message);
+        if (!this.shouldSuppressErrorLogging(errorMsg)) {
+          if (parsedErrorPayload !== null) {
+            console.error(`[HttpClient] Error Data for ${url}:`, parsedErrorPayload);
+          } else {
+            console.error(`[HttpClient] Error Response for ${url}:`, errorMsg);
+          }
+        }
         throw new Error(errorMsg);
       }
 
@@ -63,7 +85,10 @@ class HttpClient {
       console.log(`[HttpClient] Result for ${url}:`, result);
       return result;
     } catch (error) {
-      console.error(`[HttpClient] Fetch Error for ${url}:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error || "");
+      if (!this.shouldSuppressErrorLogging(errorMessage)) {
+        console.error(`[HttpClient] Fetch Error for ${url}:`, error);
+      }
       throw error;
     }
   }

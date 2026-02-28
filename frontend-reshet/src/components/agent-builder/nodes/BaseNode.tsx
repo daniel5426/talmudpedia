@@ -37,11 +37,13 @@ function NodeBranchRow({
     label,
     handleId,
     handleColor,
+    isConnectable = true,
     isLast = false,
 }: {
     label: string
     handleId: string
     handleColor: string
+    isConnectable?: boolean
     isLast?: boolean
 }) {
     return (
@@ -54,6 +56,7 @@ function NodeBranchRow({
                 type="source"
                 position={Position.Right}
                 id={handleId}
+                isConnectable={isConnectable}
                 className={cn(
                     "!w-3.5 !h-3.5 !border-2 !border-background !top-1/2 !-translate-y-1/2 !-right-1.75",
                     "transition-all duration-200 hover:!w-4.5 hover:!h-4.5 hover:!-right-2.25"
@@ -83,6 +86,8 @@ function BaseNodeComponent(props: NodeProps) {
     const isEndNode = data.nodeType === "end"
     const isConditional = data.nodeType === "conditional"
     const isSpecialNode = ["if_else", "while", "user_approval", "classify", "join", "router", "judge", "replan"].includes(data.nodeType)
+    const connectableProps = props as { isConnectable?: boolean; connectable?: boolean }
+    const isHandleConnectable = connectableProps.isConnectable ?? connectableProps.connectable ?? true
 
     // Prepare handles for shared node
     let outputHandles: SharedNodeHandle[] | undefined = undefined
@@ -109,12 +114,14 @@ function BaseNodeComponent(props: NodeProps) {
                         label={conditions[idx]?.name || handleId}
                         handleId={handleId}
                         handleColor="#3b82f6"
+                        isConnectable={isHandleConnectable}
                     />
                 ))}
                 <NodeBranchRow
                     label="Else"
                     handleId="else"
                     handleColor="#6b7280"
+                    isConnectable={isHandleConnectable}
                     isLast={true}
                 />
             </div>
@@ -126,11 +133,13 @@ function BaseNodeComponent(props: NodeProps) {
                     label="Loop"
                     handleId="loop"
                     handleColor="#3b82f6"
+                    isConnectable={isHandleConnectable}
                 />
                 <NodeBranchRow
                     label="Exit"
                     handleId="exit"
                     handleColor="#6b7280"
+                    isConnectable={isHandleConnectable}
                     isLast={true}
                 />
             </div>
@@ -142,11 +151,13 @@ function BaseNodeComponent(props: NodeProps) {
                     label="Approve"
                     handleId="approve"
                     handleColor="#22c55e"
+                    isConnectable={isHandleConnectable}
                 />
                 <NodeBranchRow
                     label="Reject"
                     handleId="reject"
                     handleColor="#ef4444"
+                    isConnectable={isHandleConnectable}
                     isLast={true}
                 />
             </div>
@@ -162,6 +173,7 @@ function BaseNodeComponent(props: NodeProps) {
                         label={c.name || handleIds[idx]}
                         handleId={handleIds[idx]}
                         handleColor="#8b5cf6"
+                        isConnectable={isHandleConnectable}
                         isLast={idx === categories.length - 1}
                     />
                 ))}
@@ -201,6 +213,7 @@ function BaseNodeComponent(props: NodeProps) {
                         label={labels[handleId] || handleId}
                         handleId={handleId}
                         handleColor={colors[handleId] || "#3b82f6"}
+                        isConnectable={isHandleConnectable}
                         isLast={idx === handles.length - 1}
                     />
                 ))}

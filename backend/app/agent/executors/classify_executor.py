@@ -30,13 +30,24 @@ class ClassifyNodeExecutor(BaseNodeExecutor):
         
         node_id = context.get("node_id", "classify") if context else "classify"
         categories = config.get("categories", [])
+        normalized_categories = []
+        for idx, category in enumerate(categories):
+            if not isinstance(category, dict):
+                continue
+            name = str(category.get("name") or "").strip() or f"category_{idx}"
+            normalized_categories.append(
+                {
+                    "name": name,
+                    "description": str(category.get("description", "")),
+                }
+            )
         model_id = config.get("model_id")
         instructions = config.get("instructions", "Classify the input.")
         
         # 1. Construct Classification Prompt
         category_lines = []
-        for cat in categories:
-            name = cat.get("name")
+        for cat in normalized_categories:
+            name = cat["name"]
             desc = cat.get("description", "")
             category_lines.append(f"- {name}: {desc}")
             
@@ -62,39 +73,33 @@ Respond ONLY with the category name. Do not include any other text."""
         from app.agent.execution.emitter import active_emitter
         emitter = active_emitter.get()
         if emitter:
-             emitter.emit_node_start(node_id, config.get("name", "Classify"), "classify", {"categories": len(categories)})
+            emitter.emit_node_start(node_id, config.get("name", "Classify"), "classify", {"categories": len(normalized_categories)})
 
         response_content = ""
         try:
-             # Non-streaming for classification is usually safer/faster
-             response = await adapter.ainvoke(formatted_messages)
-             response_content = response.content.strip()
-             
-             # Basic cleanup (remove quotes or periods if model adds them)
-             response_content = response_content.replace('"', '').replace("'", "").rstrip(".")
-             
+            # Non-streaming for classification is usually safer/faster
+            response = await adapter.ainvoke(formatted_messages)
+            response_content = response.content.strip()
+
+            # Basic cleanup (remove quotes or periods if model adds them)
+            response_content = response_content.replace('"', '').replace("'", "").rstrip(".")
+
         except Exception as e:
             logger.error(f"Classification failed: {e}")
             if emitter:
                 emitter.emit_error(str(e), node_id)
             raise e
-            
+
         if emitter:
             emitter.emit_node_end(node_id, config.get("name", "Classify"), "classify", {"selected": response_content})
 
         # 4. Match result to category
         selected_category = "else" # Default
-        for cat in categories:
-            if cat.get("name") == response_content:
-                selected_category = response_content
+        normalized_response = response_content.strip().lower()
+        for cat in normalized_categories:
+            if cat["name"].lower() == normalized_response:
+                selected_category = cat["name"]
                 break
-                
-        # If exact match failed, try case-insensitive
-        if selected_category == "else":
-             for cat in categories:
-                if cat.get("name").lower() == response_content.lower():
-                    selected_category = cat.get("name")
-                    break
         
         logger.info(f"Classify node '{node_id}' selected: {selected_category}")
         
@@ -106,7 +111,12 @@ Respond ONLY with the category name. Do not include any other text."""
 
     def get_output_handles(self, config: Dict[str, Any]) -> List[str]:
         categories = config.get("categories", [])
-        return [c.get("name") for c in categories]
+        handles = []
+        for idx, category in enumerate(categories):
+            if not isinstance(category, dict):
+                continue
+            handles.append(str(category.get("name") or "").strip() or f"category_{idx}")
+        return handles
 
     def _format_messages(self, messages: List[Any]) -> List[BaseMessage]:
         formatted: List[BaseMessage] = []

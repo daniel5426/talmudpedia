@@ -150,6 +150,14 @@ export interface DraftDevSyncRequest {
   revision_id?: string;
 }
 
+export interface DraftDevHeartbeatResult {
+  session: DraftDevSessionResponse | null;
+  publish_locked: boolean;
+  code?: string | null;
+  message?: string | null;
+  active_publish_job_id?: string | null;
+}
+
 export interface RevisionPreviewTokenResponse {
   revision_id: string;
   preview_token: string;
@@ -435,6 +443,52 @@ export const publishedAppsService = {
 
   async heartbeatDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {
     return httpClient.post<DraftDevSessionResponse>(`/admin/apps/${appId}/builder/draft-dev/session/heartbeat`, {});
+  },
+
+  async heartbeatDraftDevSessionQuiet(appId: string): Promise<DraftDevHeartbeatResult> {
+    const response = await httpClient.requestRaw(`/admin/apps/${appId}/builder/draft-dev/session/heartbeat`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+
+    if (response.ok) {
+      return {
+        session: await response.json() as DraftDevSessionResponse,
+        publish_locked: false,
+      };
+    }
+
+    let detail: unknown = null;
+    try {
+      const payload = await response.json();
+      detail = (payload as { detail?: unknown } | null)?.detail ?? payload;
+    } catch {
+      detail = null;
+    }
+
+    if (response.status === 409 && detail && typeof detail === "object") {
+      const detailObj = detail as Record<string, unknown>;
+      const code = String(detailObj.code || "").trim();
+      if (code.toUpperCase() === "PUBLISH_ACTIVE_SESSION_LOCKED") {
+        return {
+          session: null,
+          publish_locked: true,
+          code,
+          message: String(detailObj.message || "").trim() || null,
+          active_publish_job_id: String(detailObj.active_publish_job_id || "").trim() || null,
+        };
+      }
+    }
+
+    let message: unknown = "Heartbeat request failed";
+    if (typeof detail === "string" && detail.trim()) {
+      message = detail.trim();
+    } else if (detail && typeof detail === "object") {
+      message = JSON.stringify(detail);
+    } else if (response.statusText) {
+      message = response.statusText;
+    }
+    throw new Error(typeof message === "string" ? message : JSON.stringify(message));
   },
 
   async stopDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {

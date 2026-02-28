@@ -149,6 +149,26 @@ class AgentCompiler:
         }
         return mapping.get(str(node_type), str(node_type))
 
+    @staticmethod
+    def _sanitize_handle_name(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _dedupe_handles(self, raw_names: List[Any], fallback_prefix: str) -> List[str]:
+        used: Set[str] = set()
+        handles: List[str] = []
+        for idx, raw_name in enumerate(raw_names):
+            base = self._sanitize_handle_name(raw_name) or f"{fallback_prefix}_{idx}"
+            unique = base
+            suffix = 1
+            while unique in used:
+                unique = f"{base}_{suffix}"
+                suffix += 1
+            used.add(unique)
+            handles.append(unique)
+        return handles
+
     def _validate_data_flow(self, graph: AgentGraph) -> list[ValidationError]:
         errors = []
         node_writes: Dict[str, Set[AgentStateField]] = {}
@@ -287,12 +307,24 @@ class AgentCompiler:
         node_type = self._normalize_node_type(node.type)
         if node_type == "if_else":
             conditions = node.config.get("conditions", []) if isinstance(node.config, dict) else []
-            handles = [c.get("name") or f"condition_{i}" for i, c in enumerate(conditions)]
+            condition_names: List[Any] = []
+            for condition in conditions:
+                if isinstance(condition, dict):
+                    condition_names.append(condition.get("name"))
+                else:
+                    condition_names.append(condition)
+            handles = self._dedupe_handles(condition_names, "condition")
             handles.append("else")
             return handles
         if node_type == "classify":
             categories = node.config.get("categories", []) if isinstance(node.config, dict) else []
-            return [c.get("name") or f"category_{i}" for i, c in enumerate(categories)]
+            category_names: List[Any] = []
+            for category in categories:
+                if isinstance(category, dict):
+                    category_names.append(category.get("name"))
+                else:
+                    category_names.append(category)
+            return self._dedupe_handles(category_names, "category")
         if node_type == "while":
             return ["loop", "exit"]
         if node_type == "user_approval":
@@ -301,20 +333,20 @@ class AgentCompiler:
             return ["true", "false"]
         if node_type == "router":
             routes = node.config.get("routes", []) if isinstance(node.config, dict) else []
-            handles: List[str] = []
-            for idx, route in enumerate(routes):
+            route_names: List[Any] = []
+            for route in routes:
                 if isinstance(route, str):
-                    name = route
+                    route_names.append(route)
                 elif isinstance(route, dict):
-                    name = route.get("name") or route.get("key") or route.get("handle")
+                    route_names.append(route.get("name") or route.get("key") or route.get("handle"))
                 else:
-                    name = None
-                handles.append(name or f"route_{idx}")
+                    route_names.append(None)
+            handles = self._dedupe_handles(route_names, "route")
             handles.append("default")
             return handles
         if node_type == "judge":
             outcomes = node.config.get("outcomes", []) if isinstance(node.config, dict) else []
-            handles = [str(item) for item in outcomes if isinstance(item, str) and item.strip()]
+            handles = [self._sanitize_handle_name(item) for item in outcomes if self._sanitize_handle_name(item)]
             if not handles:
                 handles = ["pass", "fail"]
             return handles
@@ -335,16 +367,17 @@ class AgentCompiler:
             edges = edges_by_source.get(node_id, [])
             handle_targets = {}
             for edge in edges:
-                if not edge.source_handle:
+                normalized_handle = self._sanitize_handle_name(edge.source_handle)
+                if not normalized_handle:
                     errors.append(ValidationError(node_id=node_id, edge_id=edge.id, message="Conditional edge missing source_handle"))
                     continue
-                if edge.source_handle not in handles:
-                    errors.append(ValidationError(node_id=node_id, edge_id=edge.id, message=f"Invalid branch handle '{edge.source_handle}'"))
+                if normalized_handle not in handles:
+                    errors.append(ValidationError(node_id=node_id, edge_id=edge.id, message=f"Invalid branch handle '{normalized_handle}'"))
                     continue
-                if edge.source_handle in handle_targets:
-                    errors.append(ValidationError(node_id=node_id, edge_id=edge.id, message=f"Duplicate branch handle '{edge.source_handle}'"))
+                if normalized_handle in handle_targets:
+                    errors.append(ValidationError(node_id=node_id, edge_id=edge.id, message=f"Duplicate branch handle '{normalized_handle}'"))
                     continue
-                handle_targets[edge.source_handle] = edge.target
+                handle_targets[normalized_handle] = edge.target
 
             missing = [h for h in handles if h not in handle_targets]
             if missing:
@@ -837,7 +870,9 @@ class AgentCompiler:
             edge_map: Dict[str, str] = {}
             for edge in graph.edges:
                 if edge.source == node.id and edge.source_handle:
-                    edge_map[edge.source_handle] = edge.target
+                    normalized_handle = self._sanitize_handle_name(edge.source_handle)
+                    if normalized_handle:
+                        edge_map[normalized_handle] = edge.target
             default_handle = None
             if "else" in handles:
                 default_handle = "else"

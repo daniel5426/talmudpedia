@@ -20,7 +20,7 @@ export function mergeExecuteRenderGraph(
     const runtimeNote = overlay.runtimeNotesByNodeId[node.id]
     return {
       ...node,
-      draggable: false,
+      draggable: true,
       data: {
         ...(node.data as AgentNodeData),
         executionStatus: runtimeStatus || (node.data as AgentNodeData).executionStatus,

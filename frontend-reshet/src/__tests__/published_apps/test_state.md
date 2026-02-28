@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-25
+Last Updated: 2026-03-01
 
 ## Scope
 Frontend coverage for:
@@ -14,15 +14,13 @@ Frontend coverage for:
 
 ## Test Files
 - `frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/apps_builder_file_filter.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/apps_builder_workspace.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/chat_thread_tabs.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/chat_history_timeline.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/chat_model_path_parsing.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
-- `frontend-reshet/src/__tests__/published_apps/published_auth_templates.test.tsx`
-- `frontend-reshet/src/__tests__/published_apps/published_runtime_gate.test.tsx`
-- `frontend-reshet/src/__tests__/published_apps/published_auth_flows.test.tsx`
 
 ## Key Scenarios Covered
 - Apps admin page loads existing apps and submits create payload.
@@ -91,6 +89,9 @@ Frontend coverage for:
 - Builder workspace treats transient draft-dev bootstrap 400s (`Draft dev sandbox is not running`) as recoverable, retries session ensure with backoff, and keeps loading UI instead of surfacing immediate preview failure.
 - Builder workspace syncs draft files via draft-dev sync API without creating revisions per keystroke.
 - Builder preview iframe remains hidden behind a warmup overlay until the sandbox frame is ready, preventing early transient Vite error flashes.
+- Builder workspace keeps sandbox lifecycle maintenance tab-agnostic (ensure/sync/heartbeat continue while in `Config`).
+- Builder workspace uses unified sandbox readiness gating for `Publish` and chat `Send` (textarea remains editable while submit is blocked).
+- Builder workspace treats publish-lock heartbeat responses as expected control flow (`PUBLISH_ACTIVE_SESSION_LOCKED`) without noisy error surfacing.
 - Publish action uses async publish-job contract (`publish` + `getPublishJobStatus`).
 - Publish action surfaces immediate failed publish-job responses without entering status polling.
 - Open App now falls back to published-revision preview runtime proxy for local `*.apps.localhost` domains.
@@ -99,6 +100,12 @@ Frontend coverage for:
 - Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
 
 ## Last Run
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_builder_workspace.test.tsx`
+- Date: 2026-03-01
+- Result: PASS (1 suite, 57 tests; React act() warnings emitted in logs)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-03-01
+- Result: PASS (1 suite, 1 test)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/chat_history_timeline.test.ts`
 - Date: 2026-02-25
 - Result: PASS (1 suite, 5 tests)

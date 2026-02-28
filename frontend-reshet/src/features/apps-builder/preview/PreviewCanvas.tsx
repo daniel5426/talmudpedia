@@ -3,8 +3,10 @@
 import { forwardRef, useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Loader2 } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import type { SandboxLifecyclePhase } from "@/features/apps-builder/workspace/useAppsBuilderSandboxLifecycle";
 
 type DraftDevStatus = "starting" | "running" | "stopped" | "expired" | "error";
 
@@ -13,6 +15,10 @@ type PreviewCanvasProps = {
   previewAuthToken?: string | null;
   devStatus?: DraftDevStatus | null;
   devError?: string | null;
+  lifecyclePhase?: SandboxLifecyclePhase | null;
+  loadingMessage?: string | null;
+  canRetry?: boolean;
+  onRetry?: (() => void) | null;
 };
 
 const PREVIEW_REVEAL_DELAY_MS = 350;
@@ -20,7 +26,10 @@ const PREVIEW_MAX_HIDDEN_MS = 8_000;
 const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 
 export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
-  function PreviewCanvas({ previewUrl, previewAuthToken, devStatus, devError }, ref) {
+  function PreviewCanvas(
+    { previewUrl, previewAuthToken, devStatus, devError, lifecyclePhase, loadingMessage, canRetry = false, onRetry = null },
+    ref,
+  ) {
     const revealTimerRef = useRef<number | null>(null);
     const failSafeTimerRef = useRef<number | null>(null);
     const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -39,10 +48,11 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
 
     useEffect(() => clearTimers, [clearTimers]);
 
-    const isPending = devStatus === "starting";
-    const hasFailed = devStatus === "error" || devStatus === "expired";
+    const isPending = devStatus === "starting" || lifecyclePhase === "ensuring" || lifecyclePhase === "recovering" || lifecyclePhase === "syncing";
+    const hasFailed = devStatus === "error" || devStatus === "expired" || lifecyclePhase === "error";
     const hasSessionError = Boolean(devError);
     const canLoadFrame = devStatus === "running" && Boolean(previewUrl) && !hasFailed && !hasSessionError;
+    const warmupMessage = String(loadingMessage || "").trim() || (isPending ? "Starting draft preview..." : "Warming preview sandbox...");
 
     const setFrameRef = useCallback(
       (node: HTMLIFrameElement | null) => {
@@ -133,7 +143,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
             <div className="w-full max-w-sm rounded-lg border border-border/60 bg-background/95 p-4 shadow-sm">
               <div className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>{isPending ? "Starting draft preview..." : "Warming preview sandbox..."}</span>
+                <span>{warmupMessage}</span>
               </div>
               <div className="mt-3 space-y-2">
                 <Skeleton className="h-3 w-5/6" />
@@ -145,7 +155,18 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
 
         {(hasFailed || hasSessionError) && (
           <div className="absolute inset-0 overflow-auto bg-background/95 p-4 text-sm text-destructive">
-            {devError || "Draft preview session failed. Re-open Preview to restart the sandbox."}
+            <div>{devError || "Draft preview session failed. Retry to restart the sandbox."}</div>
+            {canRetry && onRetry ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={onRetry}
+              >
+                Retry sandbox
+              </Button>
+            ) : null}
           </div>
         )}
 

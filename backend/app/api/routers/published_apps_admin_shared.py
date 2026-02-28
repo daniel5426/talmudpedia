@@ -604,7 +604,7 @@ def _app_to_response(app: PublishedApp) -> PublishedAppResponse:
         template_key=app.template_key or "chat-classic",
         current_draft_revision_id=str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
         current_published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
-        published_url=app.published_url,
+        published_url=_build_published_url(app.slug) if app.status == PublishedAppStatus.published else None,
         created_by=str(app.created_by) if app.created_by else None,
         created_at=app.created_at,
         updated_at=app.updated_at,

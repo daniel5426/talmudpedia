@@ -134,6 +134,24 @@ def _apps_base_domain() -> str:
     return os.getenv("APPS_BASE_DOMAIN", "apps.localhost")
 
 
+def _apps_url_scheme() -> str:
+    configured = (os.getenv("APPS_URL_SCHEME") or "").strip().lower()
+    if configured in {"http", "https"}:
+        return configured
+    return "https"
+
+
+def _apps_url_port() -> str:
+    configured = (os.getenv("APPS_URL_PORT") or "").strip()
+    if configured:
+        return configured if configured.startswith(":") else f":{configured}"
+    return ""
+
+
+def _build_published_url(slug: str) -> str:
+    return f"{_apps_url_scheme()}://{slug}.{_apps_base_domain()}{_apps_url_port()}"
+
+
 def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
     return PublicAppConfigResponse(
         id=str(app.id),
@@ -148,7 +166,7 @@ def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
         auth_enabled=bool(app.auth_enabled),
         auth_providers=list(app.auth_providers or []),
         auth_template_key=(app.auth_template_key or "auth-classic"),
-        published_url=app.published_url,
+        published_url=_build_published_url(app.slug) if app.status == PublishedAppStatus.published else None,
         has_custom_ui=bool(app.current_published_revision_id),
         published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
         ui_runtime_mode="custom_bundle" if app.current_published_revision_id else "legacy_template",

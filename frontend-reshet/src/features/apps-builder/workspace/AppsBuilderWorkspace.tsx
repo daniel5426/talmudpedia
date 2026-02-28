@@ -50,11 +50,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { publishedAppsService, publishedRuntimeService } from "@/services";
+import { publishedAppsService } from "@/services";
 import type {
   BuilderStateResponse,
   DraftDevSessionResponse,
-  DraftDevSessionStatus,
   PublishedAppAuthTemplate,
   PublishedAppDomain,
   PublishedAppRevision,
@@ -69,22 +68,14 @@ import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel"
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
 import { LogoPickerDialog } from "@/features/apps-builder/workspace/LogoPickerDialog";
 import {
-  isCodingAgentRunActiveError,
-  isDraftDevTransientBootstrapError,
-  isDraftSandboxNotRunningError,
-} from "@/features/apps-builder/workspace/draftDevErrors";
-import {
   AppsBuilderWorkspaceBootSkeleton,
   DomainsListSkeleton,
   UsersListSkeleton,
 } from "@/features/apps-builder/workspace/WorkspaceLoadingSkeletons";
 import { AppsBuilderChatPanel } from "@/features/apps-builder/workspace/chat/AppsBuilderChatPanel";
 import { useAppsBuilderChat } from "@/features/apps-builder/workspace/chat/useAppsBuilderChat";
+import { useAppsBuilderSandboxLifecycle } from "@/features/apps-builder/workspace/useAppsBuilderSandboxLifecycle";
 
-const DRAFT_DEV_SYNC_DEBOUNCE_MS = 800;
-const DRAFT_DEV_HEARTBEAT_MS = 45_000;
-const DRAFT_DEV_RECOVERY_ATTEMPTS = 3;
-const DRAFT_DEV_RECOVERY_BACKOFF_MS = 700;
 const PUBLISH_POLL_INTERVAL_MS = 2_000;
 const PUBLISH_POLL_TIMEOUT_MS = 15 * 60_000;
 
@@ -169,19 +160,16 @@ function buildPreviewFrameUrl(baseUrl: string, route: string, reloadToken: numbe
   }
 }
 
-function normalizePreviewSessionUrlForReloadCompare(url: string | null | undefined): string {
-  if (!url) return "";
+function appendRuntimeTokenToUrl(url: string, token?: string | null): string {
+  const trimmedToken = String(token || "").trim();
+  if (!trimmedToken) return url;
   try {
     const parsed = new URL(url);
-    parsed.searchParams.delete("preview_token");
-    parsed.searchParams.delete("runtime_preview_token");
-    const normalizedPath = parsed.pathname.endsWith("/") ? parsed.pathname.slice(0, -1) : parsed.pathname;
-    parsed.pathname = normalizedPath || "/";
-    parsed.search = parsed.searchParams.toString();
-    parsed.hash = "";
+    parsed.searchParams.set("runtime_token", trimmedToken);
     return parsed.toString();
   } catch {
-    return String(url).trim();
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}runtime_token=${encodeURIComponent(trimmedToken)}`;
   }
 }
 
@@ -195,11 +183,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [entryFile, setEntryFile] = useState("src/main.tsx");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [currentRevisionId, setCurrentRevisionId] = useState<string | null>(null);
-  const [draftDevSessionId, setDraftDevSessionId] = useState<string | null>(null);
-  const [draftDevStatus, setDraftDevStatus] = useState<DraftDevSessionStatus | null>(null);
-  const [draftDevError, setDraftDevError] = useState<string | null>(null);
-  const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
-  const [previewAuthToken, setPreviewAuthToken] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isAuthTemplatesLoading, setIsAuthTemplatesLoading] = useState(true);
@@ -229,17 +212,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [isLogoDialogOpen, setIsLogoDialogOpen] = useState(false);
   const [domainCopied, setDomainCopied] = useState(false);
-  const syncFingerprintRef = useRef<string>("");
   const lastSavedCodeFingerprintRef = useRef<string>("");
-  const draftDevSnapshotRef = useRef<{
-    sessionId: string | null;
-    status: DraftDevSessionStatus | null;
-    previewUrl: string | null;
-  }>({
-    sessionId: null,
-    status: null,
-    previewUrl: null,
-  });
 
   useEffect(() => {
     setOpen(false);
@@ -252,9 +225,72 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setHasLoadedDomains(false);
     setPreviewRoute("/");
     setPreviewReloadToken(0);
-    setPreviewAuthToken(null);
     setPostRunHydrationPending(false);
   }, [appId]);
+
+  const syncCurrentRevisionFromDraftDevSession = useCallback((revisionId: string) => {
+    const normalizedRevisionId = revisionId.trim();
+    if (!normalizedRevisionId) return;
+    setCurrentRevisionId(normalizedRevisionId);
+    setState((prev) => {
+      if (!prev) return prev;
+      if (prev.app.current_draft_revision_id === normalizedRevisionId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        app: {
+          ...prev.app,
+          current_draft_revision_id: normalizedRevisionId,
+        },
+      };
+    });
+  }, []);
+
+  const applyDraftDevSessionToBuilderState = useCallback((session: DraftDevSessionResponse | null) => {
+    setState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        draft_dev: session,
+      };
+    });
+  }, []);
+
+  const {
+    phase: sandboxPhase,
+    draftDevStatus,
+    draftDevError,
+    previewAssetUrl,
+    previewAuthToken,
+    previewLoadingMessage,
+    publishLockMessage,
+    isReady: isSandboxReady,
+    isBusy: isSandboxBusy,
+    canRetry: canRetrySandboxLifecycle,
+    actionDisabledReason: sandboxActionDisabledReason,
+    hydrateFromBuilderSession,
+    ensureDraftDevSession,
+    retryEnsureDraftDevSession,
+  } = useAppsBuilderSandboxLifecycle({
+    appId,
+    currentRevisionId,
+    entryFile,
+    files,
+    hasActiveCodingRunLock,
+    onSessionChange: applyDraftDevSessionToBuilderState,
+    onRevisionFromSession: syncCurrentRevisionFromDraftDevSession,
+  });
+  const sandboxActionsBlocked = !isSandboxReady || isSandboxBusy;
+  const sendBlockedReason = sandboxActionDisabledReason || "Waiting for preview sandbox...";
+  const publishDisabledReason = isPublishing
+    ? "Publish in progress..."
+    : postRunHydrationPending
+      ? "Finalizing latest coding-agent changes..."
+      : sandboxActionsBlocked
+        ? sendBlockedReason
+        : null;
+  const isPublishDisabled = Boolean(publishDisabledReason);
 
   const appRoutes = useMemo(() => extractRoutesFromFiles(files), [files]);
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
@@ -277,41 +313,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setPreviewReloadToken((current) => current + 1);
   }, []);
 
-  const applyDraftDevSession = useCallback((session?: DraftDevSessionResponse | null) => {
-    setDraftDevSessionId(session?.session_id || null);
-    setDraftDevStatus((session?.status as DraftDevSessionStatus | undefined) || null);
-    setDraftDevError(session?.last_error || null);
-    setPreviewAuthToken(session?.preview_auth_token || null);
-    const nextPreviewUrl = session?.preview_url || null;
-    setPreviewAssetUrl((current) => {
-      const currentNormalized = normalizePreviewSessionUrlForReloadCompare(current);
-      const nextNormalized = normalizePreviewSessionUrlForReloadCompare(nextPreviewUrl);
-      if (current && nextPreviewUrl && currentNormalized === nextNormalized) {
-        return current;
-      }
-      return nextPreviewUrl;
-    });
-  }, []);
-
-  const syncCurrentRevisionFromDraftDevSession = useCallback((session?: DraftDevSessionResponse | null) => {
-    const revisionId = session?.revision_id?.trim();
-    if (!revisionId) return;
-    setCurrentRevisionId(revisionId);
-    setState((prev) => {
-      if (!prev) return prev;
-      if (prev.app.current_draft_revision_id === revisionId) {
-        return prev;
-      }
-      return {
-        ...prev,
-        app: {
-          ...prev.app,
-          current_draft_revision_id: revisionId,
-        },
-      };
-    });
-  }, []);
-
   const hydrateFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
     const nextFiles = filterAppsBuilderFiles(revision?.files || {});
     const nextEntry = revision?.entry_file || "src/main.tsx";
@@ -319,7 +320,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setEntryFile(nextEntry);
     setSelectedFile(Object.keys(nextFiles).sort()[0] || null);
     setCurrentRevisionId(revision?.id || null);
-    syncFingerprintRef.current = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
     lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
     setHasUnsavedManualCodeChanges(false);
   }, []);
@@ -333,7 +333,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       const response = await publishedAppsService.getBuilderState(appId);
       setState(response);
       hydrateFromRevision(response.current_draft_revision);
-      applyDraftDevSession(response.draft_dev);
+      hydrateFromBuilderSession(response.draft_dev);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load builder state");
     } finally {
@@ -341,7 +341,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         setIsInitialLoading(false);
       }
     }
-  }, [appId, applyDraftDevSession, hydrateFromRevision]);
+  }, [appId, hydrateFromBuilderSession, hydrateFromRevision]);
 
   const loadAuthTemplates = useCallback(async () => {
     setIsAuthTemplatesLoading(true);
@@ -360,11 +360,11 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       const response = await publishedAppsService.getBuilderState(appId);
       setState(response);
       hydrateFromRevision(response.current_draft_revision);
-      applyDraftDevSession(response.draft_dev);
+      hydrateFromBuilderSession(response.draft_dev);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh builder state");
     }
-  }, [appId, applyDraftDevSession, hydrateFromRevision]);
+  }, [appId, hydrateFromBuilderSession, hydrateFromRevision]);
 
   useEffect(() => {
     void loadState({ showInitialSkeleton: true });
@@ -383,149 +383,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       };
     });
   }, []);
-
-  const ensureDraftDevSession = useCallback(async () => {
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < DRAFT_DEV_RECOVERY_ATTEMPTS; attempt += 1) {
-      try {
-        const session = await publishedAppsService.ensureDraftDevSession(appId);
-        applyDraftDevSession(session);
-        syncCurrentRevisionFromDraftDevSession(session);
-        setState((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            draft_dev: session,
-          };
-        });
-        return;
-      } catch (err) {
-        lastError = err;
-        if (!isDraftDevTransientBootstrapError(err) || attempt === DRAFT_DEV_RECOVERY_ATTEMPTS - 1) {
-          throw err;
-        }
-        setDraftDevError(null);
-        setDraftDevStatus("starting");
-        await wait(DRAFT_DEV_RECOVERY_BACKOFF_MS * (attempt + 1));
-      }
-    }
-    throw (lastError instanceof Error ? lastError : new Error("Failed to recover draft dev session"));
-  }, [appId, applyDraftDevSession, syncCurrentRevisionFromDraftDevSession]);
-
-  const syncDraftDevSession = useCallback(async () => {
-    if (!currentRevisionId) return;
-    const session = await publishedAppsService.syncDraftDevSession(appId, {
-      files: filterAppsBuilderFiles(files),
-      entry_file: entryFile,
-      revision_id: currentRevisionId,
-    });
-    applyDraftDevSession(session);
-    syncCurrentRevisionFromDraftDevSession(session);
-    setState((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        draft_dev: session,
-      };
-    });
-  }, [appId, applyDraftDevSession, currentRevisionId, entryFile, files, syncCurrentRevisionFromDraftDevSession]);
-
-  useEffect(() => {
-    draftDevSnapshotRef.current = {
-      sessionId: draftDevSessionId,
-      status: draftDevStatus,
-      previewUrl: previewAssetUrl,
-    };
-  }, [draftDevSessionId, draftDevStatus, previewAssetUrl]);
-
-  useEffect(() => {
-    if (activeTab !== "preview" || !currentRevisionId) {
-      return;
-    }
-    const snapshot = draftDevSnapshotRef.current;
-    const hasReusableSession =
-      snapshot.status === "running" && Boolean(snapshot.sessionId) && Boolean(snapshot.previewUrl);
-    if (hasReusableSession || snapshot.status === "starting") {
-      return;
-    }
-    setDraftDevError(null);
-    setDraftDevStatus("starting");
-    ensureDraftDevSession().catch((err) => {
-      if (isCodingAgentRunActiveError(err)) {
-        setDraftDevError(null);
-        return;
-      }
-      setDraftDevError(err instanceof Error ? err.message : "Failed to start draft preview");
-      setDraftDevStatus("error");
-      setPreviewAssetUrl(null);
-    });
-  }, [activeTab, currentRevisionId, ensureDraftDevSession]);
-
-  useEffect(() => {
-    if (activeTab !== "preview" || !currentRevisionId) {
-      syncFingerprintRef.current = "";
-      return;
-    }
-    if (hasActiveCodingRunLock) {
-      return;
-    }
-    if (!draftDevSessionId || draftDevStatus !== "running") {
-      return;
-    }
-    const fingerprint = buildDraftDevSyncFingerprint(entryFile, files);
-    if (syncFingerprintRef.current === fingerprint) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      syncDraftDevSession()
-        .then(() => {
-          syncFingerprintRef.current = fingerprint;
-        })
-        .catch((err) => {
-          if (isCodingAgentRunActiveError(err)) {
-            return;
-          }
-          if (isDraftSandboxNotRunningError(err)) {
-            setDraftDevError(null);
-            setDraftDevStatus("starting");
-            ensureDraftDevSession().catch((ensureErr) => {
-              if (isCodingAgentRunActiveError(ensureErr)) {
-                setDraftDevError(null);
-                return;
-              }
-              setDraftDevError(ensureErr instanceof Error ? ensureErr.message : "Failed to start draft preview");
-              setDraftDevStatus("error");
-              setPreviewAssetUrl(null);
-            });
-            return;
-          }
-          setDraftDevError(err instanceof Error ? err.message : "Failed to sync draft dev session");
-          setDraftDevStatus("error");
-        });
-    }, DRAFT_DEV_SYNC_DEBOUNCE_MS);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [activeTab, currentRevisionId, draftDevSessionId, draftDevStatus, ensureDraftDevSession, entryFile, files, hasActiveCodingRunLock, syncDraftDevSession]);
-
-  useEffect(() => {
-    if (activeTab !== "preview" || !draftDevSessionId) {
-      return;
-    }
-    const interval = window.setInterval(() => {
-      publishedAppsService
-        .heartbeatDraftDevSession(appId)
-        .then((session) => {
-          applyDraftDevSession(session);
-        })
-        .catch(() => {
-          // Heartbeat failure should not hard-break editing.
-        });
-    }, DRAFT_DEV_HEARTBEAT_MS);
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [activeTab, appId, applyDraftDevSession, draftDevSessionId]);
 
   const loadUsers = useCallback(async () => {
     setIsUsersLoading(true);
@@ -660,10 +517,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         files: filterAppsBuilderFiles(files),
         entry_file: entryFile,
       });
-      syncFingerprintRef.current = JSON.stringify({
-        entry: entryFile,
-        files,
-      });
       lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(entryFile, files);
       setHasUnsavedManualCodeChanges(false);
       setCurrentRevisionId(revision.id);
@@ -678,9 +531,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           },
         };
       });
-      if (activeTab === "preview") {
-        await ensureDraftDevSession();
-      }
+      await ensureDraftDevSession();
     } catch (err: any) {
       const detail = err?.message || "Failed to save draft";
       try {
@@ -697,9 +548,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [activeTab, appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, saveBlockedByBackendLock]);
+  }, [appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, saveBlockedByBackendLock]);
 
   const publish = useCallback(async () => {
+    if (sandboxActionsBlocked) {
+      setError(sendBlockedReason);
+      return;
+    }
     setIsPublishing(true);
     setError(null);
     setPublishStatus("queued");
@@ -785,6 +640,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     entryFile,
     files,
     loadState,
+    sandboxActionsBlocked,
+    sendBlockedReason,
   ]);
 
   const resetTemplate = useCallback(
@@ -826,6 +683,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     });
   }, [hydrateFromRevision]);
 
+  const ensureDraftDevSessionForChat = useCallback(async () => {
+    await ensureDraftDevSession();
+  }, [ensureDraftDevSession]);
+
   const {
     isAgentPanelOpen,
     setIsAgentPanelOpen,
@@ -862,7 +723,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   } = useAppsBuilderChat({
     appId,
     activeTab,
-    ensureDraftDevSession,
+    ensureDraftDevSession: ensureDraftDevSessionForChat,
     refreshStateSilently,
     onPostRunHydrationStateChange: setPostRunHydrationPending,
     onApplyRestoredRevision: applyRestoredRevision,
@@ -878,76 +739,49 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setError(null);
     if (state?.app.status === "published") {
       const publishedUrl = state.app.published_url || null;
-      const localBaseDomain = (process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost").toLowerCase();
-      const shouldUsePublishedPreviewProxy = (() => {
-        if (!publishedUrl) return false;
-        try {
-          const parsed = new URL(publishedUrl);
-          return parsed.hostname.toLowerCase().endsWith(`.${localBaseDomain}`);
-        } catch {
-          return false;
-        }
-      })();
-
-      if (
-        shouldUsePublishedPreviewProxy &&
-        state.app.current_published_revision_id
-      ) {
-        setIsOpeningApp(true);
-        try {
-          const tokenResponse = await publishedAppsService.createRevisionPreviewToken(
-            appId,
-            state.app.current_published_revision_id,
-          );
-          const runtime = await publishedRuntimeService.getPreviewRuntime(
-            state.app.current_published_revision_id,
-            tokenResponse.preview_token,
-          );
-          if (!runtime.preview_url) {
-            throw new Error("Published preview URL is unavailable");
-          }
-          window.open(runtime.preview_url, "_blank", "noopener,noreferrer");
-          return;
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to open app");
-          return;
-        } finally {
-          setIsOpeningApp(false);
-        }
-      }
-
       if (publishedUrl) {
         window.open(publishedUrl, "_blank", "noopener,noreferrer");
         return;
       }
     }
 
+    const inMemoryPreviewUrl =
+      draftDevStatus === "running" ? previewFrameUrl || state?.draft_dev?.preview_url || null : null;
+    if (inMemoryPreviewUrl) {
+      window.open(
+        appendRuntimeTokenToUrl(inMemoryPreviewUrl, previewAuthToken || state?.draft_dev?.preview_auth_token || null),
+        "_blank",
+        "noopener,noreferrer",
+      );
+      return;
+    }
+
     setIsOpeningApp(true);
     try {
-      const session = await publishedAppsService.ensureDraftDevSession(appId);
-      applyDraftDevSession(session);
-      setState((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          draft_dev: session,
-        };
-      });
-      if (!session.preview_url) {
+      const ensuredSession = await ensureDraftDevSession({ force: true });
+      const session = ensuredSession || state?.draft_dev || null;
+      if (!session?.preview_url) {
         throw new Error("Draft preview URL is unavailable");
       }
-      window.open(session.preview_url, "_blank", "noopener,noreferrer");
+      window.open(
+        appendRuntimeTokenToUrl(session.preview_url, session.preview_auth_token || previewAuthToken),
+        "_blank",
+        "noopener,noreferrer",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open app");
     } finally {
       setIsOpeningApp(false);
     }
   }, [
-    appId,
-    applyDraftDevSession,
-    state?.app.current_published_revision_id,
+    ensureDraftDevSession,
     state?.app.published_url,
     state?.app.status,
+    state?.draft_dev?.preview_auth_token,
+    state?.draft_dev?.preview_url,
+    previewAuthToken,
+    previewFrameUrl,
+    draftDevStatus,
   ]);
 
   const deleteFile = (path: string) => {
@@ -1033,6 +867,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                 <TooltipContent side="bottom">
                   {state.app.status === "published" ? "Published" : `Draft — ${draftDevStatus || "idle"}`}
                   {publishStatus ? ` · publish: ${publishStatus}` : ""}
+                  {publishLockMessage ? ` · ${publishLockMessage}` : ""}
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -1162,15 +997,24 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
             <div className="mx-0.5 h-4 w-px bg-border/60" />
 
-            <Button
-              size="sm"
-              className="h-7 gap-1.5 px-2.5 text-xs"
-              onClick={publish}
-              disabled={isPublishing || postRunHydrationPending}
-            >
-              {isPublishing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Rocket className="h-3 w-3" />}
-              Publish
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Button
+                    size="sm"
+                    className="h-7 gap-1.5 px-2.5 text-xs"
+                    onClick={publish}
+                    disabled={isPublishDisabled}
+                  >
+                    {isPublishing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Rocket className="h-3 w-3" />}
+                    Publish
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {publishDisabledReason || "Publish"}
+              </TooltipContent>
+            </Tooltip>
           </div>
         </header>
 
@@ -1193,6 +1037,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                       previewAuthToken={previewAuthToken}
                       devStatus={draftDevStatus}
                       devError={draftDevError}
+                      lifecyclePhase={sandboxPhase}
+                      loadingMessage={previewLoadingMessage}
+                      canRetry={canRetrySandboxLifecycle}
+                      onRetry={() => {
+                        void retryEnsureDraftDevSession();
+                      }}
                     />
                   </div>
                 </div>
@@ -1658,6 +1508,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             queuedPrompts={queuedPrompts}
             pendingQuestion={pendingQuestion}
             isAnsweringQuestion={isAnsweringQuestion}
+            isSendBlockedBySandbox={sandboxActionsBlocked}
+            sendBlockedReason={sendBlockedReason}
             runningSessionIds={runningSessionIds}
             sendingSessionIds={sendingSessionIds}
             sessionTitleHintsBySessionId={sessionTitleHintsBySessionId}

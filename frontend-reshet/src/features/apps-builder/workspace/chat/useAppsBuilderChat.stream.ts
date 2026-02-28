@@ -133,6 +133,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     onRunTerminalized,
     onPostRunHydrationStateChange,
   } = options;
+  void activeTab;
 
   const normalizedRunId = String(runId || "").trim();
   const normalizedRunSessionId = String(runSessionId || activeChatSessionIdRef.current || "").trim();
@@ -829,7 +830,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         isCurrentAttachment()
         && isAttachedRun()
         && !hasActiveRunsInScope
-        && activeTab === "preview"
         && shouldEnsurePreview
       ) {
         try {

@@ -35,6 +35,7 @@ import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "@/components/ai-elements/task";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { CodingAgentChatSession, OpenCodeCodingModelOption } from "@/services";
 
@@ -78,6 +79,8 @@ type AppsBuilderChatPanelProps = {
   queuedPrompts: QueuedPrompt[];
   pendingQuestion: CodingAgentPendingQuestion | null;
   isAnsweringQuestion: boolean;
+  isSendBlockedBySandbox: boolean;
+  sendBlockedReason: string | null;
   runningSessionIds: string[];
   sendingSessionIds: string[];
   sessionTitleHintsBySessionId: Record<string, string>;
@@ -112,6 +115,8 @@ export function AppsBuilderChatPanel({
   queuedPrompts,
   pendingQuestion,
   isAnsweringQuestion,
+  isSendBlockedBySandbox,
+  sendBlockedReason,
   runningSessionIds,
   sendingSessionIds,
   sessionTitleHintsBySessionId,
@@ -256,6 +261,10 @@ export function AppsBuilderChatPanel({
       return selections.length > 0 || !!custom;
     });
   }, [pendingQuestion, questionCustomInput, questionSelections]);
+  const sendBlocked = !isSending && (isAnsweringQuestion || isSendBlockedBySandbox);
+  const sendBlockedHint = isAnsweringQuestion
+    ? "Answer the pending question before sending a new prompt."
+    : sendBlockedReason;
 
   const handleQuestionOptionToggle = (label: string) => {
     if (!pendingQuestion || !activeQuestion) return;
@@ -802,12 +811,30 @@ export function AppsBuilderChatPanel({
                   <Square className="h-3 w-3 fill-current" />
                 </Button>
               ) : (
-                <PromptInputSubmit
-                  size="icon-sm"
-                  variant="ghost"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  aria-label="Send"
-                />
+                sendBlocked && sendBlockedHint ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">
+                        <PromptInputSubmit
+                          size="icon-sm"
+                          variant="ghost"
+                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                          aria-label="Send"
+                          disabled
+                        />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">{sendBlockedHint}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <PromptInputSubmit
+                    size="icon-sm"
+                    variant="ghost"
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    aria-label="Send"
+                    disabled={sendBlocked}
+                  />
+                )
               )}
             </PromptInputFooter>
           </PromptInput>

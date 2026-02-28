@@ -44,12 +44,14 @@ interface BaseNodeProps extends NodeProps {
 function BaseNodeComponent({
     data,
     selected,
+    isConnectable,
     icon: Icon = Hash,
     categoryColor,
     getHandleColor,
     className,
     children
 }: BaseNodeProps) {
+    const handlesConnectable = isConnectable ?? true
     const inputHandleColor = data.inputType ? getHandleColor(data.inputType) : "#6b7280"
     const outputHandleColor = data.outputType ? getHandleColor(data.outputType) : "#6b7280"
 
@@ -89,6 +91,7 @@ function BaseNodeComponent({
                 <Handle
                     type="target"
                     position={Position.Left}
+                    isConnectable={handlesConnectable}
                     className={cn(
                         "!w-3 !h-3 !border-2 !border-background !-left-1.5",
                         "transition-all duration-200 hover:!w-4 hover:!h-4 hover:!-left-2"
@@ -145,6 +148,7 @@ function BaseNodeComponent({
                 <Handle
                     type="source"
                     position={Position.Right}
+                    isConnectable={handlesConnectable}
                     className={cn(
                         "!w-3 !h-3 !border-2 !border-background !-right-1.5",
                         "transition-all duration-200 hover:!w-4 hover:!h-4 hover:!-right-2"
@@ -163,6 +167,7 @@ function BaseNodeComponent({
                             type="source"
                             position={handle.position || Position.Right}
                             id={handle.id}
+                            isConnectable={handlesConnectable}
                             className={cn(
                                 "!w-3 !h-3 !border-2 !border-background",
                                 "transition-all duration-200 hover:!w-4 hover:!h-4"
@@ -180,6 +185,7 @@ function BaseNodeComponent({
                             type="source"
                             position={handle.position || Position.Right}
                             id={handle.id}
+                            isConnectable={handlesConnectable}
                             className={cn(
                                 "!w-3 !h-3 !border-2 !border-background",
                                 "transition-all duration-200 hover:!w-4 hover:!h-4"
