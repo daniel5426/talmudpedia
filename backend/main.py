@@ -831,8 +831,6 @@ from app.api.routers import published_apps_host_runtime as published_apps_host_r
 from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
-from app.api.routers import agent_operators
-app.include_router(agent_operators.router)
 app.include_router(agents_router)
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])

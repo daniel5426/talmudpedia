@@ -561,18 +561,24 @@ export function ChatWorkspace({
         ) : (
           <>
             {displayMessages.length > 0 &&
-              displayMessages.map((msg: any) => {
-                const canOpenArtifact = Boolean(
-                  onOpenArtifact &&
-                  isArtifactMessage &&
-                  msg.role === "assistant" &&
-                  !msg.approvalRequest &&
-                  !msg._isStreaming &&
-                  isArtifactMessage(msg.content)
-                );
+              (() => {
+                const renderKeyCounts = new Map<string, number>();
+                return displayMessages.map((msg: any, index: number) => {
+                  const baseKey = msg?.id ? String(msg.id) : `message-${index}`;
+                  const nextCount = (renderKeyCounts.get(baseKey) || 0) + 1;
+                  renderKeyCounts.set(baseKey, nextCount);
+                  const renderKey = nextCount === 1 ? baseKey : `${baseKey}-${nextCount}`;
+                  const canOpenArtifact = Boolean(
+                    onOpenArtifact &&
+                    isArtifactMessage &&
+                    msg.role === "assistant" &&
+                    !msg.approvalRequest &&
+                    !msg._isStreaming &&
+                    isArtifactMessage(msg.content)
+                  );
 
                 return (
-                  <div key={msg.id} className="flex w-full">
+                  <div key={renderKey} className="flex w-full">
                   {msg.role === "assistant" && containerWidth >= 550 && (
                     <div
                       className={cn(
@@ -846,7 +852,8 @@ export function ChatWorkspace({
                   </Message>
                 </div>
                 );
-              })}
+              });
+            })()}
 
 
 

@@ -36,12 +36,28 @@ class ControlPlaneClient:
         self.session = session or requests.Session()
 
         from .agents import AgentsAPI
+        from .auth import AuthAPI
         from .artifacts import ArtifactsAPI
+        from .catalog import CatalogAPI
+        from .credentials import CredentialsAPI
+        from .knowledge_stores import KnowledgeStoresAPI
+        from .models import ModelsAPI
+        from .orchestration import OrchestrationAPI
+        from .rag import RagAPI
         from .tools import ToolsAPI
+        from .workload_security import WorkloadSecurityAPI
 
+        self.catalog = CatalogAPI(self)
         self.agents = AgentsAPI(self)
         self.tools = ToolsAPI(self)
         self.artifacts = ArtifactsAPI(self)
+        self.rag = RagAPI(self)
+        self.models = ModelsAPI(self)
+        self.credentials = CredentialsAPI(self)
+        self.knowledge_stores = KnowledgeStoresAPI(self)
+        self.workload_security = WorkloadSecurityAPI(self)
+        self.auth = AuthAPI(self)
+        self.orchestration = OrchestrationAPI(self)
 
     def request(
         self,
@@ -50,6 +66,8 @@ class ControlPlaneClient:
         *,
         params: Optional[Mapping[str, Any]] = None,
         json_body: Optional[Any] = None,
+        data: Optional[Mapping[str, Any]] = None,
+        files: Optional[Mapping[str, Any]] = None,
         options: Optional[RequestOptions] = None,
         mutation: bool = False,
         headers: Optional[Mapping[str, str]] = None,
@@ -60,6 +78,8 @@ class ControlPlaneClient:
             path,
             params=params,
             json_body=json_body,
+            data=data,
+            files=files,
             options=options,
             mutation=mutation,
             headers=headers,
@@ -74,6 +94,8 @@ class ControlPlaneClient:
         *,
         params: Optional[Mapping[str, Any]] = None,
         json_body: Optional[Any] = None,
+        data: Optional[Mapping[str, Any]] = None,
+        files: Optional[Mapping[str, Any]] = None,
         options: Optional[RequestOptions] = None,
         mutation: bool = False,
         headers: Optional[Mapping[str, str]] = None,
@@ -92,6 +114,8 @@ class ControlPlaneClient:
             url=url,
             params=merged_params,
             json=json_body,
+            data=data,
+            files=files,
             headers=request_headers,
             timeout=timeout or self.timeout,
         )

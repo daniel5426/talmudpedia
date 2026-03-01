@@ -17,11 +17,13 @@ from __future__ import annotations
 import json
 import os
 import asyncio
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 from sdk import Client, ArtifactBuilder
+from talmudpedia_control_sdk import ControlPlaneClient, ControlPlaneSDKError
 from app.agent.graph.schema import AgentGraph, NodeType
 from app.agent.graph.compiler import AgentCompiler
 from app.rag.pipeline.compiler import PipelineCompiler
@@ -96,11 +98,17 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     if action == "noop":
         output = {
             "result": {
-                "status": "ignored",
-                "reason": "missing_or_non_action_invocation",
-                "message": "No explicit Platform SDK action was provided.",
+                "status": "validation_error",
+                "reason": "missing_required_action",
+                "message": "Platform SDK calls require an explicit action.",
             },
-            "errors": [{"error": "missing_action"}],
+            "errors": [{
+                "error": "missing_action",
+                "code": "MISSING_REQUIRED_FIELD",
+                "message": "Missing required field: action",
+                "http_status": 422,
+                "retryable": False,
+            }],
             "action": "noop",
             "dry_run": dry_run,
         }
@@ -150,6 +158,10 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         required_scopes=required_scopes,
     )
     client = Client(base_url=base_url, api_key=api_key, tenant_id=tenant_id, extra_headers=extra_headers)
+    if api_key and not client.headers.get("Authorization"):
+        client.headers["Authorization"] = f"Bearer {api_key}"
+    if not client.headers.get("X-SDK-Contract"):
+        client.headers["X-SDK-Contract"] = "1"
 
     errors: List[Dict[str, Any]] = []
 
@@ -192,8 +204,15 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     elif action == "respond":
         result = {"message": payload.get("message") or inputs.get("message") or ""}
     else:
-        result = {"message": f"Unknown action '{action}'. Supported: fetch_catalog, validate_plan, execute_plan, create_artifact_draft, promote_artifact, create_tool, run_agent, run_tests, spawn_run, spawn_group, join, cancel_subtree, evaluate_and_replan, query_tree, respond."}
-        errors.append({"error": "unknown_action", "action": action})
+        result = {"message": f"Unknown action '{action}'."}
+        errors.append({
+            "error": "unknown_action",
+            "code": "INVALID_ARGUMENT",
+            "action": action,
+            "message": f"Unsupported action: {action}",
+            "http_status": 422,
+            "retryable": False,
+        })
 
     output = {
         "result": result,
@@ -227,14 +246,6 @@ def _resolve_action(
 ) -> str:
     if explicit_action:
         return explicit_action
-    if steps:
-        return "execute_plan"
-    if tests:
-        return "run_tests"
-    if payload.get("message") or inputs.get("message"):
-        return "respond"
-    if _is_non_action_invocation(inputs, payload):
-        return "noop"
     return "noop"
 
 
@@ -527,12 +538,18 @@ def _resolve_auth(
         or state_ctx.get("token")
         or tool_ctx.get("token")
     )
+    auth_ctx = tool_ctx.get("auth") if isinstance(tool_ctx.get("auth"), dict) else {}
+    if not token and isinstance(auth_ctx.get("token"), str):
+        token = auth_ctx.get("token")
+    if not token and isinstance(auth_ctx.get("bearer_token"), str):
+        token = auth_ctx.get("bearer_token")
 
-    scoped_action = action or "fetch_catalog"
-    scope_list = required_scopes or _resolve_required_scopes(scoped_action)
+    if not action:
+        raise ValueError("Action is required for auth scope resolution.")
+
+    scope_list = required_scopes or _resolve_required_scopes(action)
     if scope_list:
         delegated_token = None
-        auth_ctx = tool_ctx.get("auth") if isinstance(tool_ctx.get("auth"), dict) else {}
         mint_token_cb = auth_ctx.get("mint_token")
         if callable(mint_token_cb):
             try:
@@ -544,14 +561,20 @@ def _resolve_auth(
                 )
             except Exception as exc:
                 raise ValueError(
-                    f"Action '{scoped_action}' requires delegated workload token; workload token mint failed: {exc}"
+                    f"Action '{action}' requires delegated workload token; workload token mint failed: {exc}"
                 ) from exc
 
-        if not delegated_token:
+        if delegated_token:
+            token = delegated_token
+        elif not token:
             raise ValueError(
-                f"Action '{scoped_action}' requires delegated workload token; missing grant context or caller auth context"
+                f"Action '{action}' requires bearer token; missing caller auth context"
             )
-        token = delegated_token
+    elif not token:
+        raise ValueError(f"Action '{action}' requires bearer token; missing caller auth context")
+
+    if not tenant_id:
+        raise ValueError(f"Action '{action}' requires explicit tenant_id.")
 
     extra_headers = {}
     if isinstance(payload.get("headers"), dict):
@@ -998,7 +1021,7 @@ def _step_deploy_rag_pipeline(client: Client, step: Dict[str, Any], dry_run: boo
         resp = requests.post(
             f"{client.base_url}/admin/pipelines/visual-pipelines",
             json=payload,
-            headers=client.headers,
+            headers=_request_headers(client, mutation=True),
             timeout=30,
         )
         resp.raise_for_status()
@@ -1016,13 +1039,16 @@ def _step_deploy_agent(client: Client, step: Dict[str, Any], dry_run: bool) -> T
         return {"status": "skipped", "dry_run": True}, None
 
     try:
-        primary_url = f"{client.base_url}/agents"
-        fallback_url = f"{client.base_url}/api/agents"
-        resp = requests.post(primary_url, json=payload, headers=client.headers, timeout=30)
-        if resp.status_code == 404:
-            resp = requests.post(fallback_url, json=payload, headers=client.headers, timeout=30)
-        resp.raise_for_status()
-        return resp.json(), None
+        sdk_client = _control_client(client)
+        response = sdk_client.agents.create(payload, options=_request_options(step=step, dry_run=False))
+        return response.get("data"), None
+    except ControlPlaneSDKError as exc:
+        return None, {
+            "error": "deploy_agent_failed",
+            "detail": str(exc),
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }
     except Exception as exc:
         return None, {"error": "deploy_agent_failed", "detail": str(exc)}
 
@@ -1325,7 +1351,7 @@ def _orchestration_post(client: Client, path: str, payload: Dict[str, Any]) -> D
     resp = requests.post(
         f"{client.base_url}{path}",
         json=payload,
-        headers=client.headers,
+        headers=_request_headers(client),
         timeout=60,
     )
     resp.raise_for_status()
@@ -1335,11 +1361,74 @@ def _orchestration_post(client: Client, path: str, payload: Dict[str, Any]) -> D
 def _orchestration_get(client: Client, path: str) -> Dict[str, Any]:
     resp = requests.get(
         f"{client.base_url}{path}",
-        headers=client.headers,
+        headers=_request_headers(client),
         timeout=60,
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def _request_headers(
+    client: Client,
+    *,
+    mutation: bool = False,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    base_headers = getattr(client, "headers", None)
+    if isinstance(base_headers, dict):
+        headers.update(base_headers)
+    build_headers = getattr(client, "_build_headers", None)
+    if callable(build_headers):
+        try:
+            headers.update(build_headers())
+        except Exception:
+            pass
+    if mutation:
+        headers["X-Idempotency-Key"] = idempotency_key or str(uuid.uuid4())
+    headers.setdefault("X-SDK-Contract", "1")
+    return headers
+
+
+def _request_options(
+    *,
+    step: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    dry_run: bool,
+) -> Dict[str, Any]:
+    source: Dict[str, Any] = {}
+    if isinstance(payload, dict):
+        source.update(payload)
+    if isinstance(step, dict):
+        source.update(step)
+    options: Dict[str, Any] = {"dry_run": dry_run}
+    if source.get("validate_only") is not None:
+        options["validate_only"] = bool(source.get("validate_only"))
+    if source.get("idempotency_key"):
+        options["idempotency_key"] = str(source.get("idempotency_key"))
+    if isinstance(source.get("request_metadata"), dict):
+        options["request_metadata"] = source.get("request_metadata")
+    return options
+
+
+def _control_client(client: Client) -> ControlPlaneClient:
+    token = getattr(client, "api_key", None)
+    auth_header = None
+    if isinstance(getattr(client, "headers", None), dict):
+        auth_header = client.headers.get("Authorization")
+    if isinstance(auth_header, str) and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    tenant_id = None
+    if isinstance(getattr(client, "headers", None), dict):
+        tenant_id = client.headers.get("X-Tenant-ID")
+    if not tenant_id:
+        tenant_id = getattr(client, "tenant_id", None)
+    return ControlPlaneClient(
+        base_url=client.base_url,
+        token=token,
+        tenant_id=tenant_id,
+        timeout=60.0,
+    )
 
 
 def _create_artifact_draft(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
@@ -1355,16 +1444,24 @@ def _create_artifact_draft(client: Client, payload: Dict[str, Any], dry_run: boo
     request_payload["python_code"] = python_code
     request_payload.pop("code", None)
     request_payload.setdefault("display_name", payload.get("display_name") or name)
+    tenant_slug = request_payload.pop("tenant_slug", None)
 
     try:
-        resp = requests.post(
-            f"{client.base_url}/admin/artifacts",
-            json=request_payload,
-            headers=client.headers,
-            timeout=30,
+        sdk_client = _control_client(client)
+        response = sdk_client.artifacts.create_draft(
+            request_payload,
+            tenant_slug=tenant_slug,
+            options=_request_options(payload=payload, dry_run=False),
         )
-        resp.raise_for_status()
-        return resp.json(), []
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{
+            "error": "create_artifact_draft_failed",
+            "detail": str(exc),
+            "name": name,
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }]
     except Exception as exc:
         return None, [{"error": "create_artifact_draft_failed", "detail": str(exc), "name": name}]
 
@@ -1377,21 +1474,30 @@ def _promote_artifact(client: Client, payload: Dict[str, Any], dry_run: bool) ->
     if dry_run:
         return {"status": "skipped", "dry_run": True, "artifact_id": artifact_id}, []
 
-    promote_payload = {}
-    if payload.get("namespace"):
-        promote_payload["namespace"] = payload.get("namespace")
-    if payload.get("version"):
-        promote_payload["version"] = payload.get("version")
+    namespace = payload.get("namespace")
+    if not namespace:
+        return None, [{"error": "missing_fields", "fields": ["namespace"]}]
+    version = payload.get("version")
+    tenant_slug = payload.get("tenant_slug")
 
     try:
-        resp = requests.post(
-            f"{client.base_url}/admin/artifacts/{artifact_id}/promote",
-            json=promote_payload,
-            headers=client.headers,
-            timeout=30,
+        sdk_client = _control_client(client)
+        response = sdk_client.artifacts.promote(
+            artifact_id,
+            namespace=namespace,
+            version=version,
+            tenant_slug=tenant_slug,
+            options=_request_options(payload=payload, dry_run=False),
         )
-        resp.raise_for_status()
-        return resp.json(), []
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{
+            "error": "promote_artifact_failed",
+            "detail": str(exc),
+            "artifact_id": artifact_id,
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }]
     except Exception as exc:
         return None, [{"error": "promote_artifact_failed", "detail": str(exc), "artifact_id": artifact_id}]
 
@@ -1413,14 +1519,20 @@ def _create_tool(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tupl
         return {"status": "skipped", "dry_run": True, "slug": payload.get("slug")}, []
 
     try:
-        resp = requests.post(
-            f"{client.base_url}/tools",
-            json=payload,
-            headers=client.headers,
-            timeout=30,
+        sdk_client = _control_client(client)
+        response = sdk_client.tools.create(
+            payload,
+            options=_request_options(payload=payload, dry_run=False),
         )
-        resp.raise_for_status()
-        return resp.json(), []
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{
+            "error": "create_tool_failed",
+            "detail": str(exc),
+            "slug": payload.get("slug"),
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }]
     except Exception as exc:
         return None, [{"error": "create_tool_failed", "detail": str(exc), "slug": payload.get("slug")}]
 
@@ -1443,8 +1555,17 @@ def _run_agent(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[
         "context": context or {},
     }
     try:
-        response = _call_agent_execute(client, agent_id, request_payload)
+        sdk_client = _control_client(client)
+        response = sdk_client.agents.execute(agent_id, request_payload).get("data")
         return response, []
+    except ControlPlaneSDKError as exc:
+        return None, [{
+            "error": "run_agent_failed",
+            "detail": str(exc),
+            "agent_id": agent_id,
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }]
     except Exception as exc:
         return None, [{"error": "run_agent_failed", "detail": str(exc), "agent_id": agent_id}]
 
@@ -1549,7 +1670,7 @@ def _resolve_agent_id_by_slug(client: Client, agent_slug: str) -> Optional[str]:
             resp = requests.get(
                 f"{client.base_url}/agents",
                 params={"skip": page * page_size, "limit": page_size},
-                headers=client.headers,
+                headers=_request_headers(client),
                 timeout=30,
             )
             resp.raise_for_status()
@@ -1571,7 +1692,7 @@ def _call_agent_execute(client: Client, agent_id: str, payload: Dict[str, Any]) 
     resp = requests.post(
         f"{client.base_url}/agents/{agent_id}/execute",
         json=payload,
-        headers=client.headers,
+        headers=_request_headers(client),
         timeout=60,
     )
     resp.raise_for_status()

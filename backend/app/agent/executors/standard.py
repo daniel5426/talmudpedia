@@ -1134,7 +1134,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             tool_records = await self._load_tool_records(tools)
             tool_records_by_id = {str(t.id): t for t in tool_records if getattr(t, "id", None)}
             langchain_tools = [self._build_langchain_tool(t) for t in tool_records] if tools else []
-            platform_sdk_defaulted_once = False
 
             conversation_messages = list(formatted_messages)
             emitted_messages: List[BaseMessage] = []
@@ -1309,26 +1308,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     tool_record = tool_records_by_id.get(resolved_tool_id)
                     if tool_record is not None:
                         tool_input = self._coerce_tool_input(tool_input, tool_record)
-                    if (not tool_input) and tool_record is not None:
-                        tool_slug = str(getattr(tool_record, "slug", "") or "").lower()
-                        tool_name_lower = str(getattr(tool_record, "name", "") or "").lower()
-                        artifact_id = str(getattr(tool_record, "artifact_id", "") or "")
-                        is_platform_sdk = (
-                            tool_slug == "platform-sdk"
-                            or tool_name_lower == "platform sdk"
-                            or artifact_id == "builtin/platform_sdk"
-                        )
-                        if is_platform_sdk:
-                            if not platform_sdk_defaulted_once:
-                                tool_input = {"action": "fetch_catalog"}
-                                platform_sdk_defaulted_once = True
-                                logger.info("Defaulted empty Platform SDK tool call to fetch_catalog")
-                            else:
-                                tool_input = {
-                                    "action": "respond",
-                                    "message": "Missing explicit Platform SDK action in tool call.",
-                                }
-                                logger.warning("Repeated empty Platform SDK tool call; forcing respond action")
                     policy = self._get_tool_execution_policy(tool_record, tool_timeout_s)
 
                     resolved_calls.append({

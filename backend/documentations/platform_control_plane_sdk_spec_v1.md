@@ -3,7 +3,7 @@
 Last Updated: 2026-03-01
 
 ## Document Control
-- Status: Draft for implementation (normative for new SDK work)
+- Status: In implementation (normative for new SDK work)
 - Spec ID: `CONTROL-SDK-CONTRACT-v1`
 - Primary audience: backend platform engineers, SDK maintainers, architect-agent/tooling engineers
 - Canonical domain: platform control plane (admin/configuration/execution APIs), not hosted-runtime SDK
@@ -830,3 +830,37 @@ The following action IDs are recommended as stable domain actions for parity:
 - `orchestration.spawn_run`, `orchestration.spawn_group`, `orchestration.join`, `orchestration.cancel_subtree`, `orchestration.evaluate_and_replan`, `orchestration.query_tree`
 - `workload_security.list_pending`, `workload_security.approve_policy`, `workload_security.reject_policy`, `workload_security.list_approvals`, `workload_security.decide_approval`
 
+## 23. Implementation Progress (2026-03-01)
+Completed in this increment:
+- Activated/wired Python control-plane SDK package usage: `backend/talmudpedia_control_sdk/`.
+- Adopted shared transport/error/envelope client (`ControlPlaneClient`) with contract headers (`X-SDK-Contract`, tenant/auth, idempotency on mutations) in platform tool flows.
+- SDK module coverage in Python package now includes:
+  - `catalog`
+  - `agents`
+  - `tools`
+  - `artifacts`
+  - `rag`
+  - `models`
+  - `credentials`
+  - `knowledge_stores`
+  - `workload_security`
+  - `auth`
+  - `orchestration`
+- Added RAG file upload support in SDK transport and `rag.upload_input_file(...)` method surface.
+- Enforced explicit-action behavior in `backend/artifacts/builtin/platform_sdk/handler.py`:
+  - Missing action now returns structured validation error.
+  - Unknown action now returns structured `INVALID_ARGUMENT` style error payload.
+- Removed legacy deploy-agent fallback to `/api/agents` from platform SDK execution path.
+- Removed Platform SDK empty-call auto-defaulting from `backend/app/agent/executors/standard.py`.
+- Removed duplicate `/agents/operators` route registration from `backend/main.py` by keeping `agents` router as the single mounted source.
+- Added unit/contract tests for the new SDK and hard-cut behavior:
+  - `backend/tests/control_plane_sdk/test_client_and_modules.py`
+  - `backend/tests/control_plane_sdk/test_additional_modules.py`
+  - `backend/tests/platform_sdk_tool/test_platform_sdk_actions.py` updates
+  - `backend/tests/workload_delegation_auth/test_platform_sdk_delegated_auth_flow.py` updates
+
+Still pending for full v1 conformance:
+- TypeScript SDK package (`@talmudpedia/control-sdk`).
+- Full tool-wrapper parity generation for all SDK methods.
+- Legacy package deletion (`backend/sdk/`) after full replacement parity.
+- Cross-surface E2E parity suite (UI vs SDK vs tool wrappers) for all control-plane mutation paths.

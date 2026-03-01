@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-02-26
+Last Updated: 2026-03-01
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -160,6 +160,21 @@ backend/alembic/
 backend/artifacts/
 backend/ingestion/
 backend/sdk/
+backend/talmudpedia_control_sdk/
+backend/talmudpedia_control_sdk/client.py
+backend/talmudpedia_control_sdk/catalog.py
+backend/talmudpedia_control_sdk/agents.py
+backend/talmudpedia_control_sdk/tools.py
+backend/talmudpedia_control_sdk/artifacts.py
+backend/talmudpedia_control_sdk/rag.py
+backend/talmudpedia_control_sdk/models.py
+backend/talmudpedia_control_sdk/credentials.py
+backend/talmudpedia_control_sdk/knowledge_stores.py
+backend/talmudpedia_control_sdk/workload_security.py
+backend/talmudpedia_control_sdk/auth.py
+backend/talmudpedia_control_sdk/orchestration.py
+backend/talmudpedia_control_sdk/errors.py
+backend/talmudpedia_control_sdk/types.py
 backend/library_chunks/
 backend/scripts/
 backend/tests/

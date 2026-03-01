@@ -189,7 +189,28 @@ All conditions must be true:
 5. Archive/remove `backend/documentations/sdk_specification.md`.
 6. Add CI check that fails on new references to `/api/agents` under control-plane SDK/tool paths.
 
+## Implementation Progress (2026-03-01)
+Completed:
+1. Removed `/agents -> /api/agents` fallback branch from `backend/artifacts/builtin/platform_sdk/handler.py` (`_step_deploy_agent` now uses canonical `/agents` path only).
+2. Removed Platform SDK empty-call auto-defaulting from `backend/app/agent/executors/standard.py` (`fetch_catalog` / `respond` synthetic defaults removed).
+3. Consolidated duplicate `GET /agents/operators` exposure by removing `agent_operators` router registration from `backend/main.py`.
+4. Updated legacy lightweight SDK agent create route in `backend/sdk/pipeline.py` from `/api/agents` to `/agents`.
+5. Added/updated strict-contract tests:
+   - `backend/tests/platform_sdk_tool/test_platform_sdk_actions.py`
+   - `backend/tests/workload_delegation_auth/test_platform_sdk_delegated_auth_flow.py`
+6. Expanded Python replacement SDK coverage in `backend/talmudpedia_control_sdk/` to include:
+   - `catalog`, `rag`, `models`, `credentials`, `knowledge_stores`, `workload_security`, `auth`, `orchestration`
+   - plus additional contract tests in `backend/tests/control_plane_sdk/test_additional_modules.py`.
+
+In progress:
+1. Replacement SDK implementation is underway via `backend/talmudpedia_control_sdk/` (full module surface exists; platform handler wiring is currently partial and focused on `agents/tools/artifacts` paths).
+2. Full migration of platform tool wrappers to 1:1 domain-method wrappers is partial; planner-centric actions (`validate_plan`, `execute_plan`) still exist.
+
+Pending:
+1. Delete legacy `backend/sdk/` package after full replacement and parity validation.
+2. Archive/remove `backend/documentations/sdk_specification.md`.
+3. Add CI guardrail to block new `/api/agents` references in control-plane SDK/tool code paths.
+
 ## Contradictions Requiring Resolution
 1. `backend/documentations/sdk_specification.md` overlaps with and can contradict `platform_control_plane_sdk_spec_v1.md`.
 2. Existing tests/docs in workload delegation area may still describe fallback auth behavior not present in current handler implementation.
-

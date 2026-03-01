@@ -88,8 +88,9 @@ def test_execute_ignores_auth_envelope_without_action():
     }
     out = handler.execute(state={}, config={}, context=context)
     assert out["context"]["action"] == "noop"
-    assert out["context"]["result"]["status"] == "ignored"
+    assert out["context"]["result"]["status"] == "validation_error"
     assert any(err.get("error") == "missing_action" for err in out["context"]["errors"])
+    assert any(err.get("code") == "MISSING_REQUIRED_FIELD" for err in out["context"]["errors"])
 
 
 def test_execute_ignores_metadata_probe_without_action():
@@ -102,4 +103,40 @@ def test_execute_ignores_metadata_probe_without_action():
     }
     out = handler.execute(state={}, config={}, context=context)
     assert out["context"]["action"] == "noop"
-    assert out["context"]["result"]["status"] == "ignored"
+    assert out["context"]["result"]["status"] == "validation_error"
+
+
+def test_resolve_action_requires_explicit_action():
+    resolved = handler._resolve_action(
+        explicit_action=None,
+        inputs={"steps": [{"action": "deploy_agent"}]},
+        payload={"tests": [{"name": "t1"}], "message": "hello"},
+        steps=[{"action": "deploy_agent"}],
+        tests=[{"name": "t1"}],
+    )
+    assert resolved == "noop"
+
+
+def test_deploy_agent_uses_agents_endpoint_without_fallback(monkeypatch):
+    class FakeAgents:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, payload, options=None):
+            self.calls.append({"payload": payload, "options": options})
+            return {"data": {"id": "agent-123"}}
+
+    class FakeControlClient:
+        def __init__(self):
+            self.agents = FakeAgents()
+
+    fake_client = FakeControlClient()
+    monkeypatch.setattr(handler, "_control_client", lambda _legacy_client: fake_client)
+
+    legacy_client = type("LegacyClient", (), {"base_url": "http://localhost:8000", "headers": {}})()
+    step = {"action": "deploy_agent", "payload": {"name": "A", "slug": "a", "graph_definition": {"nodes": [], "edges": []}}}
+    result, errors = handler._step_deploy_agent(legacy_client, step, dry_run=False)
+
+    assert errors is None
+    assert result == {"id": "agent-123"}
+    assert len(fake_client.agents.calls) == 1
