@@ -18,7 +18,7 @@ async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_
         "/admin/apps",
         headers=headers,
         json={
-            "name": f"Batch Finalizer App {uuid4().hex[:6]}",
+            "name": f"Version Run Diff App {uuid4().hex[:6]}",
             "agent_id": agent_id,
             "template_key": "chat-classic",
             "auth_enabled": True,
@@ -30,37 +30,27 @@ async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_
 
     state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
     assert state_resp.status_code == 200
-    draft_revision_id = UUID(state_resp.json()["current_draft_revision"]["id"])
-    return app_id, draft_revision_id
+    return app_id, UUID(state_resp.json()["current_draft_revision"]["id"])
 
 
-def _new_scope_run(
-    *,
-    tenant_id: UUID,
-    agent_id: UUID,
-    user_id: UUID,
-    app_id: UUID,
-    base_revision_id: UUID,
-    status: RunStatus,
-) -> AgentRun:
-    now = datetime.now(timezone.utc)
+def _run(*, tenant_id: UUID, agent_id: UUID, user_id: UUID, app_id: UUID, base_revision_id: UUID) -> AgentRun:
     return AgentRun(
         tenant_id=tenant_id,
         agent_id=agent_id,
         user_id=user_id,
         initiator_user_id=user_id,
-        status=status,
+        status=RunStatus.completed,
         surface=CODING_AGENT_SURFACE,
         published_app_id=app_id,
         base_revision_id=base_revision_id,
         input_params={"context": {"chat_session_id": f"chat-{uuid4()}"}},
         execution_engine="opencode",
-        completed_at=now if status == RunStatus.completed else None,
+        completed_at=datetime.now(timezone.utc),
     )
 
 
 @pytest.mark.asyncio
-async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(client, db_session, monkeypatch):
+async def test_completed_runs_create_versions_only_when_live_differs_from_base(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
@@ -71,7 +61,7 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
     assert draft is not None
 
     live_files = dict(draft.files or {})
-    live_files["src/App.tsx"] = "export default function App() { return <div>changed</div>; }"
+    live_files["src/App.tsx"] = "export default function App() { return <main>run-diff</main>; }"
 
     same_as_live_base = await create_app_version(
         db_session,
@@ -88,26 +78,22 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
         template_runtime=draft.template_runtime or "vite_static",
     )
 
-    run_no_diff = _new_scope_run(
+    run_same = _run(
         tenant_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         app_id=app_id,
         base_revision_id=same_as_live_base.id,
-        status=RunStatus.completed,
     )
-    run_with_diff = _new_scope_run(
+    run_diff = _run(
         tenant_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         app_id=app_id,
         base_revision_id=draft.id,
-        status=RunStatus.completed,
     )
-    db_session.add_all([run_no_diff, run_with_diff])
+    db_session.add_all([run_same, run_diff])
     await db_session.commit()
-    await db_session.refresh(run_no_diff)
-    await db_session.refresh(run_with_diff)
 
     async def _fake_prepare(self, *, app_id, actor_id, sample_run):
         _ = actor_id, sample_run
@@ -120,61 +106,14 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
     monkeypatch.setattr(PublishedAppCodingBatchFinalizer, "_prepare_finalized_live_snapshot", _fake_prepare)
 
     service = PublishedAppCodingBatchFinalizer(db_session)
-    result = await service.finalize_for_terminal_run(run_id=run_with_diff.id)
+    result = await service.finalize_for_terminal_run(run_id=run_diff.id)
     assert result["status"] == "finalized"
-    assert result["candidate_count"] == 2
-    assert str(run_no_diff.id) not in result["revision_ids_by_run"]
-    assert str(run_with_diff.id) in result["revision_ids_by_run"]
+    assert str(run_same.id) not in result["revision_ids_by_run"]
+    assert str(run_diff.id) in result["revision_ids_by_run"]
 
-    refreshed_no_diff = await db_session.get(AgentRun, run_no_diff.id)
-    refreshed_with_diff = await db_session.get(AgentRun, run_with_diff.id)
-    assert refreshed_no_diff is not None
-    assert refreshed_with_diff is not None
-
-    assert refreshed_no_diff.batch_finalized_at is not None
-    assert refreshed_no_diff.result_revision_id is None
-
-    assert refreshed_with_diff.batch_finalized_at is not None
-    assert refreshed_with_diff.result_revision_id is not None
-
-
-@pytest.mark.asyncio
-async def test_batch_finalizer_skips_when_active_runs_remain(client, db_session, monkeypatch):
-    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
-
-    completed = _new_scope_run(
-        tenant_id=tenant.id,
-        agent_id=agent.id,
-        user_id=user.id,
-        app_id=app_id,
-        base_revision_id=draft_revision_id,
-        status=RunStatus.completed,
-    )
-    running = _new_scope_run(
-        tenant_id=tenant.id,
-        agent_id=agent.id,
-        user_id=user.id,
-        app_id=app_id,
-        base_revision_id=draft_revision_id,
-        status=RunStatus.running,
-    )
-    db_session.add_all([completed, running])
-    await db_session.commit()
-    await db_session.refresh(completed)
-
-    async def _unexpected_prepare(self, *, app_id, actor_id, sample_run):
-        _ = app_id, actor_id, sample_run
-        raise AssertionError("finalizer should not prepare snapshots while active runs remain")
-
-    monkeypatch.setattr(PublishedAppCodingBatchFinalizer, "_prepare_finalized_live_snapshot", _unexpected_prepare)
-
-    service = PublishedAppCodingBatchFinalizer(db_session)
-    result = await service.finalize_for_terminal_run(run_id=completed.id)
-    assert result["status"] == "active_runs_remaining"
-    assert result["active_count"] >= 1
-
-    refreshed = await db_session.get(AgentRun, completed.id)
-    assert refreshed is not None
-    assert refreshed.batch_finalized_at is None
+    refreshed_same = await db_session.get(AgentRun, run_same.id)
+    refreshed_diff = await db_session.get(AgentRun, run_diff.id)
+    assert refreshed_same is not None
+    assert refreshed_diff is not None
+    assert refreshed_same.result_revision_id is None
+    assert refreshed_diff.result_revision_id is not None

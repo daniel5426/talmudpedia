@@ -34,8 +34,8 @@ from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientError,
 )
-from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
+from app.services.published_app_versioning import create_app_version
 
 
 logger = logging.getLogger(__name__)
@@ -191,30 +191,20 @@ async def _create_checkpoint_from_snapshot(*, job_id: UUID, snapshot: _PublishSn
             raise RuntimeError("Current draft revision is required before sandbox publish")
 
         entry_file = _extract_requested_entry_file(job) or str(current_draft.entry_file or "src/main.tsx")
-        revision_store = PublishedAppRevisionStore(db)
-        manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(snapshot.files)
-        checkpoint = PublishedAppRevision(
-            published_app_id=app.id,
+        checkpoint = await create_app_version(
+            db,
+            app=app,
             kind=PublishedAppRevisionKind.draft,
             template_key=app.template_key or current_draft.template_key or "chat-classic",
             entry_file=entry_file,
             files=dict(snapshot.files),
-            manifest_json=manifest_json,
+            created_by=job.requested_by,
+            source_revision_id=current_draft.id,
+            origin_kind="publish_checkpoint",
             build_status=PublishedAppRevisionBuildStatus.queued,
             build_seq=int(current_draft.build_seq or 0) + 1,
-            build_error=None,
-            build_started_at=None,
-            build_finished_at=None,
-            dist_storage_prefix=None,
-            dist_manifest=None,
             template_runtime="vite_static",
-            compiled_bundle=None,
-            bundle_hash=bundle_hash,
-            source_revision_id=current_draft.id,
-            created_by=job.requested_by,
         )
-        db.add(checkpoint)
-        await db.flush()
         app.current_draft_revision_id = checkpoint.id
         job.source_revision_id = checkpoint.id
         job.saved_draft_revision_id = checkpoint.id
@@ -390,14 +380,17 @@ async def _build_upload_and_finalize(
                 build_finished_at = datetime.now(timezone.utc)
 
         await _heartbeat_publish_scope(db=db, job=job, session=session, runtime_service=runtime_service, stage="finalize")
-        published_revision = PublishedAppRevision(
-            id=published_revision_uuid,
-            published_app_id=app.id,
+        published_revision = await create_app_version(
+            db,
+            revision_id=published_revision_uuid,
+            app=app,
             kind=PublishedAppRevisionKind.published,
             template_key=checkpoint_revision.template_key,
             entry_file=checkpoint_revision.entry_file,
             files=dict(checkpoint_revision.files or {}),
-            manifest_json=dict(checkpoint_revision.manifest_json or {}),
+            created_by=job.requested_by,
+            source_revision_id=checkpoint_revision.id,
+            origin_kind="publish_output",
             build_status=PublishedAppRevisionBuildStatus.succeeded,
             build_seq=int(checkpoint_revision.build_seq or 0) + 1,
             build_error=None,
@@ -407,12 +400,7 @@ async def _build_upload_and_finalize(
             dist_manifest=dist_manifest,
             template_runtime=checkpoint_revision.template_runtime or "vite_static",
             compiled_bundle=checkpoint_revision.compiled_bundle,
-            bundle_hash=checkpoint_revision.bundle_hash,
-            source_revision_id=checkpoint_revision.id,
-            created_by=job.requested_by,
         )
-        db.add(published_revision)
-        await db.flush()
 
         app.current_published_revision_id = published_revision.id
         app.status = PublishedAppStatus.published

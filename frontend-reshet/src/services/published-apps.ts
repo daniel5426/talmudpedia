@@ -87,21 +87,13 @@ export interface PublishedAppRevision {
   template_runtime?: string;
   compiled_bundle?: string | null;
   bundle_hash?: string | null;
+  version_seq?: number;
+  origin_kind?: string;
+  origin_run_id?: string | null;
+  restored_from_revision_id?: string | null;
   source_revision_id?: string | null;
   created_by?: string | null;
   created_at: string;
-}
-
-export interface RevisionBuildStatusResponse {
-  revision_id: string;
-  build_status: "queued" | "running" | "succeeded" | "failed";
-  build_seq: number;
-  build_error?: string | null;
-  build_started_at?: string | null;
-  build_finished_at?: string | null;
-  dist_storage_prefix?: string | null;
-  dist_manifest?: Record<string, unknown> | null;
-  template_runtime?: string;
 }
 
 export interface RevisionConflictResponse {
@@ -158,17 +150,6 @@ export interface DraftDevHeartbeatResult {
   active_publish_job_id?: string | null;
 }
 
-export interface RevisionPreviewTokenResponse {
-  revision_id: string;
-  preview_token: string;
-}
-
-export interface PublishRequest {
-  base_revision_id?: string;
-  files?: Record<string, string>;
-  entry_file?: string;
-}
-
 export interface PublishJobResponse {
   job_id: string;
   app_id: string;
@@ -184,6 +165,13 @@ export interface PublishJobResponse {
 }
 
 export type PublishJobStatusResponse = PublishJobResponse;
+
+export interface VersionPreviewRuntimeResponse {
+  revision_id: string;
+  preview_url: string;
+  runtime_token: string;
+  expires_at: string;
+}
 
 export interface CreatePublishedAppRequest {
   name: string;
@@ -257,7 +245,6 @@ export interface CodingAgentRun {
   published_app_id?: string | null;
   base_revision_id?: string | null;
   result_revision_id?: string | null;
-  checkpoint_revision_id?: string | null;
   requested_model_id?: string | null;
   resolved_model_id?: string | null;
   error?: string | null;
@@ -304,18 +291,11 @@ export interface CodingAgentChatSessionDetail {
   };
 }
 
-export interface CodingAgentCheckpoint {
-  checkpoint_id: string;
-  run_id: string;
-  app_id: string;
-  revision_id?: string | null;
-  created_at: string;
-}
-
-export interface CodingAgentRestoreCheckpointResponse {
-  checkpoint_id: string;
-  revision: PublishedAppRevision;
-  run_id?: string | null;
+export interface AppVersionListItem extends PublishedAppRevision {
+  is_current_draft: boolean;
+  is_current_published: boolean;
+  run_status?: string | null;
+  run_prompt_preview?: string | null;
 }
 
 export interface CodingAgentActiveRunState {
@@ -409,10 +389,6 @@ export const publishedAppsService = {
     return httpClient.delete<{ status: string; id: string }>(`/admin/apps/${appId}/domains/${domainId}`);
   },
 
-  async publish(appId: string, payload: PublishRequest = {}): Promise<PublishJobResponse> {
-    return httpClient.post<PublishJobResponse>(`/admin/apps/${appId}/publish`, payload);
-  },
-
   async getPublishJobStatus(appId: string, jobId: string): Promise<PublishJobStatusResponse> {
     return httpClient.get<PublishJobStatusResponse>(`/admin/apps/${appId}/publish/jobs/${jobId}`);
   },
@@ -425,8 +401,40 @@ export const publishedAppsService = {
     return httpClient.get<{ app_id: string; slug: string; status: string; runtime_url: string }>(`/admin/apps/${appId}/runtime-preview`);
   },
 
-  async createRevision(appId: string, payload: CreateBuilderRevisionRequest): Promise<PublishedAppRevision> {
-    return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/builder/revisions`, payload);
+  async listVersions(
+    appId: string,
+    options: { limit?: number; before_version_seq?: number } = {},
+  ): Promise<AppVersionListItem[]> {
+    const params = new URLSearchParams();
+    if (options.limit != null) {
+      params.set("limit", String(options.limit));
+    }
+    if (options.before_version_seq != null) {
+      params.set("before_version_seq", String(options.before_version_seq));
+    }
+    const query = params.toString();
+    const suffix = query ? `?${query}` : "";
+    return httpClient.get<AppVersionListItem[]>(`/admin/apps/${appId}/versions${suffix}`);
+  },
+
+  async getVersion(appId: string, versionId: string): Promise<PublishedAppRevision> {
+    return httpClient.get<PublishedAppRevision>(`/admin/apps/${appId}/versions/${versionId}`);
+  },
+
+  async getVersionPreviewRuntime(appId: string, versionId: string): Promise<VersionPreviewRuntimeResponse> {
+    return httpClient.get<VersionPreviewRuntimeResponse>(`/admin/apps/${appId}/versions/${versionId}/preview-runtime`);
+  },
+
+  async createDraftVersion(appId: string, payload: CreateBuilderRevisionRequest): Promise<PublishedAppRevision> {
+    return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/versions/draft`, payload);
+  },
+
+  async restoreVersion(appId: string, versionId: string): Promise<PublishedAppRevision> {
+    return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/versions/${versionId}/restore`, {});
+  },
+
+  async publishVersion(appId: string, versionId: string): Promise<PublishJobResponse> {
+    return httpClient.post<PublishJobResponse>(`/admin/apps/${appId}/versions/${versionId}/publish`, {});
   },
 
   async getDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {
@@ -493,21 +501,6 @@ export const publishedAppsService = {
 
   async stopDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {
     return httpClient.delete<DraftDevSessionResponse>(`/admin/apps/${appId}/builder/draft-dev/session`);
-  },
-
-  async getRevisionBuildStatus(appId: string, revisionId: string): Promise<RevisionBuildStatusResponse> {
-    return httpClient.get<RevisionBuildStatusResponse>(`/admin/apps/${appId}/builder/revisions/${revisionId}/build`);
-  },
-
-  async createRevisionPreviewToken(appId: string, revisionId: string): Promise<RevisionPreviewTokenResponse> {
-    return httpClient.post<RevisionPreviewTokenResponse>(
-      `/admin/apps/${appId}/builder/revisions/${revisionId}/preview-token`,
-      {},
-    );
-  },
-
-  async retryRevisionBuild(appId: string, revisionId: string): Promise<RevisionBuildStatusResponse> {
-    return httpClient.post<RevisionBuildStatusResponse>(`/admin/apps/${appId}/builder/revisions/${revisionId}/build/retry`, {});
   },
 
   async validateRevision(appId: string, payload: CreateBuilderRevisionRequest): Promise<BuilderValidationResponse> {
@@ -659,20 +652,4 @@ export const publishedAppsService = {
     );
   },
 
-  async listCodingAgentCheckpoints(appId: string, limit = 25): Promise<CodingAgentCheckpoint[]> {
-    return httpClient.get<CodingAgentCheckpoint[]>(
-      `/admin/apps/${appId}/coding-agent/v2/checkpoints?limit=${encodeURIComponent(String(limit))}`,
-    );
-  },
-
-  async restoreCodingAgentCheckpoint(
-    appId: string,
-    checkpointId: string,
-    payload: { run_id?: string } = {},
-  ): Promise<CodingAgentRestoreCheckpointResponse> {
-    return httpClient.post<CodingAgentRestoreCheckpointResponse>(
-      `/admin/apps/${appId}/coding-agent/v2/checkpoints/${checkpointId}/restore`,
-      payload,
-    );
-  },
 };

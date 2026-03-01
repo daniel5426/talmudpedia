@@ -15,6 +15,7 @@ from . import published_apps_admin_routes_apps as _routes_apps  # noqa: F401
 from . import published_apps_admin_routes_builder as _routes_builder  # noqa: F401
 from . import published_apps_admin_routes_coding_agent_v2 as _routes_coding_agent_v2  # noqa: F401
 from . import published_apps_admin_routes_publish as _routes_publish  # noqa: F401
+from . import published_apps_admin_routes_versions as _routes_versions  # noqa: F401
 
 from .published_apps_admin_builder_tools import (
     _apply_patch_operations_to_sandbox,

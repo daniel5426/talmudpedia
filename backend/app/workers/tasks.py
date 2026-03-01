@@ -672,6 +672,7 @@ def publish_published_app_task(
         from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
         from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
         from app.services.published_app_bundle_storage import PublishedAppBundleStorage
+        from app.services.published_app_versioning import create_app_version
 
         job_uuid = UUID(str(job_id))
         source_files: Dict[str, str] = {}
@@ -898,13 +899,17 @@ def publish_published_app_task(
                     "error": "Source draft revision disappeared before finalize",
                 }
 
-            published_revision = PublishedAppRevision(
-                id=published_revision_uuid,
-                published_app_id=app.id,
+            published_revision = await create_app_version(
+                db,
+                revision_id=published_revision_uuid,
+                app=app,
                 kind=PublishedAppRevisionKind.published,
                 template_key=source_revision.template_key,
                 entry_file=source_revision.entry_file,
                 files=dict(source_revision.files or {}),
+                created_by=job.requested_by,
+                source_revision_id=source_revision.id,
+                origin_kind="publish_output",
                 build_status=PublishedAppRevisionBuildStatus.succeeded,
                 build_seq=int(source_revision.build_seq or 0) + 1,
                 build_error=None,
@@ -914,12 +919,7 @@ def publish_published_app_task(
                 dist_manifest=dist_manifest,
                 template_runtime=source_revision.template_runtime or "vite_static",
                 compiled_bundle=source_revision.compiled_bundle,
-                bundle_hash=source_revision.bundle_hash,
-                source_revision_id=source_revision.id,
-                created_by=job.requested_by,
             )
-            db.add(published_revision)
-            await db.flush()
 
             app.current_published_revision_id = published_revision.id
             app.status = PublishedAppStatus.published

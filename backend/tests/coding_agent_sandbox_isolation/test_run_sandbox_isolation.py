@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from uuid import UUID
-from uuid import uuid4
 
 import pytest
 
@@ -132,12 +130,8 @@ async def test_stream_reuses_existing_preview_sandbox_without_stage_bootstrap(cl
             diagnostics=[],
         )
 
-    async def _skip_auto_apply(self, run):
-        return None
-
     monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "_prepare_run_stage_workspace_context", _fail_stage_prepare)
     monkeypatch.setattr(OpenCodePublishedAppCodingAgentEngine, "stream", _fake_stream)
-    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _skip_auto_apply)
 
     app = await db_session.get(PublishedApp, UUID(app_id))
     assert app is not None
@@ -150,7 +144,7 @@ async def test_stream_reuses_existing_preview_sandbox_without_stage_bootstrap(cl
 
 
 @pytest.mark.asyncio
-async def test_completed_run_promotes_revision_even_without_write_tool_events(client, db_session, monkeypatch):
+async def test_completed_run_does_not_emit_checkpoint_events(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
@@ -192,17 +186,7 @@ async def test_completed_run_promotes_revision_even_without_write_tool_events(cl
             diagnostics=[],
         )
 
-    async def _fake_auto_apply(self, _run):
-        _run.result_revision_id = uuid4()
-        _run.checkpoint_revision_id = _run.result_revision_id
-        return SimpleNamespace(
-            id=_run.result_revision_id,
-            entry_file="src/main.tsx",
-            files={"src/main.tsx": "export default function App(){return null;}"},
-        )
-
     monkeypatch.setattr(OpenCodePublishedAppCodingAgentEngine, "stream", _fake_stream)
-    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "auto_apply_and_checkpoint", _fake_auto_apply)
 
     app = await db_session.get(PublishedApp, UUID(app_id))
     assert app is not None
@@ -210,6 +194,5 @@ async def test_completed_run_promotes_revision_even_without_write_tool_events(cl
     service = PublishedAppCodingAgentRuntimeService(db_session)
     events = [event async for event in service.stream_run_events(app=app, run=run)]
     event_names = [event.get("event") for event in events]
-    assert "revision.created" in event_names
-    assert "checkpoint.created" in event_names
+    assert "checkpoint.created" not in event_names
     assert event_names[-1] == "run.completed"

@@ -584,16 +584,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 "entryPath",
             ),
         )
-        _coerce_string_alias(
-            "checkpoint_revision_id",
-            (
-                "checkpoint_revision_id",
-                "checkpointRevisionId",
-                "checkpoint_id",
-                "checkpointId",
-            ),
-        )
-
         input_schema = self._parse_tool_input_schema(tool)
         properties = input_schema.get("properties", {}) if isinstance(input_schema, dict) else {}
         required = input_schema.get("required", []) if isinstance(input_schema, dict) else []

@@ -18,7 +18,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionKind,
 )
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
-from app.services.published_app_revision_store import PublishedAppRevisionStore
+from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_builder_core import (
     _builder_chat_command_allowlist,
@@ -472,29 +472,19 @@ async def _create_draft_revision_from_files(
 ) -> PublishedAppRevision:
     sanitized_files = _filter_builder_snapshot_files(files)
     _validate_builder_project_or_raise(sanitized_files, entry_file)
-    revision_store = PublishedAppRevisionStore(db)
-    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(sanitized_files)
-    revision = PublishedAppRevision(
-        published_app_id=app.id,
+    revision = await create_app_version(
+        db,
+        app=app,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
         files=sanitized_files,
-        manifest_json=manifest_json,
+        created_by=actor_id,
+        source_revision_id=current.id,
+        origin_kind="builder_tool",
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=_next_build_seq(current),
-        build_error=None,
-        build_started_at=None,
-        build_finished_at=None,
-        dist_storage_prefix=None,
-        dist_manifest=None,
         template_runtime="vite_static",
-        compiled_bundle=None,
-        bundle_hash=bundle_hash,
-        source_revision_id=current.id,
-        created_by=actor_id,
     )
-    db.add(revision)
-    await db.flush()
     app.current_draft_revision_id = revision.id
     return revision

@@ -144,6 +144,7 @@ type FileTreeProps = {
   onSelectFile: (path: string) => void;
   onDeleteFile: (path: string) => void;
   onCreateFile?: (path: string) => void;
+  readOnly?: boolean;
 };
 
 export function FileTree({
@@ -151,6 +152,7 @@ export function FileTree({
   selectedFile,
   onSelectFile,
   onDeleteFile,
+  readOnly = false,
 }: FileTreeProps) {
   const sortedPaths = useMemo(() => Object.keys(files).sort(), [files]);
   const treeNodes = useMemo(() => buildFileTree(sortedPaths), [sortedPaths]);
@@ -254,15 +256,17 @@ export function FileTree({
           <FileCode2 className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-primary" : fileIconColor(node.name))} />
           <span className="truncate">{node.name}</span>
         </button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-          onClick={() => onDeleteFile(node.path)}
-        >
-          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-        </Button>
+        {!readOnly ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+            onClick={() => onDeleteFile(node.path)}
+          >
+            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+          </Button>
+        ) : null}
       </div>
     );
   };

@@ -18,8 +18,8 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
 )
-from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_templates import build_template_files, get_template
+from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_builder_core import _next_build_seq
 from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify
@@ -308,30 +308,20 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
             "agent_id": str(app.agent_id),
         },
     )
-    revision_store = PublishedAppRevisionStore(db)
-    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
-    created = PublishedAppRevision(
-        published_app_id=app.id,
+    created = await create_app_version(
+        db,
+        app=app,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key or "chat-classic",
         entry_file=get_template(app.template_key or "chat-classic").entry_file,
         files=files,
-        manifest_json=manifest_json,
+        created_by=actor_id,
+        source_revision_id=None,
+        origin_kind="app_init",
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=1,
-        build_error=None,
-        build_started_at=None,
-        build_finished_at=None,
-        dist_storage_prefix=None,
-        dist_manifest=None,
         template_runtime="vite_static",
-        compiled_bundle=None,
-        bundle_hash=bundle_hash,
-        source_revision_id=None,
-        created_by=actor_id,
     )
-    db.add(created)
-    await db.flush()
     app.current_draft_revision_id = created.id
     return created
 
@@ -345,29 +335,19 @@ async def _create_draft_revision_snapshot(
     files: Dict[str, str],
     entry_file: str,
 ) -> PublishedAppRevision:
-    revision_store = PublishedAppRevisionStore(db)
-    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
-    revision = PublishedAppRevision(
-        published_app_id=app.id,
+    revision = await create_app_version(
+        db,
+        app=app,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
         files=files,
-        manifest_json=manifest_json,
+        created_by=actor_id,
+        source_revision_id=current.id,
+        origin_kind="draft_snapshot",
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=_next_build_seq(current),
-        build_error=None,
-        build_started_at=None,
-        build_finished_at=None,
-        dist_storage_prefix=None,
-        dist_manifest=None,
         template_runtime="vite_static",
-        compiled_bundle=None,
-        bundle_hash=bundle_hash,
-        source_revision_id=current.id,
-        created_by=actor_id,
     )
-    db.add(revision)
-    await db.flush()
     app.current_draft_revision_id = revision.id
     return revision

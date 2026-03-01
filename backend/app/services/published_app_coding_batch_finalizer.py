@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routers.published_apps_admin_builder_core import _next_build_seq
 from app.api.routers.published_apps_admin_files import _filter_builder_snapshot_files, _validate_builder_project_or_raise
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import (
@@ -17,7 +18,7 @@ from app.db.postgres.models.published_apps import (
 )
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
-from app.services.published_app_revision_store import PublishedAppRevisionStore
+from app.services.published_app_versioning import create_app_version
 
 _ACTIVE_RUN_STATUSES = {RunStatus.queued, RunStatus.running}
 _TERMINAL_RUN_STATUSES = {
@@ -67,20 +68,6 @@ class PublishedAppCodingBatchFinalizer:
             .order_by(AgentRun.created_at.asc())
         )
         return list(result.scalars().all())
-
-    @staticmethod
-    def _pick_owner_run(runs: list[AgentRun]) -> AgentRun | None:
-        if not runs:
-            return None
-        epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-        return max(
-            runs,
-            key=lambda run: (
-                run.completed_at or run.created_at or epoch,
-                run.created_at or epoch,
-                str(run.id),
-            ),
-        )
 
     async def _try_scope_advisory_lock(self, *, app_id: UUID, actor_id: UUID) -> tuple[bool, int | None]:
         dialect_name = str(getattr(getattr(self.db.get_bind(), "dialect", None), "name", "")).lower()
@@ -135,63 +122,28 @@ class PublishedAppCodingBatchFinalizer:
             raise RuntimeError("Live workspace snapshot did not return files")
         return _filter_builder_snapshot_files(files)
 
-    async def _create_draft_revision(
-        self,
-        *,
-        app: PublishedApp,
-        current: PublishedAppRevision,
-        actor_id: UUID | None,
-        files: dict[str, str],
-    ) -> PublishedAppRevision:
-        _validate_builder_project_or_raise(files, current.entry_file)
-        revision_store = PublishedAppRevisionStore(self.db)
-        manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
-        revision = PublishedAppRevision(
-            published_app_id=app.id,
-            kind=PublishedAppRevisionKind.draft,
-            template_key=app.template_key,
-            entry_file=current.entry_file,
-            files=files,
-            manifest_json=manifest_json,
-            build_status=PublishedAppRevisionBuildStatus.queued,
-            build_seq=int(current.build_seq or 0) + 1,
-            build_error=None,
-            build_started_at=None,
-            build_finished_at=None,
-            dist_storage_prefix=None,
-            dist_manifest=None,
-            template_runtime="vite_static",
-            compiled_bundle=None,
-            bundle_hash=bundle_hash,
-            source_revision_id=current.id,
-            created_by=actor_id,
-        )
-        self.db.add(revision)
-        await self.db.flush()
-        app.current_draft_revision_id = revision.id
-        return revision
-
-    async def _promote_shared_stage_and_create_revision(
+    async def _prepare_finalized_live_snapshot(
         self,
         *,
         app_id: UUID,
         actor_id: UUID,
-        owner_run: AgentRun,
-    ) -> UUID | None:
+        sample_run: AgentRun,
+    ) -> tuple[PublishedApp, PublishedAppRevision, dict[str, str] | None]:
         app = await self.db.get(PublishedApp, app_id)
         if app is None:
-            return None
-        current_revision_id = app.current_draft_revision_id or owner_run.base_revision_id
+            raise RuntimeError("App not found")
+
+        current_revision_id = app.current_draft_revision_id or sample_run.base_revision_id
         if current_revision_id is None:
-            return None
+            raise RuntimeError("Current draft revision not found")
         current = await self.db.get(PublishedAppRevision, current_revision_id)
         if current is None:
-            return None
+            raise RuntimeError("Current draft revision not found")
 
         runtime_service = PublishedAppDraftDevRuntimeService(self.db)
         session = await runtime_service.get_session(app_id=app_id, user_id=actor_id)
         if session is None or not session.sandbox_id:
-            return None
+            return app, current, None
         sandbox_id = str(session.sandbox_id)
 
         stage_files = await self._snapshot_shared_stage_files(
@@ -199,20 +151,14 @@ class PublishedAppCodingBatchFinalizer:
             sandbox_id=sandbox_id,
         )
         if stage_files == dict(current.files or {}):
-            return None
+            return app, current, None
 
         await runtime_service.client.promote_stage_workspace(sandbox_id=sandbox_id)
         live_files = await self._snapshot_live_files(
             runtime_service=runtime_service,
             sandbox_id=sandbox_id,
         )
-        revision = await self._create_draft_revision(
-            app=app,
-            current=current,
-            actor_id=actor_id,
-            files=live_files,
-        )
-        return revision.id
+        return app, current, live_files
 
     async def finalize_for_terminal_run(self, *, run_id: UUID) -> dict[str, Any]:
         run = await self.db.get(AgentRun, run_id)
@@ -244,34 +190,62 @@ class PublishedAppCodingBatchFinalizer:
             if not completed_candidates:
                 return {"status": "no_unfinalized_completed_runs"}
 
-            owner_run = self._pick_owner_run(completed_candidates)
-            if owner_run is None:
-                return {"status": "no_owner_run"}
-
-            revision_id = await self._promote_shared_stage_and_create_revision(
+            app, current, live_files = await self._prepare_finalized_live_snapshot(
                 app_id=app_id,
                 actor_id=actor_id,
-                owner_run=owner_run,
+                sample_run=completed_candidates[-1],
             )
 
             finalized_at = datetime.now(timezone.utc)
+            created_by_run: dict[str, str] = {}
+
+            if live_files is not None:
+                _validate_builder_project_or_raise(live_files, current.entry_file)
+
+            latest_revision = current
             for candidate in completed_candidates:
-                is_owner = str(candidate.id) == str(owner_run.id)
                 candidate.batch_finalized_at = finalized_at
-                candidate.batch_owner = is_owner
-                if is_owner and revision_id is not None:
-                    candidate.result_revision_id = revision_id
-                    candidate.checkpoint_revision_id = revision_id
-                else:
+
+                if live_files is None:
                     candidate.result_revision_id = None
-                    candidate.checkpoint_revision_id = None
+                    continue
+
+                is_diff = True
+                if candidate.base_revision_id:
+                    base_revision = await self.db.get(PublishedAppRevision, candidate.base_revision_id)
+                    if base_revision is not None and dict(base_revision.files or {}) == live_files:
+                        is_diff = False
+
+                if not is_diff:
+                    candidate.result_revision_id = None
+                    continue
+
+                revision = await create_app_version(
+                    self.db,
+                    app=app,
+                    kind=PublishedAppRevisionKind.draft,
+                    template_key=app.template_key,
+                    entry_file=latest_revision.entry_file,
+                    files=live_files,
+                    created_by=actor_id,
+                    source_revision_id=latest_revision.id,
+                    origin_kind="coding_run",
+                    origin_run_id=candidate.id,
+                    build_status=PublishedAppRevisionBuildStatus.queued,
+                    build_seq=_next_build_seq(latest_revision),
+                    template_runtime="vite_static",
+                )
+                latest_revision = revision
+                app.current_draft_revision_id = revision.id
+                candidate.result_revision_id = revision.id
+                created_by_run[str(candidate.id)] = str(revision.id)
 
             await self.db.commit()
             return {
                 "status": "finalized",
                 "candidate_count": len(completed_candidates),
-                "owner_run_id": str(owner_run.id),
-                "revision_id": str(revision_id) if revision_id is not None else None,
+                "revision_ids_by_run": created_by_run,
+                "latest_revision_id": str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
             }
         finally:
             if lock_acquired:

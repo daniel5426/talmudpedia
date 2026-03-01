@@ -65,8 +65,10 @@ import { cn } from "@/lib/utils";
 import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
+import { FileTree } from "@/features/apps-builder/editor/FileTree";
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
 import { LogoPickerDialog } from "@/features/apps-builder/workspace/LogoPickerDialog";
+import { useAppsBuilderVersions } from "@/features/apps-builder/workspace/versions/useAppsBuilderVersions";
 import {
   AppsBuilderWorkspaceBootSkeleton,
   DomainsListSkeleton,
@@ -75,9 +77,6 @@ import {
 import { AppsBuilderChatPanel } from "@/features/apps-builder/workspace/chat/AppsBuilderChatPanel";
 import { useAppsBuilderChat } from "@/features/apps-builder/workspace/chat/useAppsBuilderChat";
 import { useAppsBuilderSandboxLifecycle } from "@/features/apps-builder/workspace/useAppsBuilderSandboxLifecycle";
-
-const PUBLISH_POLL_INTERVAL_MS = 2_000;
-const PUBLISH_POLL_TIMEOUT_MS = 15 * 60_000;
 
 type WorkspaceProps = {
   appId: string;
@@ -124,12 +123,6 @@ function extractRoutesFromFiles(files: Record<string, string>): string[] {
     if (a === "/") return -1;
     if (b === "/") return 1;
     return a.localeCompare(b);
-  });
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
   });
 }
 
@@ -182,8 +175,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [files, setFiles] = useState<Record<string, string>>({});
   const [entryFile, setEntryFile] = useState("src/main.tsx");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedVersionCodeFile, setSelectedVersionCodeFile] = useState<string | null>(null);
   const [currentRevisionId, setCurrentRevisionId] = useState<string | null>(null);
-  const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isAuthTemplatesLoading, setIsAuthTemplatesLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -204,11 +197,11 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const hasActiveCodingRunLock = Boolean(state?.draft_dev?.has_active_coding_runs);
   const [postRunHydrationPending, setPostRunHydrationPending] = useState(false);
   const saveBlockedByBackendLock = hasActiveCodingRunLock || postRunHydrationPending;
-  const [isPublishing, setIsPublishing] = useState(false);
   const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewRoute, setPreviewRoute] = useState("/");
   const [previewReloadToken, setPreviewReloadToken] = useState(0);
+  const [previewMode, setPreviewMode] = useState<"preview" | "version_code">("preview");
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [isLogoDialogOpen, setIsLogoDialogOpen] = useState(false);
   const [domainCopied, setDomainCopied] = useState(false);
@@ -283,14 +276,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   });
   const sandboxActionsBlocked = !isSandboxReady || isSandboxBusy;
   const sendBlockedReason = sandboxActionDisabledReason || "Waiting for preview sandbox...";
-  const publishDisabledReason = isPublishing
-    ? "Publish in progress..."
-    : postRunHydrationPending
-      ? "Finalizing latest coding-agent changes..."
-      : sandboxActionsBlocked
-        ? sendBlockedReason
-        : null;
-  const isPublishDisabled = Boolean(publishDisabledReason);
 
   const appRoutes = useMemo(() => extractRoutesFromFiles(files), [files]);
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
@@ -366,10 +351,105 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
   }, [appId, hydrateFromBuilderSession, hydrateFromRevision]);
 
+  const {
+    versions,
+    selectedVersion,
+    selectedVersionId,
+    isLoadingVersions,
+    isLoadingVersionPreview,
+    isRestoringVersion,
+    isPublishingVersion,
+    publishStatus: versionPublishStatus,
+    inspectedVersionId,
+    inspectedPreviewUrl,
+    inspectedRuntimeToken,
+    refreshVersions,
+    selectVersion,
+    clearInspectedVersion,
+    restoreSelectedVersion,
+    publishSelectedVersion,
+  } = useAppsBuilderVersions({
+    appId,
+    currentRevisionId,
+    onApplyRevision: (revision) => {
+      hydrateFromRevision(revision);
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          current_draft_revision: revision,
+          app: {
+            ...prev.app,
+            current_draft_revision_id: revision.id,
+          },
+        };
+      });
+    },
+    onRefreshState: async () => {
+      await loadState();
+    },
+    onError: setError,
+  });
+  const publishStatus = versionPublishStatus;
+  const isPublishing = isPublishingVersion;
+  const isInspectingVersion = Boolean(inspectedVersionId);
+  const publishDisabledReason = isPublishing
+    ? "Publish in progress..."
+    : postRunHydrationPending
+      ? "Finalizing latest coding-agent changes..."
+      : sandboxActionsBlocked
+        ? sendBlockedReason
+        : null;
+  const isPublishDisabled = Boolean(publishDisabledReason);
+  const inspectedPreviewFrameUrl = useMemo(() => {
+    if (!inspectedPreviewUrl) {
+      return null;
+    }
+    if (previewReloadToken <= 0) {
+      return inspectedPreviewUrl;
+    }
+    try {
+      const parsed = new URL(inspectedPreviewUrl);
+      parsed.searchParams.set("__reload", String(previewReloadToken));
+      return parsed.toString();
+    } catch {
+      const separator = inspectedPreviewUrl.includes("?") ? "&" : "?";
+      return `${inspectedPreviewUrl}${separator}__reload=${previewReloadToken}`;
+    }
+  }, [inspectedPreviewUrl, previewReloadToken]);
+  const effectivePreviewUrl = isInspectingVersion ? inspectedPreviewFrameUrl : previewFrameUrl;
+  const effectivePreviewToken = isInspectingVersion ? inspectedRuntimeToken : previewAuthToken;
+  const effectivePreviewStatus = isInspectingVersion ? "running" : draftDevStatus;
+  const effectivePreviewError = isInspectingVersion ? null : draftDevError;
+  const effectivePreviewPhase = isInspectingVersion ? null : sandboxPhase;
+  const effectivePreviewLoadingMessage = isInspectingVersion
+    ? (isLoadingVersionPreview ? "Loading selected version preview..." : null)
+    : previewLoadingMessage;
+
   useEffect(() => {
     void loadState({ showInitialSkeleton: true });
     void loadAuthTemplates();
   }, [loadAuthTemplates, loadState]);
+
+  useEffect(() => {
+    if (!isInspectingVersion) {
+      setPreviewMode("preview");
+      return;
+    }
+    if (previewMode === "version_code") {
+      return;
+    }
+    setPreviewMode("preview");
+  }, [isInspectingVersion, previewMode]);
+
+  useEffect(() => {
+    if (!selectedVersion) {
+      setSelectedVersionCodeFile(null);
+      return;
+    }
+    const nextPaths = Object.keys(selectedVersion.files || {}).sort();
+    setSelectedVersionCodeFile(nextPaths[0] || null);
+  }, [selectedVersion]);
 
   const updateLocalApp = useCallback((patch: Record<string, unknown>) => {
     setState((prev) => {
@@ -512,7 +592,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setIsSaving(true);
     setError(null);
     try {
-      const revision = await publishedAppsService.createRevision(appId, {
+      const revision = await publishedAppsService.createDraftVersion(appId, {
         base_revision_id: currentRevisionId || undefined,
         files: filterAppsBuilderFiles(files),
         entry_file: entryFile,
@@ -555,92 +635,21 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       setError(sendBlockedReason);
       return;
     }
-    setIsPublishing(true);
     setError(null);
-    setPublishStatus("queued");
-    try {
-      let publishBaseRevisionId = currentRevisionId || undefined;
-      // Always re-read the latest server draft revision before publish to avoid races
-      // with post-run/debounced draft-dev sync creating a newer draft revision.
-      const latestBuilderState = await publishedAppsService.getBuilderState(appId);
-      publishBaseRevisionId = latestBuilderState.current_draft_revision?.id || publishBaseRevisionId;
-      setState((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          app: {
-            ...prev.app,
-            current_draft_revision_id:
-              latestBuilderState.current_draft_revision?.id || prev.app.current_draft_revision_id,
-          },
-        };
-      });
-
-      const job = await publishedAppsService.publish(appId, {
-        base_revision_id: publishBaseRevisionId,
-        files: filterAppsBuilderFiles(files),
-        entry_file: entryFile,
-      });
-
-      setPublishStatus(job.status);
-      const startedAt = Date.now();
-      let status = job.status;
-      if (status === "failed") {
-        const diagnostic = job.diagnostics?.[0];
-        const message = (diagnostic?.message as string | undefined) || job.error || "Publish failed";
-        throw new Error(message);
-      }
-      while (status === "queued" || status === "running") {
-        if (Date.now() - startedAt > PUBLISH_POLL_TIMEOUT_MS) {
-          throw new Error("Publish timed out while waiting for build completion");
-        }
-        await wait(PUBLISH_POLL_INTERVAL_MS);
-        const current = await publishedAppsService.getPublishJobStatus(appId, job.job_id);
-        status = current.status;
-        setPublishStatus(status);
-        if (status === "failed") {
-          const diagnostic = current.diagnostics?.[0];
-          const message = (diagnostic?.message as string | undefined) || current.error || "Publish failed";
-          throw new Error(message);
-        }
-      }
-      if (status !== "succeeded") {
-        throw new Error("Publish ended in an unexpected state");
-      }
-
-      await loadState();
-      setPublishStatus("succeeded");
-    } catch (err) {
-      let message = err instanceof Error ? err.message : "Failed to publish app";
-      try {
-        const parsed = JSON.parse(message) as RevisionConflictResponse & { code?: string; message?: string };
-        if (parsed.code === "DRAFT_DEV_SESSION_REQUIRED_FOR_PUBLISH") {
-          message = parsed.message || "Open preview / start preview session before publishing.";
-        } else if (parsed.code === "PUBLISH_JOB_ACTIVE") {
-          message = parsed.message || "A publish is already running for this app.";
-        } else if (parsed.code === "REVISION_CONFLICT") {
-          setError(`Revision conflict. Latest revision is ${parsed.latest_revision_id}. Reloading state...`);
-          await loadState();
-          setPublishStatus(null);
-          return;
-        } else if (parsed.message) {
-          message = parsed.message;
-        }
-      } catch {
-        // ignore non-JSON errors
-      }
-      setError(message);
-      setPublishStatus("failed");
-    } finally {
-      setIsPublishing(false);
+    const publishVersionId = String(
+      inspectedVersionId || currentRevisionId || selectedVersionId || "",
+    ).trim();
+    if (!publishVersionId) {
+      setError("No version selected to publish.");
+      return;
     }
+    await publishSelectedVersion(publishVersionId);
   }, [
-    appId,
     currentRevisionId,
-    entryFile,
-    files,
-    loadState,
+    inspectedVersionId,
+    publishSelectedVersion,
     sandboxActionsBlocked,
+    selectedVersionId,
     sendBlockedReason,
   ]);
 
@@ -671,18 +680,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     [appId, hydrateFromRevision],
   );
 
-  const applyRestoredRevision = useCallback((revision: PublishedAppRevision) => {
-    hydrateFromRevision(revision);
-    setState((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        current_draft_revision: revision,
-        app: { ...prev.app, current_draft_revision_id: revision.id },
-      };
-    });
-  }, [hydrateFromRevision]);
-
   const ensureDraftDevSessionForChat = useCallback(async () => {
     await ensureDraftDevSession();
   }, [ensureDraftDevSession]);
@@ -692,7 +689,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setIsAgentPanelOpen,
     isSending,
     isStopping,
-    isUndoing,
     timeline,
     activeThinkingSummary,
     chatSessions,
@@ -718,7 +714,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     sendBuilderChat,
     stopCurrentRun,
     startNewChat,
-    revertToCheckpoint,
     loadChatSession,
   } = useAppsBuilderChat({
     appId,
@@ -726,7 +721,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     ensureDraftDevSession: ensureDraftDevSessionForChat,
     refreshStateSilently,
     onPostRunHydrationStateChange: setPostRunHydrationPending,
-    onApplyRestoredRevision: applyRestoredRevision,
     onSetCurrentRevisionId: setCurrentRevisionId,
     onError: setError,
     initialActiveRunId: null,
@@ -883,18 +877,52 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
               {activeTab === "preview" && (
                 <div className="absolute top-1/2 left-full ml-2 flex -translate-y-1/2 items-center gap-1">
-                  <Select value={previewRoute} onValueChange={navigatePreview}>
-                    <SelectTrigger className="data-[size=default]:h-7 h-7 w-36 gap-1 rounded-md border-border/50 bg-transparent px-2 py-0 text-xs font-medium shadow-none">
-                      <SelectValue placeholder="/" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {appRoutes.map((route) => (
-                        <SelectItem key={route} value={route}>
-                          {route}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {isInspectingVersion ? (
+                    <div className="flex h-7 items-center gap-1 rounded-md border border-border/60 bg-background px-1">
+                      <Button
+                        size="sm"
+                        variant={previewMode === "preview" ? "secondary" : "ghost"}
+                        className="h-5 px-2 text-[11px]"
+                        onClick={() => setPreviewMode("preview")}
+                      >
+                        Preview
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={previewMode === "version_code" ? "secondary" : "ghost"}
+                        className="h-5 px-2 text-[11px]"
+                        onClick={() => setPreviewMode("version_code")}
+                        disabled={!selectedVersion}
+                      >
+                        Version Code
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          clearInspectedVersion();
+                          setPreviewMode("preview");
+                        }}
+                        aria-label="Exit version inspect mode"
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Select value={previewRoute} onValueChange={navigatePreview}>
+                      <SelectTrigger className="data-[size=default]:h-7 h-7 w-36 gap-1 rounded-md border-border/50 bg-transparent px-2 py-0 text-xs font-medium shadow-none">
+                        <SelectValue placeholder="/" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {appRoutes.map((route) => (
+                          <SelectItem key={route} value={route}>
+                            {route}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
 
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1032,18 +1060,39 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                       ? "w-[390px] overflow-hidden rounded-md border border-border/60 shadow-sm"
                       : "w-full",
                   )}>
-                    <PreviewCanvas
-                      previewUrl={previewFrameUrl}
-                      previewAuthToken={previewAuthToken}
-                      devStatus={draftDevStatus}
-                      devError={draftDevError}
-                      lifecyclePhase={sandboxPhase}
-                      loadingMessage={previewLoadingMessage}
-                      canRetry={canRetrySandboxLifecycle}
-                      onRetry={() => {
-                        void retryEnsureDraftDevSession();
-                      }}
-                    />
+                    {isInspectingVersion && previewMode === "version_code" ? (
+                      <div className="flex h-full min-h-0">
+                        <aside className="h-full w-72 shrink-0 border-r border-border/60 bg-background/95">
+                          <FileTree
+                            files={selectedVersion?.files || {}}
+                            selectedFile={selectedVersionCodeFile}
+                            onSelectFile={setSelectedVersionCodeFile}
+                            onDeleteFile={() => {}}
+                            readOnly
+                          />
+                        </aside>
+                        <CodeEditorPanel
+                          files={selectedVersion?.files || {}}
+                          selectedFile={selectedVersionCodeFile}
+                          onUpdateFile={() => {}}
+                          readOnly
+                        />
+                      </div>
+                    ) : (
+                      <PreviewCanvas
+                        previewUrl={effectivePreviewUrl}
+                        previewAuthToken={effectivePreviewToken}
+                        forceReady={isInspectingVersion}
+                        devStatus={effectivePreviewStatus}
+                        devError={effectivePreviewError}
+                        lifecyclePhase={effectivePreviewPhase}
+                        loadingMessage={effectivePreviewLoadingMessage}
+                        canRetry={!isInspectingVersion && canRetrySandboxLifecycle}
+                        onRetry={isInspectingVersion ? null : () => {
+                          void retryEnsureDraftDevSession();
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1486,20 +1535,26 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             isOpen={isAgentPanelOpen}
             isSending={isSending}
             isStopping={isStopping}
-            isUndoing={isUndoing}
             timeline={timeline}
             activeThinkingSummary={activeThinkingSummary}
             chatSessions={chatSessions}
             activeChatSessionId={activeChatSessionId}
             onActivateDraftChat={activateDraftChat}
-            onStartNewChat={startNewChat}
+            onStartNewChat={() => {
+              clearInspectedVersion();
+              setPreviewMode("preview");
+              startNewChat();
+            }}
             onOpenHistory={() => {
               void refreshChatSessionRunActivity();
             }}
             onLoadChatSession={loadChatSession}
-            onSendMessage={sendBuilderChat}
+            onSendMessage={async (text) => {
+              clearInspectedVersion();
+              setPreviewMode("preview");
+              await sendBuilderChat(text);
+            }}
             onStopRun={stopCurrentRun}
-            onRevertToCheckpoint={revertToCheckpoint}
             chatModels={chatModels}
             selectedRunModelLabel={selectedRunModelLabel}
             isModelSelectorOpen={isModelSelectorOpen}
@@ -1518,6 +1573,34 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             onLoadOlderHistory={loadOlderHistory}
             onRemoveQueuedPrompt={removeQueuedPrompt}
             onAnswerQuestion={answerPendingQuestion}
+            versions={versions}
+            selectedVersionId={selectedVersionId}
+            selectedVersion={selectedVersion}
+            isLoadingVersions={isLoadingVersions}
+            isRestoringVersion={isRestoringVersion}
+            isPublishingVersion={isPublishingVersion}
+            publishStatus={versionPublishStatus}
+            onRefreshVersions={() => {
+              void refreshVersions();
+            }}
+            onSelectVersion={(versionId) => {
+              void selectVersion(versionId).then(() => {
+                setPreviewMode("preview");
+                setActiveTab("preview");
+              });
+            }}
+            onRestoreVersion={(versionId) => {
+              void restoreSelectedVersion(versionId);
+            }}
+            onPublishVersion={(versionId) => {
+              void publishSelectedVersion(versionId);
+            }}
+            onViewCodeVersion={(versionId) => {
+              void selectVersion(versionId).then(() => {
+                setPreviewMode("version_code");
+                setActiveTab("preview");
+              });
+            }}
           />
         </div>
       </div>

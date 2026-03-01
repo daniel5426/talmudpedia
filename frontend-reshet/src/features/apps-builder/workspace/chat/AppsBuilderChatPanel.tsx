@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
+  GitBranch,
   Plus,
   Square,
-  Undo2,
   X,
 } from "lucide-react";
 
@@ -37,7 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { CodingAgentChatSession, OpenCodeCodingModelOption } from "@/services";
+import type { AppVersionListItem, CodingAgentChatSession, OpenCodeCodingModelOption, PublishedAppRevision } from "@/services";
 
 import {
   TimelineItem,
@@ -53,13 +53,13 @@ import {
 } from "./chat-model";
 import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import type { QueuedPrompt } from "./useAppsBuilderChat";
+import { AppsBuilderVersionHistoryPanel } from "./AppsBuilderVersionHistoryPanel";
 import { useAppsBuilderChatThreadTabs } from "./useAppsBuilderChat.thread-tabs";
 
 type AppsBuilderChatPanelProps = {
   isOpen: boolean;
   isSending: boolean;
   isStopping: boolean;
-  isUndoing: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
   chatSessions: CodingAgentChatSession[];
@@ -70,7 +70,6 @@ type AppsBuilderChatPanelProps = {
   onLoadChatSession: (sessionId: string) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
   onStopRun: () => void;
-  onRevertToCheckpoint: (userItemId: string, checkpointId: string) => Promise<void>;
   chatModels: OpenCodeCodingModelOption[];
   selectedRunModelLabel: string;
   isModelSelectorOpen: boolean;
@@ -89,13 +88,24 @@ type AppsBuilderChatPanelProps = {
   onLoadOlderHistory: () => Promise<void>;
   onRemoveQueuedPrompt: (promptId: string) => void;
   onAnswerQuestion: (answers: string[][]) => Promise<void>;
+  versions: AppVersionListItem[];
+  selectedVersionId: string | null;
+  selectedVersion: PublishedAppRevision | null;
+  isLoadingVersions: boolean;
+  isRestoringVersion: boolean;
+  isPublishingVersion: boolean;
+  publishStatus: string | null;
+  onRefreshVersions: () => void;
+  onSelectVersion: (versionId: string) => void;
+  onRestoreVersion: (versionId?: string) => void;
+  onPublishVersion: (versionId?: string) => void;
+  onViewCodeVersion: (versionId: string) => void;
 };
 
 export function AppsBuilderChatPanel({
   isOpen,
   isSending,
   isStopping,
-  isUndoing,
   timeline,
   activeThinkingSummary,
   chatSessions,
@@ -106,7 +116,6 @@ export function AppsBuilderChatPanel({
   onLoadChatSession,
   onSendMessage,
   onStopRun,
-  onRevertToCheckpoint,
   chatModels,
   selectedRunModelLabel,
   isModelSelectorOpen,
@@ -125,8 +134,21 @@ export function AppsBuilderChatPanel({
   onLoadOlderHistory,
   onRemoveQueuedPrompt,
   onAnswerQuestion,
+  versions,
+  selectedVersionId,
+  selectedVersion,
+  isLoadingVersions,
+  isRestoringVersion,
+  isPublishingVersion,
+  publishStatus,
+  onRefreshVersions,
+  onSelectVersion,
+  onRestoreVersion,
+  onPublishVersion,
+  onViewCodeVersion,
 }: AppsBuilderChatPanelProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isVersionsOpen, setIsVersionsOpen] = useState(false);
   const [questionStepIndex, setQuestionStepIndex] = useState(0);
   const [questionSelections, setQuestionSelections] = useState<Record<number, string[]>>({});
   const [questionCustomInput, setQuestionCustomInput] = useState<Record<number, string>>({});
@@ -361,19 +383,6 @@ export function AppsBuilderChatPanel({
                   {renderUserDeliveryLabel(item.userDeliveryStatus)}
                 </div>
               ) : null}
-              {item.checkpointId && (
-                <button
-                  type="button"
-                  className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-md bg-muted text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/usermsg:opacity-100"
-                  onClick={() => {
-                    void onRevertToCheckpoint(item.id, item.checkpointId!);
-                  }}
-                  disabled={isUndoing}
-                  aria-label="Revert to this point"
-                >
-                  <Undo2 className="h-3 w-3" />
-                </button>
-              )}
             </MessageContent>
           </Message>
         );
@@ -498,7 +507,7 @@ export function AppsBuilderChatPanel({
     }
 
     return renderedItems;
-  }, [isUndoing, onRevertToCheckpoint, timeline]);
+  }, [timeline]);
 
   if (!isOpen) {
     return null;
@@ -595,8 +604,43 @@ export function AppsBuilderChatPanel({
         >
           <Clock className="h-3.5 w-3.5" />
         </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "h-6 w-6 text-muted-foreground hover:text-foreground",
+            isVersionsOpen ? "bg-muted text-foreground" : "",
+          )}
+          onClick={() => setIsVersionsOpen((prev) => !prev)}
+          aria-label="Version history"
+        >
+          <GitBranch className="h-3.5 w-3.5" />
+        </Button>
       </div>
-      <div className="flex min-h-0 pt-1 flex-1 flex-col px-3 pb-3">
+      {isVersionsOpen ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <AppsBuilderVersionHistoryPanel
+            versions={versions}
+            selectedVersionId={selectedVersionId}
+            selectedVersion={selectedVersion}
+            isLoadingVersions={isLoadingVersions}
+            isRestoringVersion={isRestoringVersion}
+            isPublishingVersion={isPublishingVersion}
+            publishStatus={publishStatus}
+            onClose={() => setIsVersionsOpen(false)}
+            onRefreshVersions={onRefreshVersions}
+            onSelectVersion={onSelectVersion}
+            onRestoreVersion={onRestoreVersion}
+            onPublishVersion={onPublishVersion}
+            onViewCodeVersion={onViewCodeVersion}
+            onOpenHistory={() => {
+              onOpenHistory();
+              setIsHistoryOpen(true);
+            }}
+          />
+        </div>
+      ) : (
+        <div className="flex min-h-0 pt-1 flex-1 flex-col px-3 pb-3">
         <Conversation className="flex min-h-0 pb-[-200px] flex-1 flex-col transition-all">
           <ConversationContent className="gap-2 px-0 py-0 pb-3">
             <div ref={topSentinelRef} className="h-1 w-full shrink-0" />
@@ -839,7 +883,8 @@ export function AppsBuilderChatPanel({
             </PromptInputFooter>
           </PromptInput>
         </div>
-      </div>
+        </div>
+      )}
 
       <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
         <DialogContent className="w-[min(44rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-2xl">

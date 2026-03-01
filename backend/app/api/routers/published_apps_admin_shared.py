@@ -238,6 +238,10 @@ class PublishedAppRevisionResponse(BaseModel):
     template_runtime: str = "vite_static"
     compiled_bundle: Optional[str] = None
     bundle_hash: Optional[str] = None
+    version_seq: int = 0
+    origin_kind: str = "unknown"
+    origin_run_id: Optional[str] = None
+    restored_from_revision_id: Optional[str] = None
     source_revision_id: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
@@ -665,6 +669,14 @@ def _revision_to_response(revision: PublishedAppRevision) -> PublishedAppRevisio
         template_runtime=revision.template_runtime or "vite_static",
         compiled_bundle=revision.compiled_bundle,
         bundle_hash=revision.bundle_hash,
+        version_seq=int(revision.version_seq or 0),
+        origin_kind=str(revision.origin_kind or "unknown"),
+        origin_run_id=str(revision.origin_run_id) if revision.origin_run_id else None,
+        restored_from_revision_id=(
+            str(revision.restored_from_revision_id)
+            if revision.restored_from_revision_id
+            else None
+        ),
         source_revision_id=str(revision.source_revision_id) if revision.source_revision_id else None,
         created_by=str(revision.created_by) if revision.created_by else None,
         created_at=revision.created_at,

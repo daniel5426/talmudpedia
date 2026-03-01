@@ -3,7 +3,6 @@
 import { ArrowLeft, Code, Globe, LayoutDashboard, Loader2, Save, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { FileTree } from "@/features/apps-builder/editor/FileTree";
 

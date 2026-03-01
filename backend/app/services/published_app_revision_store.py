@@ -59,7 +59,17 @@ class PublishedAppRevisionStore:
     async def materialize_revision_files(self, revision: PublishedAppRevision) -> Dict[str, str]:
         manifest = revision.manifest_json if isinstance(revision.manifest_json, dict) else {}
         if manifest:
-            return await self.materialize_files_from_manifest({str(path): str(blob_hash) for path, blob_hash in manifest.items()})
+            try:
+                return await self.materialize_files_from_manifest(
+                    {str(path): str(blob_hash) for path, blob_hash in manifest.items()}
+                )
+            except Exception:
+                # Hard-cut versions can still contain inline files snapshots; if blob materialization
+                # fails (missing metadata/object or unavailable storage), fall back to inline files.
+                inline_files = {str(path): str(content) for path, content in dict(revision.files or {}).items()}
+                if inline_files:
+                    return inline_files
+                raise
         return {str(path): str(content) for path, content in dict(revision.files or {}).items()}
 
     async def materialize_files_from_manifest(self, manifest: Dict[str, str]) -> Dict[str, str]:

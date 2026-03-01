@@ -6,7 +6,6 @@ import {
 import type {
   CodingAgentChatSession,
   OpenCodeCodingModelOption,
-  PublishedAppRevision,
 } from "@/services";
 import { timelineId, type TimelineItem } from "./chat-model";
 import {
@@ -40,7 +39,6 @@ export type UseAppsBuilderChatOptions = {
   ensureDraftDevSession: () => Promise<void>;
   refreshStateSilently: () => Promise<void>;
   onPostRunHydrationStateChange?: (inProgress: boolean) => void;
-  onApplyRestoredRevision: (revision: PublishedAppRevision) => void;
   onSetCurrentRevisionId: (revisionId: string | null) => void;
   onError: (message: string | null) => void;
   initialActiveRunId?: string | null;
@@ -51,7 +49,6 @@ export type UseAppsBuilderChatResult = {
   setIsAgentPanelOpen: (next: boolean) => void;
   isSending: boolean;
   isStopping: boolean;
-  isUndoing: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
   chatSessions: CodingAgentChatSession[];
@@ -78,7 +75,6 @@ export type UseAppsBuilderChatResult = {
   sendBuilderChat: (rawInput: string) => Promise<void>;
   stopCurrentRun: () => void;
   startNewChat: () => void;
-  revertToCheckpoint: (userItemId: string, checkpointId: string) => Promise<void>;
   loadChatSession: (sessionId: string) => Promise<void>;
 };
 
@@ -100,13 +96,11 @@ export function useAppsBuilderChat({
   ensureDraftDevSession,
   refreshStateSilently,
   onPostRunHydrationStateChange,
-  onApplyRestoredRevision,
   onSetCurrentRevisionId,
   onError,
   initialActiveRunId,
 }: UseAppsBuilderChatOptions): UseAppsBuilderChatResult {
   const [isAgentPanelOpen, setIsAgentPanelOpenState] = useState(true);
-  const [isUndoing, setIsUndoing] = useState(false);
   const [chatSessions, setChatSessions] = useState<CodingAgentChatSession[]>([]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [chatModels, setChatModels] = useState<OpenCodeCodingModelOption[]>([]);
@@ -684,16 +678,12 @@ export function useAppsBuilderChat({
     answerPendingQuestion,
     stopCurrentRun,
     startNewChat,
-    revertToCheckpoint: revertToCheckpointImpl,
   } = useAppsBuilderChatSessionActions({
     appId,
-    activeTab,
     selectedRunModelId,
     activeChatSessionIdRef,
     isMountedRef,
     onError,
-    onApplyRestoredRevision,
-    ensureDraftDevSession,
     mutateSession,
     getSession,
     markSessionRunActive,
@@ -710,15 +700,6 @@ export function useAppsBuilderChat({
     forceClearSessionSendingState,
     createClientMessageId,
   });
-
-  const revertToCheckpoint = useCallback(async (userItemId: string, checkpointId: string) => {
-    setIsUndoing(true);
-    try {
-      await revertToCheckpointImpl(userItemId, checkpointId);
-    } finally {
-      setIsUndoing(false);
-    }
-  }, [revertToCheckpointImpl]);
 
   const restoreLastSessionIfPossible = useCallback(async (sessionsHint?: CodingAgentChatSession[]) => {
     if (restoredLastSessionRef.current) {
@@ -860,7 +841,6 @@ export function useAppsBuilderChat({
     setIsAgentPanelOpen,
     isSending,
     isStopping,
-    isUndoing,
     timeline,
     activeThinkingSummary,
     chatSessions,
@@ -887,7 +867,6 @@ export function useAppsBuilderChat({
     sendBuilderChat,
     stopCurrentRun,
     startNewChat,
-    revertToCheckpoint,
     loadChatSession,
   };
 }

@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, desc
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, desc
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -382,6 +382,20 @@ class PublishedAppRevision(Base):
     template_runtime = Column(String, nullable=False, default="vite_static")
     compiled_bundle = Column(String, nullable=True)
     bundle_hash = Column(String, nullable=True, index=True)
+    version_seq = Column(BigInteger, nullable=False, default=0)
+    origin_kind = Column(String(32), nullable=False, default="unknown", index=True)
+    origin_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    restored_from_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     source_revision_id = Column(
         UUID(as_uuid=True),
         ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
@@ -397,6 +411,18 @@ class PublishedAppRevision(Base):
         "PublishedAppBuilderConversationTurn",
         back_populates="revision",
         foreign_keys="PublishedAppBuilderConversationTurn.revision_id",
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "published_app_id",
+            "version_seq",
+            name="uq_published_app_revisions_app_version_seq",
+        ),
+        Index(
+            "ix_published_app_revisions_app_created_at_desc",
+            "published_app_id",
+            desc("created_at"),
+        ),
     )
 
 

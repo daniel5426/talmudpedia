@@ -13,6 +13,7 @@ type DraftDevStatus = "starting" | "running" | "stopped" | "expired" | "error";
 type PreviewCanvasProps = {
   previewUrl?: string | null;
   previewAuthToken?: string | null;
+  forceReady?: boolean;
   devStatus?: DraftDevStatus | null;
   devError?: string | null;
   lifecyclePhase?: SandboxLifecyclePhase | null;
@@ -27,7 +28,7 @@ const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 
 export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
   function PreviewCanvas(
-    { previewUrl, previewAuthToken, devStatus, devError, lifecyclePhase, loadingMessage, canRetry = false, onRetry = null },
+    { previewUrl, previewAuthToken, forceReady = false, devStatus, devError, lifecyclePhase, loadingMessage, canRetry = false, onRetry = null },
     ref,
   ) {
     const revealTimerRef = useRef<number | null>(null);
@@ -51,7 +52,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
     const isPending = devStatus === "starting" || lifecyclePhase === "ensuring" || lifecyclePhase === "recovering" || lifecyclePhase === "syncing";
     const hasFailed = devStatus === "error" || devStatus === "expired" || lifecyclePhase === "error";
     const hasSessionError = Boolean(devError);
-    const canLoadFrame = devStatus === "running" && Boolean(previewUrl) && !hasFailed && !hasSessionError;
+    const canLoadFrame = (forceReady || devStatus === "running") && Boolean(previewUrl) && !hasFailed && !hasSessionError;
     const warmupMessage = String(loadingMessage || "").trim() || (isPending ? "Starting draft preview..." : "Warming preview sandbox...");
 
     const setFrameRef = useCallback(

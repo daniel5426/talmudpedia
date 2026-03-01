@@ -17,8 +17,10 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlparse
-# Load environment variables BEFORE importing any modules that might need them
-load_dotenv(Path(__file__).parent / ".env")
+# Load environment variables BEFORE importing any modules that might need them.
+# `override=True` avoids stale exported shell vars (e.g. old APPS_URL_PORT) from
+# silently shadowing backend/.env in local development.
+load_dotenv(Path(__file__).parent / ".env", override=True)
 
 from app.db.connection import MongoDatabase
 from vector_store import VectorStore

@@ -146,7 +146,6 @@ class PublishedAppCodingRunMonitor:
                     run_event=event_name,
                     status=run_payload.get("status"),
                     result_revision_id=run_payload.get("result_revision_id"),
-                    checkpoint_revision_id=run_payload.get("checkpoint_revision_id"),
                     error=run_payload.get("error"),
                 )
         for queue in subscribers:

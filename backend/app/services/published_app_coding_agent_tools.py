@@ -27,7 +27,7 @@ from app.services.published_app_agent_integration_contract import (
     build_published_app_agent_integration_contract,
 )
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
-from app.services.published_app_revision_store import PublishedAppRevisionStore
+from app.services.published_app_versioning import create_app_version
 from app.services.tool_function_registry import register_tool_function
 
 CODING_AGENT_SURFACE = "published_app_coding_agent"
@@ -216,30 +216,20 @@ async def _create_draft_revision_from_files(
 ) -> PublishedAppRevision:
     sanitized_files = _filter_builder_snapshot_files(files)
     _validate_builder_project_or_raise(sanitized_files, entry_file)
-    revision_store = PublishedAppRevisionStore(db)
-    manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(sanitized_files)
-    revision = PublishedAppRevision(
-        published_app_id=app.id,
+    revision = await create_app_version(
+        db,
+        app=app,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
         files=sanitized_files,
-        manifest_json=manifest_json,
+        created_by=actor_id,
+        source_revision_id=current.id,
+        origin_kind="coding_tool",
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=int(current.build_seq or 0) + 1,
-        build_error=None,
-        build_started_at=None,
-        build_finished_at=None,
-        dist_storage_prefix=None,
-        dist_manifest=None,
         template_runtime="vite_static",
-        compiled_bundle=None,
-        bundle_hash=bundle_hash,
-        source_revision_id=current.id,
-        created_by=actor_id,
     )
-    db.add(revision)
-    await db.flush()
     app.current_draft_revision_id = revision.id
     return revision
 
@@ -628,11 +618,6 @@ def _resolve_required_string_field(payload: dict[str, Any], field: str) -> str:
             value_raw,
             ("to_path", "toPath", "destination_path", "destinationPath", "dest_path", "destPath", "new_path", "newPath", "to", "destination"),
         )
-    if field == "checkpoint_revision_id":
-        resolved = _resolve_string_arg(payload, ("checkpoint_revision_id", "checkpoint_id", "checkpointRevisionId"))
-        if resolved:
-            return resolved
-        return _extract_loose_kv_string(value_raw, ("checkpoint_revision_id", "checkpoint_id", "checkpointRevisionId"))
     if field == "content":
         return _resolve_content_arg(payload)
     if field == "patch":
@@ -687,8 +672,6 @@ def validate_coding_agent_required_fields(
             candidate = _resolve_from_path_arg(tool_payload)
         elif field == "to_path":
             candidate = _resolve_to_path_arg(tool_payload)
-        elif field == "checkpoint_revision_id":
-            candidate = _resolve_string_arg(tool_payload, ("checkpoint_revision_id", "checkpoint_id"))
         else:
             candidate = tool_payload.get(field)
 
@@ -1267,89 +1250,6 @@ async def coding_agent_build_worker_precheck(payload: Any) -> dict[str, Any]:
         }
 
 
-@register_tool_function("coding_agent_create_checkpoint")
-async def coding_agent_create_checkpoint(payload: Any) -> dict[str, Any]:
-    tool_payload = payload if isinstance(payload, dict) else {}
-    async with get_session() as db:
-        ctx = await _resolve_run_tool_context(db, tool_payload)
-        current = await db.get(PublishedAppRevision, ctx.app.current_draft_revision_id)
-        if current is None:
-            raise ValueError("Current draft revision not found")
-
-        files = await _snapshot_files(ctx)
-        entry_file = str(tool_payload.get("entry_file") or current.entry_file)
-        entry_file = _normalize_builder_path(entry_file)
-        _assert_builder_path_allowed(entry_file, field="entry_file")
-        revision = await _create_draft_revision_from_files(
-            db=db,
-            app=ctx.app,
-            current=current,
-            actor_id=ctx.actor_id,
-            files=files,
-            entry_file=entry_file,
-        )
-        ctx.run.checkpoint_revision_id = revision.id
-        if ctx.run.result_revision_id is None:
-            ctx.run.result_revision_id = revision.id
-        await db.commit()
-        return {
-            "checkpoint_revision_id": str(revision.id),
-            "created_at": revision.created_at.isoformat() if revision.created_at else datetime.now(timezone.utc).isoformat(),
-            "file_count": len(files),
-            "entry_file": entry_file,
-        }
-
-
-@register_tool_function("coding_agent_restore_checkpoint")
-async def coding_agent_restore_checkpoint(payload: Any) -> dict[str, Any]:
-    tool_payload = payload if isinstance(payload, dict) else {}
-    checkpoint_id_raw = tool_payload.get("checkpoint_revision_id") or tool_payload.get("checkpoint_id")
-    if checkpoint_id_raw is None:
-        raise ValueError("checkpoint_revision_id is required")
-    checkpoint_revision_id = _parse_uuid(checkpoint_id_raw, "checkpoint_revision_id")
-
-    async with get_session() as db:
-        ctx = await _resolve_run_tool_context(db, tool_payload)
-        checkpoint_revision = await db.get(PublishedAppRevision, checkpoint_revision_id)
-        if checkpoint_revision is None:
-            raise ValueError("Checkpoint revision not found")
-        if str(checkpoint_revision.published_app_id) != str(ctx.app.id):
-            raise PermissionError("Checkpoint revision does not belong to this app")
-
-        current = await db.get(PublishedAppRevision, ctx.app.current_draft_revision_id)
-        if current is None:
-            raise ValueError("Current draft revision not found")
-        revision_store = PublishedAppRevisionStore(db)
-        files = await revision_store.materialize_revision_files(checkpoint_revision)
-        entry_file = checkpoint_revision.entry_file
-        restored = await _create_draft_revision_from_files(
-            db=db,
-            app=ctx.app,
-            current=current,
-            actor_id=ctx.actor_id,
-            files=files,
-            entry_file=entry_file,
-        )
-
-        await ctx.runtime_service.sync_session(
-            app=ctx.app,
-            revision=restored,
-            user_id=ctx.actor_id,
-            files=files,
-            entry_file=entry_file,
-        )
-
-        ctx.run.result_revision_id = restored.id
-        ctx.run.checkpoint_revision_id = checkpoint_revision.id
-        await db.commit()
-        return {
-            "restored_revision_id": str(restored.id),
-            "from_checkpoint_revision_id": str(checkpoint_revision.id),
-            "entry_file": entry_file,
-            "file_count": len(files),
-        }
-
-
 CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "List Files",
@@ -1638,43 +1538,6 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
         "is_pure": False,
         "schema": {
             "input": {"type": "object", "additionalProperties": True},
-            "output": {"type": "object", "additionalProperties": True},
-        },
-    },
-    {
-        "name": "Create Checkpoint",
-        "slug": "create_checkpoint",
-        "function_name": "coding_agent_create_checkpoint",
-        "description": "Create a durable checkpoint revision from current sandbox files.",
-        "timeout_s": 60,
-        "is_pure": False,
-        "schema": {
-            "input": {
-                "type": "object",
-                "properties": {
-                    "entry_file": {"type": "string"},
-                },
-                "additionalProperties": True,
-            },
-            "output": {"type": "object", "additionalProperties": True},
-        },
-    },
-    {
-        "name": "Restore Checkpoint",
-        "slug": "restore_checkpoint",
-        "function_name": "coding_agent_restore_checkpoint",
-        "description": "Restore sandbox/app draft from a checkpoint revision.",
-        "timeout_s": 60,
-        "is_pure": False,
-        "schema": {
-            "input": {
-                "type": "object",
-                "properties": {
-                    "checkpoint_revision_id": {"type": "string"},
-                },
-                "required": ["checkpoint_revision_id"],
-                "additionalProperties": True,
-            },
             "output": {"type": "object", "additionalProperties": True},
         },
     },

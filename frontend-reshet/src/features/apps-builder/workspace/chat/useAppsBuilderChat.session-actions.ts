@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 
 import { OPENCODE_CODING_MODEL_AUTO_ID, publishedAppsService } from "@/services";
-import type { PublishedAppRevision } from "@/services";
 
 import {
   DRAFT_SESSION_KEY,
@@ -28,13 +27,10 @@ type PromptRequest = {
 
 type SessionActionsDeps = {
   appId: string;
-  activeTab: "preview" | "config";
   selectedRunModelId: string | null;
   activeChatSessionIdRef: { current: string | null };
   isMountedRef: { current: boolean };
   onError: (message: string | null) => void;
-  onApplyRestoredRevision: (revision: PublishedAppRevision) => void;
-  ensureDraftDevSession: () => Promise<void>;
   mutateSession: (sessionKey: string, updater: (session: SessionContainer) => void) => void;
   getSession: (sessionKey: string) => SessionContainer;
   markSessionRunActive: (sessionId: string, runId: string, status?: string) => void;
@@ -54,13 +50,10 @@ type SessionActionsDeps = {
 
 export function useAppsBuilderChatSessionActions({
   appId,
-  activeTab,
   selectedRunModelId,
   activeChatSessionIdRef,
   isMountedRef,
   onError,
-  onApplyRestoredRevision,
-  ensureDraftDevSession,
   mutateSession,
   getSession,
   markSessionRunActive,
@@ -423,39 +416,11 @@ export function useAppsBuilderChatSessionActions({
     setActiveChatSessionId(null);
   }, [activeChatSessionIdRef, mutateSession, setActiveChatSessionId]);
 
-  const revertToCheckpoint = useCallback(async (userItemId: string, checkpointId: string) => {
-    const key = normalizeSessionKey(activeChatSessionIdRef.current);
-    const session = getSession(key);
-    if (session.isSendingRef.current) {
-      stopCurrentRun();
-    }
-
-    onError(null);
-    try {
-      const response = await publishedAppsService.restoreCodingAgentCheckpoint(appId, checkpointId, {});
-      const revision = response.revision;
-      onApplyRestoredRevision(revision);
-      mutateSession(key, (target) => {
-        const idx = target.timeline.findIndex((item) => item.id === userItemId);
-        if (idx >= 0) {
-          target.timeline = target.timeline.slice(0, idx);
-        }
-      });
-      if (activeTab === "preview") {
-        await ensureDraftDevSession();
-      }
-    } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to revert to checkpoint");
-      throw err;
-    }
-  }, [activeChatSessionIdRef, activeTab, appId, ensureDraftDevSession, getSession, mutateSession, onApplyRestoredRevision, onError, stopCurrentRun]);
-
   return {
     sendBuilderChat,
     removeQueuedPrompt,
     answerPendingQuestion,
     stopCurrentRun,
     startNewChat,
-    revertToCheckpoint,
   };
 }

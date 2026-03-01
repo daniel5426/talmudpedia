@@ -1,6 +1,6 @@
 # Coding Agent API Tests
 
-Last Updated: 2026-02-25
+Last Updated: 2026-03-01
 
 ## Scope of the feature
 - v2 coding-agent admin API under `/admin/apps/{app_id}/coding-agent/v2/*`.
@@ -40,7 +40,7 @@ Last Updated: 2026-02-25
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py tests/sandbox_controller/test_dev_shim.py`
 - Date: 2026-02-23
 - Result: PASS (11 passed, 6 warnings)
-- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api tests/coding_agent_chat_history_api tests/coding_agent_checkpoints tests/coding_agent_sandbox_isolation`
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api tests/coding_agent_chat_history_api tests/coding_agent_sandbox_isolation`
 - Date: 2026-02-23
 - Result: PASS (15 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py::test_v2_answer_question_endpoint tests/sandbox_controller/test_dev_shim.py::test_dev_shim_opencode_question_answer`

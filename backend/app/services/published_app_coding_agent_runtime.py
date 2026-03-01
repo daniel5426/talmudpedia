@@ -36,7 +36,6 @@ from app.services.published_app_agent_integration_contract import build_publishe
 from app.services.opencode_server_client import OpenCodeServerClient
 from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.api.routers.published_apps_admin_files import _filter_builder_snapshot_files, _validate_builder_project_or_raise
-from app.services.published_app_coding_agent_runtime_checkpoints import PublishedAppCodingAgentRuntimeCheckpointsMixin
 from app.services.published_app_coding_agent_runtime_sandbox import PublishedAppCodingAgentRuntimeSandboxMixin
 from app.services.published_app_coding_agent_runtime_streaming import PublishedAppCodingAgentRuntimeStreamingMixin
 
@@ -75,7 +74,6 @@ _WORKSPACE_WRITE_TOOL_HINTS = (
 
 
 class PublishedAppCodingAgentRuntimeService(
-    PublishedAppCodingAgentRuntimeCheckpointsMixin,
     PublishedAppCodingAgentRuntimeSandboxMixin,
     PublishedAppCodingAgentRuntimeStreamingMixin,
 ):
@@ -115,7 +113,6 @@ class PublishedAppCodingAgentRuntimeService(
             "published_app_id": str(run.published_app_id) if run.published_app_id else None,
             "base_revision_id": str(run.base_revision_id) if run.base_revision_id else None,
             "result_revision_id": str(run.result_revision_id) if run.result_revision_id else None,
-            "checkpoint_revision_id": str(run.checkpoint_revision_id) if run.checkpoint_revision_id else None,
             "requested_model_id": requested_model_id or None,
             "resolved_model_id": resolved_model_id or None,
             "error": run.error_message,
@@ -485,10 +482,8 @@ class PublishedAppCodingAgentRuntimeService(
         run.published_app_id = app.id
         run.base_revision_id = base_revision.id
         run.result_revision_id = None
-        run.checkpoint_revision_id = None
         run.has_workspace_writes = False
         run.batch_finalized_at = None
-        run.batch_owner = False
         run.requested_model_id = None
         run.resolved_model_id = None
         run.execution_engine = normalized_engine
@@ -788,7 +783,7 @@ class PublishedAppCodingAgentRuntimeService(
                 and_(
                     AgentRun.surface == CODING_AGENT_SURFACE,
                     AgentRun.published_app_id == app_id,
-                    AgentRun.checkpoint_revision_id.is_not(None),
+                    AgentRun.result_revision_id.is_not(None),
                 )
             )
             .order_by(AgentRun.created_at.desc())
@@ -799,7 +794,7 @@ class PublishedAppCodingAgentRuntimeService(
         for run in runs:
             payload.append(
                 {
-                    "checkpoint_id": str(run.checkpoint_revision_id),
+                    "checkpoint_id": str(run.result_revision_id),
                     "run_id": str(run.id),
                     "app_id": str(app_id),
                     "revision_id": str(run.result_revision_id) if run.result_revision_id else None,

@@ -13,7 +13,6 @@ from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,
-    PublishedAppRevision,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
     PublishedAppSession,
@@ -23,9 +22,9 @@ from app.db.postgres.models.published_apps import (
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
-from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 from app.services.published_app_auth_templates import list_auth_templates
+from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
@@ -147,30 +146,20 @@ async def create_published_app(
                 "agent_id": str(app.agent_id),
             },
         )
-        revision_store = PublishedAppRevisionStore(db)
-        manifest_json, bundle_hash = await revision_store.build_manifest_and_store_blobs(files)
-        revision = PublishedAppRevision(
-            published_app_id=app.id,
+        revision = await create_app_version(
+            db,
+            app=app,
             kind=PublishedAppRevisionKind.draft,
             template_key=template_key,
             entry_file=template.entry_file,
             files=files,
-            manifest_json=manifest_json,
+            created_by=ctx["user"].id if ctx["user"] else None,
+            source_revision_id=None,
+            origin_kind="app_init",
             build_status=PublishedAppRevisionBuildStatus.queued,
             build_seq=1,
-            build_error=None,
-            build_started_at=None,
-            build_finished_at=None,
-            dist_storage_prefix=None,
-            dist_manifest=None,
             template_runtime="vite_static",
-            compiled_bundle=None,
-            bundle_hash=bundle_hash,
-            source_revision_id=None,
-            created_by=ctx["user"].id if ctx["user"] else None,
         )
-        db.add(revision)
-        await db.flush()
         app.current_draft_revision_id = revision.id
 
         await db.commit()

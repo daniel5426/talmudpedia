@@ -59,7 +59,6 @@ class CodingAgentRunResponse(BaseModel):
     published_app_id: Optional[str] = None
     base_revision_id: Optional[str] = None
     result_revision_id: Optional[str] = None
-    checkpoint_revision_id: Optional[str] = None
     requested_model_id: Optional[str] = None
     resolved_model_id: Optional[str] = None
     error: Optional[str] = None
@@ -709,13 +708,14 @@ async def list_coding_agent_checkpoints(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    service = PublishedAppCodingAgentRuntimeService(db)
-    checkpoints = await service.list_checkpoints(app_id=app.id, limit=limit)
-    return [CodingAgentCheckpointResponse(**item) for item in checkpoints]
+    _ = (app_id, request, limit, principal, db)
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "CODING_AGENT_CHECKPOINTS_ENDPOINT_REMOVED",
+            "message": "Checkpoint endpoints were removed. Use /admin/apps/{app_id}/versions/{version_id}/restore.",
+        },
+    )
 
 
 @router.post(
@@ -731,28 +731,11 @@ async def restore_coding_agent_checkpoint(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    actor = ctx.get("user")
-    actor_id = actor.id if actor else None
-
-    run = None
-    service = PublishedAppCodingAgentRuntimeService(db)
-    if payload.run_id is not None:
-        run = await service.get_run_for_app(app_id=app.id, run_id=payload.run_id)
-
-    await _get_revision_for_app(db, app.id, checkpoint_id)
-    restored = await service.restore_checkpoint(
-        app=app,
-        checkpoint_revision_id=checkpoint_id,
-        actor_id=actor_id,
-        run=run,
-    )
-
-    return CodingAgentRestoreCheckpointResponse(
-        checkpoint_id=str(checkpoint_id),
-        revision=_revision_to_response(restored),
-        run_id=str(run.id) if run else None,
+    _ = (app_id, checkpoint_id, payload, request, principal, db)
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "CODING_AGENT_CHECKPOINTS_ENDPOINT_REMOVED",
+            "message": "Checkpoint restore endpoint was removed. Use /admin/apps/{app_id}/versions/{version_id}/restore.",
+        },
     )
