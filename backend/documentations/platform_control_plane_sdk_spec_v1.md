@@ -865,9 +865,42 @@ Completed in this increment:
   - `tools.*`
   - `agents.*`
   - `orchestration.*`
+- Split platform SDK runtime into domain modules and reduced dispatcher size under guardrail:
+  - `backend/artifacts/builtin/platform_sdk/handler.py` now acts as a thin dispatcher (~656 LOC).
+  - Added `backend/artifacts/builtin/platform_sdk/actions/{catalog,agents,artifacts,tools,orchestration}.py`.
+- Expanded canonical start-set action coverage in runtime dispatch:
+  - Added read/write canonical handlers for `artifacts.*` (`list`, `get`, `delete`, `test` in addition to existing draft/promote).
+  - Added read/write canonical handlers for `tools.*` (`list`, `get`, `publish`, `create_version`, `delete` in addition to existing create_or_update).
+  - Added canonical handlers for `agents.*` (`list`, `get`, `create_or_update`, `publish`, `validate`, `start_run`, `resume_run`, `get_run`, `get_run_tree` in addition to execute/run_tests).
+- Extended canonical dispatch coverage to non-start-set domain families:
+  - `rag.*`: `list_pipelines`, `create_or_update_pipeline`, `compile_pipeline`, `create_job`, `get_job`, `get_step_data`
+  - `models.*`: `list`, `create_or_update`, `add_provider`, `update_provider`, `delete_provider`
+  - `credentials.*`: `list`, `create_or_update`, `delete`, `usage`, `status`
+  - `knowledge_stores.*`: `list`, `create_or_update`, `delete`, `stats`
+  - `auth.*`: `create_delegation_grant`, `mint_workload_token`
+  - `workload_security.*`: `list_pending`, `approve_policy`, `reject_policy`, `list_approvals`, `decide_approval`
 - Switched orchestration wrappers to direct `talmudpedia_control_sdk.orchestration.*` calls (no ad-hoc internal HTTP helper path for runtime dispatch).
 - Added parity-focused tests that assert action inputs/outputs align with SDK method invocation contracts:
   - `backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py`
+  - Expanded parity assertions to include newly exposed canonical actions (`tools.publish`, `artifacts.delete`, `agents.start_run`, `agents.get_run_tree`).
+  - Added coverage for additional domain actions (`rag.create_job`, `models.update_provider`, `credentials.delete`, `knowledge_stores.list`, `auth.mint_workload_token`, `workload_security.decide_approval`).
+  - Added broad matrix parity coverage in `backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py` for most remaining canonical dispatched actions across domain families.
+  - Added canonical `agents.run_tests` action parity and a parity guard that fails when dispatched canonical actions are introduced without test coverage references.
+- Added env-gated cross-surface parity integration test scaffold:
+  - `backend/tests/platform_sdk_tool/test_platform_sdk_cross_surface_parity_integration.py`
+  - Current coverage validates persisted-state equivalence for core mutations across UI HTTP path, SDK path, and tool-action path:
+    - `artifacts.create_draft`
+    - `tools.create_or_update` (create)
+    - `tools.create_or_update` (update)
+    - `tools.publish`
+    - `artifacts.promote`
+    - `agents.create_or_update` (create)
+    - `agents.publish`
+- Added execution-focused cross-surface parity integration module:
+  - `backend/tests/platform_sdk_tool/test_platform_sdk_cross_surface_parity_execution_integration.py`
+  - Current coverage:
+    - `agents.start_run` (success-path parity with persisted run retrieval)
+    - `agents.resume_run` (error-path parity for nonexistent run ID)
 - Added control-plane guardrail test to fail on new `/api/agents` references in SDK/tool Python code:
   - `backend/tests/control_plane_sdk/test_no_legacy_api_agents_refs.py`
 - Archived legacy overlapping SDK doc as explicitly non-canonical:
@@ -892,20 +925,24 @@ This section defines the minimum remaining work to call the Control Plane SDK v1
 
 ### 24.1 Critical (Must finish for MVP)
 1. Split oversized platform handler into domain modules and enforce file-size guardrail:
-   - Current blocker: `backend/artifacts/builtin/platform_sdk/handler.py` remains above enforced size limits.
-   - Target shape:
-     - `backend/artifacts/builtin/platform_sdk/handler.py` (thin dispatcher only)
+   - Completed: `backend/artifacts/builtin/platform_sdk/handler.py` is now a thin dispatcher and domain handlers were split into:
      - `backend/artifacts/builtin/platform_sdk/actions/catalog.py`
      - `backend/artifacts/builtin/platform_sdk/actions/agents.py`
      - `backend/artifacts/builtin/platform_sdk/actions/artifacts.py`
      - `backend/artifacts/builtin/platform_sdk/actions/tools.py`
      - `backend/artifacts/builtin/platform_sdk/actions/orchestration.py`
 2. Complete explicit 1:1 tool action coverage for all required canonical domain methods (no planner/coarse actions):
+   - In progress: canonical domain families are now broadly covered across start-set and non-start-set modules (`catalog`, `agents`, `tools`, `artifacts`, `orchestration`, `rag`, `models`, `credentials`, `knowledge_stores`, `auth`, `workload_security`).
+   - Remaining: close any still-uncovered method-level action gaps and ensure exact 1:1 parity evidence per action.
    - Keep alias support only as input normalization.
    - Runtime output action IDs must be canonical dotted IDs.
 3. Expand action parity tests from partial coverage to full method-family coverage:
+   - In progress: parity coverage now includes broad matrix assertions for most canonical dispatched actions across all currently routed domain families.
+   - Remaining: close any still-missing action-level parity assertions and strengthen assertions from call-shape parity to payload/result equivalence where needed.
    - Every exposed tool action must have a direct parity test against corresponding SDK method call contract.
 4. Add cross-surface parity tests for core mutation paths:
+   - In progress: env-gated cross-surface parity now includes artifact, tool, and agent core mutations plus execution lifecycle coverage (`agents.start_run`, `agents.resume_run` error-path parity).
+   - Remaining: increase success-path execution lifecycle depth (for resumable run states) and ensure execution in CI environments with integration credentials.
    - UI path vs SDK path vs tool path must converge to equivalent persisted state.
 5. Delete legacy lightweight SDK package:
    - Remove `backend/sdk/*` once parity suite is green and no callers remain.

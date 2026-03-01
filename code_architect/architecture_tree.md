@@ -160,6 +160,22 @@ backend/app/templates/
 
 backend/alembic/
 backend/artifacts/
+backend/artifacts/builtin/
+backend/artifacts/builtin/platform_sdk/
+backend/artifacts/builtin/platform_sdk/handler.py
+backend/artifacts/builtin/platform_sdk/actions/
+backend/artifacts/builtin/platform_sdk/actions/catalog.py
+backend/artifacts/builtin/platform_sdk/actions/agents.py
+backend/artifacts/builtin/platform_sdk/actions/artifacts.py
+backend/artifacts/builtin/platform_sdk/actions/tools.py
+backend/artifacts/builtin/platform_sdk/actions/orchestration.py
+backend/artifacts/builtin/platform_sdk/actions/rag.py
+backend/artifacts/builtin/platform_sdk/actions/models.py
+backend/artifacts/builtin/platform_sdk/actions/credentials.py
+backend/artifacts/builtin/platform_sdk/actions/knowledge_stores.py
+backend/artifacts/builtin/platform_sdk/actions/auth.py
+backend/artifacts/builtin/platform_sdk/actions/workload_security.py
+backend/artifacts/builtin/platform_sdk/actions/shared.py
 backend/ingestion/
 backend/sdk/
 backend/talmudpedia_control_sdk/
