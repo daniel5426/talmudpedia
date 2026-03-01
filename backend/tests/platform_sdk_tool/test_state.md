@@ -3,29 +3,28 @@
 Last Updated: 2026-03-01
 
 Scope:
-- Platform SDK tool actions (`create_artifact_draft`, `promote_artifact`, `create_tool`, `run_agent`, `run_tests`).
-- Plan validation for new action types.
+- Platform SDK tool action dispatch and strict explicit-action behavior.
+- Domain-method action wrappers for control-plane SDK surfaces.
+- Runtime primitive orchestration action dispatch and validation.
 
 Test files present:
 - test_platform_sdk_actions.py
 - test_platform_sdk_integration.py
 - test_platform_sdk_orchestration_actions.py
+- test_platform_sdk_sdk_parity.py
 
 Key scenarios covered:
-- Plan validation accepts new draft/test actions and flags missing fields.
-- Plan validation accepts orchestration runtime primitives (`spawn_run`, `spawn_group`, `join`, `cancel_subtree`, `evaluate_and_replan`, `query_tree`).
+- Missing action fails fast with structured validation errors (`MISSING_REQUIRED_FIELD`).
+- Deprecated planner-centric actions (`validate_plan`, `execute_plan`) fail with explicit `deprecated_action` validation errors.
+- Legacy action aliases normalize to canonical domain action IDs.
 - `run_tests` evaluates `contains` and `jsonpath` assertions.
-- Empty/non-action invocations now fail fast with structured validation errors (`MISSING_REQUIRED_FIELD`) when action is missing.
-- Explicit action contract is enforced (no implicit infer-from-steps/tests/message action resolution).
-- Deploy-agent step uses canonical `/agents` path only (no `/api/agents` fallback chain).
-- Integration flow for artifact draft → promote → tool creation.
-- Integration flow for `run_tests` via Platform SDK action.
-- Runtime primitive action dispatch from `execute` routes to kernel-backed orchestration calls.
+- Runtime primitive action dispatch routes through canonical orchestration action IDs.
+- Action-to-SDK parity for `artifacts.create_or_update_draft`, `tools.create_or_update`, `agents.execute`, `orchestration.spawn_run`, and `catalog.list_capabilities`.
 
-Last run command: `pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_actions.py backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py`
-Last run date/time: 2026-03-01 17:20:59 EET
-Last run result: pass (11 passed)
+Last run command: `pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_actions.py backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py`
+Last run date/time: 2026-03-01 18:28:32 EET
+Last run result: pass (14 passed)
 
 Known gaps / follow-ups:
-- Add coverage for delegated workload token auth behavior on `/admin/artifacts` and `/tools` routes.
-- Add assertions for `run_agent` slug resolution pagination edge cases.
+- Expand parity coverage to additional canonical actions across all SDK modules.
+- Add integration parity assertions comparing tool wrapper outputs with direct SDK HTTP calls on live env-gated runs.

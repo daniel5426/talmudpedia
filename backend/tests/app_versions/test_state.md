@@ -17,15 +17,18 @@ Hard-cut versions-first API behavior for builder versioning, restore, and publis
 - Restore falls back to inline version files when manifest blob materialization fails.
 - Restore returns `409 VERSION_SOURCE_UNAVAILABLE` when version source is unrecoverable.
 - Publish-by-version uses selected `version_id` as `source_revision_id` and updates published pointer without creating extra version rows.
-- Publish-by-version auto-builds missing dist artifacts on the selected version before pointer publish.
-- Version preview runtime endpoint returns a revision-scoped tokenized runtime URL.
+- Manual save (`/versions/draft`) enqueues revision build, while restore does not auto-enqueue.
+- Publish-by-version with missing dist returns queued publish job and waits for build completion via worker flow.
+- Publish-by-version fails safely when selected revision build fails and keeps previous published pointer unchanged.
+- Publish failure diagnostics include publish-wait build state and auto-fix submission metadata.
+- Version preview runtime returns `409 VERSION_BUILD_NOT_READY` when dist artifacts are missing.
 - Cross-app version access returns `404`.
 - Coding-run finalizer still enforces diff-only version creation.
 
 ## Last Run
-- Command: `cd backend && pytest -q tests/app_versions/test_versions_endpoints.py tests/app_versions/test_coding_run_versions.py`
+- Command: `cd backend && pytest tests/app_versions/test_versions_endpoints.py`
 - Date: 2026-03-01
-- Result: Pass (8 passed)
+- Result: Pass (9 passed)
 
 ## Known Gaps / Follow-ups
 - Add deeper assertions for `version_seq` ordering under concurrent version writes.

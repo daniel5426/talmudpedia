@@ -10,6 +10,7 @@ Last Updated: 2026-03-01
 ## Test files present
 - `backend/tests/coding_agent_api/test_v2_api.py`
 - `backend/tests/coding_agent_api/test_opencode_apply_patch_recovery.py`
+- `backend/tests/coding_agent_api/test_batch_finalizer.py`
 
 ## Key scenarios covered
 - Prompt submission starts a run when no active run exists for the chat session.
@@ -23,11 +24,16 @@ Last Updated: 2026-03-01
 - Cancel endpoint now force-closes stream subscribers even when runtime keeps emitting non-terminal events.
 - Question-answer endpoint routes user answers to active OpenCode runs (`POST /coding-agent/v2/runs/{run_id}/answer-question`).
 - OpenCode apply-patch recovery/fail-closed semantics remain covered in engine-level tests.
+- Batch finalizer auto-enqueues coding-run revision builds and records enqueue outcomes per run.
+- Batch finalizer marks created revisions as `build_status=failed` when build enqueue fails, without breaking run finalization.
 
 ## Last run command + date/time + result
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py`
 - Date: 2026-02-25
 - Result: PASS (7 passed, 6 warnings)
+- Command: `cd backend && pytest tests/coding_agent_api/test_batch_finalizer.py`
+- Date: 2026-03-01
+- Result: PASS (3 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py::test_v2_submit_prompt_started_then_run_active tests/coding_agent_api/test_v2_api.py::test_v2_stream_missing_terminal_does_not_force_fail_by_default tests/coding_agent_api/test_v2_api.py::test_v2_cancel_marks_cancelled tests/coding_agent_api/test_v2_api.py::test_v2_cancel_closes_stream_when_runtime_keeps_non_terminal_events`
 - Date: 2026-02-25
 - Result: PASS (4 passed, 6 warnings)

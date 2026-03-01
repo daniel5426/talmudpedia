@@ -1,6 +1,6 @@
 # Custom Coding Agent
 
-Last Updated: 2026-02-25
+Last Updated: 2026-03-01
 
 ## Current State: Hard Cut v2 (OpenCode-Only)
 
@@ -22,6 +22,17 @@ This doc now reflects the current thin-wrapper defaults that were implemented in
 - Non-terminal disconnects are reconcile-first: transport closure triggers status reconciliation against backend run status rather than immediate failed terminalization.
 - Permission prompts from OpenCode (`permission.asked`) are mapped into question flow, with stage-sandbox auto-approval by default policy.
 - Mid-run assistant text no longer implies terminal completion: `session.idle` does not force `run.completed` in default reconcile-first mode.
+
+## Latest Applied Update (2026-03-01)
+
+The coding-agent/revision pipeline now integrates directly with async app-build readiness for version publish and preview:
+- Batch finalization now auto-enqueues revision build jobs for coding-run-created revisions (`origin_kind="coding_run"`), when build automation is enabled.
+- Build enqueue failures no longer break finalization; revision rows are preserved and marked `build_status=failed` with enqueue error diagnostics.
+- Finalizer result payload now includes per-run build enqueue diagnostics (`build_enqueue_by_run`) in addition to created revision ids.
+- Publish wait failures that are build-related can now trigger a best-effort automatic coding-agent fix request:
+  - target = latest existing coding-agent chat session for the publishing user/app scope
+  - no new session is auto-created
+  - diagnostics include either `auto_fix_run_id`, `auto_fix_skipped`, or `auto_fix_error`
 
 ## OpenCode Protocol Evidence (2026-02-25 Deep-Dive)
 

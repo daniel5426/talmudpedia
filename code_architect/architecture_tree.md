@@ -131,7 +131,9 @@ backend/app/services/published_app_coding_run_monitor.py
 backend/app/services/published_app_coding_run_monitor_config.py
 backend/app/services/published_app_coding_pipeline_trace.py
 backend/app/services/published_app_revision_store.py
+backend/app/services/published_app_revision_build_dispatch.py
 backend/app/services/published_app_publish_runtime.py
+backend/app/services/published_app_publish_autofix.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
 backend/app/services/published_app_coding_agent_engines/prompt_history.py

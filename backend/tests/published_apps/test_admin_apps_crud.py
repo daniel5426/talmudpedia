@@ -3,6 +3,7 @@ from sqlalchemy import select
 from uuid import UUID
 
 from app.db.postgres.models.published_apps import PublishedAppCustomDomain
+from app.db.postgres.models.published_apps import PublishedAppRevision, PublishedAppRevisionBuildStatus
 from ._helpers import admin_headers, seed_admin_tenant_and_agent
 
 
@@ -73,6 +74,79 @@ async def test_admin_apps_crud(client, db_session):
     delete_resp = await client.delete(f"/admin/apps/{app_id}", headers=headers)
     assert delete_resp.status_code == 200
     assert delete_resp.json()["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_admin_app_create_enqueues_initial_revision_build(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    enqueue_calls: list[tuple[str, str]] = []
+
+    def _enqueue_stub(*, revision, app, build_kind):
+        _ = app
+        enqueue_calls.append((str(revision.id), str(build_kind)))
+        return None
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_apps.enqueue_revision_build",
+        _enqueue_stub,
+    )
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Init Build App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    revision_id = state_resp.json()["current_draft_revision"]["id"]
+    assert enqueue_calls == [(revision_id, "app_init")]
+
+
+@pytest.mark.asyncio
+async def test_admin_app_create_marks_initial_revision_build_failed_on_enqueue_error(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    def _enqueue_fail(*, revision, app, build_kind):
+        _ = revision, app, build_kind
+        return "enqueue boom"
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_apps.enqueue_revision_build",
+        _enqueue_fail,
+    )
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Init Build Fail App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    revision_id = state_resp.json()["current_draft_revision"]["id"]
+    revision = await db_session.get(PublishedAppRevision, UUID(revision_id))
+    assert revision is not None
+    assert revision.build_status == PublishedAppRevisionBuildStatus.failed
+    assert "enqueue boom" in str(revision.build_error or "")
 
 
 @pytest.mark.asyncio

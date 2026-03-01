@@ -6,7 +6,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision
+from app.db.postgres.models.published_apps import (
+    PublishedApp,
+    PublishedAppRevision,
+    PublishedAppRevisionBuildStatus,
+)
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_coding_batch_finalizer import PublishedAppCodingBatchFinalizer
 from app.services.published_app_versioning import create_app_version
@@ -119,6 +123,18 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
 
     monkeypatch.setattr(PublishedAppCodingBatchFinalizer, "_prepare_finalized_live_snapshot", _fake_prepare)
 
+    enqueue_calls: list[str] = []
+
+    def _enqueue_stub(*, revision, app, build_kind):
+        _ = app
+        enqueue_calls.append(f"{revision.id}:{build_kind}")
+        return None
+
+    monkeypatch.setattr(
+        "app.services.published_app_coding_batch_finalizer.enqueue_revision_build",
+        _enqueue_stub,
+    )
+
     service = PublishedAppCodingBatchFinalizer(db_session)
     result = await service.finalize_for_terminal_run(run_id=run_with_diff.id)
     assert result["status"] == "finalized"
@@ -136,6 +152,63 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
 
     assert refreshed_with_diff.batch_finalized_at is not None
     assert refreshed_with_diff.result_revision_id is not None
+    assert enqueue_calls
+    assert enqueue_calls[0].endswith(":coding_run")
+
+
+@pytest.mark.asyncio
+async def test_batch_finalizer_marks_revision_failed_when_build_enqueue_fails(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+
+    app = await db_session.get(PublishedApp, app_id)
+    draft = await db_session.get(PublishedAppRevision, draft_revision_id)
+    assert app is not None
+    assert draft is not None
+
+    live_files = dict(draft.files or {})
+    live_files["src/App.tsx"] = "export default function App() { return <div>enqueue-fail</div>; }"
+
+    run_with_diff = _new_scope_run(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        app_id=app_id,
+        base_revision_id=draft.id,
+        status=RunStatus.completed,
+    )
+    db_session.add(run_with_diff)
+    await db_session.commit()
+    await db_session.refresh(run_with_diff)
+
+    async def _fake_prepare(self, *, app_id, actor_id, sample_run):
+        _ = actor_id, sample_run
+        loaded_app = await self.db.get(PublishedApp, app_id)
+        loaded_current = await self.db.get(PublishedAppRevision, draft.id)
+        assert loaded_app is not None
+        assert loaded_current is not None
+        return loaded_app, loaded_current, dict(live_files)
+
+    monkeypatch.setattr(PublishedAppCodingBatchFinalizer, "_prepare_finalized_live_snapshot", _fake_prepare)
+
+    def _enqueue_fail(*, revision, app, build_kind):
+        _ = revision, app, build_kind
+        return "enqueue exploded"
+
+    monkeypatch.setattr(
+        "app.services.published_app_coding_batch_finalizer.enqueue_revision_build",
+        _enqueue_fail,
+    )
+
+    service = PublishedAppCodingBatchFinalizer(db_session)
+    result = await service.finalize_for_terminal_run(run_id=run_with_diff.id)
+    assert result["status"] == "finalized"
+    created_revision_id = result["revision_ids_by_run"][str(run_with_diff.id)]
+    created_revision = await db_session.get(PublishedAppRevision, UUID(created_revision_id))
+    assert created_revision is not None
+    assert created_revision.build_status == PublishedAppRevisionBuildStatus.failed
+    assert "enqueue exploded" in str(created_revision.build_error or "")
 
 
 @pytest.mark.asyncio

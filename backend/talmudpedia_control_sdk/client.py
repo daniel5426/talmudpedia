@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Any, Callable, Dict, Mapping, Optional
 
@@ -10,6 +11,7 @@ from .errors import ControlPlaneSDKError
 from .types import RequestOptions, ResponseEnvelope
 
 TokenProvider = Callable[[], Optional[str]]
+TenantResolver = Callable[[], Optional[str]]
 
 
 class ControlPlaneClient:
@@ -20,6 +22,7 @@ class ControlPlaneClient:
         token_provider: Optional[TokenProvider] = None,
         token: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        tenant_resolver: Optional[TenantResolver] = None,
         timeout: float = 30.0,
         user_agent: str = "talmudpedia-control-sdk-python/1",
         default_request_metadata: Optional[Mapping[str, Any]] = None,
@@ -27,9 +30,12 @@ class ControlPlaneClient:
     ) -> None:
         if token_provider is not None and token is not None:
             raise ValueError("Provide either token_provider or token, not both.")
+        if tenant_resolver is not None and tenant_id is not None:
+            raise ValueError("Provide either tenant_resolver or tenant_id, not both.")
         self.base_url = base_url.rstrip("/")
         self._token_provider = token_provider or (lambda: token)
         self.tenant_id = str(tenant_id) if tenant_id is not None else None
+        self._tenant_resolver = tenant_resolver
         self.timeout = timeout
         self.user_agent = user_agent
         self.default_request_metadata = dict(default_request_metadata or {})
@@ -58,6 +64,31 @@ class ControlPlaneClient:
         self.workload_security = WorkloadSecurityAPI(self)
         self.auth = AuthAPI(self)
         self.orchestration = OrchestrationAPI(self)
+
+    @classmethod
+    def from_env(
+        cls,
+        *,
+        base_url_env: str = "TEST_BASE_URL",
+        token_env: str = "TEST_API_KEY",
+        tenant_env: str = "TEST_TENANT_ID",
+        timeout: float = 30.0,
+        user_agent: str = "talmudpedia-control-sdk-python/1",
+        default_request_metadata: Optional[Mapping[str, Any]] = None,
+        session: Optional[requests.sessions.Session] = None,
+    ) -> "ControlPlaneClient":
+        base_url = os.getenv(base_url_env) or "http://localhost:8000"
+        token = os.getenv(token_env)
+        tenant_id = os.getenv(tenant_env)
+        return cls(
+            base_url=base_url,
+            token=token,
+            tenant_id=tenant_id,
+            timeout=timeout,
+            user_agent=user_agent,
+            default_request_metadata=default_request_metadata,
+            session=session,
+        )
 
     def request(
         self,
@@ -136,8 +167,9 @@ class ControlPlaneClient:
             "User-Agent": self.user_agent,
             "X-Request-ID": request_id,
         }
-        if self.tenant_id:
-            base_headers["X-Tenant-ID"] = self.tenant_id
+        tenant_id = self._resolve_tenant_id()
+        if tenant_id:
+            base_headers["X-Tenant-ID"] = tenant_id
         token = self._resolve_token()
         if token:
             base_headers["Authorization"] = f"Bearer {token}"
@@ -185,6 +217,26 @@ class ControlPlaneClient:
             return None
         token_text = str(token).strip()
         return token_text or None
+
+    def _resolve_tenant_id(self) -> Optional[str]:
+        if self._tenant_resolver is not None:
+            try:
+                tenant_id = self._tenant_resolver()
+            except Exception as exc:
+                raise ControlPlaneSDKError(
+                    code="TENANT_RESOLVER_ERROR",
+                    message=f"Tenant resolver failed: {exc}",
+                    retryable=False,
+                ) from exc
+            if tenant_id is None:
+                return None
+            tenant_text = str(tenant_id).strip()
+            return tenant_text or None
+
+        if self.tenant_id is None:
+            return None
+        tenant_text = str(self.tenant_id).strip()
+        return tenant_text or None
 
     def _normalize_response(self, response: requests.Response) -> ResponseEnvelope:
         payload: Any

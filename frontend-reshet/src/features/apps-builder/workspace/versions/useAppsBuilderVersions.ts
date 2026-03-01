@@ -14,6 +14,26 @@ function wait(ms: number): Promise<void> {
   });
 }
 
+function parsePreviewBuildNotReadyMessage(err: unknown): string | null {
+  const raw = err instanceof Error ? err.message : String(err || "");
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const code = String(parsed?.code || "").trim();
+    if (code !== "VERSION_BUILD_NOT_READY") {
+      return null;
+    }
+    const status = String(parsed?.build_status || "queued").trim() || "queued";
+    const details = String(parsed?.build_error || "").trim();
+    if (details) {
+      return `Version preview build is ${status}: ${details}`;
+    }
+    return `Version preview build is ${status}.`;
+  } catch {
+    return null;
+  }
+}
+
 type UseAppsBuilderVersionsOptions = {
   appId: string;
   currentRevisionId: string | null;
@@ -40,6 +60,7 @@ export function useAppsBuilderVersions({
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [isLoadingVersion, setIsLoadingVersion] = useState(false);
   const [isLoadingVersionPreview, setIsLoadingVersionPreview] = useState(false);
+  const [inspectedPreviewNotice, setInspectedPreviewNotice] = useState<string | null>(null);
   const [isRestoringVersion, setIsRestoringVersion] = useState(false);
   const [isPublishingVersion, setIsPublishingVersion] = useState(false);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
@@ -49,16 +70,30 @@ export function useAppsBuilderVersions({
     setIsLoadingVersion(true);
     if (shouldInspect) {
       setIsLoadingVersionPreview(true);
+      setInspectedPreviewNotice(null);
     }
     try {
       const revision = await publishedAppsService.getVersion(appId, versionId);
       setSelectedVersion(revision);
       if (shouldInspect) {
-        const previewRuntime = await publishedAppsService.getVersionPreviewRuntime(appId, versionId);
-        inspectedVersionIdRef.current = versionId;
-        setInspectedVersionId(versionId);
-        setInspectedPreviewUrl(previewRuntime.preview_url || null);
-        setInspectedRuntimeToken(previewRuntime.runtime_token || null);
+        try {
+          const previewRuntime = await publishedAppsService.getVersionPreviewRuntime(appId, versionId);
+          inspectedVersionIdRef.current = versionId;
+          setInspectedVersionId(versionId);
+          setInspectedPreviewUrl(previewRuntime.preview_url || null);
+          setInspectedRuntimeToken(previewRuntime.runtime_token || null);
+        } catch (previewErr) {
+          const notReadyMessage = parsePreviewBuildNotReadyMessage(previewErr);
+          if (notReadyMessage) {
+            inspectedVersionIdRef.current = versionId;
+            setInspectedVersionId(versionId);
+            setInspectedPreviewUrl(null);
+            setInspectedRuntimeToken(null);
+            setInspectedPreviewNotice(notReadyMessage);
+          } else {
+            throw previewErr;
+          }
+        }
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to load version");
@@ -138,6 +173,7 @@ export function useAppsBuilderVersions({
     setInspectedVersionId(null);
     setInspectedPreviewUrl(null);
     setInspectedRuntimeToken(null);
+    setInspectedPreviewNotice(null);
   }, []);
 
   const restoreSelectedVersion = useCallback(async (versionId?: string) => {
@@ -183,9 +219,29 @@ export function useAppsBuilderVersions({
         status = current.status;
         setPublishStatus(status);
         if (status === "failed") {
-          const diagnostic = current.diagnostics?.[0];
-          const message = (diagnostic?.message as string | undefined) || current.error || "Publish failed";
-          throw new Error(message);
+          const diagnostics = Array.isArray(current.diagnostics) ? current.diagnostics : [];
+          const primary = diagnostics.find((item) => item && typeof item === "object" && String((item as Record<string, unknown>).kind || "") === "publish_wait_build")
+            || diagnostics[0];
+          const baseMessage = (
+            (primary as Record<string, unknown> | undefined)?.message as string | undefined
+          ) || current.error || "Publish failed";
+          const autoFix = diagnostics.find(
+            (item) =>
+              item &&
+              typeof item === "object" &&
+              String((item as Record<string, unknown>).kind || "") === "auto_fix_submission"
+          ) as Record<string, unknown> | undefined;
+          if (autoFix) {
+            const autoFixRunId = String(autoFix.auto_fix_run_id || "").trim();
+            if (autoFixRunId) {
+              throw new Error(`${baseMessage} Auto-fix run queued: ${autoFixRunId}.`);
+            }
+            const skippedReason = String(autoFix.reason || "").trim();
+            if (skippedReason) {
+              throw new Error(`${baseMessage} Auto-fix skipped: ${skippedReason}.`);
+            }
+          }
+          throw new Error(baseMessage);
         }
       }
 
@@ -225,6 +281,7 @@ export function useAppsBuilderVersions({
     inspectedVersionId,
     inspectedPreviewUrl,
     inspectedRuntimeToken,
+    inspectedPreviewNotice,
     isLoadingVersions,
     isLoadingVersion,
     isLoadingVersionPreview,

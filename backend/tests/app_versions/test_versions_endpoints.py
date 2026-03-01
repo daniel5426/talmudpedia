@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID
 
 import pytest
 from sqlalchemy import func, select
 
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision
+from app.db.postgres.models.published_apps import (
+    PublishedApp,
+    PublishedAppRevision,
+    PublishedAppRevisionBuildStatus,
+    PublishedAppStatus,
+)
+from app.workers.tasks import publish_version_pointer_after_build_task
 from tests.published_apps._helpers import (
     admin_headers,
     seed_admin_tenant_and_agent,
@@ -142,6 +149,55 @@ async def test_versions_list_get_create_restore_and_cross_app_guard(client, db_s
         headers=headers,
     )
     assert cross_app_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_manual_save_enqueues_build_but_restore_does_not(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id = await _create_app(client, headers, name="Version Build Queue App", agent_id=str(agent.id))
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    initial_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    enqueue_calls: list[tuple[str, str]] = []
+
+    def _enqueue_stub(*, revision, app, build_kind):
+        _ = app
+        enqueue_calls.append((str(revision.id), str(build_kind)))
+        return None
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_versions.enqueue_revision_build",
+        _enqueue_stub,
+    )
+
+    create_resp = await client.post(
+        f"/admin/apps/{app_id}/versions/draft",
+        headers=headers,
+        json={
+            "base_revision_id": initial_revision_id,
+            "operations": [
+                {
+                    "op": "upsert_file",
+                    "path": "src/App.tsx",
+                    "content": "export default function App() { return <main>manual-save</main>; }",
+                }
+            ],
+        },
+    )
+    assert create_resp.status_code == 200
+    created_revision_id = create_resp.json()["id"]
+    assert enqueue_calls == [(created_revision_id, "manual_save")]
+
+    restore_resp = await client.post(
+        f"/admin/apps/{app_id}/versions/{initial_revision_id}/restore",
+        headers=headers,
+        json={},
+    )
+    assert restore_resp.status_code == 200
+    assert enqueue_calls == [(created_revision_id, "manual_save")]
 
 
 @pytest.mark.asyncio
@@ -303,7 +359,7 @@ async def test_publish_selected_version_rebuilds_from_version_snapshot(client, d
 
 
 @pytest.mark.asyncio
-async def test_publish_selected_version_missing_dist_triggers_on_demand_build(client, db_session):
+async def test_publish_selected_version_missing_dist_waits_for_build_and_then_succeeds(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app(client, headers, name="Publish Missing Dist App", agent_id=str(agent.id))
@@ -312,12 +368,15 @@ async def test_publish_selected_version_missing_dist_triggers_on_demand_build(cl
     assert state_resp.status_code == 200
     selected_version_id = state_resp.json()["current_draft_revision"]["id"]
 
-    revisions_before_count = int(
-        (
-            await db_session.execute(
-                select(func.count(PublishedAppRevision.id)).where(PublishedAppRevision.published_app_id == UUID(app_id))
-            )
-        ).scalar_one()
+    queued_job_ids: list[str] = []
+
+    def _delay_stub(*, job_id: str):
+        queued_job_ids.append(str(job_id))
+        return None
+
+    monkeypatch.setattr(
+        "app.workers.tasks.publish_version_pointer_after_build_task.delay",
+        _delay_stub,
     )
 
     publish_resp = await client.post(
@@ -327,23 +386,126 @@ async def test_publish_selected_version_missing_dist_triggers_on_demand_build(cl
     )
     assert publish_resp.status_code == 200
     payload = publish_resp.json()
-    assert payload["status"] == "succeeded"
+    assert payload["status"] == "queued"
     assert payload["source_revision_id"] == selected_version_id
-    assert payload["published_revision_id"] == selected_version_id
+    assert payload["published_revision_id"] is None
+    assert len(queued_job_ids) == 1
 
     selected_row = await db_session.get(PublishedAppRevision, UUID(selected_version_id))
     assert selected_row is not None
-    assert str(selected_row.dist_storage_prefix or "").strip()
-    assert isinstance(selected_row.dist_manifest, dict) and selected_row.dist_manifest
+    selected_row.build_status = PublishedAppRevisionBuildStatus.succeeded
+    selected_row.dist_storage_prefix = f"published-apps/test/{selected_version_id}/dist"
+    selected_row.dist_manifest = {"entry_html": "index.html", "assets": []}
+    await db_session.commit()
 
-    revisions_after_count = int(
-        (
-            await db_session.execute(
-                select(func.count(PublishedAppRevision.id)).where(PublishedAppRevision.published_app_id == UUID(app_id))
-            )
-        ).scalar_one()
+    task_result = await asyncio.to_thread(
+        publish_version_pointer_after_build_task.run,
+        queued_job_ids[0],
     )
-    assert revisions_after_count == revisions_before_count
+    assert task_result["status"] == "succeeded"
+
+    status_resp = await client.get(
+        f"/admin/apps/{app_id}/publish/jobs/{payload['job_id']}",
+        headers=headers,
+    )
+    assert status_resp.status_code == 200
+    status_payload = status_resp.json()
+    assert status_payload["status"] == "succeeded"
+    assert status_payload["published_revision_id"] == selected_version_id
+
+    app_row = await db_session.get(PublishedApp, UUID(app_id))
+    assert app_row is not None
+    assert str(app_row.current_published_revision_id) == selected_version_id
+
+
+@pytest.mark.asyncio
+async def test_publish_selected_version_missing_dist_fails_and_keeps_previous_published(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id = await _create_app(client, headers, name="Publish Wait Fail App", agent_id=str(agent.id))
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    initial_revision_id = state_resp.json()["current_draft_revision"]["id"]
+
+    create_resp = await client.post(
+        f"/admin/apps/{app_id}/versions/draft",
+        headers=headers,
+        json={
+            "base_revision_id": initial_revision_id,
+            "operations": [
+                {
+                    "op": "upsert_file",
+                    "path": "src/App.tsx",
+                    "content": "export default function App() { return <main>publish-fail</main>; }",
+                }
+            ],
+        },
+    )
+    assert create_resp.status_code == 200
+    selected_version_id = create_resp.json()["id"]
+
+    previous_published = await db_session.get(PublishedAppRevision, UUID(initial_revision_id))
+    assert previous_published is not None
+    previous_published.dist_storage_prefix = f"published-apps/test/{initial_revision_id}/dist"
+    previous_published.dist_manifest = {"entry_html": "index.html", "assets": []}
+    app_row = await db_session.get(PublishedApp, UUID(app_id))
+    assert app_row is not None
+    app_row.current_published_revision_id = previous_published.id
+    app_row.status = PublishedAppStatus.published
+    await db_session.commit()
+
+    queued_job_ids: list[str] = []
+
+    def _delay_stub(*, job_id: str):
+        queued_job_ids.append(str(job_id))
+        return None
+
+    monkeypatch.setattr(
+        "app.workers.tasks.publish_version_pointer_after_build_task.delay",
+        _delay_stub,
+    )
+
+    publish_resp = await client.post(
+        f"/admin/apps/{app_id}/versions/{selected_version_id}/publish",
+        headers=headers,
+        json={},
+    )
+    assert publish_resp.status_code == 200
+    payload = publish_resp.json()
+    assert payload["status"] == "queued"
+    assert len(queued_job_ids) == 1
+
+    selected_row = await db_session.get(PublishedAppRevision, UUID(selected_version_id))
+    assert selected_row is not None
+    selected_row.build_status = PublishedAppRevisionBuildStatus.failed
+    selected_row.build_error = "npm run build failed"
+    selected_row.dist_storage_prefix = None
+    selected_row.dist_manifest = None
+    await db_session.commit()
+
+    task_result = await asyncio.to_thread(
+        publish_version_pointer_after_build_task.run,
+        queued_job_ids[0],
+    )
+    assert task_result["status"] == "failed"
+
+    status_resp = await client.get(
+        f"/admin/apps/{app_id}/publish/jobs/{payload['job_id']}",
+        headers=headers,
+    )
+    assert status_resp.status_code == 200
+    status_payload = status_resp.json()
+    assert status_payload["status"] == "failed"
+    assert status_payload["published_revision_id"] is None
+    diagnostics = status_payload.get("diagnostics") or []
+    assert diagnostics
+    assert any(str(item.get("kind")) == "publish_wait_build" for item in diagnostics if isinstance(item, dict))
+    assert any(str(item.get("kind")) == "auto_fix_submission" for item in diagnostics if isinstance(item, dict))
+
+    refreshed_app = await db_session.get(PublishedApp, UUID(app_id))
+    assert refreshed_app is not None
+    assert str(refreshed_app.current_published_revision_id) == initial_revision_id
 
 
 @pytest.mark.asyncio
@@ -360,9 +522,7 @@ async def test_version_preview_runtime_returns_tokenized_url(client, db_session)
         f"/admin/apps/{app_id}/versions/{selected_version_id}/preview-runtime",
         headers=headers,
     )
-    assert runtime_resp.status_code == 200
-    payload = runtime_resp.json()
-    assert payload["revision_id"] == selected_version_id
-    assert f"/public/apps/preview/revisions/{selected_version_id}/assets/" in payload["preview_url"]
-    assert "runtime_token=" in payload["preview_url"]
-    assert payload["runtime_token"]
+    assert runtime_resp.status_code == 409
+    detail = runtime_resp.json()["detail"]
+    assert detail["code"] == "VERSION_BUILD_NOT_READY"
+    assert detail["version_id"] == selected_version_id

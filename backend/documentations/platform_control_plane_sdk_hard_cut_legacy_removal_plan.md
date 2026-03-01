@@ -182,12 +182,9 @@ All conditions must be true:
   - Mitigation: generate SDK types from shared versioned contract schemas.
 
 ## Immediate Cleanup Backlog (Actionable)
-1. Remove fallback branches in `backend/artifacts/builtin/platform_sdk/handler.py`.
-2. Remove auto-defaulting in `backend/app/agent/executors/standard.py`.
-3. Delete old `backend/sdk/` package once replacement SDK is merged.
-4. Consolidate `GET /agents/operators` into one router.
-5. Archive/remove `backend/documentations/sdk_specification.md`.
-6. Add CI check that fails on new references to `/api/agents` under control-plane SDK/tool paths.
+1. Delete old `backend/sdk/` package once replacement SDK is merged.
+2. Expand parity coverage from currently migrated platform actions to the full SDK method surface.
+3. Add CI-level wired step that always runs the `/api/agents` guardrail test.
 
 ## Implementation Progress (2026-03-01)
 Completed:
@@ -201,16 +198,30 @@ Completed:
 6. Expanded Python replacement SDK coverage in `backend/talmudpedia_control_sdk/` to include:
    - `catalog`, `rag`, `models`, `credentials`, `knowledge_stores`, `workload_security`, `auth`, `orchestration`
    - plus additional contract tests in `backend/tests/control_plane_sdk/test_additional_modules.py`.
+7. Added shared client config capabilities required for external consumers:
+   - dynamic tenant resolution (`tenant_resolver`)
+   - env-based client bootstrap (`ControlPlaneClient.from_env(...)`)
+   - validation tests added in `backend/tests/control_plane_sdk/test_client_and_modules.py`.
+8. Added env-gated HTTP integration smoke tests for SDK module surfaces in
+   `backend/tests/control_plane_sdk/test_http_integration.py`.
+9. Removed planner-centric coarse platform actions from runtime dispatch:
+   - `validate_plan`
+   - `execute_plan`
+10. Migrated platform SDK action dispatch to canonical domain-method wrappers with action alias normalization to canonical dotted IDs.
+11. Routed runtime orchestration actions through `talmudpedia_control_sdk.orchestration.*` method wrappers.
+12. Added parity test coverage for tool action-to-SDK method contract behavior in:
+    - `backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py`
+13. Added guardrail test to fail on `/api/agents` usage in control-plane SDK/tool Python paths:
+    - `backend/tests/control_plane_sdk/test_no_legacy_api_agents_refs.py`
+14. Archived `backend/documentations/sdk_specification.md` as non-canonical legacy context.
 
 In progress:
-1. Replacement SDK implementation is underway via `backend/talmudpedia_control_sdk/` (full module surface exists; platform handler wiring is currently partial and focused on `agents/tools/artifacts` paths).
-2. Full migration of platform tool wrappers to 1:1 domain-method wrappers is partial; planner-centric actions (`validate_plan`, `execute_plan`) still exist.
+1. Replacement SDK implementation is underway via `backend/talmudpedia_control_sdk/` (full module surface exists; platform handler runtime dispatch now uses domain-method wrappers, but full surface parity rollout is still incomplete).
 
 Pending:
 1. Delete legacy `backend/sdk/` package after full replacement and parity validation.
-2. Archive/remove `backend/documentations/sdk_specification.md`.
-3. Add CI guardrail to block new `/api/agents` references in control-plane SDK/tool code paths.
+2. Expand parity tests to cover all required canonical actions in the v1 spec appendix.
+3. Wire the `/api/agents` guardrail test into always-on CI execution path.
 
 ## Contradictions Requiring Resolution
-1. `backend/documentations/sdk_specification.md` overlaps with and can contradict `platform_control_plane_sdk_spec_v1.md`.
-2. Existing tests/docs in workload delegation area may still describe fallback auth behavior not present in current handler implementation.
+1. Existing tests/docs in workload delegation area may still describe fallback auth behavior not present in current handler implementation.

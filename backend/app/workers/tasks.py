@@ -653,6 +653,244 @@ def build_published_app_revision_task(
     return run_async(_run())
 
 
+@celery_app.task(bind=True, name="app.workers.tasks.publish_version_pointer_after_build_task")
+def publish_version_pointer_after_build_task(
+    self,
+    job_id: str,
+):
+    async def _run():
+        from app.db.postgres.models.published_apps import (
+            PublishedApp,
+            PublishedAppPublishJob,
+            PublishedAppPublishJobStatus,
+            PublishedAppRevision,
+            PublishedAppRevisionBuildStatus,
+            PublishedAppStatus,
+        )
+        from app.db.postgres.session import sessionmaker
+        from app.services.published_app_publish_autofix import submit_publish_build_failure_autofix
+
+        poll_interval_seconds = max(
+            1,
+            int(os.getenv("APPS_PUBLISH_WAIT_BUILD_POLL_SECONDS", "2") or 2),
+        )
+        timeout_seconds = max(
+            30,
+            int(os.getenv("APPS_PUBLISH_WAIT_BUILD_TIMEOUT_SECONDS", "900") or 900),
+        )
+        started_at = datetime.now(timezone.utc)
+        deadline = started_at.timestamp() + float(timeout_seconds)
+        job_uuid = UUID(str(job_id))
+
+        async def _mark_failed(
+            *,
+            db,
+            job: PublishedAppPublishJob,
+            app: PublishedApp | None,
+            revision: PublishedAppRevision | None,
+            reason: str,
+            build_related: bool,
+        ) -> dict[str, Any]:
+            message = _truncate_error(reason or "Publish failed while waiting for revision build")
+            diagnostics = list(job.diagnostics or [])
+            diagnostics.append(
+                {
+                    "kind": "publish_wait_build",
+                    "build_wait_state": "failed",
+                    "build_related": "true" if build_related else "false",
+                    "message": message,
+                }
+            )
+            job.status = PublishedAppPublishJobStatus.failed
+            job.stage = "failed"
+            job.error = message
+            job.finished_at = datetime.now(timezone.utc)
+            job.last_heartbeat_at = datetime.now(timezone.utc)
+            job.diagnostics = diagnostics
+
+            if build_related and app is not None and revision is not None:
+                try:
+                    autofix_result = await submit_publish_build_failure_autofix(
+                        db=db,
+                        app=app,
+                        revision=revision,
+                        requested_by=job.requested_by,
+                        failure_reason=message,
+                    )
+                    next_diagnostics = list(job.diagnostics or [])
+                    status = str(autofix_result.get("status") or "").strip().lower()
+                    if status == "submitted":
+                        next_diagnostics.append(
+                            {
+                                "kind": "auto_fix_submission",
+                                "auto_fix_run_id": str(autofix_result.get("run_id") or ""),
+                                "chat_session_id": str(autofix_result.get("chat_session_id") or ""),
+                                "message": "Submitted automatic coding-agent fix request.",
+                            }
+                        )
+                    else:
+                        next_diagnostics.append(
+                            {
+                                "kind": "auto_fix_submission",
+                                "auto_fix_skipped": "true",
+                                "reason": str(autofix_result.get("reason") or "auto-fix was skipped"),
+                                "active_run_id": str(autofix_result.get("active_run_id") or ""),
+                            }
+                        )
+                    job.diagnostics = next_diagnostics
+                except Exception as exc:
+                    next_diagnostics = list(job.diagnostics or [])
+                    next_diagnostics.append(
+                        {
+                            "kind": "auto_fix_submission",
+                            "auto_fix_error": _truncate_error(str(exc) or repr(exc)),
+                            "message": "Failed to auto-submit coding-agent fix request.",
+                        }
+                    )
+                    job.diagnostics = next_diagnostics
+
+            await db.commit()
+            return {"status": "failed", "publish_job_id": str(job.id), "error": message}
+
+        while True:
+            async with sessionmaker() as db:
+                job_result = await db.execute(
+                    select(PublishedAppPublishJob).where(PublishedAppPublishJob.id == job_uuid).limit(1)
+                )
+                job = job_result.scalar_one_or_none()
+                if job is None:
+                    return {"status": "missing", "publish_job_id": job_id}
+
+                app: PublishedApp | None = None
+                source_revision: PublishedAppRevision | None = None
+                if job.published_app_id:
+                    app_result = await db.execute(
+                        select(PublishedApp).where(PublishedApp.id == job.published_app_id).limit(1)
+                    )
+                    app = app_result.scalar_one_or_none()
+                if app is None:
+                    return await _mark_failed(
+                        db=db,
+                        job=job,
+                        app=None,
+                        revision=None,
+                        reason="Published app not found while waiting for version build",
+                        build_related=False,
+                    )
+                if not job.source_revision_id:
+                    return await _mark_failed(
+                        db=db,
+                        job=job,
+                        app=app,
+                        revision=None,
+                        reason="Publish source revision is missing",
+                        build_related=False,
+                    )
+                revision_result = await db.execute(
+                    select(PublishedAppRevision).where(
+                        and_(
+                            PublishedAppRevision.id == job.source_revision_id,
+                            PublishedAppRevision.published_app_id == app.id,
+                        )
+                    ).limit(1)
+                )
+                source_revision = revision_result.scalar_one_or_none()
+                if source_revision is None:
+                    return await _mark_failed(
+                        db=db,
+                        job=job,
+                        app=app,
+                        revision=None,
+                        reason="Publish source revision not found",
+                        build_related=False,
+                    )
+
+                current_status = job.status.value if hasattr(job.status, "value") else str(job.status)
+                if current_status not in {
+                    PublishedAppPublishJobStatus.queued.value,
+                    PublishedAppPublishJobStatus.running.value,
+                }:
+                    return {
+                        "status": "noop",
+                        "publish_job_id": str(job.id),
+                        "job_status": current_status,
+                    }
+
+                if current_status == PublishedAppPublishJobStatus.queued.value:
+                    job.status = PublishedAppPublishJobStatus.running
+                job.stage = "waiting_for_build"
+                job.started_at = job.started_at or started_at
+                job.error = None
+                job.last_heartbeat_at = datetime.now(timezone.utc)
+                await db.commit()
+                await db.refresh(job)
+                await db.refresh(source_revision)
+
+                build_status = (
+                    source_revision.build_status.value
+                    if hasattr(source_revision.build_status, "value")
+                    else str(source_revision.build_status)
+                )
+                has_dist = bool(str(source_revision.dist_storage_prefix or "").strip()) and bool(source_revision.dist_manifest)
+                if build_status == PublishedAppRevisionBuildStatus.succeeded.value and has_dist:
+                    now = datetime.now(timezone.utc)
+                    app.current_published_revision_id = source_revision.id
+                    app.status = PublishedAppStatus.published
+                    app.published_at = now
+                    app.published_url = _build_published_url(app.slug)
+                    job.status = PublishedAppPublishJobStatus.succeeded
+                    job.stage = "completed"
+                    job.error = None
+                    job.published_revision_id = source_revision.id
+                    job.finished_at = now
+                    job.last_heartbeat_at = now
+                    diagnostics = list(job.diagnostics or [])
+                    diagnostics.append(
+                        {
+                            "kind": "publish_wait_build",
+                            "build_wait_state": "succeeded",
+                            "version_id": str(source_revision.id),
+                            "message": "Revision build succeeded; publish pointer updated.",
+                        }
+                    )
+                    job.diagnostics = diagnostics
+                    await db.commit()
+                    return {
+                        "status": "succeeded",
+                        "publish_job_id": str(job.id),
+                        "published_revision_id": str(source_revision.id),
+                    }
+
+                if build_status == PublishedAppRevisionBuildStatus.failed.value:
+                    failure_reason = str(source_revision.build_error or "").strip() or "Revision build failed"
+                    return await _mark_failed(
+                        db=db,
+                        job=job,
+                        app=app,
+                        revision=source_revision,
+                        reason=failure_reason,
+                        build_related=True,
+                    )
+
+                if datetime.now(timezone.utc).timestamp() >= deadline:
+                    timeout_reason = (
+                        f"Timed out after {timeout_seconds}s waiting for revision build "
+                        f"(version={source_revision.id}, build_status={build_status})."
+                    )
+                    return await _mark_failed(
+                        db=db,
+                        job=job,
+                        app=app,
+                        revision=source_revision,
+                        reason=timeout_reason,
+                        build_related=True,
+                    )
+
+            await asyncio.sleep(float(poll_interval_seconds))
+
+    return run_async(_run())
+
+
 @celery_app.task(bind=True, name="app.workers.tasks.publish_published_app_task")
 def publish_published_app_task(
     self,

@@ -115,3 +115,37 @@ def test_artifact_promote_serialization_includes_tenant_slug_and_version() -> No
     assert call["json"]["namespace"] == "custom"
     assert call["json"]["version"] == "1.0.0"
     assert call["headers"]["X-Idempotency-Key"] == "idem-promote"
+
+
+def test_tenant_resolver_sets_header_per_request() -> None:
+    session = _RecordingSession(_FakeResponse(payload={"id": "agent-1"}))
+    resolver_values = iter(["tenant-a", "tenant-b"])
+    client = ControlPlaneClient(
+        base_url="http://localhost:8000",
+        token="token-123",
+        tenant_resolver=lambda: next(resolver_values),
+        session=session,
+    )
+
+    client.agents.get("agent-1")
+    client.agents.get("agent-1")
+
+    first = session.calls[0]["headers"]["X-Tenant-ID"]
+    second = session.calls[1]["headers"]["X-Tenant-ID"]
+    assert first == "tenant-a"
+    assert second == "tenant-b"
+
+
+def test_from_env_uses_default_test_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_BASE_URL", "http://env-host")
+    monkeypatch.setenv("TEST_API_KEY", "env-token")
+    monkeypatch.setenv("TEST_TENANT_ID", "env-tenant")
+    session = _RecordingSession(_FakeResponse(payload={"ok": True}))
+
+    client = ControlPlaneClient.from_env(session=session)
+    client.agents.list()
+
+    call = session.calls[0]
+    assert call["url"].startswith("http://env-host/")
+    assert call["headers"]["Authorization"] == "Bearer env-token"
+    assert call["headers"]["X-Tenant-ID"] == "env-tenant"

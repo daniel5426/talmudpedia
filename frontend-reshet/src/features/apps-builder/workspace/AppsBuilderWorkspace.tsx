@@ -363,6 +363,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     inspectedVersionId,
     inspectedPreviewUrl,
     inspectedRuntimeToken,
+    inspectedPreviewNotice,
     refreshVersions,
     selectVersion,
     clearInspectedVersion,
@@ -420,7 +421,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const effectivePreviewUrl = isInspectingVersion ? inspectedPreviewFrameUrl : previewFrameUrl;
   const effectivePreviewToken = isInspectingVersion ? inspectedRuntimeToken : previewAuthToken;
   const effectivePreviewStatus = isInspectingVersion ? "running" : draftDevStatus;
-  const effectivePreviewError = isInspectingVersion ? null : draftDevError;
+  const effectivePreviewError = isInspectingVersion ? inspectedPreviewNotice : draftDevError;
   const effectivePreviewPhase = isInspectingVersion ? null : sandboxPhase;
   const effectivePreviewLoadingMessage = isInspectingVersion
     ? (isLoadingVersionPreview ? "Loading selected version preview..." : null)

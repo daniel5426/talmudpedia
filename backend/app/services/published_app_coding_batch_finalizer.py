@@ -18,6 +18,10 @@ from app.db.postgres.models.published_apps import (
 )
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
+from app.services.published_app_revision_build_dispatch import (
+    enqueue_revision_build,
+    mark_revision_build_enqueue_failed,
+)
 from app.services.published_app_versioning import create_app_version
 
 _ACTIVE_RUN_STATUSES = {RunStatus.queued, RunStatus.running}
@@ -198,6 +202,7 @@ class PublishedAppCodingBatchFinalizer:
 
             finalized_at = datetime.now(timezone.utc)
             created_by_run: dict[str, str] = {}
+            build_enqueue_by_run: dict[str, dict[str, str | bool]] = {}
 
             if live_files is not None:
                 _validate_builder_project_or_raise(live_files, current.entry_file)
@@ -239,12 +244,29 @@ class PublishedAppCodingBatchFinalizer:
                 app.current_draft_revision_id = revision.id
                 candidate.result_revision_id = revision.id
                 created_by_run[str(candidate.id)] = str(revision.id)
+                enqueue_error = enqueue_revision_build(
+                    revision=revision,
+                    app=app,
+                    build_kind="coding_run",
+                )
+                if enqueue_error:
+                    mark_revision_build_enqueue_failed(
+                        revision=revision,
+                        reason=enqueue_error,
+                    )
+                    build_enqueue_by_run[str(candidate.id)] = {
+                        "ok": False,
+                        "error": enqueue_error,
+                    }
+                else:
+                    build_enqueue_by_run[str(candidate.id)] = {"ok": True}
 
             await self.db.commit()
             return {
                 "status": "finalized",
                 "candidate_count": len(completed_candidates),
                 "revision_ids_by_run": created_by_run,
+                "build_enqueue_by_run": build_enqueue_by_run,
                 "latest_revision_id": str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
             }
         finally:

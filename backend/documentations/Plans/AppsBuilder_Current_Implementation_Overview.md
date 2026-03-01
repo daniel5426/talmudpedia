@@ -1,6 +1,6 @@
 # Apps Builder Current Implementation Overview
 
-Last Updated: 2026-02-26
+Last Updated: 2026-03-01
 
 ## Purpose
 This document is the current-state overview of the Apps Builder system (not a future implementation plan). It summarizes how the builder works today across backend, frontend, runtime, coding-agent, revision persistence, and publish/runtime delivery.
@@ -14,6 +14,7 @@ Core implementation choices in current state:
 - Draft preview uses a persistent draft-dev sandbox session per app/user.
 - Coding-agent runs use the same sandbox as preview, with stage/live isolation inside that sandbox.
 - Published runtime is static artifact delivery (`vite_static`) and no longer source-UI compilation.
+- Revision dist builds are asynchronous and build-readiness-aware for version publish/preview flows.
 
 ## Credential Handling in Builder Runtime
 - Builder-generated apps and coding-agent runs do not embed provider API keys in template files.
@@ -128,6 +129,7 @@ Run flow:
 - Chat sessions and chat messages are persisted server-side.
 - Frontend can resume chat sessions and reuse `chat_session_id` across runs.
 - Run tool events are now persisted in run output payload (`output_result.tool_events`) and returned via chat-session detail `run_events` so reload can reconstruct tool-call timeline rows.
+- Build-related publish failures can now trigger a best-effort auto-fix coding-agent prompt in the latest existing chat session for the publishing user.
 
 ## OpenCode Integration
 OpenCode is the default engine path in current state.
@@ -156,37 +158,40 @@ Core behavior:
 
 Service:
 - `backend/app/services/published_app_revision_store.py`
+- `backend/app/services/published_app_revision_build_dispatch.py`
+
+Build enqueue behavior (current):
+- App creation initial draft revision (`origin_kind="app_init"`) is auto-enqueued for build.
+- Coding-run-created revisions (`origin_kind="coding_run"`) are auto-enqueued for build by batch finalizer.
+- Manual draft-save revisions (`POST /admin/apps/{app_id}/versions/draft`, `origin_kind="manual_save"`) are auto-enqueued for build.
+- Restore/template-reset revisions are not auto-enqueued by default.
+- Enqueue failure marks revision build as failed (`build_status=failed`) without rolling back revision creation.
 
 ## Publish Pipeline
 Publish is asynchronous and deterministic.
 
 Flow:
-1. Optional publish payload (`files`/`entry_file`) is accepted.
-2. Publish job created/enqueued.
-3. Publish execution path is feature-flagged:
-   - Default/fallback: Celery worker build from draft revision snapshot (legacy/current fallback path).
-   - Sandbox path (`APPS_PUBLISH_USE_SANDBOX_BUILD=1`): build from current draft-dev live preview sandbox.
-4. Sandbox path requires an active user draft-dev session and snapshots live preview -> isolated publish workspace (`.talmudpedia/publish/current/workspace`) before build.
-5. In sandbox mode, live preview sandbox is the source of truth for publish:
-   - publish request `files` payload is ignored (no pre-publish sync back into live sandbox)
-   - publish request `entry_file` may be recorded in diagnostics/request metadata
-   - stale `base_revision_id` conflict checks are bypassed for sandbox mode because publish uses the live snapshot, not a draft DB revision snapshot
-6. Sandbox path creates a draft checkpoint revision from that frozen live snapshot (audit/history) and publishes from the isolated workspace build output.
-7. Sandbox path attempts dependency reuse for the isolated publish workspace:
-   - prepares publish workspace dependencies from the live sandbox workspace `node_modules`
-   - prefers symlink reuse, then copy fallback
-   - falls back to `npm ci` (if lockfile exists) or `npm install --no-audit --no-fund` only when reuse is unavailable/incompatible
-8. Dist artifacts uploaded to immutable storage prefix.
-9. Publish pointer/url updates only on successful completion.
+1. `POST /admin/apps/{app_id}/versions/{version_id}/publish` always creates a publish job.
+2. If selected revision already has dist artifacts, publish pointer update is immediate and job succeeds.
+3. If selected revision dist is missing, publish job remains queued/running and an async wait task is enqueued:
+   - `app.workers.tasks.publish_version_pointer_after_build_task`
+4. Publish wait task polls selected revision build state until:
+   - success (`build_status=succeeded` + dist present): publish pointer updates to selected `version_id`
+   - failure (`build_status=failed`) or timeout: publish job fails and existing published pointer is preserved
+5. Build-related publish failure triggers best-effort coding-agent auto-fix submission in latest existing chat session for publish requester.
+6. Publish diagnostics now include build-wait and auto-fix metadata (`build_wait_state`, `auto_fix_run_id`, `auto_fix_skipped`, `auto_fix_error`).
 
 Key endpoints:
-- `POST /admin/apps/{app_id}/publish`
+- `POST /admin/apps/{app_id}/versions/{version_id}/publish`
 - `GET /admin/apps/{app_id}/publish/jobs/{job_id}`
+- `GET /admin/apps/{app_id}/versions/{version_id}/preview-runtime`
 
 Worker/runtime plumbing:
 - Celery app/tasks remain available as fallback under `backend/app/workers/`.
 - Sandbox publish runner service (in-process async dispatch) is implemented in:
   - `backend/app/services/published_app_publish_runtime.py`
+- Publish build-wait + pointer-update worker task:
+  - `backend/app/workers/tasks.py` (`publish_version_pointer_after_build_task`)
 
 Publish job observability (current additions):
 - Polling response includes optional `stage` (for example `snapshot`, `install`, `build`, `upload`, `finalize`).
@@ -266,6 +271,12 @@ Current policy highlights:
 ### Open Runtime
 - Published runtime resolves through runtime descriptor/static artifact URL.
 - On the published app host itself, backend now serves either the centralized auth shell or the published runtime HTML at the same URL based on cookie auth state.
+
+### Version Preview Readiness
+- Version preview runtime endpoint now fails fast when selected revision dist artifacts are unavailable:
+  - `GET /admin/apps/{app_id}/versions/{version_id}/preview-runtime`
+  - returns `409 VERSION_BUILD_NOT_READY` with `build_status` and `build_error`
+- This replaces delayed asset-path failures and allows frontend to display non-fatal “build not ready” status.
 
 ## Operational and Testing Notes
 Relevant active test areas:

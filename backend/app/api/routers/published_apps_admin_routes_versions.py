@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -26,6 +25,10 @@ from app.db.postgres.models.published_apps import (
 )
 from app.db.postgres.session import get_db
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
+from app.services.published_app_revision_build_dispatch import (
+    enqueue_revision_build,
+    mark_revision_build_enqueue_failed,
+)
 from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_versioning import create_app_version
 
@@ -72,6 +75,10 @@ class VersionPreviewRuntimeResponse(BaseModel):
     preview_url: str
     runtime_token: str
     expires_at: datetime
+
+
+def _revision_has_dist_assets(revision: PublishedAppRevision) -> bool:
+    return bool(str(revision.dist_storage_prefix or "").strip()) and bool(revision.dist_manifest)
 
 
 @router.get("/{app_id}/versions", response_model=List[VersionListItemResponse])
@@ -209,6 +216,16 @@ async def create_draft_version(
         build_seq=_next_build_seq(current),
         template_runtime="vite_static",
     )
+    enqueue_error = enqueue_revision_build(
+        revision=revision,
+        app=app,
+        build_kind="manual_save",
+    )
+    if enqueue_error:
+        mark_revision_build_enqueue_failed(
+            revision=revision,
+            reason=enqueue_error,
+        )
     app.current_draft_revision_id = revision.id
     await db.commit()
     await db.refresh(revision)
@@ -294,6 +311,17 @@ async def get_version_preview_runtime(
     _assert_can_manage_apps(ctx)
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     revision = await _get_revision_for_app(db, app.id, version_id)
+    if not _revision_has_dist_assets(revision):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "VERSION_BUILD_NOT_READY",
+                "version_id": str(revision.id),
+                "build_status": revision.build_status.value if hasattr(revision.build_status, "value") else str(revision.build_status),
+                "build_error": revision.build_error,
+                "message": "Selected version preview is unavailable until build artifacts are ready.",
+            },
+        )
 
     preview_subject = str(ctx.get("user").id) if ctx.get("user") else str(ctx.get("membership").user_id)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=PUBLISHED_APP_PREVIEW_TOKEN_EXPIRE_MINUTES)
@@ -351,59 +379,7 @@ async def publish_version(
             },
         )
 
-    has_dist = bool(str(revision.dist_storage_prefix or "").strip()) and bool(revision.dist_manifest)
-    built_on_publish = False
-    if not has_dist:
-        build_result: dict[str, Any] | None = None
-        try:
-            from app.workers.tasks import build_published_app_revision_task
-        except Exception as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "VERSION_DIST_MISSING",
-                    "version_id": str(revision.id),
-                    "message": "Selected version has no built dist artifacts and revision build is unavailable.",
-                    "reason": str(exc),
-                },
-            ) from exc
-
-        try:
-            build_result = await asyncio.to_thread(
-                build_published_app_revision_task.run,
-                str(revision.id),
-                str(app.tenant_id),
-                str(app.id),
-                str(app.slug),
-                "publish_pointer",
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "VERSION_DIST_MISSING",
-                    "version_id": str(revision.id),
-                    "message": "Selected version has no built dist artifacts and on-demand build failed.",
-                    "reason": str(exc),
-                },
-            ) from exc
-
-        await db.refresh(revision)
-        has_dist = bool(str(revision.dist_storage_prefix or "").strip()) and bool(revision.dist_manifest)
-        if not has_dist:
-            reason = ""
-            if isinstance(build_result, dict):
-                reason = str(build_result.get("error") or build_result.get("status") or "").strip()
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "VERSION_DIST_MISSING",
-                    "version_id": str(revision.id),
-                    "message": "Selected version has no built dist artifacts. Build this version before publishing.",
-                    "reason": reason or None,
-                },
-            )
-        built_on_publish = True
+    has_dist = _revision_has_dist_assets(revision)
 
     now = datetime.now(timezone.utc)
     publish_job = PublishedAppPublishJob(
@@ -412,7 +388,7 @@ async def publish_version(
         requested_by=actor_id,
         source_revision_id=revision.id,
         saved_draft_revision_id=None,
-        published_revision_id=revision.id,
+        published_revision_id=None,
         status=PublishedAppPublishJobStatus.running,
         stage="running",
         error=None,
@@ -420,24 +396,46 @@ async def publish_version(
             {
                 "kind": "publish_pointer",
                 "version_id": str(revision.id),
-                "reused_dist": "false" if built_on_publish else "true",
-                "built_on_publish": "true" if built_on_publish else "false",
+                "reused_dist": "true" if has_dist else "false",
+                "built_on_publish": "false",
             }
         ],
         last_heartbeat_at=now,
-        started_at=now,
+        started_at=now if has_dist else None,
         finished_at=None,
     )
     db.add(publish_job)
     await db.flush()
-    app.current_published_revision_id = revision.id
-    app.status = PublishedAppStatus.published
-    app.published_at = now
-    app.published_url = _build_published_url(app.slug)
-    publish_job.status = PublishedAppPublishJobStatus.succeeded
-    publish_job.stage = "completed"
-    publish_job.finished_at = now
-    publish_job.last_heartbeat_at = now
+
+    if has_dist:
+        app.current_published_revision_id = revision.id
+        app.status = PublishedAppStatus.published
+        app.published_at = now
+        app.published_url = _build_published_url(app.slug)
+        publish_job.status = PublishedAppPublishJobStatus.succeeded
+        publish_job.stage = "completed"
+        publish_job.published_revision_id = revision.id
+        publish_job.finished_at = now
+        publish_job.last_heartbeat_at = now
+    else:
+        publish_job.status = PublishedAppPublishJobStatus.queued
+        publish_job.stage = "waiting_for_build"
+        try:
+            from app.workers.tasks import publish_version_pointer_after_build_task
+            publish_version_pointer_after_build_task.delay(job_id=str(publish_job.id))
+        except Exception as exc:
+            publish_job.status = PublishedAppPublishJobStatus.failed
+            publish_job.stage = "failed"
+            publish_job.error = f"Failed to enqueue publish wait task: {exc}"
+            publish_job.finished_at = datetime.now(timezone.utc)
+            publish_job.last_heartbeat_at = datetime.now(timezone.utc)
+            publish_job.diagnostics = list(publish_job.diagnostics or []) + [
+                {
+                    "kind": "publish_wait_build",
+                    "build_wait_state": "enqueue_failed",
+                    "message": str(exc),
+                }
+            ]
     await db.commit()
     await db.refresh(publish_job)
 

@@ -50,11 +50,11 @@ This v1 spec is grounded in current backend code:
   - `/admin/pipelines/*`, `/admin/artifacts`, `/admin/settings/*`, `/admin/knowledge-stores/*`
   - `/internal/auth/*`, `/internal/orchestration/*`
 - Current lightweight Python SDK in `backend/sdk/` is catalog-first and not a full contract SDK.
-- `backend/sdk/pipeline.py` still posts agent creation to `/api/agents`.
-- `backend/artifacts/builtin/platform_sdk/handler.py` still has `/agents` then `/api/agents` fallback for deploy-agent.
-- Platform SDK runtime defaults empty calls to a synthetic action in `backend/app/agent/executors/standard.py`.
+- `backend/sdk/pipeline.py` now posts agent creation to canonical `/agents` (legacy package remains pending deletion).
+- `backend/artifacts/builtin/platform_sdk/handler.py` now uses explicit-action, SDK-backed domain wrappers and no `/api/agents` fallback.
+- Platform SDK runtime no longer auto-defaults empty calls to synthetic actions in `backend/app/agent/executors/standard.py`.
 - Knowledge stores currently require `tenant_slug` query parameter, unlike most other domains.
-- `backend/app/api/routers/agent_operators.py` and `backend/app/api/routers/agents.py` both expose `GET /agents/operators` (duplicate surface).
+- Duplicate `GET /agents/operators` router exposure has been removed (single authoritative route remains).
 
 This spec defines the target canonical behavior and migration rules from these drifts.
 
@@ -834,6 +834,9 @@ The following action IDs are recommended as stable domain actions for parity:
 Completed in this increment:
 - Activated/wired Python control-plane SDK package usage: `backend/talmudpedia_control_sdk/`.
 - Adopted shared transport/error/envelope client (`ControlPlaneClient`) with contract headers (`X-SDK-Contract`, tenant/auth, idempotency on mutations) in platform tool flows.
+- Added shared client configuration features aligned with spec section 6.3:
+  - `tenant_resolver` callback support (alternative to fixed `tenant_id`)
+  - `ControlPlaneClient.from_env(...)` bootstrap for base URL, token, tenant
 - SDK module coverage in Python package now includes:
   - `catalog`
   - `agents`
@@ -853,14 +856,85 @@ Completed in this increment:
 - Removed legacy deploy-agent fallback to `/api/agents` from platform SDK execution path.
 - Removed Platform SDK empty-call auto-defaulting from `backend/app/agent/executors/standard.py`.
 - Removed duplicate `/agents/operators` route registration from `backend/main.py` by keeping `agents` router as the single mounted source.
+- Removed planner-centric platform SDK actions from runtime dispatch:
+  - `validate_plan`
+  - `execute_plan`
+- Migrated platform SDK handler routing to canonical domain actions with explicit alias normalization (legacy action IDs map to canonical dotted action IDs):
+  - `catalog.*`
+  - `artifacts.*`
+  - `tools.*`
+  - `agents.*`
+  - `orchestration.*`
+- Switched orchestration wrappers to direct `talmudpedia_control_sdk.orchestration.*` calls (no ad-hoc internal HTTP helper path for runtime dispatch).
+- Added parity-focused tests that assert action inputs/outputs align with SDK method invocation contracts:
+  - `backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py`
+- Added control-plane guardrail test to fail on new `/api/agents` references in SDK/tool Python code:
+  - `backend/tests/control_plane_sdk/test_no_legacy_api_agents_refs.py`
+- Archived legacy overlapping SDK doc as explicitly non-canonical:
+  - `backend/documentations/sdk_specification.md`
 - Added unit/contract tests for the new SDK and hard-cut behavior:
   - `backend/tests/control_plane_sdk/test_client_and_modules.py`
   - `backend/tests/control_plane_sdk/test_additional_modules.py`
+  - `backend/tests/control_plane_sdk/test_http_integration.py` (env-gated HTTP smoke coverage)
   - `backend/tests/platform_sdk_tool/test_platform_sdk_actions.py` updates
+  - `backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py` updates
   - `backend/tests/workload_delegation_auth/test_platform_sdk_delegated_auth_flow.py` updates
 
 Still pending for full v1 conformance:
 - TypeScript SDK package (`@talmudpedia/control-sdk`).
-- Full tool-wrapper parity generation for all SDK methods.
+- Full tool-wrapper parity generation for all SDK methods (broader than current covered actions).
 - Legacy package deletion (`backend/sdk/`) after full replacement parity.
 - Cross-surface E2E parity suite (UI vs SDK vs tool wrappers) for all control-plane mutation paths.
+- Production-facing developer docs for external SDK consumers (installation/versioning/auth quickstart) are still pending.
+
+## 24. MVP Remaining Implementation Scope (Handoff Checklist)
+This section defines the minimum remaining work to call the Control Plane SDK v1 migration MVP complete.
+
+### 24.1 Critical (Must finish for MVP)
+1. Split oversized platform handler into domain modules and enforce file-size guardrail:
+   - Current blocker: `backend/artifacts/builtin/platform_sdk/handler.py` remains above enforced size limits.
+   - Target shape:
+     - `backend/artifacts/builtin/platform_sdk/handler.py` (thin dispatcher only)
+     - `backend/artifacts/builtin/platform_sdk/actions/catalog.py`
+     - `backend/artifacts/builtin/platform_sdk/actions/agents.py`
+     - `backend/artifacts/builtin/platform_sdk/actions/artifacts.py`
+     - `backend/artifacts/builtin/platform_sdk/actions/tools.py`
+     - `backend/artifacts/builtin/platform_sdk/actions/orchestration.py`
+2. Complete explicit 1:1 tool action coverage for all required canonical domain methods (no planner/coarse actions):
+   - Keep alias support only as input normalization.
+   - Runtime output action IDs must be canonical dotted IDs.
+3. Expand action parity tests from partial coverage to full method-family coverage:
+   - Every exposed tool action must have a direct parity test against corresponding SDK method call contract.
+4. Add cross-surface parity tests for core mutation paths:
+   - UI path vs SDK path vs tool path must converge to equivalent persisted state.
+5. Delete legacy lightweight SDK package:
+   - Remove `backend/sdk/*` once parity suite is green and no callers remain.
+6. Ensure `/api/agents` guardrail is always enforced in CI:
+   - The guardrail test exists and must be wired into always-on CI execution path.
+
+### 24.2 Important (Should finish in same MVP window)
+1. Method-level contract completion in this spec for every exposed method:
+   - input schema
+   - output schema
+   - side effects
+   - scopes
+   - stable error codes
+   - idempotency behavior
+2. Normalize error envelope behavior across SDK wrappers/tool actions:
+   - consistent `code`, `message`, `details`, `retryable`, `http_status`.
+3. Validate audit-event emission coverage for all control-plane mutation wrappers.
+4. Add env-gated HTTP parity integration tests for remaining uncovered module routes.
+
+### 24.3 Nice-to-have (Not blocking MVP)
+1. TypeScript control SDK package implementation parity with Python.
+2. External-facing developer quickstart documentation and migration guide.
+3. Optional action-wrapper generation from shared method metadata to reduce drift long-term.
+
+### 24.4 MVP Exit Criteria (Operational)
+MVP is complete only when all are true:
+1. No planner-centric actions remain executable in platform SDK tool runtime.
+2. No `/api/agents` references remain in control-plane SDK/tool code paths, and CI blocks regressions.
+3. Legacy `backend/sdk/` package is deleted.
+4. Full parity tests (action↔SDK and UI↔SDK↔tool for core mutations) pass.
+5. Platform SDK tool runtime code is modularized and compliant with file-size guardrails.
+6. Contract and hard-cut docs are synchronized with shipped behavior.

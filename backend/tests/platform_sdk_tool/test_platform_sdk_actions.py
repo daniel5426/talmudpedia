@@ -1,51 +1,11 @@
 import json
-from types import SimpleNamespace
 
 from artifacts.builtin.platform_sdk import handler
 
 
 class DummyClient:
-    def __init__(self):
-        self.nodes = SimpleNamespace(catalog={})
-        self.agent_nodes = SimpleNamespace(catalog=[])
-
-    def connect(self):
-        return None
-
-
-def test_validate_plan_accepts_new_actions():
-    client = DummyClient()
-    steps = [
-        {
-            "action": "create_artifact_draft",
-            "payload": {"name": "demo", "python_code": "def execute(x, y=None):\n    return x"},
-        },
-        {"action": "promote_artifact", "payload": {"artifact_id": "draft-123", "namespace": "custom"}},
-        {
-            "action": "create_tool",
-            "payload": {
-                "name": "Demo Tool",
-                "slug": "demo-tool",
-                "input_schema": {"type": "object"},
-                "output_schema": {"type": "object"},
-            },
-        },
-        {"action": "run_tests", "payload": {"tests": [{"name": "t1", "agent_target": {"agent_id": "a"}}]}},
-    ]
-
-    result, errors = handler._validate_plan(client, steps)
-
-    assert result["valid"] is True
-    assert errors == []
-
-
-def test_validate_plan_missing_fields_create_tool():
-    client = DummyClient()
-    steps = [{"action": "create_tool", "payload": {"name": "Tool"}}]
-    result, errors = handler._validate_plan(client, steps)
-
-    assert result["valid"] is False
-    assert any(err.get("error") == "missing_fields" for err in errors)
+    base_url = "http://localhost:8000"
+    headers = {}
 
 
 def test_run_tests_evaluates_assertions(monkeypatch):
@@ -73,7 +33,7 @@ def test_run_tests_evaluates_assertions(monkeypatch):
     assert result["summary"]["failed"] == 0
 
 
-def test_execute_ignores_auth_envelope_without_action():
+def test_execute_requires_explicit_action():
     context = {
         "inputs": {
             "user_id": "u1",
@@ -93,17 +53,39 @@ def test_execute_ignores_auth_envelope_without_action():
     assert any(err.get("code") == "MISSING_REQUIRED_FIELD" for err in out["context"]["errors"])
 
 
-def test_execute_ignores_metadata_probe_without_action():
-    context = {
-        "inputs": {
-            "artifact_id": "builtin/platform_sdk",
-            "version": "1.0.0",
-            "config_keys": ["tool_id", "_artifact_id", "_artifact_version"],
-        }
-    }
-    out = handler.execute(state={}, config={}, context=context)
-    assert out["context"]["action"] == "noop"
-    assert out["context"]["result"]["status"] == "validation_error"
+def test_execute_rejects_deprecated_plan_actions():
+    out = handler.execute(
+        state={},
+        config={},
+        context={"inputs": {"action": "validate_plan", "tenant_id": "tenant-1", "token": "t"}},
+    )
+
+    assert out["context"]["action"] == "validate_plan"
+    assert out["context"]["result"]["reason"] == "deprecated_action"
+    assert any(err.get("error") == "deprecated_action" for err in out["context"]["errors"])
+
+
+def test_execute_maps_legacy_alias_to_canonical_action(monkeypatch):
+    monkeypatch.setattr(
+        handler,
+        "_resolve_auth",
+        lambda inputs, payload, state=None, context=None, action=None, required_scopes=None: (
+            "http://localhost:8000",
+            "token",
+            "tenant-1",
+            {},
+        ),
+    )
+    monkeypatch.setattr(handler, "_fetch_catalog", lambda client, payload: ({"ok": True}, []))
+
+    out = handler.execute(
+        state={},
+        config={},
+        context={"inputs": {"action": "fetch_catalog", "tenant_id": "tenant-1", "token": "t"}},
+    )
+
+    assert out["context"]["action"] == "catalog.list_capabilities"
+    assert out["context"]["result"] == {"ok": True}
 
 
 def test_resolve_action_requires_explicit_action():
@@ -115,28 +97,3 @@ def test_resolve_action_requires_explicit_action():
         tests=[{"name": "t1"}],
     )
     assert resolved == "noop"
-
-
-def test_deploy_agent_uses_agents_endpoint_without_fallback(monkeypatch):
-    class FakeAgents:
-        def __init__(self):
-            self.calls = []
-
-        def create(self, payload, options=None):
-            self.calls.append({"payload": payload, "options": options})
-            return {"data": {"id": "agent-123"}}
-
-    class FakeControlClient:
-        def __init__(self):
-            self.agents = FakeAgents()
-
-    fake_client = FakeControlClient()
-    monkeypatch.setattr(handler, "_control_client", lambda _legacy_client: fake_client)
-
-    legacy_client = type("LegacyClient", (), {"base_url": "http://localhost:8000", "headers": {}})()
-    step = {"action": "deploy_agent", "payload": {"name": "A", "slug": "a", "graph_definition": {"nodes": [], "edges": []}}}
-    result, errors = handler._step_deploy_agent(legacy_client, step, dry_run=False)
-
-    assert errors is None
-    assert result == {"id": "agent-123"}
-    assert len(fake_client.agents.calls) == 1

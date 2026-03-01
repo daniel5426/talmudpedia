@@ -24,6 +24,10 @@ from app.db.postgres.models.published_apps import (
 from app.db.postgres.session import get_db
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 from app.services.published_app_auth_templates import list_auth_templates
+from app.services.published_app_revision_build_dispatch import (
+    enqueue_revision_build,
+    mark_revision_build_enqueue_failed,
+)
 from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_access import (
@@ -160,6 +164,16 @@ async def create_published_app(
             build_seq=1,
             template_runtime="vite_static",
         )
+        enqueue_error = enqueue_revision_build(
+            revision=revision,
+            app=app,
+            build_kind="app_init",
+        )
+        if enqueue_error:
+            mark_revision_build_enqueue_failed(
+                revision=revision,
+                reason=enqueue_error,
+            )
         app.current_draft_revision_id = revision.id
 
         await db.commit()
