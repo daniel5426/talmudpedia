@@ -1,6 +1,8 @@
 # Agent Builder v2 Frontend Refactor Handoff
 
-Last Updated: 2026-02-09
+Last Updated: 2026-03-02
+
+> Status Note (2026-03-02): Portions of this handoff reference the historical staged Platform Architect graph that was current at the time. The current backend architect runtime is V1 single-agent (`start -> agent -> end`) and should be treated as source of truth for new work.
 
 ## 1. Purpose
 This handoff is for a fresh-context implementation chat to execute a full frontend refactor for Agent Builder to support GraphSpec v2 orchestration and runtime topology visualization in Execute mode.

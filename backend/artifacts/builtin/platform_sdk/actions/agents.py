@@ -117,6 +117,42 @@ def create_or_update(
         return None, [{"error": "create_or_update_agent_failed", "detail": str(exc), "agent_id": agent_id}]
 
 
+def create(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    return create_or_update(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=control_client_factory,
+        request_options_builder=request_options_builder,
+    )
+
+
+def update(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    if not (payload.get("agent_id") or payload.get("id")):
+        return None, [{"error": "missing_fields", "fields": ["agent_id"]}]
+    return create_or_update(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=control_client_factory,
+        request_options_builder=request_options_builder,
+    )
+
+
 def publish(
     client: Client,
     payload: Dict[str, Any],

@@ -1,6 +1,6 @@
 # Platform Control Plane SDK Contract Specification (v1)
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-02
 
 ## Document Control
 - Status: In implementation (normative for new SDK work)
@@ -676,22 +676,18 @@ The method list below is normative for v1 SDK surface. Each method maps to one c
 Every SDK method above MUST have an equivalent agent tool action with the same JSON input and output contracts.
 
 ### 12.2 Current Tool Action Baseline
-Current `builtin/platform_sdk` actions include:
-- `fetch_catalog`
-- `validate_plan`
-- `execute_plan`
-- `create_artifact_draft`
-- `promote_artifact`
-- `create_tool`
-- `run_agent`
-- `run_tests`
-- `spawn_run`
-- `spawn_group`
-- `join`
-- `cancel_subtree`
-- `evaluate_and_replan`
-- `query_tree`
-- `respond`
+Current control-plane tooling supports canonical domain actions and legacy aliases:
+- Canonical `domain.action` dispatch (for example `agents.create`, `agents.update`, `rag.create_visual_pipeline`, `rag.compile_visual_pipeline`, `auth.mint_workload_token`, `workload_security.decide_approval`).
+- Legacy aliases remain for compatibility in `builtin/platform_sdk` (`fetch_catalog`, `create_artifact_draft`, etc.) but are non-canonical.
+
+Platform Architect v1 now uses domain-scoped tools:
+- `platform-rag`
+- `platform-agents`
+- `platform-assets`
+- `platform-governance`
+
+Each domain tool enforces action-prefix boundaries with explicit action payload contracts.
+Hard-cut note: `architect.run` is removed from active runtime path.
 
 ### 12.3 v1 Required Direction
 - Move from planner-centric coarse actions to domain actions that map directly to SDK methods.

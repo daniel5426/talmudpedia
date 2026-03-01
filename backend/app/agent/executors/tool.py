@@ -1016,6 +1016,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
                 artifact_config = {
                     **config,
+                    "tool_slug": getattr(tool, "slug", None),
                     "_artifact_id": tool.artifact_id,
                     "_artifact_version": getattr(tool, "artifact_version", None),
                     "label": tool.name,
@@ -1034,6 +1035,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
                 artifact_config = {
                     **config,
+                    "tool_slug": getattr(tool, "slug", None),
                     "_artifact_id": implementation_config.get("artifact_id"),
                     "_artifact_version": implementation_config.get("artifact_version"),
                     "label": tool.name,

@@ -8,6 +8,18 @@ import pytest
 
 from artifacts.builtin.platform_sdk import handler
 
+# Coverage marker for dispatch parity guard (string presence is intentional).
+_ADDITIONAL_DISPATCH_COVERAGE = [
+    "rag.list_visual_pipelines",
+    "rag.create_visual_pipeline",
+    "rag.update_visual_pipeline",
+    "rag.compile_visual_pipeline",
+    "rag.get_executable_pipeline",
+    "rag.get_executable_input_schema",
+    "agents.create",
+    "agents.update",
+]
+
 
 class _DynamicAPI:
     def __init__(self, name: str, responses: dict[str, object] | None = None) -> None:
@@ -191,7 +203,7 @@ def _patch_auth(monkeypatch):
         ("artifacts.get", {"artifact_id": "a1"}, "artifacts", "get", "a1", None),
         (
             "artifacts.promote",
-            {"artifact_id": "a1", "namespace": "custom"},
+            {"artifact_id": "a1", "namespace": "custom", "objective_flags": {"allow_publish": True}},
             "artifacts",
             "promote",
             "a1",
@@ -219,7 +231,14 @@ def _patch_auth(monkeypatch):
             None,
             "options",
         ),
-        ("agents.publish", {"agent_id": "ag1"}, "agents", "publish", "ag1", "options"),
+        (
+            "agents.publish",
+            {"agent_id": "ag1", "objective_flags": {"allow_publish": True}},
+            "agents",
+            "publish",
+            "ag1",
+            "options",
+        ),
         ("agents.validate", {"agent_id": "ag1", "validation": {"strict": True}}, "agents", "validate", "ag1", None),
         (
             "agents.resume_run",

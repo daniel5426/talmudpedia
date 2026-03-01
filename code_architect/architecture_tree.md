@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-02
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -101,6 +101,7 @@ backend/app/services/model_resolver.py
 backend/app/services/credentials_service.py
 backend/app/services/integration_provider_catalog.py
 backend/app/services/registry_seeding.py
+backend/app/services/platform_architect_contracts.py
 backend/app/services/tool_function_registry.py
 backend/app/services/artifact_registry.py
 backend/app/services/builtin_tools.py

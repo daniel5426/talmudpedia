@@ -88,6 +88,40 @@ def test_execute_maps_legacy_alias_to_canonical_action(monkeypatch):
     assert out["context"]["result"] == {"ok": True}
 
 
+def test_execute_maps_create_agent_alias_to_agents_create(monkeypatch):
+    monkeypatch.setattr(
+        handler,
+        "_resolve_auth",
+        lambda inputs, payload, state=None, context=None, action=None, required_scopes=None: (
+            "http://localhost:8000",
+            "token",
+            "tenant-1",
+            {},
+        ),
+    )
+    monkeypatch.setattr(handler, "_control_client", lambda _client: type("C", (), {
+        "agents": type("A", (), {
+            "create": staticmethod(lambda payload, options=None: {"data": {"id": "agent-1", **payload}})
+        })()
+    })())
+
+    out = handler.execute(
+        state={},
+        config={},
+        context={
+            "inputs": {
+                "action": "create_agent",
+                "tenant_id": "tenant-1",
+                "payload": {"name": "Support Bot", "slug": "support-bot", "graph_definition": {"nodes": [], "edges": []}},
+            }
+        },
+    )
+
+    assert out["context"]["action"] == "agents.create"
+    assert out["context"]["errors"] == []
+    assert out["context"]["result"]["id"] == "agent-1"
+
+
 def test_resolve_action_requires_explicit_action():
     resolved = handler._resolve_action(
         explicit_action=None,

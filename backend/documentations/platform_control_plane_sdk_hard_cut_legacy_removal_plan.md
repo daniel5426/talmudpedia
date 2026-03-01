@@ -1,6 +1,8 @@
 # Platform Control Plane SDK Hard-Cut Legacy Removal Plan
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-02
+
+> Status Note (2026-03-02): Architect runtime hard-cut is now applied in active backend path (single-agent V1 with domain tools). Remaining checklist items in this document should be interpreted as broader SDK cleanup tasks beyond architect runtime cutover.
 
 ## Purpose
 This document defines the **hard-cut deletion plan** for legacy control-plane SDK and tooling paths.

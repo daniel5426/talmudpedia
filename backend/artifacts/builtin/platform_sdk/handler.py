@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from sdk import Client
 from talmudpedia_control_sdk import ControlPlaneClient
@@ -33,6 +34,13 @@ from .actions import workload_security as workload_security_actions
 
 ACTION_ALIASES = {
     "fetch_catalog": "catalog.list_capabilities",
+    "create_agent": "agents.create",
+    "update_agent": "agents.update",
+    "run_agent_tests": "agents.run_tests",
+    "create_pipeline": "rag.create_visual_pipeline",
+    "update_pipeline": "rag.update_visual_pipeline",
+    "compile_pipeline": "rag.compile_visual_pipeline",
+    "register_asset": "artifacts.create_or_update_draft",
     "create_artifact_draft": "artifacts.create_or_update_draft",
     "promote_artifact": "artifacts.promote",
     "create_tool": "tools.create_or_update",
@@ -64,10 +72,16 @@ PRIVILEGED_ACTION_SCOPES = {
     "catalog.get_rag_operator": ["pipelines.catalog.read"],
     "catalog.list_agent_operators": ["pipelines.catalog.read"],
     "rag.list_pipelines": ["pipelines.read"],
+    "rag.list_visual_pipelines": ["pipelines.read"],
     "rag.create_or_update_pipeline": ["pipelines.write"],
+    "rag.create_visual_pipeline": ["pipelines.write"],
+    "rag.update_visual_pipeline": ["pipelines.write"],
     "rag.compile_pipeline": ["pipelines.write"],
+    "rag.compile_visual_pipeline": ["pipelines.write"],
     "rag.create_job": ["pipelines.write"],
     "rag.get_job": ["pipelines.read"],
+    "rag.get_executable_pipeline": ["pipelines.read"],
+    "rag.get_executable_input_schema": ["pipelines.read"],
     "rag.get_step_data": ["pipelines.read"],
     "artifacts.list": ["artifacts.read"],
     "artifacts.get": ["artifacts.read"],
@@ -83,6 +97,8 @@ PRIVILEGED_ACTION_SCOPES = {
     "tools.delete": ["tools.write"],
     "agents.list": ["agents.read"],
     "agents.get": ["agents.read"],
+    "agents.create": ["agents.write"],
+    "agents.update": ["agents.write"],
     "agents.create_or_update": ["agents.write"],
     "agents.publish": ["agents.write"],
     "agents.validate": ["agents.write"],
@@ -122,12 +138,31 @@ PRIVILEGED_ACTION_SCOPES = {
     "respond": [],
 }
 
+DOMAIN_TOOL_ALLOWED_PREFIXES = {
+    "platform-rag": ("rag.",),
+    "platform-agents": ("agents.",),
+    "platform-assets": ("tools.", "artifacts.", "models.", "credentials.", "knowledge_stores."),
+    "platform-governance": ("auth.", "workload_security.", "orchestration."),
+}
+
+PUBLISH_ACTIONS = {
+    "agents.publish",
+    "tools.publish",
+    "artifacts.promote",
+}
+
 
 def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     inputs = _resolve_inputs(state, context)
     inputs = _coerce_json_text(inputs)
 
-    payload = inputs.get("payload") if isinstance(inputs.get("payload"), dict) else {}
+    payload = dict(inputs.get("payload")) if isinstance(inputs.get("payload"), dict) else {}
+    if inputs.get("idempotency_key") and not payload.get("idempotency_key"):
+        payload["idempotency_key"] = inputs.get("idempotency_key")
+    if isinstance(inputs.get("request_metadata"), dict) and not isinstance(payload.get("request_metadata"), dict):
+        payload["request_metadata"] = inputs.get("request_metadata")
+    if inputs.get("tenant_id") and not payload.get("tenant_id"):
+        payload["tenant_id"] = inputs.get("tenant_id")
     tests = inputs.get("tests") if isinstance(inputs.get("tests"), list) else []
     if not tests and isinstance(payload.get("tests"), list):
         tests = payload.get("tests") or []
@@ -154,7 +189,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": "noop",
             "dry_run": dry_run,
         }
-        return {"context": output, "tool_outputs": [output]}
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
 
     if action in DEPRECATED_ACTIONS:
         output = {
@@ -174,9 +209,67 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": action,
             "dry_run": dry_run,
         }
-        return {"context": output, "tool_outputs": [output]}
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
 
     canonical_action = _canonicalize_action(action)
+    tool_slug = _resolve_tool_slug(inputs=inputs, payload=payload, state=state, context=context, config=config)
+    domain_error = _validate_domain_action_access(canonical_action=canonical_action, tool_slug=tool_slug)
+    if domain_error is not None:
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "tool_action_scope_mismatch",
+                "message": domain_error["message"],
+            },
+            "errors": [domain_error],
+            "action": canonical_action,
+            "dry_run": dry_run,
+        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+
+    if _is_mutating_action(canonical_action) and not tenant_for_flags:
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "missing_tenant_context",
+                "message": f"Action '{canonical_action}' requires explicit tenant_id.",
+            },
+            "errors": [{
+                "error": "missing_tenant_context",
+                "code": "TENANT_REQUIRED",
+                "action": canonical_action,
+                "message": f"Action '{canonical_action}' requires explicit tenant_id.",
+                "http_status": 422,
+                "retryable": False,
+            }],
+            "action": canonical_action,
+            "dry_run": dry_run,
+        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+
+    if canonical_action in PUBLISH_ACTIONS and not _has_explicit_publish_intent(inputs, payload):
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "draft_first_policy",
+                "message": f"Action '{canonical_action}' blocked by draft-first policy.",
+                "next_actions": [
+                    "Continue in draft mode and validate without publish/promote.",
+                    "Set objective_flags.allow_publish=true to explicitly permit publish/promote.",
+                ],
+            },
+            "errors": [{
+                "error": "draft_first_policy_denied",
+                "code": "DRAFT_FIRST_POLICY_DENIED",
+                "action": canonical_action,
+                "message": f"Action '{canonical_action}' requires explicit publish intent.",
+                "http_status": 403,
+                "retryable": False,
+            }],
+            "action": canonical_action,
+            "dry_run": dry_run,
+        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
 
     gated_actions = {canonical_action} if canonical_action in ORCHESTRATION_PRIMITIVE_ACTIONS else set()
     if gated_actions and not is_orchestration_surface_enabled(
@@ -199,7 +292,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": action,
             "dry_run": dry_run,
         }
-        return {"context": output, "tool_outputs": [output]}
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
 
     required_scopes = _resolve_required_scopes(action=canonical_action)
     base_url, api_key, tenant_id, extra_headers = _resolve_auth(
@@ -237,6 +330,16 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         }]
     else:
         result, errors = dispatched
+    if any(str(err.get("code")) == "SENSITIVE_ACTION_APPROVAL_REQUIRED" for err in errors if isinstance(err, dict)):
+        result = {
+            "status": "blocked_approval",
+            "reason": "approval_required",
+            "message": "Action blocked pending approval.",
+            "next_actions": [
+                "Request approval for the blocked action.",
+                "Retry the action after approval is granted.",
+            ],
+        }
 
     output = {
         "result": result,
@@ -244,7 +347,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         "action": canonical_action,
         "dry_run": dry_run,
     }
-    return {"context": output, "tool_outputs": [output]}
+    return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
 
 
 def _extract_explicit_action(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
@@ -292,6 +395,47 @@ def _resolve_effective_tenant_id(
     if tenant_id is None:
         return None
     return str(tenant_id)
+
+
+def _resolve_tool_slug(
+    *,
+    inputs: Dict[str, Any],
+    payload: Dict[str, Any],
+    state: Optional[Dict[str, Any]],
+    context: Optional[Dict[str, Any]],
+    config: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    candidates = [
+        payload.get("tool_slug"),
+        inputs.get("tool_slug"),
+        (config or {}).get("tool_slug"),
+        (context or {}).get("tool_slug"),
+    ]
+    state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
+    candidates.append(state_ctx.get("tool_slug"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def _validate_domain_action_access(canonical_action: str, tool_slug: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not tool_slug:
+        return None
+    prefixes = DOMAIN_TOOL_ALLOWED_PREFIXES.get(tool_slug)
+    if not prefixes:
+        return None
+    if any(canonical_action.startswith(prefix) for prefix in prefixes):
+        return None
+    return {
+        "error": "tool_action_scope_mismatch",
+        "code": "SCOPE_DENIED",
+        "tool_slug": tool_slug,
+        "action": canonical_action,
+        "message": f"Action '{canonical_action}' is not allowed by tool '{tool_slug}'.",
+        "http_status": 403,
+        "retryable": False,
+    }
 
 
 def _resolve_inputs(state: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
@@ -346,9 +490,76 @@ def _coerce_json_text(inputs: Dict[str, Any]) -> Dict[str, Any]:
     return inputs
 
 
+def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Optional[str]) -> Dict[str, Any]:
+    request_metadata = payload.get("request_metadata") if isinstance(payload.get("request_metadata"), dict) else {}
+    if not request_metadata and isinstance(inputs.get("request_metadata"), dict):
+        request_metadata = inputs.get("request_metadata")
+
+    idempotency_key = (
+        payload.get("idempotency_key")
+        or inputs.get("idempotency_key")
+    )
+    trace_id = (
+        request_metadata.get("trace_id")
+        or payload.get("trace_id")
+        or inputs.get("trace_id")
+        or f"trace-{uuid4()}"
+    )
+    request_id = (
+        request_metadata.get("request_id")
+        or payload.get("request_id")
+        or inputs.get("request_id")
+    )
+    return {
+        "trace_id": str(trace_id) if trace_id is not None else None,
+        "request_id": str(request_id) if request_id is not None else None,
+        "idempotency_key": str(idempotency_key) if idempotency_key else None,
+        "idempotency_provided": bool(idempotency_key),
+        "tool_slug": tool_slug,
+    }
+
+
+def _finalize_output(
+    output: Dict[str, Any],
+    *,
+    inputs: Dict[str, Any],
+    payload: Dict[str, Any],
+    tool_slug: Optional[str],
+) -> Dict[str, Any]:
+    output["meta"] = _extract_meta(inputs=inputs, payload=payload, tool_slug=tool_slug)
+    return {"context": output, "tool_outputs": [output]}
+
+
 def _resolve_required_scopes(action: str) -> List[str]:
     scopes = set(PRIVILEGED_ACTION_SCOPES.get(action, []))
     return sorted(scopes)
+
+
+def _is_mutating_action(action: str) -> bool:
+    scopes = _resolve_required_scopes(action)
+    if not scopes:
+        return False
+    return any(not scope.endswith(".read") for scope in scopes)
+
+
+def _has_explicit_publish_intent(inputs: Dict[str, Any], payload: Dict[str, Any]) -> bool:
+    candidates = [
+        payload.get("allow_publish"),
+        payload.get("publish_intent"),
+        inputs.get("allow_publish"),
+        inputs.get("publish_intent"),
+    ]
+    objective_flags = payload.get("objective_flags") if isinstance(payload.get("objective_flags"), dict) else {}
+    if not objective_flags and isinstance(inputs.get("objective_flags"), dict):
+        objective_flags = inputs.get("objective_flags")
+    candidates.append(objective_flags.get("allow_publish"))
+
+    for candidate in candidates:
+        if isinstance(candidate, bool):
+            return candidate
+        if isinstance(candidate, str) and candidate.strip().lower() in {"1", "true", "yes", "publish"}:
+            return True
+    return False
 
 
 def _resolve_auth(
@@ -653,10 +864,16 @@ def _dispatch_action(
         "catalog.get_rag_operator": lambda: _catalog_get_rag_operator(client, payload),
         "catalog.list_agent_operators": lambda: _catalog_list_agent_operators(client),
         "rag.list_pipelines": lambda: rag_actions.list_pipelines(client, payload, control_client_factory=_control_client),
+        "rag.list_visual_pipelines": lambda: rag_actions.list_pipelines(client, payload, control_client_factory=_control_client),
         "rag.create_or_update_pipeline": lambda: rag_actions.create_or_update_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.create_visual_pipeline": lambda: rag_actions.create_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.update_visual_pipeline": lambda: rag_actions.update_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "rag.compile_pipeline": lambda: rag_actions.compile_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.compile_visual_pipeline": lambda: rag_actions.compile_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "rag.create_job": lambda: rag_actions.create_job(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "rag.get_job": lambda: rag_actions.get_job(client, payload, control_client_factory=_control_client),
+        "rag.get_executable_pipeline": lambda: rag_actions.get_executable_pipeline(client, payload, control_client_factory=_control_client),
+        "rag.get_executable_input_schema": lambda: rag_actions.get_executable_input_schema(client, payload, control_client_factory=_control_client),
         "rag.get_step_data": lambda: rag_actions.get_step_data(client, payload, control_client_factory=_control_client),
         "artifacts.list": lambda: artifact_actions.list_artifacts(client, payload, control_client_factory=_control_client),
         "artifacts.get": lambda: artifact_actions.get_artifact(client, payload, control_client_factory=_control_client),
@@ -672,6 +889,8 @@ def _dispatch_action(
         "tools.delete": lambda: tool_actions.delete(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "agents.list": lambda: agent_actions.list_agents(client, payload, control_client_factory=_control_client),
         "agents.get": lambda: agent_actions.get_agent(client, payload, control_client_factory=_control_client),
+        "agents.create": lambda: agent_actions.create(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.update": lambda: agent_actions.update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "agents.create_or_update": lambda: agent_actions.create_or_update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "agents.publish": lambda: agent_actions.publish(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "agents.validate": lambda: agent_actions.validate(client, payload, control_client_factory=_control_client),

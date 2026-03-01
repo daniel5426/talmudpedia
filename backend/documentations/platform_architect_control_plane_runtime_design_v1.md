@@ -1,13 +1,13 @@
 # Platform Architect Runtime Design (Control Plane SDK, v1)
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-02
 
 ## Status
-- Planning/specification only.
-- No implementation changes included in this document.
+- Implemented in backend runtime (V1.1 hard-cut path).
+- This doc now reflects implementation-aligned architecture and rollout status.
 
 ## Context
-Current `platform-architect` is seeded as a static GraphSpec v2 staged orchestration with fixed subagents. The target architecture is a real tool-using architect agent that dynamically plans and executes through Control Plane SDK method-backed tools.
+`platform-architect` now runs as a real tool-using single-agent runtime powered by Control Plane SDK method-backed tools and domain-scoped action boundaries.
 
 ## Goals
 - Replace fixed stage behavior with adaptive runtime planning/execution.
@@ -31,7 +31,7 @@ Single orchestrator agent with optional specialist delegation.
 
 ### Runtime shape
 - `platform-architect` becomes a compact agent graph (`start -> agent -> end`) with tool access.
-- Core intelligence is in a deterministic architect runtime tool action (`architect.run`) that executes the planning loop using Control Plane SDK calls.
+- Core intelligence is in the architect node prompt policy that executes a direct plan/execute/validate/repair loop via domain tools.
 - Optional future path: delegated specialist subtasks via `agents.start_run` when confidence or complexity thresholds are exceeded.
 
 ## Planning and Execution Loop
@@ -83,7 +83,7 @@ Architect runtime tool action set (invoked through platform SDK tool wrappers):
 
 ### Tool schema strategy
 - Canonical action id: `domain.method` only.
-- Typed payload per action with `additionalProperties: false` for architect-owned orchestration payloads.
+- Typed payload per action via strict `oneOf` action contracts.
 - Unified envelope fields:
   - `action`
   - `payload`
@@ -91,19 +91,25 @@ Architect runtime tool action set (invoked through platform SDK tool wrappers):
   - `validate_only`
   - `idempotency_key`
   - `request_metadata` (`trace_id`, `reason`, `source=agent-tool`)
+  - `meta` (`trace_id`, `request_id`, `idempotency_key`, `tool_slug`)
 
 ## Safety and Governance
 ### Scope boundaries
 - Tenant must be explicit for every mutating operation.
 - No fallback to implicit tenant selection.
 - Scope checks enforced pre-dispatch.
+- Missing tenant context is rejected with deterministic `TENANT_REQUIRED`.
 
 ### Approval-sensitive mutations
 - Mutations that require approval return structured block status:
   - `status=blocked_approval`
-  - `required_approval`
-  - `approval_subject`
+  - failure code `SENSITIVE_ACTION_APPROVAL_REQUIRED`
+  - actionable `next_actions`
 - Architect stops mutation path and reports unblock action.
+
+### Draft-first enforcement
+- Publish/promote actions are blocked unless explicit publish intent is set (`objective_flags.allow_publish=true`).
+- Policy denial code: `DRAFT_FIRST_POLICY_DENIED`.
 
 ### Idempotency and safe mutation pattern
 - Every mutation uses deterministic idempotency key:
@@ -179,9 +185,9 @@ Resource registry entry shape:
 Input: one user request to create capability assets.
 
 Expected behavior:
-1. Create or update one RAG visual pipeline via `rag.create_or_update_pipeline`.
-2. Compile pipeline via `rag.compile_pipeline`.
-3. Create or update one agent via `agents.create_or_update` referencing target graph/tooling.
+1. Create or update one RAG visual pipeline via canonical actions (`rag.create_visual_pipeline` / `rag.update_visual_pipeline`).
+2. Compile pipeline via `rag.compile_visual_pipeline`.
+3. Create or update one agent via canonical actions (`agents.create` / `agents.update`) referencing target graph/tooling.
 4. Validate agent via `agents.validate`.
 5. Emit run report JSON with created IDs and tool call trace.
 6. On one controlled failure (example: compile fails), apply one repair patch and retry compile once.
@@ -193,7 +199,7 @@ Stop conditions:
 
 ## Phased Implementation Plan
 ### Phase 1: Runtime contracts and planner state
-- Add architect runtime action contract and schemas.
+- Add strict domain action contracts and schemas.
 - Add internal planning state model and report model.
 - Add deterministic idempotency strategy utility.
 
@@ -205,7 +211,7 @@ Stop conditions:
 ### Phase 3: Seed new architect path
 - Seed `platform-architect` as single dynamic tool-using agent (no fixed staged graph).
 - Attach only required tools and enforce explicit action contracts.
-- Keep legacy path behind temporary fallback flag during migration window.
+- Legacy staged path removed from active runtime (hard cut).
 
 ### Phase 4: Validation and repair loop
 - Add compile/validate/test checks and repair planner.
@@ -235,8 +241,9 @@ Additional recommended tests:
 
 ## Migration Notes
 - New architect path should be default for new runs once validated.
-- Legacy staged graph may remain temporarily behind a feature flag as rollback only.
-- Remove legacy path after parity and soak window completion.
+- Legacy staged graph is no longer the active path in current implementation.
+- `architect.run` is removed from active runtime path.
+- V2 should build domain-specialist subagents on top of the existing direct domain action contracts and report schema.
 
 ## Documentation Contradiction Detected
 There is a mismatch between docs and runtime surface:

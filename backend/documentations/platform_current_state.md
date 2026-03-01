@@ -1,6 +1,6 @@
 # TalmudPedia: Platform Current State & Overview
 
-Last Updated: 2026-02-22
+Last Updated: 2026-03-02
 
 TalmudPedia is a foundational **Enterprise AI Agent & RAG Platform** designed as a unified control plane for models, tools, data, and reasoning workflows. It is vendor-agnostic, modular, and enterprise-ready, supporting both API-based and self-hosted models. Data ingestion (RAG) and reasoning (Agents) are decoupled through the **Knowledge Store** bridge.
 
@@ -31,7 +31,7 @@ The platform is organized into independent domains communicating through stable 
 - **Observability**: **Unified Engine, Divergent Observability** (ADR 001). `StreamAdapter` filters events by `ExecutionMode`: Debug = full firehose (inputs, tool calls, thoughts, tokens); Production = clean stream (final tokens and client-safe events only). Auth-scoped: public tokens cannot request Debug.
 - **Features**: Cyclic workflows, CEL (If/Else, While), User Approval (HITL), Transform/Set State, artifact field mapping, versioning, `AgentRun`/`AgentTrace` persistence. Tool execution: HTTP, artifact, MCP, and function tools supported. Built-in Tools v1 is live as a global built-in catalog (Core 8: retrieval_pipeline, http_request, function_call, mcp_call, web_fetch, web_search, json_transform, datetime_utils), with legacy template/instance metadata no longer used by runtime behavior. `web_search` provider dispatch now supports `serper`, `tavily`, and `exa`. Tool invocation in agent nodes supports structured tool calls with JSON fallback (native LLM tool calling is still a roadmap item).
 - **UI**: Visual Builder (xyflow, BaseNode, ConfigPanel) and Agent Playground (streaming, execution sidebar, same chat components as production). Builder Execute mode now overlays runtime topology (orchestration decisions + child runs) from SSE with periodic `/agents/runs/{run_id}/tree` reconciliation; overlay is ephemeral per run and never persisted into draft `graph_definition`. Memory: short-term active; long-term/vector in development.
-- **Platform Architect (linear staged GraphSpec v2)**: Multi-agent orchestrator seeded with sub-agents (Catalog, Planner, Builder, Coder, Tester). The current seed uses a stage-by-stage GraphSpec v2 orchestration graph (`spawn_group` + `join` per stage, then `replan`, optional replanner stage, `cancel_subtree`) and auto-seeds orchestrator policy/target allowlist rows for those sub-agents. Platform SDK tool supports draft asset creation and multi-case tests; secure internal API flows use delegated workload tokens with scope enforcement (legacy service/API-key fallback removed on migrated secure paths).
+- **Platform Architect (V1.1 dynamic single-agent runtime)**: `platform-architect` is seeded as a compact `start -> agent -> end` graph and executes directly through domain-scoped Control Plane tools (`platform-rag`, `platform-agents`, `platform-assets`, `platform-governance`). There is no `architect.run` runtime path. The architect node follows a direct plan/execute/validate/repair loop, enforces strict per-action tool contracts (`oneOf` payload schemas), hard draft-first policy (`DRAFT_FIRST_POLICY_DENIED` unless explicit publish intent), explicit tenant requirement for mutations (`TENANT_REQUIRED`), and standardized tool-output metadata for observability.
 
 ### B. RAG Domain
 
@@ -90,6 +90,6 @@ The platform is organized into independent domains communicating through stable 
 - **Agent SOTA alignment**: Native LLM tool calling, durable checkpointing, memory_config/execution_constraints enforcement, and deeper tool-governance policy (see `summary/agent_sota_architecture_gap_overview.md`).
 - **RAG**: Multi-store retrieval with score normalization; advanced metadata filtering UI; real-time metrics per node.
 - **Tools**: Built-in Tools v1 shipped with tenant-configurable retrieval and mode-based publish guardrails (production requires published tools, debug allows drafts); continue hardening governance/policy and observability.
-- **Platform Architect**: Linear staged multi-agent Architect (draft-only, test-first) is implemented; future iterations should improve stage-to-stage contracts and richer adaptive replanning.
+- **Platform Architect**: V1 dynamic single-agent runtime is implemented with domain tool boundaries and report-first observability. Next major iteration is planned as multi-agent domain specialists plus an orchestrator, reusing the same action/report contracts.
 - **Artifact CLI**: Scaffolding for new operator artifacts.
 - **Stats**: Performance metrics (e.g. token/latency per node) and deeper drilldowns.

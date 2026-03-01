@@ -280,6 +280,15 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setMessages(item.messages || []);
   }, []);
 
+  const serializeConversationMessages = useCallback((source: ChatMessage[]) => {
+    return source
+      .filter((msg) => (msg.role === "user" || msg.role === "assistant") && typeof msg.content === "string")
+      .map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+  }, []);
+
   const handleSubmit = async (message: { text: string; files: any[] }) => {
     if (!message.text.trim() || !agentId) return;
 
@@ -311,10 +320,13 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     thinkingStartRef.current = Date.now();
 
     try {
+      // New runs must include full prior conversation history; the backend will append request.input as the latest user turn.
+      const priorMessages = !isPaused ? serializeConversationMessages(messagesRef.current) : undefined;
       const response = await agentService.streamAgent(
         agentId,
         {
           text: message.text,
+          messages: priorMessages,
           runId: isPaused ? currentRunId || undefined : undefined,
           context: isPaused && pendingApproval ? { approval: message.text } : undefined,
         },

@@ -1,6 +1,9 @@
 # Platform Architect Agent: Strategy & Design (v2)
 
-Last Updated: 2026-02-08
+Last Updated: 2026-03-02
+
+> Status Note (2026-03-02): This document is future-state strategy for Architect V2 (domain agents + orchestrator).  
+> Current production/active backend path is Architect V1 single-agent runtime documented in `platform_architect_current_architecture.md`.
 
 ## Vision
 Build a multi-agent Platform Architect that designs, drafts, and tests platform assets through internal APIs with secure SaaS-grade delegation.

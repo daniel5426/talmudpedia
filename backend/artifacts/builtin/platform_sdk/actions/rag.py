@@ -66,6 +66,64 @@ def create_or_update_pipeline(
         return None, [{"error": "create_or_update_pipeline_failed", "detail": str(exc)}]
 
 
+def create_visual_pipeline(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "slug": payload.get("slug")}, []
+
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.create_visual_pipeline(
+            payload,
+            tenant_slug=payload.get("tenant_slug"),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{"error": "create_visual_pipeline_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
+    except Exception as exc:
+        return None, [{"error": "create_visual_pipeline_failed", "detail": str(exc)}]
+
+
+def update_visual_pipeline(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    pipeline_id = payload.get("pipeline_id") or payload.get("id")
+    if not pipeline_id:
+        return None, [{"error": "missing_fields", "fields": ["pipeline_id"]}]
+
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "pipeline_id": str(pipeline_id)}, []
+
+    patch_payload = dict(payload.get("patch")) if isinstance(payload.get("patch"), dict) else dict(payload)
+    patch_payload.pop("pipeline_id", None)
+    patch_payload.pop("id", None)
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.update_visual_pipeline(
+            str(pipeline_id),
+            patch_payload,
+            tenant_slug=payload.get("tenant_slug"),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{"error": "update_visual_pipeline_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
+    except Exception as exc:
+        return None, [{"error": "update_visual_pipeline_failed", "detail": str(exc)}]
+
+
 def compile_pipeline(
     client: Client,
     payload: Dict[str, Any],
@@ -93,6 +151,23 @@ def compile_pipeline(
         return None, [{"error": "compile_pipeline_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
     except Exception as exc:
         return None, [{"error": "compile_pipeline_failed", "detail": str(exc)}]
+
+
+def compile_visual_pipeline(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    return compile_pipeline(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=control_client_factory,
+        request_options_builder=request_options_builder,
+    )
 
 
 def create_job(
@@ -156,6 +231,44 @@ def get_job(
         return None, [{"error": "get_job_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
     except Exception as exc:
         return None, [{"error": "get_job_failed", "detail": str(exc)}]
+
+
+def get_executable_pipeline(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    exec_id = payload.get("exec_id") or payload.get("executable_pipeline_id") or payload.get("id")
+    if not exec_id:
+        return None, [{"error": "missing_fields", "fields": ["exec_id"]}]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.get_executable_pipeline(str(exec_id), tenant_slug=payload.get("tenant_slug"))
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{"error": "get_executable_pipeline_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
+    except Exception as exc:
+        return None, [{"error": "get_executable_pipeline_failed", "detail": str(exc)}]
+
+
+def get_executable_input_schema(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    exec_id = payload.get("exec_id") or payload.get("executable_pipeline_id") or payload.get("id")
+    if not exec_id:
+        return None, [{"error": "missing_fields", "fields": ["exec_id"]}]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.get_executable_input_schema(str(exec_id), tenant_slug=payload.get("tenant_slug"))
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{"error": "get_executable_input_schema_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
+    except Exception as exc:
+        return None, [{"error": "get_executable_input_schema_failed", "detail": str(exc)}]
 
 
 def get_step_data(

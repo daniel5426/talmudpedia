@@ -1,6 +1,9 @@
 # Architect Agent v2 — Full‑Control, Multi‑Agent Builder (API‑Only, Draft‑Only)
 
-Last Updated: 2026-02-06
+Last Updated: 2026-03-02
+
+> Status Note (2026-03-02): This is a V2 planning document (future state).
+> Current implemented runtime is Architect V1.1 single-agent direct domain-tool loop (`platform-architect` + 4 domain tools, no `architect.run` runtime path), documented in `backend/documentations/platform_architect_current_architecture.md`.
 
 ## Summary
 Design and implement a multi‑agent “Architect” system that can introspect platform capabilities, create draft agents/workflows/tools/artifacts, and run multi‑case tests before returning a final report. The system is API‑only and uses service tokens for privileged internal calls. It upgrades the current linear Platform Architect into a multi‑agent orchestrator while keeping all mutations in draft status.
@@ -135,7 +138,7 @@ To keep API‑only and internal execution safe:
 1. Extend SDK tool actions + auth dependencies.
 2. Seed sub‑agents (Catalog, Planner, Builder, Coder, Tester).
 3. Upgrade Orchestrator agent graph to multi‑agent workflow.
-4. Deprecate legacy linear Platform Architect or keep as fallback.
+4. Replace current V1.1 single-agent runtime after validation; no fallback requirement.
 
 ## Docs Updates (Required)
 - `backend/documentations/platform_current_state.md`  
