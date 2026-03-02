@@ -7,13 +7,17 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.adapter import StreamAdapter
 from app.agent.execution.service import AgentExecutorService
+from app.agent.execution.stream_contract_v2 import (
+    build_stream_v2_event,
+    normalize_filtered_event_to_v2,
+)
 from app.agent.execution.types import ExecutionMode
 from app.api.dependencies import (
     get_current_published_app_preview_principal,
@@ -35,6 +39,7 @@ from app.services.published_app_bundle_storage import (
     PublishedAppBundleStorageNotConfigured,
 )
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
+from app.services.usage_quota_service import QuotaExceededError
 
 
 router = APIRouter(prefix="/public/apps", tags=["published-apps-public"])
@@ -88,6 +93,7 @@ class RuntimeBootstrapAuthResponse(BaseModel):
 
 class RuntimeBootstrapResponse(BaseModel):
     version: str = "runtime-bootstrap.v1"
+    stream_contract_version: str = "run-stream.v2"
     app_id: str
     slug: str
     revision_id: Optional[str] = None
@@ -113,7 +119,9 @@ class PublicChatStreamRequest(BaseModel):
     input: Optional[str] = None
     messages: List[dict[str, Any]] = []
     chat_id: Optional[UUID] = None
+    run_id: Optional[UUID] = None
     context: Optional[dict[str, Any]] = None
+    client: Optional[dict[str, Any]] = None
 
 
 def _published_host_runtime_only_error() -> HTTPException:
@@ -128,6 +136,10 @@ def _published_host_runtime_only_error() -> HTTPException:
 
 def _is_enabled(flag_name: str, default: str = "1") -> bool:
     return os.getenv(flag_name, default).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _stream_v2_enforced() -> bool:
+    return _is_enabled("STREAM_V2_ENFORCED", "1")
 
 
 def _apps_base_domain() -> str:
@@ -408,7 +420,7 @@ async def _stream_chat_for_app(
     allow_chat_persistence: bool,
     request_user_id: Optional[str] = None,
     extra_context: Optional[Dict[str, Any]] = None,
-) -> StreamingResponse:
+) -> Response:
     if enforce_app_auth:
         if app.auth_enabled and principal is None:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -488,37 +500,90 @@ async def _stream_chat_for_app(
         for key, value in extra_context.items():
             request_context.setdefault(key, value)
 
-    run_id = await executor.start_run(
-        app.agent_id,
-        {
-            "messages": run_messages,
-            "input": payload.input,
-            "context": request_context,
-        },
-        user_id=user_uuid,
-        background=False,
-        mode=ExecutionMode.PRODUCTION,
-    )
+    run_id = payload.run_id
+    resume_payload: Optional[dict[str, Any]] = None
+    if run_id:
+        resume_payload = dict(payload.context or {})
+        if payload.input and "input" not in resume_payload:
+            resume_payload["input"] = payload.input
+        try:
+            await executor.resume_run(run_id, resume_payload, background=False)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {exc}")
+    else:
+        try:
+            run_id = await executor.start_run(
+                app.agent_id,
+                {
+                    "messages": run_messages,
+                    "input": payload.input,
+                    "context": request_context,
+                },
+                user_id=user_uuid,
+                background=False,
+                mode=ExecutionMode.PRODUCTION,
+            )
+        except QuotaExceededError as exc:
+            return JSONResponse(status_code=429, content=exc.to_payload())
 
     async def event_generator():
         assistant_text_parts: List[str] = []
-        raw_stream = executor.run_and_stream(run_id, db, mode=ExecutionMode.PRODUCTION)
+        raw_stream = executor.run_and_stream(run_id, db, resume_payload=resume_payload, mode=ExecutionMode.PRODUCTION)
         filtered_stream = StreamAdapter.filter_stream(raw_stream, ExecutionMode.PRODUCTION)
+        seq = 1
         yield ": " + (" " * 2048) + "\n\n"
-        yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
+        if _stream_v2_enforced():
+            accepted = build_stream_v2_event(
+                seq=seq,
+                run_id=str(run_id),
+                event="run.accepted",
+                stage="run",
+                payload={"status": "running"},
+            )
+            seq += 1
+            yield f"data: {json.dumps(accepted, default=str)}\n\n"
+        else:
+            yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
 
         try:
             async for event_dict in filtered_stream:
-                if (
-                    event_dict.get("event") == "token"
-                    and isinstance(event_dict.get("data"), dict)
-                    and event_dict["data"].get("content")
-                ):
-                    assistant_text_parts.append(str(event_dict["data"]["content"]))
-                elif event_dict.get("type") == "token" and event_dict.get("content"):
-                    assistant_text_parts.append(str(event_dict["content"]))
-                yield f"data: {json.dumps(event_dict, default=str)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                if _stream_v2_enforced():
+                    mapped_event, stage, payload_v2, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
+                    if mapped_event == "assistant.delta" and payload_v2.get("content"):
+                        assistant_text_parts.append(str(payload_v2.get("content")))
+                    envelope = build_stream_v2_event(
+                        seq=seq,
+                        run_id=str(run_id),
+                        event=mapped_event,
+                        stage=stage,
+                        payload=payload_v2,
+                        diagnostics=diagnostics,
+                    )
+                    seq += 1
+                    yield f"data: {json.dumps(envelope, default=str)}\n\n"
+                else:
+                    if (
+                        event_dict.get("event") == "token"
+                        and isinstance(event_dict.get("data"), dict)
+                        and event_dict["data"].get("content")
+                    ):
+                        assistant_text_parts.append(str(event_dict["data"]["content"]))
+                    elif event_dict.get("type") == "token" and event_dict.get("content"):
+                        assistant_text_parts.append(str(event_dict["content"]))
+                    yield f"data: {json.dumps(event_dict, default=str)}\n\n"
+        except Exception as exc:
+            if _stream_v2_enforced():
+                envelope = build_stream_v2_event(
+                    seq=seq,
+                    run_id=str(run_id),
+                    event="run.failed",
+                    stage="run",
+                    payload={"error": str(exc)},
+                    diagnostics=[{"message": str(exc)}],
+                )
+                yield f"data: {json.dumps(envelope, default=str)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
         finally:
             if can_persist_chat and chat is not None:
                 assistant_text = "".join(assistant_text_parts).strip()

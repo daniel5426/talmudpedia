@@ -810,7 +810,7 @@ app.add_middleware(PublishedAppsCORSMiddleware)
 # Registered after CORS so it runs first for app-host requests.
 app.add_middleware(PublishedAppsHostRuntimeMiddleware)
 
-from app.api.routers import auth, chat, general, search, stt, texts, library, admin, tts, rag_admin, agent
+from app.api.routers import auth, general, search, stt, texts, library, admin, tts, rag_admin
 from app.api.routers.agents import router as agents_router
 from app.api.routers import org_units as org_units_router
 from app.api.routers import rbac as rbac_router
@@ -857,8 +857,6 @@ app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
 app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
 app.include_router(audit_router.router, prefix="/api", tags=["audit"])
 app.include_router(library.router, prefix="/api/library", tags=["library"])
-app.include_router(agent.router)
-app.include_router(chat.router, prefix="/chats", tags=["chats"])
 app.include_router(general.router, tags=["general"])
 app.include_router(search.router, tags=["search"])
 app.include_router(stt.router, prefix="/stt", tags=["stt"])

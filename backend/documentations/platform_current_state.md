@@ -27,9 +27,11 @@ The platform is organized into independent domains communicating through stable 
 ### A. Agent Domain
 
 - **Architecture**: Service Layer (`AgentService`); single execution engine (`AgentExecutorService`) for Playground and Production.
+- **Stream contract**: Unified stream envelope `run-stream.v2` is now enforced for non-coding execution streams (`/agents/{id}/stream`, preview runtime stream, and host runtime stream).
 - **Engine**: `AgentCompiler` turns declarative GraphSpec v1 JSON into executable LangGraph workflows.
 - **Observability**: **Unified Engine, Divergent Observability** (ADR 001). `StreamAdapter` filters events by `ExecutionMode`: Debug = full firehose (inputs, tool calls, thoughts, tokens); Production = clean stream (final tokens and client-safe events only). Auth-scoped: public tokens cannot request Debug.
 - **Features**: Cyclic workflows, CEL (If/Else, While), User Approval (HITL), Transform/Set State, artifact field mapping, versioning, `AgentRun`/`AgentTrace` persistence. Tool execution: HTTP, artifact, MCP, and function tools supported. Built-in Tools v1 is live as a global built-in catalog (Core 8: retrieval_pipeline, http_request, function_call, mcp_call, web_fetch, web_search, json_transform, datetime_utils), with legacy template/instance metadata no longer used by runtime behavior. `web_search` provider dispatch now supports `serper`, `tavily`, and `exa`. Tool invocation in agent nodes supports structured tool calls with JSON fallback (native LLM tool calling is still a roadmap item).
+- **Usage accounting + quotas**: `AgentRun.usage_tokens` is populated from execution usage metadata with fallback estimation, and a fast quota subsystem (`usage_quota_policies`, `usage_quota_counters`, `usage_quota_reservations`) enforces pre-run hard limits for tenant/user scopes using reserve-then-settle semantics.
 - **UI**: Visual Builder (xyflow, BaseNode, ConfigPanel) and Agent Playground (streaming, execution sidebar, same chat components as production). Builder Execute mode now overlays runtime topology (orchestration decisions + child runs) from SSE with periodic `/agents/runs/{run_id}/tree` reconciliation; overlay is ephemeral per run and never persisted into draft `graph_definition`. Memory: short-term active; long-term/vector in development.
 - **Platform Architect (V1.1 dynamic single-agent runtime)**: `platform-architect` is seeded as a compact `start -> agent -> end` graph and executes directly through domain-scoped Control Plane tools (`platform-rag`, `platform-agents`, `platform-assets`, `platform-governance`). There is no `architect.run` runtime path. The architect node follows a direct plan/execute/validate/repair loop, enforces strict per-action tool contracts (`oneOf` payload schemas), hard draft-first policy (`DRAFT_FIRST_POLICY_DENIED` unless explicit publish intent), explicit tenant requirement for mutations (`TENANT_REQUIRED`), and standardized tool-output metadata for observability.
 
@@ -56,6 +58,7 @@ The platform is organized into independent domains communicating through stable 
 ### E. Admin & Observability
 
 - **Stats API**: `GET /api/v1/admin/stats/summary` with sections `overview`, `rag`, `agents`, `resources`; date range and presets; metrics for users, messages, tokens, RAG jobs, agent runs, tools/models/artifacts. Frontend: `/admin/stats` with tabs and drilldowns; types and API in `src/services`.
+- **Token usage source**: admin user monthly token usage now reads from `AgentRun.usage_tokens` aggregates (legacy `users.token_usage` is deprecated for enforcement/stats reads).
 - **Execution transparency**: RAG pipeline live tracking on canvas; step input/output inspection; streaming steps; Pipeline Builder syncs execution state with React Flow.
 
 ---

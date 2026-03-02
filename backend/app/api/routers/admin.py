@@ -11,9 +11,20 @@ from app.db.postgres.session import get_db
 from app.api.routers.auth import get_current_user
 from app.db.postgres.models.identity import User, OrgMembership, OrgRole
 from app.db.postgres.models.chat import Chat, Message, MessageRole
+from app.db.postgres.models.agents import AgentRun
 from pydantic import BaseModel
 
 router = APIRouter()
+
+
+def _current_month_bounds_utc() -> tuple[datetime, datetime]:
+    now = datetime.now(timezone.utc)
+    period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if period_start.month == 12:
+        period_end = period_start.replace(year=period_start.year + 1, month=1)
+    else:
+        period_end = period_start.replace(month=period_start.month + 1)
+    return period_start, period_end
 
 # --- Dependencies & Helpers ---
 
@@ -260,6 +271,7 @@ async def get_users(
     db: AsyncSession = Depends(get_db)
 ):
     tenant_id = context["tenant_id"]
+    period_start, period_end = _current_month_bounds_utc()
     
     query = select(User)
     if tenant_id:
@@ -277,9 +289,36 @@ async def get_users(
     # Paginate
     query = query.offset(skip).limit(limit)
     users = (await db.execute(query)).scalars().all()
+
+    user_ids = [u.id for u in users]
+    usage_by_user: Dict[str, int] = {}
+    if user_ids:
+        q_usage = (
+            select(
+                AgentRun.user_id,
+                func.coalesce(func.sum(AgentRun.usage_tokens), 0),
+            )
+            .where(
+                and_(
+                    AgentRun.user_id.in_(user_ids),
+                    AgentRun.created_at >= period_start,
+                    AgentRun.created_at < period_end,
+                )
+            )
+            .group_by(AgentRun.user_id)
+        )
+        if tenant_id:
+            q_usage = q_usage.where(AgentRun.tenant_id == tenant_id)
+        usage_rows = (await db.execute(q_usage)).all()
+        usage_by_user = {
+            str(user_id): int(tokens or 0)
+            for user_id, tokens in usage_rows
+            if user_id is not None
+        }
     
     items = []
     for u in users:
+        monthly_tokens = usage_by_user.get(str(u.id), 0)
         items.append({
             "id": str(u.id),
             "email": u.email,
@@ -287,7 +326,7 @@ async def get_users(
             "role": u.role,
             "avatar": u.avatar,
             "created_at": u.created_at,
-            "token_usage": u.token_usage
+            "token_usage": monthly_tokens
         })
         
     return {
@@ -348,6 +387,7 @@ async def get_user_details(
     try:
         uid = UUID(user_id)
         tenant_id = context["tenant_id"]
+        period_start, period_end = _current_month_bounds_utc()
         
         query = select(User).where(User.id == uid)
         
@@ -371,6 +411,19 @@ async def get_user_details(
         chat_count = (await db.execute(
             select(func.count(Chat.id)).where(Chat.user_id == uid)
         )).scalar() or 0
+        q_tokens = (
+            select(func.coalesce(func.sum(AgentRun.usage_tokens), 0))
+            .where(
+                and_(
+                    AgentRun.user_id == uid,
+                    AgentRun.created_at >= period_start,
+                    AgentRun.created_at < period_end,
+                )
+            )
+        )
+        if tenant_id:
+            q_tokens = q_tokens.where(AgentRun.tenant_id == tenant_id)
+        tokens_used_this_month = int((await db.execute(q_tokens)).scalar() or 0)
         
         return {
             "user": {
@@ -380,11 +433,11 @@ async def get_user_details(
                 "created_at": user.created_at,
                 "role": user.role,
                 "avatar": user.avatar,
-                "token_usage": user.token_usage
+                "token_usage": tokens_used_this_month
             },
             "stats": {
                 "chats_count": chat_count,
-                "tokens_used_this_month": user.token_usage
+                "tokens_used_this_month": tokens_used_this_month
             }
         }
     except ValueError:

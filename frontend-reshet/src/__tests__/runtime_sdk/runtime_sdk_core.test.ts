@@ -37,6 +37,7 @@ function buildResponse(chunks: string[], status = 200, headers?: Record<string, 
 describe("runtime-sdk core", () => {
   const bootstrap: RuntimeBootstrap = {
     version: "runtime-bootstrap.v1",
+    stream_contract_version: "run-stream.v2",
     app_id: "app-1",
     slug: "slug-1",
     mode: "published-runtime",
@@ -55,10 +56,9 @@ describe("runtime-sdk core", () => {
     const fetchImpl = jest.fn().mockResolvedValue(
       buildResponse(
         [
-          'data: {"event":"token","data":{"content":"Hel',
-          'lo"}}\n\n',
-          'data: {"event":"token","data":{"content":" world"}}\n\n',
-          'data: {"type":"done"}\n\n',
+          'data: {"version":"run-stream.v2","seq":1,"ts":"2026-03-02T00:00:00Z","event":"assistant.delta","run_id":"run-1","stage":"assistant","payload":{"content":"Hello"},"diagnostics":[]',
+          '}\n\n',
+          'data: {"version":"run-stream.v2","seq":2,"ts":"2026-03-02T00:00:01Z","event":"assistant.delta","run_id":"run-1","stage":"assistant","payload":{"content":" world"},"diagnostics":[]}\n\n',
         ],
         200,
         { "X-Chat-ID": "chat-123" },
@@ -68,8 +68,8 @@ describe("runtime-sdk core", () => {
     const events: string[] = [];
     const client = createRuntimeClient({ bootstrap, fetchImpl });
     const result = await client.stream({ input: "hi" }, (event) => {
-      if (event.event === "token") {
-        events.push(String(event.data?.content || ""));
+      if (event.event === "assistant.delta") {
+        events.push(String(event.content || ""));
       }
     });
 
@@ -84,7 +84,7 @@ describe("runtime-sdk core", () => {
       buildResponse(
         [
           "data: not-json\n\n",
-          'data: {"event":"token","data":{"content":"ok"}}\n\n',
+          'data: {"version":"run-stream.v2","seq":1,"ts":"2026-03-02T00:00:00Z","event":"assistant.delta","run_id":"run-1","stage":"assistant","payload":{"content":"ok"},"diagnostics":[]}\n\n',
         ],
       ),
     );
@@ -92,8 +92,8 @@ describe("runtime-sdk core", () => {
     const client = createRuntimeClient({ bootstrap, fetchImpl, tokenProvider });
     const received: string[] = [];
     await client.stream({ input: "hello" }, (event) => {
-      if (event.event === "token") {
-        received.push(String(event.data?.content || ""));
+      if (event.event === "assistant.delta") {
+        received.push(String(event.content || ""));
       }
     });
 
@@ -104,6 +104,7 @@ describe("runtime-sdk core", () => {
 
   test("normalizes payload/content fallback", () => {
     const normalized = normalizeRuntimeEvent({
+      version: "run-stream.v2",
       type: "assistant.delta",
       payload: { content: "delta" },
     });

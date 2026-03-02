@@ -1197,3 +1197,67 @@ def reap_published_app_draft_dev_sessions_task():
         return {"status": "ok", "expired_sessions": expired}
 
     return run_async(_run())
+
+
+@celery_app.task(name="app.workers.tasks.expire_usage_quota_reservations_task")
+def expire_usage_quota_reservations_task():
+    async def _run():
+        from app.db.postgres.engine import sessionmaker
+        from app.services.usage_quota_service import UsageQuotaService
+
+        older_than_minutes = int(os.getenv("QUOTA_RESERVATION_EXPIRE_MINUTES", "30"))
+        async with sessionmaker() as db:
+            service = UsageQuotaService(db)
+            released = await service.expire_stale_reservations(older_than_minutes=older_than_minutes)
+            await db.commit()
+        return {"status": "ok", "expired_reservations": released, "older_than_minutes": older_than_minutes}
+
+    return run_async(_run())
+
+
+@celery_app.task(name="app.workers.tasks.reconcile_usage_quota_counters_task")
+def reconcile_usage_quota_counters_task():
+    async def _run():
+        from app.db.postgres.engine import sessionmaker
+        from app.db.postgres.models.usage_quota import UsageQuotaPolicy, UsageQuotaScopeType
+        from app.services.usage_quota_service import UsageQuotaService
+
+        async with sessionmaker() as db:
+            service = UsageQuotaService(db)
+            result = await db.execute(
+                select(UsageQuotaPolicy).where(UsageQuotaPolicy.is_active.is_(True))
+            )
+            policies = result.scalars().all()
+            now_utc = datetime.now(timezone.utc)
+            scope_keys: set[tuple[str, str, datetime, datetime]] = set()
+            for policy in policies:
+                scope_type = (
+                    UsageQuotaScopeType.tenant
+                    if policy.scope_type == UsageQuotaScopeType.tenant
+                    else UsageQuotaScopeType.user
+                )
+                scope_id = policy.tenant_id if scope_type == UsageQuotaScopeType.tenant else policy.user_id
+                if scope_id is None:
+                    continue
+                period_start, period_end = service._month_bounds_utc(
+                    tz_name=str(policy.timezone or "UTC"),
+                    now_utc=now_utc,
+                )
+                scope_keys.add((scope_type.value, str(scope_id), period_start, period_end))
+
+            reconciled = 0
+            for scope_type_raw, scope_id_raw, period_start, period_end in scope_keys:
+                scope_type = UsageQuotaScopeType(scope_type_raw)
+                used = await service.reconcile_counter_from_ledger(
+                    scope_type=scope_type,
+                    scope_id=UUID(scope_id_raw),
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+                _ = used
+                reconciled += 1
+            await db.commit()
+
+        return {"status": "ok", "reconciled_scopes": reconciled}
+
+    return run_async(_run())

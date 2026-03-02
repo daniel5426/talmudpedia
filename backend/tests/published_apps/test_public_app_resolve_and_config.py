@@ -70,15 +70,11 @@ async def test_private_published_app_is_hidden_from_public_endpoints(client, db_
     assert config_resp.status_code == 404
 
 @pytest.mark.asyncio
-async def test_public_ui_source_removed_endpoint_still_returns_410():
-    # Legacy source-ui path remains explicitly removed; published runtime is now host-gated.
-    # This endpoint should continue to return the deprecation response.
-    # No DB setup is required because the route no longer resolves app state before responding.
-    from app.api.routers.published_apps_public import get_published_ui  # local import to avoid test-wide side effects
-
-    with pytest.raises(Exception):
-        # Placeholder keeps intent local to this file while legacy path tests were removed.
-        _ = get_published_ui
+async def test_public_ui_source_removed_endpoint_still_returns_410(client):
+    resp = await client.get("/public/apps/some-app/ui")
+    assert resp.status_code == 410
+    detail = resp.json().get("detail", {})
+    assert detail.get("code") == "UI_SOURCE_MODE_REMOVED"
 
 
 @pytest.mark.asyncio
@@ -295,4 +291,3 @@ async def test_preview_runtime_bootstrap_contract(client, db_session):
     assert payload["revision_id"] == draft_revision_id
     assert "preview_token" not in payload
     assert payload["chat_stream_path"].endswith(f"/public/apps/preview/revisions/{draft_revision_id}/chat/stream")
-

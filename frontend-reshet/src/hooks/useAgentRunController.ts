@@ -61,6 +61,88 @@ const resolveArchitectResponse = (content: string) => {
   return content;
 };
 
+const adaptStreamEvent = (event: any): any => {
+  if (!event || event.version !== "run-stream.v2") return event;
+
+  const payload = (event.payload && typeof event.payload === "object") ? event.payload : {};
+  const eventName = String(event.event || "");
+
+  if (eventName === "assistant.delta") {
+    return { event: "token", run_id: event.run_id, data: { content: payload.content } };
+  }
+  if (eventName === "run.accepted") {
+    return { event: "run_status", run_id: event.run_id, data: { status: payload.status || "running" } };
+  }
+  if (eventName === "run.completed") {
+    return { event: "run_status", run_id: event.run_id, data: { status: "completed" } };
+  }
+  if (eventName === "run.paused") {
+    return {
+      event: "run_status",
+      run_id: event.run_id,
+      data: { status: "paused", next: payload.next, next_nodes: payload.next_nodes },
+    };
+  }
+  if (eventName === "run.cancelled") {
+    return { event: "run_status", run_id: event.run_id, data: { status: "cancelled" } };
+  }
+  if (eventName === "run.failed") {
+    return {
+      event: "error",
+      run_id: event.run_id,
+      data: { error: payload.error || event.diagnostics?.[0]?.message || "Agent error" },
+    };
+  }
+  if (eventName === "tool.started") {
+    return {
+      event: "on_tool_start",
+      run_id: event.run_id,
+      span_id: payload.span_id,
+      name: payload.tool,
+      data: { input: payload.input, message: payload.message },
+    };
+  }
+  if (eventName === "tool.completed") {
+    return {
+      event: "on_tool_end",
+      run_id: event.run_id,
+      span_id: payload.span_id,
+      name: payload.tool,
+      data: { output: payload.output },
+    };
+  }
+  if (eventName === "tool.failed") {
+    return {
+      event: "error",
+      run_id: event.run_id,
+      span_id: payload.span_id,
+      data: { error: payload.error || "Tool failed" },
+    };
+  }
+  if (eventName === "reasoning.update") {
+    return { type: "reasoning", run_id: event.run_id, data: payload };
+  }
+  if (eventName.startsWith("orchestration.")) {
+    return {
+      event: eventName,
+      run_id: event.run_id,
+      span_id: payload.span_id,
+      name: payload.name,
+      data: payload.data || payload,
+      metadata: payload.metadata,
+    };
+  }
+
+  return {
+    event: eventName || "event",
+    run_id: event.run_id,
+    span_id: payload.span_id,
+    name: payload.name,
+    data: payload.data || payload,
+    metadata: payload.metadata,
+  };
+};
+
 export function useAgentRunController(agentId: string | undefined): ChatController & {
   executionSteps: ExecutionStep[];
   executionEvents: AgentExecutionEvent[];
@@ -358,7 +440,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
           if (dataStr === "[DONE]") break;
 
           try {
-            const event = JSON.parse(dataStr);
+            const event = adaptStreamEvent(JSON.parse(dataStr));
             const eventName =
               typeof event.event === "string"
                 ? event.event

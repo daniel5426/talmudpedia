@@ -1,6 +1,23 @@
 import { useReducer, useCallback, useRef } from 'react';
 import { agentService } from '@/services/agent';
 
+const adaptStreamEvent = (event: any): any => {
+    if (!event || event.version !== "run-stream.v2") return event;
+    const payload = (event.payload && typeof event.payload === "object") ? event.payload : {};
+    const eventName = String(event.event || "");
+
+    if (eventName === "assistant.delta") return { event: "token", run_id: event.run_id, data: { content: payload.content } };
+    if (eventName === "run.accepted") return { event: "run_status", run_id: event.run_id, data: { status: payload.status || "running" } };
+    if (eventName === "run.completed") return { event: "run_status", run_id: event.run_id, data: { status: "completed" } };
+    if (eventName === "run.paused") return { event: "run_status", run_id: event.run_id, data: { status: "paused" } };
+    if (eventName === "run.cancelled") return { event: "run_status", run_id: event.run_id, data: { status: "cancelled" } };
+    if (eventName === "run.failed") return { event: "error", run_id: event.run_id, data: { error: payload.error || "Run failed" } };
+    if (eventName === "tool.started") return { event: "on_tool_start", run_id: event.run_id, span_id: payload.span_id, name: payload.tool, data: { input: payload.input } };
+    if (eventName === "tool.completed") return { event: "on_tool_end", run_id: event.run_id, span_id: payload.span_id, name: payload.tool, data: { output: payload.output } };
+    if (eventName === "reasoning.update") return { type: "reasoning", run_id: event.run_id, data: payload };
+    return { event: eventName || "event", run_id: event.run_id, data: payload.data || payload, span_id: payload.span_id, name: payload.name };
+};
+
 // --- Types ---
 
 export type ExecutionStatus = 'idle' | 'running' | 'paused' | 'completed' | 'failed';
@@ -182,10 +199,10 @@ export function useAgentExecution() {
                     if (dataStr === "[DONE]") break;
 
                     try {
-                        const eventData = JSON.parse(dataStr);
+                        const eventData = adaptStreamEvent(JSON.parse(dataStr));
                         
-                        if (eventData.type === 'error') {
-                            throw new Error(eventData.error);
+                        if (eventData.type === 'error' || eventData.event === 'error') {
+                            throw new Error(eventData.error || eventData.data?.error || "Execution error");
                         }
                         if (eventData.type === 'done') break;
 

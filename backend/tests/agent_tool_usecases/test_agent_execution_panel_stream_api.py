@@ -52,7 +52,82 @@ def _parse_sse_events(payload: str) -> list[dict]:
     for block in payload.split("\n\n"):
         for line in block.splitlines():
             if line.startswith("data: "):
-                events.append(json.loads(line[6:]))
+                raw = json.loads(line[6:])
+                if raw.get("version") == "run-stream.v2":
+                    event_name = str(raw.get("event") or "")
+                    payload_data = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
+                    if event_name == "run.accepted":
+                        events.append({"event": "run_id", "run_id": raw.get("run_id")})
+                        events.append(
+                            {
+                                "event": "run_status",
+                                "run_id": raw.get("run_id"),
+                                "data": {"status": payload_data.get("status", "running")},
+                            }
+                        )
+                        continue
+                    if event_name == "assistant.delta":
+                        events.append(
+                            {
+                                "event": "token",
+                                "run_id": raw.get("run_id"),
+                                "data": {"content": payload_data.get("content")},
+                            }
+                        )
+                        continue
+                    if event_name == "tool.started":
+                        events.append(
+                            {
+                                "event": "on_tool_start",
+                                "run_id": raw.get("run_id"),
+                                "span_id": payload_data.get("span_id"),
+                                "name": payload_data.get("tool"),
+                                "data": {"input": payload_data.get("input"), "message": payload_data.get("message")},
+                            }
+                        )
+                        continue
+                    if event_name == "tool.completed":
+                        events.append(
+                            {
+                                "event": "on_tool_end",
+                                "run_id": raw.get("run_id"),
+                                "span_id": payload_data.get("span_id"),
+                                "name": payload_data.get("tool"),
+                                "data": {"output": payload_data.get("output")},
+                            }
+                        )
+                        continue
+                    if event_name == "reasoning.update":
+                        events.append({"type": "reasoning", "run_id": raw.get("run_id"), "data": payload_data})
+                        continue
+                    if event_name == "run.completed":
+                        events.append(
+                            {
+                                "event": "run_status",
+                                "run_id": raw.get("run_id"),
+                                "data": {"status": "completed"},
+                            }
+                        )
+                        continue
+                    if event_name == "run.paused":
+                        events.append(
+                            {
+                                "event": "run_status",
+                                "run_id": raw.get("run_id"),
+                                "data": {"status": "paused"},
+                            }
+                        )
+                        continue
+                    if event_name == "run.failed":
+                        events.append(
+                            {
+                                "event": "error",
+                                "run_id": raw.get("run_id"),
+                                "data": {"error": payload_data.get("error")},
+                            }
+                        )
+                        continue
+                events.append(raw)
     return events
 
 

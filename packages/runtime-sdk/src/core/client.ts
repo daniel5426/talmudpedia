@@ -47,6 +47,9 @@ export function createRuntimeClient(options: RuntimeClientOptions) {
   if (!bootstrap) {
     throw new Error("Runtime SDK requires bootstrap configuration.");
   }
+  if (bootstrap.stream_contract_version !== "run-stream.v2") {
+    throw new Error("Runtime SDK requires stream_contract_version=run-stream.v2.");
+  }
 
   const streamUrl = resolveChatStreamUrl(bootstrap, options.apiBaseUrl || bootstrap.api_base_url);
 

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrace, AgentStatus, RunStatus
+from app.services.usage_quota_service import QuotaExceededError
 # from ..agent.graph.compiler import AgentCompiler # Mocking compiler for now if not ready, or use it
 # from ..agent.graph.schema import AgentGraph
 
@@ -304,6 +305,8 @@ class AgentService:
                 usage={"tokens": run.usage_tokens if run else 0},
             )
 
+        except QuotaExceededError:
+            raise
         except Exception as e:
             logger.error(f"Agent execution failed: {e}")
             raise AgentServiceError(f"Execution failed: {e}")

@@ -2,8 +2,8 @@ import logging
 import asyncio
 import traceback
 import json
-from uuid import UUID
-from datetime import datetime
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
+from app.services.usage_quota_service import UsageQuotaService
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,48 @@ class AgentExecutorService:
         patched = dict(graph_definition)
         patched["nodes"] = patched_nodes
         return patched
+
+    @staticmethod
+    def _estimate_usage_tokens_from_payload(input_params: Dict[str, Any], output_result: Dict[str, Any] | None) -> int:
+        total_chars = 0
+        if isinstance(input_params, dict):
+            raw_input = input_params.get("input")
+            if isinstance(raw_input, str):
+                total_chars += len(raw_input)
+            messages = input_params.get("messages")
+            if isinstance(messages, list):
+                for msg in messages:
+                    if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+                        total_chars += len(msg["content"])
+        if isinstance(output_result, dict):
+            messages = output_result.get("messages")
+            if isinstance(messages, list):
+                for msg in messages:
+                    if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+                        total_chars += len(msg["content"])
+            text = output_result.get("final_output")
+            if isinstance(text, str):
+                total_chars += len(text)
+        return max(0, int(total_chars // 4))
+
+    @staticmethod
+    def _extract_usage_tokens_from_event(event: ExecutionEvent) -> int:
+        payload = event.data if isinstance(event.data, dict) else {}
+        candidates: list[Any] = []
+        for key in ("usage_tokens", "total_tokens", "tokens"):
+            candidates.append(payload.get(key))
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            for key in ("total_tokens", "tokens", "usage_tokens"):
+                candidates.append(usage.get(key))
+        for candidate in candidates:
+            try:
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+            except Exception:
+                continue
+        return 0
 
     async def start_run(
         self, 
@@ -108,11 +151,36 @@ class AgentExecutorService:
         except Exception:
             parsed_initiator_id = None
 
+        run_id = uuid4()
+        effective_initiator_id = user_id or parsed_initiator_id
+
+        # Reserve quota (if enabled) before creating the run record.
+        input_params = dict(input_params or {})
+        quota_metadata = {"max_output_cap": None}
+        if str(runtime_context.get("surface") or "").strip().lower() != "published_app_coding_agent":
+            try:
+                quota_service = UsageQuotaService(self.db)
+                quota_metadata = await quota_service.reserve_for_run(
+                    run_id=run_id,
+                    tenant_id=agent.tenant_id,
+                    user_id=effective_initiator_id,
+                    input_params=input_params,
+                )
+            except Exception:
+                await self.db.rollback()
+                raise
+        context_payload = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        context_payload = dict(context_payload)
+        if quota_metadata.get("max_output_cap"):
+            context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
+        input_params["context"] = context_payload
+
         run = AgentRun(
+            id=run_id,
             agent_id=agent_id,
             tenant_id=agent.tenant_id,
-            user_id=user_id or parsed_initiator_id,
-            initiator_user_id=user_id or parsed_initiator_id,
+            user_id=effective_initiator_id,
+            initiator_user_id=effective_initiator_id,
             workload_principal_id=parsed_principal_id,
             delegation_grant_id=parsed_grant_id,
             input_params=input_params,
@@ -139,7 +207,6 @@ class AgentExecutorService:
         # Create delegation context for runs with an initiator user context.
         # This covers both direct user-initiated runs and workload-initiated runs
         # that propagate initiator_user_id in runtime context.
-        effective_initiator_id = user_id or parsed_initiator_id
         if effective_initiator_id is not None and run.delegation_grant_id is None:
             from app.services.delegation_service import DelegationService
             delegation = DelegationService(self.db)
@@ -343,8 +410,13 @@ class AgentExecutorService:
         }
 
         try:
+            max_observed_usage_tokens = 0
             # 5. Stream Execution Events (Platform-normalized)
             async for event in adapter.stream(executable, run_input_params, config):
+                max_observed_usage_tokens = max(
+                    max_observed_usage_tokens,
+                    self._extract_usage_tokens_from_event(event),
+                )
                 self._schedule_trace_persistence(run_id, {
                     "event": event.event,
                     "data": event.data,
@@ -367,7 +439,13 @@ class AgentExecutorService:
                 run.status = RunStatus.completed
                 run.output_result = self._serialize_state(snapshot.values)
                 run.completed_at = datetime.utcnow()
-                run.usage_tokens = 0
+                run.usage_tokens = max(
+                    int(max_observed_usage_tokens or 0),
+                    self._estimate_usage_tokens_from_payload(
+                        run_input_params if isinstance(run_input_params, dict) else {},
+                        run.output_result if isinstance(run.output_result, dict) else None,
+                    ),
+                )
 
             # Emit final status event
             next_nodes = []
@@ -397,6 +475,11 @@ class AgentExecutorService:
                 metadata={"mode": mode.value}
             )
 
+            quota_service = UsageQuotaService(db)
+            await quota_service.settle_for_run(
+                run_id=run_id,
+                actual_usage_tokens=int(run.usage_tokens or 0),
+            )
             await db.commit()
 
         except Exception as e:
@@ -421,6 +504,13 @@ class AgentExecutorService:
                         err_run.status = RunStatus.failed
                         err_run.error_message = str(e)
                         err_run.completed_at = datetime.utcnow()
+                        if err_run.usage_tokens is None:
+                            err_run.usage_tokens = 0
+                        quota_service = UsageQuotaService(err_db)
+                        await quota_service.settle_for_run(
+                            run_id=run_id,
+                            actual_usage_tokens=int(err_run.usage_tokens or 0),
+                        )
                         await err_db.commit()
             except Exception as se:
                 logger.error(f"Failed to save error status for {run_id}: {se}")

@@ -6,10 +6,11 @@ All business logic lives in AgentService.
 """
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import logging
+import os
 
 from app.db.postgres.session import get_db
 from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
@@ -28,6 +29,11 @@ from app.services.agent_service import (
     AgentPublishedError,
     AgentNotPublishedError,
 )
+from app.services.usage_quota_service import QuotaExceededError
+from app.agent.execution.stream_contract_v2 import (
+    build_stream_v2_event,
+    normalize_filtered_event_to_v2,
+)
 from app.api.schemas.agents import (
     CreateAgentRequest,
     UpdateAgentRequest,
@@ -42,6 +48,11 @@ from typing import Optional
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+def _stream_v2_enforced() -> bool:
+    raw = (os.getenv("STREAM_V2_ENFORCED") or "1").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 # =============================================================================
@@ -469,6 +480,8 @@ async def execute_agent(
             messages=serialized_messages,
             usage=result.usage,
         )
+    except QuotaExceededError as exc:
+        return JSONResponse(status_code=429, content=exc.to_payload())
     except AgentServiceError as e:
         handle_service_error(e)
 
@@ -549,36 +562,72 @@ async def stream_agent(
             if isinstance(maybe_scopes, list):
                 requested_scopes = maybe_scopes
         initiating_user_id = context["user"].id if context.get("user") else None
-        run_id = await executor.start_run(
-            agent_id,
-            input_params,
-            user_id=initiating_user_id,
-            background=False,
-            mode=execution_mode,
-            requested_scopes=requested_scopes,
-        )
+        try:
+            run_id = await executor.start_run(
+                agent_id,
+                input_params,
+                user_id=initiating_user_id,
+                background=False,
+                mode=execution_mode,
+                requested_scopes=requested_scopes,
+            )
+        except QuotaExceededError as exc:
+            return JSONResponse(status_code=429, content=exc.to_payload())
 
     async def event_generator():
-        import time
         # raw stream from engine (full firehose)
         raw_stream = executor.run_and_stream(run_id, db, resume_payload, mode=execution_mode)
         
         # filtered stream via adapter
         filtered_stream = StreamAdapter.filter_stream(raw_stream, execution_mode)
-        
-        # Initial Event: Run ID + Padding to force proxy flush (4KB of comments)
+
+        # Initial Event + padding to force proxy flush.
+        seq = 1
         yield ": " + (" " * 4096) + "\n\n"
-        yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
-        
+        if _stream_v2_enforced():
+            accepted = build_stream_v2_event(
+                seq=seq,
+                run_id=str(run_id),
+                event="run.accepted",
+                stage="run",
+                payload={"status": "running"},
+            )
+            seq += 1
+            yield f"data: {json.dumps(accepted, default=str)}\n\n"
+        else:
+            yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
+
         try:
             async for event_dict in filtered_stream:
-                yield f"data: {json.dumps(event_dict, default=str)}\n\n"
-            
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                if _stream_v2_enforced():
+                    mapped_event, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
+                    envelope = build_stream_v2_event(
+                        seq=seq,
+                        run_id=str(run_id),
+                        event=mapped_event,
+                        stage=stage,
+                        payload=payload,
+                        diagnostics=diagnostics,
+                    )
+                    seq += 1
+                    yield f"data: {json.dumps(envelope, default=str)}\n\n"
+                else:
+                    yield f"data: {json.dumps(event_dict, default=str)}\n\n"
         except Exception as e:
             logger = logging.getLogger(__name__)
             logger.error(f"[STREAM] Error during stream: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            if _stream_v2_enforced():
+                envelope = build_stream_v2_event(
+                    seq=seq,
+                    run_id=str(run_id),
+                    event="run.failed",
+                    stage="run",
+                    payload={"error": str(e)},
+                    diagnostics=[{"message": str(e)}],
+                )
+                yield f"data: {json.dumps(envelope, default=str)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
         event_generator(), 
@@ -652,6 +701,8 @@ async def start_run_v2(
             requested_scopes=requested_scopes,
         )
         return {"run_id": str(run_id)}
+    except QuotaExceededError as exc:
+        return JSONResponse(status_code=429, content=exc.to_payload())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

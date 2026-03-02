@@ -72,6 +72,7 @@ class ExecuteAgentRequest(BaseModel):
     messages: list[dict[str, Any]] = []
     context: Optional[dict[str, Any]] = None
     run_id: Optional[UUID] = None
+    client: Optional[dict[str, Any]] = None
 
 
 class ExecuteAgentResponse(BaseModel):

@@ -18,6 +18,7 @@ export type RuntimeAuthCapabilities = {
 
 export type RuntimeBootstrap = {
   version: "runtime-bootstrap.v1";
+  stream_contract_version: "run-stream.v2";
   app_id: string;
   slug: string;
   revision_id?: string;

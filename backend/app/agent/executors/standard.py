@@ -16,6 +16,26 @@ from app.agent.cel_engine import evaluate_template
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_quota_max_output_tokens(state: Dict[str, Any]) -> Optional[int]:
+    if not isinstance(state, dict):
+        return None
+    context = state.get("context")
+    if not isinstance(context, dict):
+        nested_state = state.get("state")
+        if isinstance(nested_state, dict):
+            context = nested_state.get("context")
+    if not isinstance(context, dict):
+        return None
+    raw = context.get("quota_max_output_tokens")
+    try:
+        parsed = int(raw)
+        if parsed > 0:
+            return parsed
+    except Exception:
+        return None
+    return None
+
 # =============================================================================
 # Control Flow Executors
 # =============================================================================
@@ -131,6 +151,16 @@ class LLMNodeExecutor(BaseNodeExecutor):
         
         system_prompt = config.get("system_prompt", None)
         model_id = config.get("model_id")
+        quota_max_tokens = _resolve_quota_max_output_tokens(state)
+        configured_max_tokens = config.get("max_tokens")
+        if quota_max_tokens is not None:
+            if configured_max_tokens is None:
+                configured_max_tokens = quota_max_tokens
+            else:
+                try:
+                    configured_max_tokens = min(int(configured_max_tokens), quota_max_tokens)
+                except Exception:
+                    configured_max_tokens = quota_max_tokens
         
         # Extract emitter from ContextVar (global implicit context)
         from app.agent.execution.emitter import active_emitter
@@ -167,7 +197,11 @@ class LLMNodeExecutor(BaseNodeExecutor):
             # Stream tokens explicitly
             try:
                 reasoning_buffer = ""
-                async for chunk in adapter._astream(formatted_messages, system_prompt=system_prompt):
+                async for chunk in adapter._astream(
+                    formatted_messages,
+                    system_prompt=system_prompt,
+                    max_tokens=configured_max_tokens,
+                ):
                     token_content = chunk.message.content if hasattr(chunk, 'message') else ""
                     
                     # Handle reasoning content if supported
@@ -184,13 +218,21 @@ class LLMNodeExecutor(BaseNodeExecutor):
                             emitter.emit_token(token_content, node_id)
             except NotImplementedError:
                 logger.warning(f"Streaming not supported for model {model_id}, using non-streaming fallback")
-                response = await adapter.ainvoke(formatted_messages, system_prompt=system_prompt)
+                response = await adapter.ainvoke(
+                    formatted_messages,
+                    system_prompt=system_prompt,
+                    max_tokens=configured_max_tokens,
+                )
                 full_content = response.content
                 if emitter:
                     emitter.emit_token(full_content, node_id)
             except Exception as stream_error:
                 logger.warning(f"Streaming failed: {stream_error}, using non-streaming fallback")
-                response = await adapter.ainvoke(formatted_messages, system_prompt=system_prompt)
+                response = await adapter.ainvoke(
+                    formatted_messages,
+                    system_prompt=system_prompt,
+                    max_tokens=configured_max_tokens,
+                )
                 full_content = response.content
                 if emitter:
                     emitter.emit_token(full_content, node_id)
@@ -1111,6 +1153,12 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         effort_settings = self.REASONING_EFFORT_MAP.get(reasoning_effort, {})
         temperature = config.get("temperature", effort_settings.get("temperature", 0.7))
         max_tokens = config.get("max_tokens", effort_settings.get("max_tokens", 2000))
+        quota_max_tokens = _resolve_quota_max_output_tokens(state)
+        if quota_max_tokens is not None:
+            try:
+                max_tokens = min(int(max_tokens), int(quota_max_tokens))
+            except Exception:
+                max_tokens = int(quota_max_tokens)
         
         # Interpolate instructions with state
         if instructions:

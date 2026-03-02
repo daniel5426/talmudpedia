@@ -1,4 +1,3 @@
-import { httpClient } from "./http";
 import type {
   ChatFetchParams,
   ChatHistory,
@@ -7,20 +6,18 @@ import type {
 
 class ChatService {
   async list(params?: ChatFetchParams): Promise<ChatPagination> {
-    const query = new URLSearchParams();
-    if (params?.limit) query.set("limit", String(params.limit));
-    if (params?.cursor) query.set("cursor", params.cursor);
-    const queryString = query.toString();
-    const path = queryString ? `/chats?${queryString}` : "/chats";
-    return httpClient.get<ChatPagination>(path);
+    return {
+      items: [],
+      nextCursor: null,
+    };
   }
 
   async getHistory(chatId: string): Promise<ChatHistory> {
-    return httpClient.get<ChatHistory>(`/chats/${chatId}`);
+    throw new Error("Legacy chat history endpoint has been removed.");
   }
 
   async delete(chatId: string): Promise<void> {
-    return httpClient.delete<void>(`/chats/${chatId}`);
+    return;
   }
 
   async updateMessageFeedback(
@@ -28,17 +25,11 @@ class ChatService {
     messageIndex: number,
     feedback: { liked?: boolean; disliked?: boolean }
   ): Promise<void> {
-    const params = new URLSearchParams();
-    if (feedback.liked !== undefined) params.set("liked", String(feedback.liked));
-    if (feedback.disliked !== undefined) params.set("disliked", String(feedback.disliked));
-    const queryString = params.toString();
-    return httpClient.patch<void>(
-      `/chats/${chatId}/messages/${messageIndex}${queryString ? `?${queryString}` : ""}`
-    );
+    return;
   }
 
   async deleteLastAssistantMessage(chatId: string): Promise<void> {
-    return httpClient.delete<void>(`/chats/${chatId}/messages/last-assistant`);
+    return;
   }
 
   async sendMessage(
@@ -47,20 +38,11 @@ class ChatService {
     files?: any[],
     signal?: AbortSignal
   ): Promise<Response> {
-    const body: any = { message };
-    if (chatId) body.chatId = chatId;
-    if (files && files.length > 0) body.files = files;
-
-    return httpClient.requestRaw("/chat", {
-      method: "POST",
-      body: JSON.stringify(body),
-      signal,
-    });
+    throw new Error("Legacy chat endpoint has been removed.");
   }
 
   getShareUrl(chatId: string): string {
-    const params = new URLSearchParams({ chatId });
-    return `${window.location.origin}/chat?${params.toString()}`;
+    return `${window.location.origin}/admin/agents/playground`;
   }
 }
 

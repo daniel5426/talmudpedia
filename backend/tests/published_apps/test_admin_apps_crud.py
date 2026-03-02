@@ -7,6 +7,10 @@ from app.db.postgres.models.published_apps import PublishedAppRevision, Publishe
 from ._helpers import admin_headers, seed_admin_tenant_and_agent
 
 
+def _host_headers(slug: str) -> dict[str, str]:
+    return {"Host": f"{slug}.apps.localhost"}
+
+
 @pytest.mark.asyncio
 async def test_admin_apps_crud(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
@@ -188,7 +192,8 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
     assert publish_toggle_resp.status_code == 200
 
     signup_resp = await client.post(
-        f"/public/apps/{app['slug']}/auth/signup",
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app["slug"]),
         json={
             "email": "member@example.com",
             "password": "secret123",
@@ -196,7 +201,6 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
         },
     )
     assert signup_resp.status_code == 200
-    session_token = signup_resp.json()["token"]
 
     users_resp = await client.get(f"/admin/apps/{app['id']}/users", headers=headers)
     assert users_resp.status_code == 200
@@ -216,11 +220,12 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
     assert blocked["membership_status"] == "blocked"
     assert blocked["active_sessions"] == 0
 
-    me_resp = await client.get(
-        f"/public/apps/{app['slug']}/auth/me",
-        headers={"Authorization": f"Bearer {session_token}"},
+    state_resp = await client.get(
+        "/_talmudpedia/auth/state",
+        headers=_host_headers(app["slug"]),
     )
-    assert me_resp.status_code == 401
+    assert state_resp.status_code == 200
+    assert state_resp.json()["authenticated"] is False
 
     unblock_resp = await client.patch(
         f"/admin/apps/{app['id']}/users/{user_id}",

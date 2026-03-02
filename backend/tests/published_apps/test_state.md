@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-02
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -19,14 +19,15 @@ Last Updated: 2026-03-01
 - Initial app-create draft revision (`origin_kind=app_init`) auto-enqueues async build; enqueue failure marks revision build failed without blocking app creation.
 - Builder state includes app + template + current draft metadata.
 - Public runtime/config endpoints enforce visibility and auth constraints.
+- Path-mode published auth/chat/runtime endpoints are removed (`410`), while admin user-management tests use host-runtime auth (`/_talmudpedia/*`).
 - Public chat persistence and scoping behavior.
 - Agent integration contract payload is exposed and validated.
 - Legacy publish helper now routes publish through selected version flow.
 
 ## Last run command + date/time + result
-- Command: `cd backend && pytest tests/published_apps/test_admin_apps_crud.py -k "initial_revision_build"`
-- Date: 2026-03-01
-- Result: PASS (2 passed, 4 deselected)
+- Command: `pytest -q backend/tests/published_apps`
+- Date: 2026-03-02
+- Result: PASS (16 passed)
 
 ## Known gaps or follow-ups
 - Add explicit regression tests for removed `/admin/apps/{app_id}/publish` route in this folder (currently covered under `backend/tests/app_versions/`).
