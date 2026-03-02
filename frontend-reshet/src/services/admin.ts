@@ -1,8 +1,7 @@
 import { httpClient } from "./http";
 import type {
   AdminStats,
-  ChatListResponse,
-  User,
+  ThreadListResponse,
   UserDetailsResponse,
   UserListResponse,
   StatsSection,
@@ -40,28 +39,32 @@ class AdminService {
     return httpClient.get<UserListResponse>(`/admin/users?${query.toString()}`);
   }
 
-  async getChats(page = 1, limit = 20, search = ""): Promise<ChatListResponse> {
+  async getThreads(page = 1, limit = 20, search = ""): Promise<ThreadListResponse> {
     const skip = (page - 1) * limit;
     const query = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (search) query.set("search", search);
-    return httpClient.get<ChatListResponse>(`/admin/chats?${query.toString()}`);
+    return httpClient.get<ThreadListResponse>(`/admin/threads?${query.toString()}`);
   }
 
   async getUserDetails(userId: string): Promise<UserDetailsResponse> {
     return httpClient.get<UserDetailsResponse>(`/admin/users/${userId}`);
   }
 
-  async getUserChats(
+  async getUserThreads(
     userId: string,
     page = 1,
     limit = 20,
     search = ""
-  ): Promise<ChatListResponse> {
+  ): Promise<ThreadListResponse> {
     const skip = (page - 1) * limit;
     const query = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (search) query.set("search", search);
     const queryString = query.toString();
-    return httpClient.get<ChatListResponse>(`/admin/users/${userId}/chats?${queryString}`);
+    return httpClient.get<ThreadListResponse>(`/admin/users/${userId}/threads?${queryString}`);
+  }
+
+  async getThread(threadId: string): Promise<Record<string, unknown>> {
+    return httpClient.get<Record<string, unknown>>(`/admin/threads/${threadId}`);
   }
 
   async updateUser(userId: string, data: { full_name?: string; role?: string }): Promise<void> {
@@ -72,8 +75,8 @@ class AdminService {
     return httpClient.post<void>("/admin/users/bulk-delete", userIds);
   }
 
-  async bulkDeleteChats(chatIds: string[]): Promise<void> {
-    return httpClient.post<void>("/admin/chats/bulk-delete", chatIds);
+  async bulkDeleteThreads(threadIds: string[]): Promise<void> {
+    return httpClient.post<void>("/admin/threads/bulk-delete", threadIds);
   }
 }
 

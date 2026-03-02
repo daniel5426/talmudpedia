@@ -99,7 +99,7 @@ class PublishedAppsCORSMiddleware(BaseHTTPMiddleware):
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Headers"] = "Authorization,Content-Type,X-Requested-With"
         response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-        response.headers["Access-Control-Expose-Headers"] = "X-Chat-ID"
+        response.headers["Access-Control-Expose-Headers"] = "X-Thread-ID"
         vary = response.headers.get("Vary")
         if vary:
             if "Origin" not in vary:

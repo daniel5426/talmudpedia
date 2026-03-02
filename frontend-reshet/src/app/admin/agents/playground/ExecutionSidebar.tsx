@@ -12,7 +12,7 @@ interface ExecutionSidebarProps {
 
 export function ExecutionSidebar({ steps, className }: ExecutionSidebarProps) {
   return (
-    <div className={cn("flex flex-col h-full min-h-0 overflow-y-auto border-l bg-muted/10", className)}>
+    <div className={cn("flex flex-col h-full min-h-0 overflow-y-auto bg-transparent", className)}>
       <ExecutionTrace steps={steps} className="bg-transparent" />
     </div>
   );

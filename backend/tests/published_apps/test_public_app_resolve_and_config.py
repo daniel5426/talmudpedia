@@ -289,5 +289,6 @@ async def test_preview_runtime_bootstrap_contract(client, db_session):
     assert payload["version"] == "runtime-bootstrap.v1"
     assert payload["mode"] == "builder-preview"
     assert payload["revision_id"] == draft_revision_id
+    assert payload["request_contract_version"] == "thread.v1"
     assert "preview_token" not in payload
     assert payload["chat_stream_path"].endswith(f"/public/apps/preview/revisions/{draft_revision_id}/chat/stream")

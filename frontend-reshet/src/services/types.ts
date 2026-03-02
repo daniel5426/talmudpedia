@@ -28,6 +28,15 @@ export interface Chat {
   id: string;
   title: string;
   updated_at: string;
+  user_id?: string | null;
+}
+
+export interface Thread {
+  id: string;
+  title: string;
+  updated_at: string;
+  created_at?: string;
+  user_id?: string | null;
 }
 
 export interface ChatHistory {
@@ -94,10 +103,17 @@ export interface ChatListResponse {
   pages: number;
 }
 
+export interface ThreadListResponse {
+  items: Thread[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
 export interface UserDetailsResponse {
   user: User;
   stats: {
-    chats_count: number;
+    threads_count: number;
     tokens_used_this_month: number;
   };
 }

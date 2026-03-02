@@ -15,6 +15,13 @@ from .registry import (
 )
 from .rag import RAGPipeline, VisualPipeline, ExecutablePipeline, PipelineJob, OperatorCategory, PipelineJobStatus, PipelineStepExecution, PipelineStepStatus, KnowledgeStore, KnowledgeStoreStatus, StorageBackend, RetrievalPolicy
 from .agents import Agent, AgentVersion, AgentRun, AgentTrace, RunStatus, AgentStatus
+from .agent_threads import (
+    AgentThread,
+    AgentThreadTurn,
+    AgentThreadStatus,
+    AgentThreadSurface,
+    AgentThreadTurnStatus,
+)
 from .security import (
     WorkloadPrincipal,
     WorkloadPrincipalBinding,

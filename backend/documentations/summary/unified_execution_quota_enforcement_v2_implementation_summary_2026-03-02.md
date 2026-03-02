@@ -71,6 +71,32 @@ Implement a reuse-first unification of non-coding agent execution on `AgentExecu
 - Updated frontend stream consumers to adapt V2 envelope to existing UI event handling.
 - Redirected workspace chat routes to playground and deactivated legacy chat service behavior.
 
+### 10) Run-Native Thread Unification (Hard Cut)
+- Introduced run-native history persistence:
+  - `agent_threads`
+  - `agent_thread_turns`
+  - `agent_runs.thread_id` linkage
+- Unified request identity from `chat_id` to `thread_id` for non-coding execution surfaces:
+  - `POST /agents/{agent_id}/stream`
+  - `POST /agents/{agent_id}/run`
+  - `POST /_talmudpedia/chat/stream`
+  - `POST /public/apps/preview/revisions/{revision_id}/chat/stream`
+- Unified stream response metadata:
+  - `X-Chat-ID` replaced by `X-Thread-ID`
+  - accepted events include `thread_id` in payload where applicable
+- Runtime bootstrap now declares request contract:
+  - `request_contract_version: "thread.v1"`
+- Admin API hard rename:
+  - `/admin/chats*` -> `/admin/threads*`
+  - user stats `chats_count` -> `threads_count`
+- Added host runtime history endpoints:
+  - `GET /_talmudpedia/threads`
+  - `GET /_talmudpedia/threads/{thread_id}`
+- Runtime SDK breaking major update:
+  - `RuntimeInput.chat_id` -> `RuntimeInput.thread_id`
+  - `RuntimeStreamResult.chatId` -> `RuntimeStreamResult.threadId`
+  - requires `request_contract_version === "thread.v1"`
+
 ## Important Migration Fixes Applied During Implementation
 
 ### A) Duplicate enum creation in Alembic migration
@@ -85,6 +111,9 @@ Implement a reuse-first unification of non-coding agent execution on `AgentExecu
 - `backend/app/db/postgres/models/usage_quota.py`
 - `backend/app/services/usage_quota_service.py`
 - `backend/app/agent/execution/stream_contract_v2.py`
+- `backend/alembic/versions/7a1f3b4c5d6e_add_agent_threads_and_turns.py`
+- `backend/app/db/postgres/models/agent_threads.py`
+- `backend/app/services/thread_service.py`
 - `backend/tests/usage_quota/test_usage_quota_service.py`
 - `backend/tests/usage_quota/test_state.md`
 
@@ -93,16 +122,27 @@ Implement a reuse-first unification of non-coding agent execution on `AgentExecu
 - `backend/app/agent/executors/standard.py`
 - `backend/app/api/routers/agents.py`
 - `backend/app/api/routers/published_apps_public.py`
+- `backend/app/api/routers/published_apps_host_runtime.py`
 - `backend/app/api/routers/admin.py`
+- `backend/app/api/schemas/agents.py`
 - `backend/main.py`
+- `backend/app/middleware/published_apps_cors.py`
 - `backend/app/workers/tasks.py`
 - `backend/app/workers/celery_app.py`
+- `backend/app/db/postgres/models/agents.py`
 - `packages/runtime-sdk/src/core/types.ts`
 - `packages/runtime-sdk/src/core/client.ts`
 - `packages/runtime-sdk/src/core/events.ts`
+- `packages/runtime-sdk/package.json`
 - `frontend-reshet/src/hooks/useAgentRunController.ts`
 - `frontend-reshet/src/hooks/useAgentExecution.ts`
 - `frontend-reshet/src/services/chat.ts`
+- `frontend-reshet/src/services/admin.ts`
+- `frontend-reshet/src/services/types.ts`
+- `frontend-reshet/src/components/admin/threads-table.tsx`
+- `frontend-reshet/src/app/admin/threads/page.tsx`
+- `frontend-reshet/src/app/admin/threads/[threadId]/page.tsx`
+- `frontend-reshet/src/app/admin/users/[userId]/threads/[threadId]/page.tsx`
 
 ## Validation and Test Runs
 - Backend suites:
@@ -117,6 +157,11 @@ Implement a reuse-first unification of non-coding agent execution on `AgentExecu
 - Frontend runtime SDK test:
   - `npm test -- --runInBand src/__tests__/runtime_sdk/runtime_sdk_core.test.ts`
   - Result: PASS (`4 passed`)
+- Thread unification backend slices:
+  - `pytest -q backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py backend/tests/published_apps/test_public_chat_scope_and_persistence.py backend/tests/published_apps/test_public_app_resolve_and_config.py::test_preview_runtime_bootstrap_contract`
+  - Result: PASS (`9 passed`)
+  - `pytest -q backend/tests/published_apps`
+  - Result: PASS (`17 passed`)
 
 ## Known Follow-Ups
 1. Full frontend cleanup for remaining `/chat` navigation references outside the redirected routes and disabled service methods.
@@ -131,4 +176,3 @@ Implement a reuse-first unification of non-coding agent execution on `AgentExecu
 - `QUOTA_WORKERS_BEAT_ENABLED`
 - `QUOTA_EXPIRE_SWEEP_INTERVAL_SECONDS`
 - `QUOTA_RECONCILE_INTERVAL_SECONDS`
-

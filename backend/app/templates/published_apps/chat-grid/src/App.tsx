@@ -80,7 +80,7 @@ export function App() {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [chatId, setChatId] = useState<string | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(null);
   const [sources, setSources] = useState<SourceItem[]>(defaultSources);
 
   useEffect(() => {
@@ -136,9 +136,9 @@ export function App() {
     };
 
     try {
-      const result = await runtime.stream({ input: text, chat_id: chatId || undefined }, applyEvent);
-      if (result.chatId) {
-        setChatId(result.chatId);
+      const result = await runtime.stream({ input: text, thread_id: threadId || undefined }, applyEvent);
+      if (result.threadId) {
+        setThreadId(result.threadId);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to stream runtime response";

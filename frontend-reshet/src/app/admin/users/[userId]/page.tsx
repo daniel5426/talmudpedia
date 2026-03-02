@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { adminService, User, Chat } from "@/services"
-import { ChatsTable } from "@/components/admin/chats-table"
+import { adminService, User, Thread } from "@/services"
+import { ThreadsTable } from "@/components/admin/threads-table"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 export default function AdminUserPage() {
@@ -11,7 +11,7 @@ export default function AdminUserPage() {
   const userId = params.userId as string
   const [user, setUser] = useState<User | null>(null)
   const [stats, setStats] = useState<any>(null)
-  const [chats, setChats] = useState<Chat[]>([])
+  const [threads, setThreads] = useState<Thread[]>([])
   const [pageCount, setPageCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [pagination, setPagination] = useState({
@@ -34,23 +34,23 @@ export default function AdminUserPage() {
   }, [userId])
 
   useEffect(() => {
-    const fetchChats = async () => {
+    const fetchThreads = async () => {
       try {
-        const data = await adminService.getUserChats(
+        const data = await adminService.getUserThreads(
           userId,
           pagination.pageIndex + 1,
           pagination.pageSize,
           search
         )
-        setChats(data.items)
+        setThreads(data.items)
         setPageCount(data.pages)
       } catch (error) {
-        console.error("Failed to fetch user chats", error)
+        console.error("Failed to fetch user threads", error)
       } finally {
         setLoading(false)
       }
     }
-    fetchChats()
+    fetchThreads()
   }, [userId, pagination, search])
 
   if (loading && !user) return <div className="p-8">Loading...</div>
@@ -96,19 +96,19 @@ export default function AdminUserPage() {
             </dd>
           </div>
           <div>
-            <dt className="text-sm text-muted-foreground">Chats</dt>
-            <dd className="mt-1 text-sm font-medium">{stats?.chats_count || 0}</dd>
+            <dt className="text-sm text-muted-foreground">Threads</dt>
+            <dd className="mt-1 text-sm font-medium">{stats?.threads_count || 0}</dd>
           </div>
         </dl>
 
         <div>
-          <ChatsTable
-            data={chats}
+          <ThreadsTable
+            data={threads}
             pageCount={pageCount}
             pagination={pagination}
             onPaginationChange={setPagination}
             onSearchChange={setSearch}
-            basePath={`/admin/users/${userId}/chats`}
+            basePath={`/admin/users/${userId}/threads`}
           />
         </div>
       </div>

@@ -801,7 +801,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Chat-ID"],
+    expose_headers=["X-Thread-ID"],
 )
 # App-level CORS allowlist for /public/apps/{slug} endpoints.
 # This middleware is registered after CORSMiddleware so it runs first.

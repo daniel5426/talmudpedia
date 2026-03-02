@@ -128,6 +128,7 @@ class AgentRun(Base):
     initiator_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     surface = Column(String, nullable=True, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
+    thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="SET NULL"), nullable=True, index=True)
     base_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
     result_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
     requested_model_id = Column(UUID(as_uuid=True), ForeignKey("model_registry.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -155,6 +156,7 @@ class AgentRun(Base):
     user = relationship("User", foreign_keys=[user_id])
     initiator_user = relationship("User", foreign_keys=[initiator_user_id])
     published_app = relationship("PublishedApp", foreign_keys=[published_app_id])
+    thread = relationship("AgentThread", foreign_keys=[thread_id])
     base_revision = relationship("PublishedAppRevision", foreign_keys=[base_revision_id])
     result_revision = relationship("PublishedAppRevision", foreign_keys=[result_revision_id])
     requested_model = relationship("ModelRegistry", foreign_keys=[requested_model_id])
@@ -162,12 +164,14 @@ class AgentRun(Base):
     root_run = relationship("AgentRun", remote_side=[id], foreign_keys=[root_run_id], post_update=True)
     parent_run = relationship("AgentRun", remote_side=[id], foreign_keys=[parent_run_id], backref="child_runs")
     orchestration_group = relationship("OrchestrationGroup", foreign_keys=[orchestration_group_id])
+    thread_turn = relationship("AgentThreadTurn", back_populates="run", uselist=False)
     traces = relationship("AgentTrace", back_populates="run", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("parent_run_id", "spawn_key", name="uq_agent_runs_parent_spawn_key"),
         Index("ix_agent_runs_root_created_at", "root_run_id", "created_at"),
         Index("ix_agent_runs_parent_created_at", "parent_run_id", "created_at"),
+        Index("ix_agent_runs_thread_created_at", "thread_id", "created_at"),
         Index(
             "ix_agent_runs_coding_scope_status_created_at",
             "surface",

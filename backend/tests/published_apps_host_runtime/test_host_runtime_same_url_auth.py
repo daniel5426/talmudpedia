@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import func, select
 
-from app.db.postgres.models.chat import Chat, Message
+from app.db.postgres.models.agent_threads import AgentThread
 from app.db.postgres.models.published_apps import PublishedAppRevision, PublishedAppRevisionKind
 from tests.published_apps._helpers import seed_admin_tenant_and_agent, seed_published_app
 
@@ -104,9 +104,6 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
     )
     assert signup_resp.status_code == 200
 
-    async def fake_start_run(self, *args, **kwargs):
-        return "host-run-123"
-
     async def fake_run_and_stream(self, *args, **kwargs):
         yield {
             "event": "token",
@@ -114,7 +111,6 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
             "visibility": "client_safe",
         }
 
-    monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.start_run", fake_start_run)
     monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
 
     stream_resp = await client.post(
@@ -124,16 +120,12 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
     )
     assert stream_resp.status_code == 200
     assert "Hello from host runtime" in stream_resp.text
+    assert stream_resp.headers.get("X-Thread-ID")
 
-    chat_count = await db_session.scalar(
-        select(func.count(Chat.id)).where(Chat.published_app_id == app.id)
+    thread_count = await db_session.scalar(
+        select(func.count(AgentThread.id)).where(AgentThread.published_app_id == app.id)
     )
-    assert chat_count == 1
-
-    message_count = await db_session.scalar(
-        select(func.count(Message.id)).join(Chat, Message.chat_id == Chat.id).where(Chat.published_app_id == app.id)
-    )
-    assert message_count == 2
+    assert thread_count == 1
 
 
 @pytest.mark.asyncio

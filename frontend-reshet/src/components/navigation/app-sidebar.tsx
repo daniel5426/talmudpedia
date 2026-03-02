@@ -66,8 +66,8 @@ const data = {
       items: [],
     },
     {
-      title: "Chats",
-      url: "/admin/chats",
+      title: "Threads",
+      url: "/admin/threads",
       icon: MessageSquare,
       items: [],
     },

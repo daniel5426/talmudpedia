@@ -92,6 +92,7 @@ backend/app/db/postgres/
 backend/app/db/postgres/engine.py
 backend/app/db/postgres/session.py
 backend/app/db/postgres/models/
+backend/app/db/postgres/models/agent_threads.py
 backend/app/db/postgres/models/usage_quota.py
 backend/app/db/postgres/seeds/
 
@@ -138,6 +139,7 @@ backend/app/services/published_app_revision_build_dispatch.py
 backend/app/services/published_app_publish_runtime.py
 backend/app/services/published_app_publish_autofix.py
 backend/app/services/usage_quota_service.py
+backend/app/services/thread_service.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
 backend/app/services/published_app_coding_agent_engines/prompt_history.py

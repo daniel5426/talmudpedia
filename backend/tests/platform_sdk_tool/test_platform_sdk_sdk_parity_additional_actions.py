@@ -341,6 +341,80 @@ def test_agents_run_tests_canonical_action_parity(monkeypatch):
     assert out["context"]["result"]["summary"] == {"passed": 1, "failed": 0}
 
 
+def test_rag_create_visual_pipeline_translates_graph_definition_payload(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _build_fake_control_client()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    out = handler.execute(
+        state={},
+        config={},
+        context={
+            "inputs": {
+                "action": "rag.create_visual_pipeline",
+                "tenant_id": "tenant-1",
+                "token": "token",
+                "payload": {
+                    "tenant_id": "tenant-1",
+                    "tenant_slug": "tenant-a",
+                    "name": "FAQ Pipeline",
+                    "graph_definition": {
+                        "nodes": [{"id": "n1", "category": "input", "operator": "query_input", "position": {"x": 0, "y": 0}, "config": {}}],
+                        "edges": [],
+                    },
+                },
+            }
+        },
+    )
+
+    assert out["context"]["errors"] == []
+    call = fake.rag.calls[0]
+    assert call["method"] == "create_visual_pipeline"
+    request_payload = call["args"][0]
+    assert "graph_definition" not in request_payload
+    assert request_payload["nodes"] == [{"id": "n1", "category": "input", "operator": "query_input", "position": {"x": 0, "y": 0}, "config": {}}]
+    assert request_payload["edges"] == []
+    assert "tenant_id" not in request_payload
+
+
+def test_rag_update_visual_pipeline_translates_graph_definition_patch(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _build_fake_control_client()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    out = handler.execute(
+        state={},
+        config={},
+        context={
+            "inputs": {
+                "action": "rag.update_visual_pipeline",
+                "tenant_id": "tenant-1",
+                "token": "token",
+                "payload": {
+                    "tenant_id": "tenant-1",
+                    "tenant_slug": "tenant-a",
+                    "pipeline_id": "pipe-1",
+                    "patch": {
+                        "description": "updated",
+                        "graph_definition": {
+                            "nodes": [{"id": "n2", "category": "retrieval", "operator": "knowledge_store_lookup", "position": {"x": 200, "y": 0}, "config": {}}],
+                            "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
+                        },
+                    },
+                },
+            }
+        },
+    )
+
+    assert out["context"]["errors"] == []
+    call = fake.rag.calls[0]
+    assert call["method"] == "update_visual_pipeline"
+    patch_payload = call["args"][1]
+    assert "graph_definition" not in patch_payload
+    assert patch_payload["nodes"] == [{"id": "n2", "category": "retrieval", "operator": "knowledge_store_lookup", "position": {"x": 200, "y": 0}, "config": {}}]
+    assert patch_payload["edges"] == [{"id": "e1", "source": "n1", "target": "n2"}]
+
+
 def test_dispatch_actions_have_parity_test_coverage():
     handler_text = Path("artifacts/builtin/platform_sdk/handler.py").read_text()
     dispatched = set(re.findall(r'"([a-z_]+\.[a-z_]+)": lambda:', handler_text))

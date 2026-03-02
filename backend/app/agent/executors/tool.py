@@ -1014,6 +1014,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 from app.agent.executors.artifact import ArtifactNodeExecutor
 
                 artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
+                strict_validation = str(getattr(tool, "artifact_id", "")) != "builtin/platform_sdk"
                 artifact_config = {
                     **config,
                     "tool_slug": getattr(tool, "slug", None),
@@ -1021,7 +1022,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     "_artifact_version": getattr(tool, "artifact_version", None),
                     "label": tool.name,
                     "input_mappings": self._build_literal_input_mappings(input_data),
-                    "_strict_validation": True,
+                    "_strict_validation": strict_validation,
                     "_literal_inputs": True,
                 }
                 result = await artifact_executor.execute(state, artifact_config, context)
@@ -1033,6 +1034,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 from app.agent.executors.artifact import ArtifactNodeExecutor
 
                 artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
+                strict_validation = str(implementation_config.get("artifact_id", "")) != "builtin/platform_sdk"
                 artifact_config = {
                     **config,
                     "tool_slug": getattr(tool, "slug", None),
@@ -1040,7 +1042,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     "_artifact_version": implementation_config.get("artifact_version"),
                     "label": tool.name,
                     "input_mappings": self._build_literal_input_mappings(input_data),
-                    "_strict_validation": True,
+                    "_strict_validation": strict_validation,
                     "_literal_inputs": True,
                 }
                 result = await artifact_executor.execute(state, artifact_config, context)

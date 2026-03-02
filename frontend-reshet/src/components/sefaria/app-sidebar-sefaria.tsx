@@ -79,8 +79,8 @@ const data = {
       items: [],
     },
     {
-      title: "שיחות",
-      url: "/admin/chats",
+      title: "שרשורים",
+      url: "/admin/threads",
       icon: MessageSquare,
       items: [],
     },

@@ -1,14 +1,12 @@
 "use client"
 
-import { useState, useEffect, Suspense } from "react"
+import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
     Loader2,
-    AlertCircle,
     Settings,
     Bot,
-    Play,
-    ChevronDown,
+    Terminal,
     Plus
 } from "lucide-react"
 
@@ -20,8 +18,6 @@ import { ExecutionSidebar } from "./ExecutionSidebar"
 import { Conversation } from "@/components/ai-elements/conversation"
 import { useDirection } from "@/components/direction-provider"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
-import { SidebarTrigger } from "@/components/ui/sidebar"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
     Select,
     SelectContent,
@@ -35,16 +31,23 @@ import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPan
 import { parseReactArtifact } from "@/lib/react-artifacts/parseReactArtifact"
 import { useTenant } from "@/contexts/TenantContext"
 import { useAuthStore } from "@/lib/store/useAuthStore"
+import { ExecutionHistoryDropdown } from "@/components/agent-builder/ExecutionHistoryDropdown"
+import { FloatingPanel } from "@/components/builder"
+import { cn } from "@/lib/utils"
+import type { AgentChatHistoryItem } from "@/hooks/useAgentThreadHistory"
 
 function PlaygroundContent() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const agentId = searchParams.get("agentId")
+    const threadId = searchParams.get("threadId")
 
     const [agent, setAgent] = useState<Agent | null>(null)
     const [agents, setAgents] = useState<Agent[]>([])
     const [isMetadataLoading, setIsMetadataLoading] = useState(true)
     const [isListingLoading, setIsListingLoading] = useState(false)
+    const [isExecutionSidebarOpen, setIsExecutionSidebarOpen] = useState(false)
+    const hydratedThreadRef = useRef<string | null>(null)
 
     const controller = useAgentRunController(agentId || undefined)
     const { executionSteps } = controller
@@ -126,8 +129,31 @@ function PlaygroundContent() {
         return () => { isMounted = false; };
     }, [agentId, router]);
 
+    const handleSelectHistory = useCallback(async (item: AgentChatHistoryItem) => {
+        const resolved = await controller.loadHistoryChat(item)
+        if (!resolved?.agentId || resolved.agentId === agentId) {
+            return
+        }
+        hydratedThreadRef.current = null
+        router.push(`/admin/agents/playground?agentId=${resolved.agentId}&threadId=${resolved.threadId}`, { scroll: false })
+    }, [agentId, controller, router])
+
+    useEffect(() => {
+        if (!threadId || !agentId || isMetadataLoading || isListingLoading) return
+        const hydrationKey = `${agentId}:${threadId}`
+        if (hydratedThreadRef.current === hydrationKey) return
+        const target = controller.history.find((item) => item.threadId === threadId)
+        if (!target) return
+
+        hydratedThreadRef.current = hydrationKey
+        void (async () => {
+            await controller.loadHistoryChat(target)
+            router.replace(`/admin/agents/playground?agentId=${agentId}`, { scroll: false })
+        })()
+    }, [agentId, controller, isListingLoading, isMetadataLoading, router, threadId])
+
     return (
-        <div className="flex w-full flex-col h-screen bg-background overflow-hidden">
+        <div className="flex w-full flex-col h-screen bg-background overflow-hidden [&_button]:shadow-none">
             {/* Header */}
             <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
                 <div className="flex items-center gap-3">
@@ -140,6 +166,40 @@ function PlaygroundContent() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={() => setIsExecutionSidebarOpen((prev) => !prev)}
+                        disabled={!agent || isMetadataLoading}
+                        aria-label={isExecutionSidebarOpen ? "Hide execution traces" : "Show execution traces"}
+                    >
+                        <Terminal className="h-3.5 w-3.5" />
+                    </button>
+
+                    <ExecutionHistoryDropdown
+                        historyItems={controller.history}
+                        loading={controller.historyLoading}
+                        label={null}
+                        ariaLabel="Show history"
+                        align="end"
+                        showChevron={false}
+                        onSelectHistory={handleSelectHistory}
+                        onStartNewChat={controller.startNewChat}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+
+                    {agent && (
+                        <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => router.push(`/admin/agents/${agent.id}/builder`)}
+                            aria-label="Open builder"
+                        >
+                            <Settings className="size-3.5" />
+                        </Button>
+                    )}
+
                     <Select
                         value={agent?.id || ""}
                         onValueChange={(id) => router.push(`/admin/agents/playground?agentId=${id}`)}
@@ -162,22 +222,10 @@ function PlaygroundContent() {
                             ))}
                         </SelectContent>
                     </Select>
-
-                    {agent && (
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-2 text-xs"
-                            onClick={() => router.push(`/admin/agents/${agent.id}/builder`)}
-                        >
-                            <Settings className="size-3.5" />
-                            Builder
-                        </Button>
-                    )}
                 </div>
             </header>
 
-            <main className="flex-1 overflow-hidden">
+            <main className="relative flex-1 overflow-hidden">
                 {isMetadataLoading ? (
                     <div className="flex w-full h-full flex-col items-center justify-center space-y-4">
                         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -203,7 +251,12 @@ function PlaygroundContent() {
                         )}
                     </div>
                 ) : (
-                    <div className="flex h-full overflow-hidden">
+                    <div
+                        className={cn(
+                            "flex h-full overflow-hidden transition-[padding] duration-300",
+                            isExecutionSidebarOpen && "lg:pr-[332px]"
+                        )}
+                    >
                         {/* Chat Area */}
                         <div className="flex min-w-0 flex-1">
                             <Conversation
@@ -231,13 +284,20 @@ function PlaygroundContent() {
                             )}
                         </div>
 
-                        {/* Execution Sidebar */}
-                        <ExecutionSidebar
-                            steps={executionSteps}
-                            className="w-80 hidden lg:flex border-r"
-                        />
                     </div>
                 )}
+
+                <FloatingPanel
+                    position="right"
+                    visible={Boolean(isExecutionSidebarOpen && agent && !isMetadataLoading)}
+                    className="w-80 z-30 hidden lg:block"
+                    fullHeight={false}
+                >
+                    <ExecutionSidebar
+                        steps={executionSteps}
+                        className="w-full"
+                    />
+                </FloatingPanel>
             </main>
         </div>
     )

@@ -8,6 +8,46 @@ from talmudpedia_control_sdk import ControlPlaneSDKError
 from .shared import control_client, request_options
 
 
+_CONTROL_PLANE_META_KEYS = {
+    "action",
+    "tool_slug",
+    "tenant_id",
+    "idempotency_key",
+    "request_metadata",
+    "validate_only",
+    "dry_run",
+}
+
+
+def _strip_control_plane_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
+    request_payload = dict(payload or {})
+    for key in _CONTROL_PLANE_META_KEYS:
+        request_payload.pop(key, None)
+    return request_payload
+
+
+def _normalize_visual_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    request_payload = _strip_control_plane_meta(payload)
+    graph_definition = request_payload.pop("graph_definition", None)
+    if isinstance(graph_definition, dict):
+        if "nodes" not in request_payload and isinstance(graph_definition.get("nodes"), list):
+            request_payload["nodes"] = graph_definition.get("nodes")
+        if "edges" not in request_payload and isinstance(graph_definition.get("edges"), list):
+            request_payload["edges"] = graph_definition.get("edges")
+    return request_payload
+
+
+def _normalize_visual_pipeline_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
+    patch_payload = _strip_control_plane_meta(patch)
+    graph_definition = patch_payload.pop("graph_definition", None)
+    if isinstance(graph_definition, dict):
+        if isinstance(graph_definition.get("nodes"), list):
+            patch_payload["nodes"] = graph_definition.get("nodes")
+        if isinstance(graph_definition.get("edges"), list):
+            patch_payload["edges"] = graph_definition.get("edges")
+    return patch_payload
+
+
 def list_pipelines(
     client: Client,
     payload: Dict[str, Any],
@@ -47,6 +87,7 @@ def create_or_update_pipeline(
             patch_payload = dict(payload.get("patch")) if isinstance(payload.get("patch"), dict) else dict(payload)
             patch_payload.pop("pipeline_id", None)
             patch_payload.pop("id", None)
+            patch_payload = _normalize_visual_pipeline_patch(patch_payload)
             response = sdk_client.rag.update_visual_pipeline(
                 str(pipeline_id),
                 patch_payload,
@@ -54,8 +95,9 @@ def create_or_update_pipeline(
                 options=request_options_builder(payload=payload, dry_run=False),
             )
         else:
+            request_payload = _normalize_visual_pipeline_payload(payload)
             response = sdk_client.rag.create_visual_pipeline(
-                payload,
+                request_payload,
                 tenant_slug=tenant_slug,
                 options=request_options_builder(payload=payload, dry_run=False),
             )
@@ -78,9 +120,10 @@ def create_visual_pipeline(
         return {"status": "skipped", "dry_run": True, "slug": payload.get("slug")}, []
 
     try:
+        request_payload = _normalize_visual_pipeline_payload(payload)
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.create_visual_pipeline(
-            payload,
+            request_payload,
             tenant_slug=payload.get("tenant_slug"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
@@ -109,6 +152,7 @@ def update_visual_pipeline(
     patch_payload = dict(payload.get("patch")) if isinstance(payload.get("patch"), dict) else dict(payload)
     patch_payload.pop("pipeline_id", None)
     patch_payload.pop("id", None)
+    patch_payload = _normalize_visual_pipeline_patch(patch_payload)
     try:
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.update_visual_pipeline(

@@ -1,7 +1,7 @@
 export type RuntimeInput = {
   input?: string;
   messages?: Array<{ role: string; content: string }>;
-  chat_id?: string;
+  thread_id?: string;
   context?: Record<string, unknown>;
 };
 
@@ -77,7 +77,7 @@ const buildStreamUrl = (basePath: string): string => {
 
 export const createRuntimeClient = () => {
   return {
-    async stream(input: RuntimeInput, onEvent: (event: RuntimeEvent) => void): Promise<{ chatId: string | null }> {
+    async stream(input: RuntimeInput, onEvent: (event: RuntimeEvent) => void): Promise<{ threadId: string | null }> {
       const basePath = resolveBasePath();
       if (!basePath) {
         throw new Error("Runtime context is missing app slug/base path.");
@@ -100,7 +100,7 @@ export const createRuntimeClient = () => {
         throw new Error(`Runtime stream failed: ${response.status}`);
       }
 
-      const chatId = response.headers.get("X-Chat-ID");
+      const threadId = response.headers.get("X-Thread-ID");
       const reader = response.body?.getReader();
       if (!reader) {
         throw new Error("Streaming reader unavailable");
@@ -128,7 +128,7 @@ export const createRuntimeClient = () => {
         }
       }
 
-      return { chatId };
+      return { threadId };
     },
   };
 };

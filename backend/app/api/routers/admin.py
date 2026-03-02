@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.db.postgres.session import get_db
 from app.api.routers.auth import get_current_user
 from app.db.postgres.models.identity import User, OrgMembership, OrgRole
-from app.db.postgres.models.chat import Chat, Message, MessageRole
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import AgentRun
 from pydantic import BaseModel
 
@@ -83,113 +83,123 @@ async def get_admin_stats(
     
     seven_days_ago = now - timedelta(days=7)
 
-    # Helper to apply filters
-    def apply_tenant_filter(query, model):
-        if tenant_id:
-            if hasattr(model, 'tenant_id'):
-                return query.where(model.tenant_id == tenant_id)
-            # For Message, join Chat
-            if model == Message:
-                return query.join(Chat).where(Chat.tenant_id == tenant_id)
-            # For User, join OrgMembership
-            if model == User:
-                return query.join(OrgMembership).where(OrgMembership.tenant_id == tenant_id)
-        return query
+    # 1. Total Active Users (Last 7 Days) based on run-native thread activity.
+    q_active = (
+        select(func.count(func.distinct(AgentRun.user_id)))
+        .where(
+            and_(
+                AgentRun.user_id.isnot(None),
+                AgentRun.created_at >= seven_days_ago,
+            )
+        )
+    )
+    if tenant_id:
+        q_active = q_active.where(AgentRun.tenant_id == tenant_id)
+    total_active_users = int((await db.execute(q_active)).scalar() or 0)
 
-    # 1. Total Active Users (Last 7 Days)
-    q_active = select(func.count(func.distinct(Chat.user_id))).where(Chat.updated_at >= seven_days_ago)
-    q_active = apply_tenant_filter(q_active, Chat)
-    total_active_users = (await db.execute(q_active)).scalar() or 0
+    # 2. Total Threads
+    q_threads = select(func.count(AgentThread.id))
+    if tenant_id:
+        q_threads = q_threads.where(AgentThread.tenant_id == tenant_id)
+    total_chats = int((await db.execute(q_threads)).scalar() or 0)
 
-    # 2. Total Conversations
-    q_chats = select(func.count(Chat.id))
-    q_chats = apply_tenant_filter(q_chats, Chat)
-    total_chats = (await db.execute(q_chats)).scalar() or 0
+    # 3. Total Turns (treated as message units for dashboard continuity).
+    q_turns = select(func.count(AgentThreadTurn.id)).join(AgentThread, AgentThreadTurn.thread_id == AgentThread.id)
+    if tenant_id:
+        q_turns = q_turns.where(AgentThread.tenant_id == tenant_id)
+    total_messages = int((await db.execute(q_turns)).scalar() or 0)
 
-    # 3. Total Messages
-    q_msgs = select(func.count(Message.id))
-    q_msgs = apply_tenant_filter(q_msgs, Message)
-    total_messages = (await db.execute(q_msgs)).scalar() or 0
-
-    # 4. Avg Messages/Chat
+    # 4. Avg Turns/Thread
     avg_messages_per_chat = round(total_messages / total_chats, 1) if total_chats > 0 else 0
 
-    # 5. Token Usage (Estimate: 1 token ~= 4 chars)
-    # Using Postgres length function
-    q_tokens = select(func.sum(func.length(Message.content)))
-    q_tokens = apply_tenant_filter(q_tokens, Message)
-    total_chars = (await db.execute(q_tokens)).scalar() or 0
-    estimated_tokens = total_chars // 4
+    # 5. Token Usage from run ledger.
+    q_tokens = select(func.coalesce(func.sum(AgentRun.usage_tokens), 0))
+    if tenant_id:
+        q_tokens = q_tokens.where(AgentRun.tenant_id == tenant_id)
+    estimated_tokens = int((await db.execute(q_tokens)).scalar() or 0)
 
-    # 6. Daily Active Users (DAU)
-    # Postgres date_trunc
+    # 6. Daily Active Users (DAU) from run activity.
     q_dau = (
         select(
-            func.date_trunc(text("'day'"), Chat.updated_at).label('date'),
-            func.count(func.distinct(Chat.user_id)).label('count')
+            func.date_trunc(text("'day'"), AgentRun.created_at).label("date"),
+            func.count(func.distinct(AgentRun.user_id)).label("count"),
         )
-        .where(and_(Chat.updated_at >= start, Chat.updated_at <= end))
-        .group_by(func.date_trunc(text("'day'"), Chat.updated_at))
+        .where(
+            and_(
+                AgentRun.user_id.isnot(None),
+                AgentRun.created_at >= start,
+                AgentRun.created_at <= end,
+            )
+        )
+        .group_by(func.date_trunc(text("'day'"), AgentRun.created_at))
         .order_by(text("date ASC"))
     )
-    q_dau = apply_tenant_filter(q_dau, Chat)
+    if tenant_id:
+        q_dau = q_dau.where(AgentRun.tenant_id == tenant_id)
     dau_result = (await db.execute(q_dau)).all()
-    daily_active_users = [{"date": r.date.strftime("%Y-%m-%d"), "count": r.count} for r in dau_result]
+    daily_active_users = [{"date": r.date.strftime("%Y-%m-%d"), "count": int(r.count or 0)} for r in dau_result]
 
     # 7. New Users (Last 7 Days)
     q_new_users = select(func.count(User.id)).where(User.created_at >= seven_days_ago)
-    q_new_users = apply_tenant_filter(q_new_users, User)
-    new_users_count = (await db.execute(q_new_users)).scalar() or 0
+    if tenant_id:
+        q_new_users = q_new_users.join(OrgMembership).where(OrgMembership.tenant_id == tenant_id)
+    new_users_count = int((await db.execute(q_new_users)).scalar() or 0)
 
-    # 8. Chat Volume Trend
+    # 8. Thread Volume Trend
     q_vol = (
         select(
-            func.date_trunc(text("'day'"), Chat.created_at).label('date'),
-            func.count(Chat.id).label('count')
+            func.date_trunc(text("'day'"), AgentThread.created_at).label("date"),
+            func.count(AgentThread.id).label("count"),
         )
-        .where(and_(Chat.created_at >= start, Chat.created_at <= end))
-        .group_by(func.date_trunc(text("'day'"), Chat.created_at))
+        .where(and_(AgentThread.created_at >= start, AgentThread.created_at <= end))
+        .group_by(func.date_trunc(text("'day'"), AgentThread.created_at))
         .order_by(text("date ASC"))
     )
-    q_vol = apply_tenant_filter(q_vol, Chat)
+    if tenant_id:
+        q_vol = q_vol.where(AgentThread.tenant_id == tenant_id)
     vol_result = (await db.execute(q_vol)).all()
-    daily_chat_stats = [{"date": r.date.strftime("%Y-%m-%d"), "chats": r.count} for r in vol_result]
+    daily_chat_stats = [{"date": r.date.strftime("%Y-%m-%d"), "chats": int(r.count or 0)} for r in vol_result]
 
-    # 9. Top Active Users (by message count)
+    # 9. Top Active Users by runs.
     q_top = (
-        select(User.email, func.count(Message.id).label('msg_count'))
+        select(User.email, func.count(AgentRun.id).label("msg_count"))
         .select_from(User)
-        .join(Chat, Chat.user_id == User.id)
-        .join(Message, Message.chat_id == Chat.id)
+        .join(AgentRun, AgentRun.user_id == User.id)
         .group_by(User.id, User.email)
-        .order_by(desc('msg_count'))
+        .order_by(desc("msg_count"))
         .limit(5)
     )
-    # Apply tenant filter logic manually for complex join
     if tenant_id:
-        q_top = q_top.join(OrgMembership, OrgMembership.user_id == User.id).where(OrgMembership.tenant_id == tenant_id)
-        
+        q_top = q_top.where(AgentRun.tenant_id == tenant_id)
     top_users_res = (await db.execute(q_top)).all()
-    top_users = [{"email": r.email, "count": r.msg_count} for r in top_users_res]
+    top_users = [{"email": r.email, "count": int(r.msg_count or 0)} for r in top_users_res]
 
-    # 10. Recent Chats
-    q_recent = select(Chat).order_by(Chat.created_at.desc()).limit(5).options(selectinload(Chat.user))
-    q_recent = apply_tenant_filter(q_recent, Chat)
-    recent_chats_res = (await db.execute(q_recent)).scalars().all()
-    
-    latest_chats = []
-    for c in recent_chats_res:
-        latest_chats.append({
-            "id": str(c.id),
-            "title": c.title,
-            "created_at": c.created_at,
-            "user_email": c.user.email if c.user else "Unknown"
-        })
+    # 10. Recent Threads
+    q_recent = (
+        select(AgentThread)
+        .order_by(AgentThread.created_at.desc())
+        .limit(5)
+        .options(selectinload(AgentThread.user))
+    )
+    if tenant_id:
+        q_recent = q_recent.where(AgentThread.tenant_id == tenant_id)
+    recent_threads_res = (await db.execute(q_recent)).scalars().all()
+
+    latest_chats = [
+        {
+            "id": str(thread.id),
+            "title": thread.title,
+            "created_at": thread.created_at,
+            "user_email": thread.user.email if thread.user else "Unknown",
+        }
+        for thread in recent_threads_res
+    ]
 
     # Total Users Count
     q_total_users = select(func.count(User.id))
-    q_total_users = apply_tenant_filter(q_total_users, User)
-    total_users = (await db.execute(q_total_users)).scalar() or 0
+    if tenant_id:
+        q_total_users = q_total_users.join(OrgMembership).where(OrgMembership.tenant_id == tenant_id)
+    total_users = int((await db.execute(q_total_users)).scalar() or 0)
 
     return {
         "total_users": total_users,
@@ -237,22 +247,22 @@ async def bulk_delete_users(
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/chats/bulk-delete")
-async def bulk_delete_chats(
-    chat_ids: List[str], 
+@router.post("/threads/bulk-delete")
+async def bulk_delete_threads(
+    thread_ids: List[str], 
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        uuids = [UUID(cid) for cid in chat_ids]
+        uuids = [UUID(tid) for tid in thread_ids]
         tenant_id = context["tenant_id"]
 
-        q = text("DELETE FROM chats WHERE id = ANY(:ids)")
+        q = text("DELETE FROM agent_threads WHERE id = ANY(:ids)")
         params = {"ids": uuids}
 
         if tenant_id:
              # Safer for tenant: delete with and clause
-             q = text("DELETE FROM chats WHERE id = ANY(:ids) AND tenant_id = :tenant_id")
+             q = text("DELETE FROM agent_threads WHERE id = ANY(:ids) AND tenant_id = :tenant_id")
              params["tenant_id"] = tenant_id
 
         result = await db.execute(q, params)
@@ -336,8 +346,8 @@ async def get_users(
         "pages": (total + limit - 1) // limit if limit else 1
     }
 
-@router.get("/chats")
-async def get_chats(
+@router.get("/threads")
+async def get_threads(
     skip: int = 0, 
     limit: int = 20, 
     search: Optional[str] = None,
@@ -346,12 +356,12 @@ async def get_chats(
 ):
     tenant_id = context["tenant_id"]
     
-    query = select(Chat).order_by(Chat.updated_at.desc())
+    query = select(AgentThread).order_by(AgentThread.last_activity_at.desc().nullslast(), AgentThread.updated_at.desc())
     if tenant_id:
-        query = query.where(Chat.tenant_id == tenant_id)
+        query = query.where(AgentThread.tenant_id == tenant_id)
         
     if search:
-        query = query.where(Chat.title.ilike(f"%{search}%"))
+        query = query.where(AgentThread.title.ilike(f"%{search}%"))
         
     # Total
     count_q = select(func.count()).select_from(query.subquery())
@@ -359,16 +369,16 @@ async def get_chats(
     
     # Paginate
     query = query.offset(skip).limit(limit)
-    chats = (await db.execute(query)).scalars().all()
+    threads = (await db.execute(query)).scalars().all()
     
     items = []
-    for c in chats:
+    for thread in threads:
         items.append({
-            "id": str(c.id),
-            "title": c.title,
-            "created_at": c.created_at,
-            "updated_at": c.updated_at,
-            "user_id": str(c.user_id)
+            "id": str(thread.id),
+            "title": thread.title,
+            "created_at": thread.created_at,
+            "updated_at": thread.last_activity_at or thread.updated_at,
+            "user_id": str(thread.user_id) if thread.user_id else None,
         })
         
     return {
@@ -376,6 +386,59 @@ async def get_chats(
         "total": total,
         "page": skip // limit + 1,
         "pages": (total + limit - 1) // limit if limit else 1
+    }
+
+
+@router.get("/threads/{thread_id}")
+async def get_thread_details(
+    thread_id: str,
+    context: Dict[str, Any] = Depends(get_admin_context),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        tid = UUID(thread_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid thread ID")
+
+    tenant_id = context["tenant_id"]
+    query = (
+        select(AgentThread)
+        .options(selectinload(AgentThread.turns))
+        .where(AgentThread.id == tid)
+        .limit(1)
+    )
+    if tenant_id:
+        query = query.where(AgentThread.tenant_id == tenant_id)
+    thread = (await db.execute(query)).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    turns = sorted(list(thread.turns or []), key=lambda item: int(item.turn_index or 0))
+    return {
+        "id": str(thread.id),
+        "title": thread.title,
+        "status": thread.status.value if hasattr(thread.status, "value") else str(thread.status),
+        "surface": thread.surface.value if hasattr(thread.surface, "value") else str(thread.surface),
+        "user_id": str(thread.user_id) if thread.user_id else None,
+        "agent_id": str(thread.agent_id) if thread.agent_id else None,
+        "created_at": thread.created_at,
+        "updated_at": thread.updated_at,
+        "last_activity_at": thread.last_activity_at,
+        "turns": [
+            {
+                "id": str(turn.id),
+                "run_id": str(turn.run_id),
+                "turn_index": int(turn.turn_index or 0),
+                "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
+                "user_input_text": turn.user_input_text,
+                "assistant_output_text": turn.assistant_output_text,
+                "usage_tokens": int(turn.usage_tokens or 0),
+                "created_at": turn.created_at,
+                "completed_at": turn.completed_at,
+                "metadata": turn.metadata_,
+            }
+            for turn in turns
+        ],
     }
 
 @router.get("/users/{user_id}")
@@ -408,9 +471,10 @@ async def get_user_details(
             raise HTTPException(status_code=404, detail="User not found")
             
         # Stats
-        chat_count = (await db.execute(
-            select(func.count(Chat.id)).where(Chat.user_id == uid)
-        )).scalar() or 0
+        q_threads = select(func.count(AgentThread.id)).where(AgentThread.user_id == uid)
+        if tenant_id:
+            q_threads = q_threads.where(AgentThread.tenant_id == tenant_id)
+        thread_count = (await db.execute(q_threads)).scalar() or 0
         q_tokens = (
             select(func.coalesce(func.sum(AgentRun.usage_tokens), 0))
             .where(
@@ -436,7 +500,7 @@ async def get_user_details(
                 "token_usage": tokens_used_this_month
             },
             "stats": {
-                "chats_count": chat_count,
+                "threads_count": thread_count,
                 "tokens_used_this_month": tokens_used_this_month
             }
         }
@@ -479,8 +543,8 @@ async def update_user(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID")
 
-@router.get("/users/{user_id}/chats")
-async def get_user_chats(
+@router.get("/users/{user_id}/threads")
+async def get_user_threads(
     user_id: str,
     skip: int = 0,
     limit: int = 20,
@@ -488,22 +552,21 @@ async def get_user_chats(
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
-    # Reuse get_chats logic but filtered by specific user
     try:
         uid = UUID(user_id)
-        # We reuse the get_user_details verification logic effectively by just querying
-        # If tenant admin requests a user outside tenant, the query below returns nothing if we add tenant check
-        
         tenant_id = context["tenant_id"]
         
-        query = select(Chat).where(Chat.user_id == uid).order_by(Chat.updated_at.desc())
+        query = (
+            select(AgentThread)
+            .where(AgentThread.user_id == uid)
+            .order_by(AgentThread.last_activity_at.desc().nullslast(), AgentThread.updated_at.desc())
+        )
         
         if tenant_id:
-            # Ensure the chat belongs to the tenant (implicitly confirms user does too for that chat)
-            query = query.where(Chat.tenant_id == tenant_id)
+            query = query.where(AgentThread.tenant_id == tenant_id)
             
         if search:
-            query = query.where(Chat.title.ilike(f"%{search}%"))
+            query = query.where(AgentThread.title.ilike(f"%{search}%"))
             
         # Total
         count_q = select(func.count()).select_from(query.subquery())
@@ -511,16 +574,16 @@ async def get_user_chats(
         
         # Paginate
         query = query.offset(skip).limit(limit)
-        chats = (await db.execute(query)).scalars().all()
+        threads = (await db.execute(query)).scalars().all()
         
         items = []
-        for c in chats:
+        for thread in threads:
             items.append({
-                "id": str(c.id),
-                "title": c.title,
-                "created_at": c.created_at,
-                "updated_at": c.updated_at,
-                "user_id": str(c.user_id)
+                "id": str(thread.id),
+                "title": thread.title,
+                "created_at": thread.created_at,
+                "updated_at": thread.last_activity_at or thread.updated_at,
+                "user_id": str(thread.user_id) if thread.user_id else None,
             })
             
         return {

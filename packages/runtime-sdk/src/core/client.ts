@@ -50,6 +50,9 @@ export function createRuntimeClient(options: RuntimeClientOptions) {
   if (bootstrap.stream_contract_version !== "run-stream.v2") {
     throw new Error("Runtime SDK requires stream_contract_version=run-stream.v2.");
   }
+  if (bootstrap.request_contract_version !== "thread.v1") {
+    throw new Error("Runtime SDK requires request_contract_version=thread.v1.");
+  }
 
   const streamUrl = resolveChatStreamUrl(bootstrap, options.apiBaseUrl || bootstrap.api_base_url);
 
@@ -92,7 +95,7 @@ export function createRuntimeClient(options: RuntimeClientOptions) {
         onEvent(normalizeRuntimeEvent(rawEvent));
       });
 
-      return { chatId: response.headers.get("X-Chat-ID") };
+      return { threadId: response.headers.get("X-Thread-ID") };
     },
   };
 }

@@ -39,6 +39,7 @@ from app.db.postgres.models.published_apps import (
 from app.db.postgres.session import get_db
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 from app.services.published_app_auth_shell_renderer import render_published_app_auth_shell
+from app.services.thread_service import ThreadService
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -51,6 +52,41 @@ router = APIRouter(tags=["published-apps-host-runtime"])
 
 INTERNAL_PREFIX = "/_talmudpedia"
 SESSION_COOKIE_NAME = os.getenv("PUBLISHED_APP_SESSION_COOKIE_NAME", "published_app_session").strip() or "published_app_session"
+
+
+def _serialize_thread_summary(thread: Any) -> dict[str, Any]:
+    return {
+        "id": str(thread.id),
+        "title": thread.title,
+        "status": thread.status.value if hasattr(thread.status, "value") else str(thread.status),
+        "surface": thread.surface.value if hasattr(thread.surface, "value") else str(thread.surface),
+        "last_run_id": str(thread.last_run_id) if thread.last_run_id else None,
+        "created_at": thread.created_at,
+        "updated_at": thread.updated_at,
+        "last_activity_at": thread.last_activity_at,
+    }
+
+
+def _serialize_thread_detail(thread: Any) -> dict[str, Any]:
+    turns = sorted(list(thread.turns or []), key=lambda item: int(item.turn_index or 0))
+    return {
+        **_serialize_thread_summary(thread),
+        "turns": [
+            {
+                "id": str(turn.id),
+                "run_id": str(turn.run_id),
+                "turn_index": int(turn.turn_index or 0),
+                "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
+                "user_input_text": turn.user_input_text,
+                "assistant_output_text": turn.assistant_output_text,
+                "usage_tokens": int(turn.usage_tokens or 0),
+                "created_at": turn.created_at,
+                "completed_at": turn.completed_at,
+                "metadata": turn.metadata_,
+            }
+            for turn in turns
+        ],
+    }
 
 
 def _apps_base_domain() -> str:
@@ -672,3 +708,68 @@ async def host_chat_stream(
     if stale_cookie:
         _clear_session_cookie(response=stream_response, request=request)
     return stream_response
+
+
+@router.get(f"{INTERNAL_PREFIX}/threads")
+async def host_list_threads(
+    request: Request,
+    skip: int = 0,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    app = await _resolve_host_app_or_404(db, request)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if principal is None:
+        response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        if stale_cookie:
+            _clear_session_cookie(response=response, request=request)
+        return response
+
+    service = ThreadService(db)
+    threads, total = await service.list_threads(
+        tenant_id=app.tenant_id,
+        user_id=UUID(principal["user_id"]),
+        published_app_id=app.id,
+        skip=skip,
+        limit=limit,
+    )
+    payload = {
+        "items": [_serialize_thread_summary(thread) for thread in threads],
+        "total": int(total),
+        "page": (skip // limit) + 1 if limit > 0 else 1,
+        "pages": ((total + limit - 1) // limit) if limit > 0 else 1,
+    }
+    response = JSONResponse(payload)
+    if stale_cookie:
+        _clear_session_cookie(response=response, request=request)
+    return response
+
+
+@router.get(f"{INTERNAL_PREFIX}/threads/{{thread_id}}")
+async def host_get_thread(
+    thread_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    app = await _resolve_host_app_or_404(db, request)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if principal is None:
+        response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        if stale_cookie:
+            _clear_session_cookie(response=response, request=request)
+        return response
+
+    service = ThreadService(db)
+    thread = await service.get_thread_with_turns(
+        tenant_id=app.tenant_id,
+        thread_id=thread_id,
+        user_id=UUID(principal["user_id"]),
+        published_app_id=app.id,
+    )
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    response = JSONResponse(_serialize_thread_detail(thread))
+    if stale_cookie:
+        _clear_session_cookie(response=response, request=request)
+    return response

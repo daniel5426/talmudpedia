@@ -6,7 +6,7 @@ export type RuntimeInputMessage = {
 export type RuntimeInput = {
   input?: string;
   messages?: RuntimeInputMessage[];
-  chat_id?: string;
+  thread_id?: string;
   context?: Record<string, unknown>;
 };
 
@@ -19,6 +19,7 @@ export type RuntimeAuthCapabilities = {
 export type RuntimeBootstrap = {
   version: "runtime-bootstrap.v1";
   stream_contract_version: "run-stream.v2";
+  request_contract_version: "thread.v1";
   app_id: string;
   slug: string;
   revision_id?: string;
@@ -51,5 +52,5 @@ export type RuntimeClientOptions = {
 };
 
 export type RuntimeStreamResult = {
-  chatId: string | null;
+  threadId: string | null;
 };

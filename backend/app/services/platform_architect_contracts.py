@@ -40,21 +40,28 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "tenant_slug": {"type": "string"},
                         "name": {"type": "string"},
-                        "slug": {"type": "string"},
-                        "graph_definition": {"type": "object"},
                         "description": {"type": "string"},
+                        "pipeline_type": {"type": "string", "enum": ["ingestion", "retrieval"]},
+                        "nodes": {"type": "array", "items": {"type": "object"}},
+                        "edges": {"type": "array", "items": {"type": "object"}},
+                        # Backward compatibility shim: wrappers map graph_definition -> nodes/edges.
+                        "graph_definition": {"type": "object"},
                     },
-                    required=["name", "slug", "graph_definition"],
+                    required=["name"],
                     additional_properties=True,
                 ),
                 "contract": {
                     "summary": "Create a draft visual RAG pipeline.",
-                    "required_fields": ["name", "slug", "graph_definition"],
+                    "required_fields": ["name", "nodes|graph_definition"],
                     "example_payload": {
                         "tenant_slug": "acme",
                         "name": "FAQ Pipeline",
-                        "slug": "faq-pipeline",
-                        "graph_definition": {"nodes": [], "edges": []},
+                        "pipeline_type": "retrieval",
+                        "nodes": [
+                            {"id": "n1", "category": "input", "operator": "query_input", "position": {"x": 80, "y": 120}, "config": {}},
+                            {"id": "n2", "category": "retrieval", "operator": "knowledge_store_lookup", "position": {"x": 360, "y": 120}, "config": {"knowledge_store_id": "ks-123"}},
+                        ],
+                        "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
                     },
                     "failure_codes": ["VALIDATION_ERROR", "SENSITIVE_ACTION_APPROVAL_REQUIRED"],
                 },
@@ -226,7 +233,18 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "example_payload": {
                         "name": "FAQ Agent",
                         "slug": "faq-agent",
-                        "graph_definition": {"nodes": [], "edges": []},
+                        "graph_definition": {
+                            "spec_version": "2.0",
+                            "nodes": [
+                                {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+                                {"id": "assistant", "type": "agent", "position": {"x": 220, "y": 0}, "config": {"model_id": "model-123", "instructions": "Answer user questions clearly."}},
+                                {"id": "end", "type": "end", "position": {"x": 460, "y": 0}, "config": {"output_variable": "context"}},
+                            ],
+                            "edges": [
+                                {"id": "e1", "source": "start", "target": "assistant", "type": "control"},
+                                {"id": "e2", "source": "assistant", "target": "end", "type": "control"},
+                            ],
+                        },
                     },
                     "failure_codes": ["VALIDATION_ERROR", "SENSITIVE_ACTION_APPROVAL_REQUIRED"],
                 },
@@ -510,6 +528,8 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "artifacts.create_or_update_draft). Never invent aliases like create_agent/register_asset. "
         "Workflow policy: extract intent and constraints, build a step plan, execute one tool call at a time, "
         "validate after each mutation, and repair/replan with a hard max of 2 repair loops. "
+        "For rag.create_visual_pipeline, pass nodes/edges at payload top-level (graph_definition is backward-compatible only). "
+        "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
         "Draft-first is mandatory: do not call publish/promote actions unless objective_flags.allow_publish=true "
         "in user-provided input. "
         "Always include tenant_id, idempotency_key, and request_metadata on mutating calls. "

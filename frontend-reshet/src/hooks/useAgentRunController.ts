@@ -3,17 +3,12 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { nanoid } from "nanoid";
-import { SearchIcon, DotIcon, Terminal } from "lucide-react";
+import { SearchIcon, DotIcon } from "lucide-react";
 import { agentService } from "@/services";
 import type { AgentExecutionEvent, AgentRunStatus } from "@/services";
 import { ChatController, ChatMessage, Citation, mergeReasoningSteps } from "@/components/layout/useChatController";
-
-export interface AgentChatHistoryItem {
-  id: string;
-  title: string;
-  timestamp: number;
-  messages: ChatMessage[];
-}
+import { useAuthStore } from "@/lib/store/useAuthStore";
+import { AgentChatHistoryItem, useAgentThreadHistory } from "./useAgentThreadHistory";
 
 export interface ExecutionStep {
   id: string;
@@ -71,7 +66,11 @@ const adaptStreamEvent = (event: any): any => {
     return { event: "token", run_id: event.run_id, data: { content: payload.content } };
   }
   if (eventName === "run.accepted") {
-    return { event: "run_status", run_id: event.run_id, data: { status: payload.status || "running" } };
+    return {
+      event: "run_status",
+      run_id: event.run_id,
+      data: { status: payload.status || "running", thread_id: payload.thread_id },
+    };
   }
   if (eventName === "run.completed") {
     return { event: "run_status", run_id: event.run_id, data: { status: "completed" } };
@@ -150,9 +149,10 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   currentRunStatus: AgentRunStatus["status"] | null;
   isPaused: boolean;
   pendingApproval: boolean;
+  historyLoading: boolean;
   history: AgentChatHistoryItem[];
   startNewChat: () => void;
-  loadHistoryChat: (item: AgentChatHistoryItem) => void;
+  loadHistoryChat: (item: AgentChatHistoryItem) => Promise<AgentChatHistoryItem | null>;
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -166,9 +166,9 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [activeStreamingId, setActiveStreamingId] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [currentRunStatus, setCurrentRunStatus] = useState<AgentRunStatus["status"] | null>(null);
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [pendingApproval, setPendingApproval] = useState(false);
-  const [history, setHistory] = useState<AgentChatHistoryItem[]>([]);
   const [executionEvents, setExecutionEvents] = useState<AgentExecutionEvent[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -181,9 +181,15 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const messagesRef = useRef<ChatMessage[]>([]);
   const streamingContentRef = useRef<string>("");
   const activeStreamingIdRef = useRef<string | null>(null);
-
-  const historyKey = agentId ? `agent-exec-history:${agentId}` : null;
-  const historyLimit = 5;
+  const currentThreadIdRef = useRef<string | null>(null);
+  const authUserId = useAuthStore((state) => state.user?.id);
+  const {
+    history,
+    historyLoading,
+    refreshHistory,
+    loadThreadMessages,
+    upsertHistoryItem,
+  } = useAgentThreadHistory(authUserId);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -198,23 +204,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   }, [activeStreamingId]);
 
   useEffect(() => {
-    if (!historyKey || typeof window === "undefined") {
-      setHistory([]);
-      return;
-    }
-    try {
-      const raw = window.localStorage.getItem(historyKey);
-      if (!raw) {
-        setHistory([]);
-        return;
-      }
-      const parsed = JSON.parse(raw) as AgentChatHistoryItem[];
-      setHistory(Array.isArray(parsed) ? parsed : []);
-    } catch (error) {
-      console.warn("Failed to load agent chat history", error);
-      setHistory([]);
-    }
-  }, [historyKey]);
+    currentThreadIdRef.current = currentThreadId;
+  }, [currentThreadId]);
 
   // Reset state when agentId changes
   useEffect(() => {
@@ -227,12 +218,14 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setActiveStreamingId(null);
     setCurrentRunId(null);
     setCurrentRunStatus(null);
+    setCurrentThreadId(null);
     setIsPaused(false);
     setPendingApproval(false);
-    setHistory([]);
     setExecutionEvents([]);
     reasoningRef.current = [];
+    lastReasoningRef.current = [];
     thinkingDurationRef.current = null;
+    currentThreadIdRef.current = null;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -240,35 +233,22 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   }, [agentId]);
 
   const persistHistory = useCallback((nextMessages: ChatMessage[]) => {
-    if (!historyKey || typeof window === "undefined") return;
     if (nextMessages.length === 0) return;
+    const threadId = currentThreadIdRef.current;
+    if (!threadId) return;
     const lastMessage = nextMessages[nextMessages.length - 1];
     if (lastMessage.role !== "assistant") return;
     const firstUser = nextMessages.find((msg) => msg.role === "user");
     if (!firstUser) return;
 
-    const title = firstUser.content.trim().slice(0, 80) || "New chat";
-    const item: AgentChatHistoryItem = {
-      id: nanoid(),
-      title,
+    upsertHistoryItem({
+      threadId,
+      agentId: agentId || undefined,
+      title: firstUser.content.trim().slice(0, 80) || "New chat",
       timestamp: Date.now(),
       messages: nextMessages,
-    };
-
-    setHistory((prev) => {
-      const last = prev[0];
-      if (last && last.title === item.title && last.messages.length === item.messages.length && last.messages[last.messages.length - 1]?.content === lastMessage.content) {
-        return prev;
-      }
-      const updated = [item, ...prev].slice(0, historyLimit);
-      try {
-        window.localStorage.setItem(historyKey, JSON.stringify(updated));
-      } catch (error) {
-        console.warn("Failed to save agent chat history", error);
-      }
-      return updated;
     });
-  }, [historyKey]);
+  }, [agentId, upsertHistoryItem]);
 
   const commitStreamingMessage = useCallback(
     (reason?: "stop" | "interrupt" | "new") => {
@@ -317,7 +297,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setIsLoading(false);
   }, [commitStreamingMessage]);
 
-  const startNewChat = useCallback(() => {
+  const resetExecutionState = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -331,36 +311,29 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setActiveStreamingId(null);
     setCurrentRunId(null);
     setCurrentRunStatus(null);
+    setCurrentThreadId(null);
     setIsPaused(false);
     setPendingApproval(false);
     reasoningRef.current = [];
     lastReasoningRef.current = [];
     thinkingDurationRef.current = null;
-    setMessages([]);
+    currentThreadIdRef.current = null;
   }, []);
 
-  const loadHistoryChat = useCallback((item: AgentChatHistoryItem) => {
-    if (!item) return;
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    setIsLoading(false);
-    setStreamingContent("");
-    setCurrentReasoning([]);
-    setExecutionSteps([]);
-    setExecutionEvents([]);
-    setLastThinkingDurationMs(null);
-    setActiveStreamingId(null);
-    setCurrentRunId(null);
-    setCurrentRunStatus(null);
-    setIsPaused(false);
-    setPendingApproval(false);
-    reasoningRef.current = [];
-    lastReasoningRef.current = [];
-    thinkingDurationRef.current = null;
-    setMessages(item.messages || []);
-  }, []);
+  const startNewChat = useCallback(() => {
+    resetExecutionState();
+    setMessages([]);
+  }, [resetExecutionState]);
+
+  const loadHistoryChat = useCallback(async (item: AgentChatHistoryItem): Promise<AgentChatHistoryItem | null> => {
+    if (!item) return null;
+    const resolved = await loadThreadMessages(item);
+    if (!resolved) return null;
+    resetExecutionState();
+    setCurrentThreadId(resolved.threadId || item.threadId || null);
+    setMessages(resolved.messages || []);
+    return resolved;
+  }, [loadThreadMessages, resetExecutionState]);
 
   const serializeConversationMessages = useCallback((source: ChatMessage[]) => {
     return source
@@ -410,10 +383,15 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
           text: message.text,
           messages: priorMessages,
           runId: isPaused ? currentRunId || undefined : undefined,
+          threadId: currentThreadIdRef.current || undefined,
           context: isPaused && pendingApproval ? { approval: message.text } : undefined,
         },
         'debug'
       );
+      const responseThreadId = response.headers.get("X-Thread-ID");
+      if (responseThreadId) {
+        setCurrentThreadId(responseThreadId);
+      }
       setIsPaused(false); // Reset pause state when starting/resuming
       setPendingApproval(false);
       const reader = response.body?.getReader();
@@ -515,6 +493,10 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               setCurrentRunId(event.run_id);
             } else if (event.event === "run_status") {
               const status = event.data?.status;
+              const threadIdFromStatus = event.data?.thread_id;
+              if (typeof threadIdFromStatus === "string" && threadIdFromStatus.trim().length > 0) {
+                setCurrentThreadId(threadIdFromStatus);
+              }
               if (typeof status === "string") {
                 setCurrentRunStatus(status as AgentRunStatus["status"]);
               }
@@ -639,6 +621,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     } finally {
       setIsLoading(false);
       thinkingStartRef.current = null;
+      void refreshHistory();
     }
   };
 
@@ -691,6 +674,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     currentRunStatus,
     isPaused,
     pendingApproval,
+    historyLoading,
     history,
     startNewChat,
     loadHistoryChat,

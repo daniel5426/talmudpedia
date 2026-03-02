@@ -38,6 +38,7 @@ describe("runtime-sdk core", () => {
   const bootstrap: RuntimeBootstrap = {
     version: "runtime-bootstrap.v1",
     stream_contract_version: "run-stream.v2",
+    request_contract_version: "thread.v1",
     app_id: "app-1",
     slug: "slug-1",
     mode: "published-runtime",
@@ -52,7 +53,7 @@ describe("runtime-sdk core", () => {
     },
   };
 
-  test("parses chunked SSE events and returns chat id", async () => {
+  test("parses chunked SSE events and returns thread id", async () => {
     const fetchImpl = jest.fn().mockResolvedValue(
       buildResponse(
         [
@@ -61,7 +62,7 @@ describe("runtime-sdk core", () => {
           'data: {"version":"run-stream.v2","seq":2,"ts":"2026-03-02T00:00:01Z","event":"assistant.delta","run_id":"run-1","stage":"assistant","payload":{"content":" world"},"diagnostics":[]}\n\n',
         ],
         200,
-        { "X-Chat-ID": "chat-123" },
+        { "X-Thread-ID": "thread-123" },
       ),
     );
 
@@ -75,7 +76,7 @@ describe("runtime-sdk core", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(events.join("")).toBe("Hello world");
-    expect(result.chatId).toBe("chat-123");
+    expect(result.threadId).toBe("thread-123");
   });
 
   test("ignores malformed SSE payloads and calls tokenProvider", async () => {

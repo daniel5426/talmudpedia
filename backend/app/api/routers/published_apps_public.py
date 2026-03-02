@@ -1,6 +1,5 @@
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -24,7 +23,8 @@ from app.api.dependencies import (
     get_current_published_app_principal,
     get_optional_published_app_principal,
 )
-from app.db.postgres.models.chat import Chat, Message, MessageRole
+from app.db.postgres.models.agents import AgentRun
+from app.db.postgres.models.agent_threads import AgentThreadTurn
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppRevision,
@@ -32,6 +32,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
+from app.services.thread_service import ThreadService
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -94,6 +95,7 @@ class RuntimeBootstrapAuthResponse(BaseModel):
 class RuntimeBootstrapResponse(BaseModel):
     version: str = "runtime-bootstrap.v1"
     stream_contract_version: str = "run-stream.v2"
+    request_contract_version: str = "thread.v1"
     app_id: str
     slug: str
     revision_id: Optional[str] = None
@@ -118,7 +120,7 @@ class PublicAuthExchangeRequest(BaseModel):
 class PublicChatStreamRequest(BaseModel):
     input: Optional[str] = None
     messages: List[dict[str, Any]] = []
-    chat_id: Optional[UUID] = None
+    thread_id: Optional[UUID] = None
     run_id: Optional[UUID] = None
     context: Optional[dict[str, Any]] = None
     client: Optional[dict[str, Any]] = None
@@ -391,16 +393,6 @@ def _set_preview_auth_cookie(
     )
 
 
-def _chat_message_to_payload(message: Message) -> dict[str, Any]:
-    return {
-        "role": message.role.value if hasattr(message.role, "value") else str(message.role),
-        "content": message.content,
-        "created_at": message.created_at,
-        "tool_calls": message.tool_calls,
-        "token_count": message.token_count,
-    }
-
-
 def _normalize_optional_user_id(raw_value: Any) -> Optional[str]:
     if raw_value is None:
         return None
@@ -408,6 +400,16 @@ def _normalize_optional_user_id(raw_value: Any) -> Optional[str]:
     if not text or text.lower() in {"none", "null"}:
         return None
     return text
+
+
+def _turns_to_messages(turns: list[AgentThreadTurn]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    for turn in sorted(turns, key=lambda item: int(item.turn_index or 0)):
+        if turn.user_input_text:
+            messages.append({"role": "user", "content": turn.user_input_text})
+        if turn.assistant_output_text:
+            messages.append({"role": "assistant", "content": turn.assistant_output_text})
+    return messages
 
 
 async def _stream_chat_for_app(
@@ -428,67 +430,31 @@ async def _stream_chat_for_app(
             raise HTTPException(status_code=403, detail="Token does not belong to this app")
 
     user_uuid: Optional[UUID] = None
-    chat: Optional[Chat] = None
-    existing_count = 0
     run_messages: List[dict[str, Any]] = []
-    can_persist_chat = (
+    can_persist_thread = (
         allow_chat_persistence
         and app.auth_enabled
         and principal is not None
         and bool(principal.get("user_id"))
     )
-
-    if can_persist_chat:
+    if can_persist_thread:
         user_uuid = UUID(str(principal["user_id"]))
-        if payload.chat_id:
-            chat_result = await db.execute(
-                select(Chat).where(
-                    and_(
-                        Chat.id == payload.chat_id,
-                        Chat.published_app_id == app.id,
-                        Chat.user_id == user_uuid,
-                    )
-                ).limit(1)
-            )
-            chat = chat_result.scalar_one_or_none()
-            if chat is None:
-                raise HTTPException(status_code=404, detail="Chat not found")
-            message_result = await db.execute(
-                select(Message).where(Message.chat_id == chat.id).order_by(Message.index.asc())
-            )
-            existing_messages = message_result.scalars().all()
-            existing_count = len(existing_messages)
-            run_messages.extend(
-                [{"role": m.role.value if hasattr(m.role, "value") else str(m.role), "content": m.content} for m in existing_messages]
-            )
-        else:
-            title_source = payload.input or (payload.messages[0].get("content") if payload.messages else "New chat")
-            chat = Chat(
-                tenant_id=app.tenant_id,
-                user_id=user_uuid,
-                published_app_id=app.id,
-                title=(title_source or "New chat")[:60],
-            )
-            db.add(chat)
-            await db.flush()
 
-        if payload.messages:
-            run_messages.extend(payload.messages)
-        if payload.input:
-            run_messages.append({"role": "user", "content": payload.input})
-            user_message = Message(
-                chat_id=chat.id,  # type: ignore[arg-type]
-                role=MessageRole.USER,
-                content=payload.input,
-                index=existing_count,
-            )
-            db.add(user_message)
-            chat.updated_at = datetime.now(timezone.utc)  # type: ignore[union-attr]
-            await db.commit()
-    else:
-        run_messages.extend(payload.messages or [])
-        if payload.input:
-            run_messages.append({"role": "user", "content": payload.input})
+    if payload.thread_id:
+        thread_service = ThreadService(db)
+        existing_thread = await thread_service.get_thread_with_turns(
+            tenant_id=app.tenant_id,
+            thread_id=payload.thread_id,
+            user_id=user_uuid,
+            published_app_id=app.id,
+        )
+        if existing_thread is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        run_messages.extend(_turns_to_messages(list(existing_thread.turns or [])))
+
+    run_messages.extend(payload.messages or [])
+    if payload.input:
+        run_messages.append({"role": "user", "content": payload.input})
 
     executor = AgentExecutorService(db=db)
     request_context = dict(payload.context or {})
@@ -496,6 +462,7 @@ async def _stream_chat_for_app(
     request_context.setdefault("user_id", str(user_uuid) if user_uuid else _normalize_optional_user_id(request_user_id))
     request_context.setdefault("published_app_id", str(app.id))
     request_context.setdefault("published_app_slug", app.slug)
+    request_context.setdefault("thread_id", str(payload.thread_id) if payload.thread_id else None)
     if extra_context:
         for key, value in extra_context.items():
             request_context.setdefault(key, value)
@@ -517,17 +484,23 @@ async def _stream_chat_for_app(
                 {
                     "messages": run_messages,
                     "input": payload.input,
+                    "thread_id": str(payload.thread_id) if payload.thread_id else None,
                     "context": request_context,
                 },
                 user_id=user_uuid,
                 background=False,
                 mode=ExecutionMode.PRODUCTION,
+                thread_id=payload.thread_id,
             )
         except QuotaExceededError as exc:
             return JSONResponse(status_code=429, content=exc.to_payload())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    run_row = await db.get(AgentRun, run_id)
+    thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
 
     async def event_generator():
-        assistant_text_parts: List[str] = []
         raw_stream = executor.run_and_stream(run_id, db, resume_payload=resume_payload, mode=ExecutionMode.PRODUCTION)
         filtered_stream = StreamAdapter.filter_stream(raw_stream, ExecutionMode.PRODUCTION)
         seq = 1
@@ -538,7 +511,7 @@ async def _stream_chat_for_app(
                 run_id=str(run_id),
                 event="run.accepted",
                 stage="run",
-                payload={"status": "running"},
+                payload={"status": "running", "thread_id": thread_id_value},
             )
             seq += 1
             yield f"data: {json.dumps(accepted, default=str)}\n\n"
@@ -549,8 +522,6 @@ async def _stream_chat_for_app(
             async for event_dict in filtered_stream:
                 if _stream_v2_enforced():
                     mapped_event, stage, payload_v2, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
-                    if mapped_event == "assistant.delta" and payload_v2.get("content"):
-                        assistant_text_parts.append(str(payload_v2.get("content")))
                     envelope = build_stream_v2_event(
                         seq=seq,
                         run_id=str(run_id),
@@ -562,14 +533,6 @@ async def _stream_chat_for_app(
                     seq += 1
                     yield f"data: {json.dumps(envelope, default=str)}\n\n"
                 else:
-                    if (
-                        event_dict.get("event") == "token"
-                        and isinstance(event_dict.get("data"), dict)
-                        and event_dict["data"].get("content")
-                    ):
-                        assistant_text_parts.append(str(event_dict["data"]["content"]))
-                    elif event_dict.get("type") == "token" and event_dict.get("content"):
-                        assistant_text_parts.append(str(event_dict["content"]))
                     yield f"data: {json.dumps(event_dict, default=str)}\n\n"
         except Exception as exc:
             if _stream_v2_enforced():
@@ -584,29 +547,10 @@ async def _stream_chat_for_app(
                 yield f"data: {json.dumps(envelope, default=str)}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
-        finally:
-            if can_persist_chat and chat is not None:
-                assistant_text = "".join(assistant_text_parts).strip()
-                if assistant_text:
-                    count_result = await db.execute(
-                        select(Message).where(Message.chat_id == chat.id).order_by(Message.index.desc()).limit(1)
-                    )
-                    last = count_result.scalar_one_or_none()
-                    next_index = (last.index + 1) if last is not None else 0
-                    db.add(
-                        Message(
-                            chat_id=chat.id,
-                            role=MessageRole.ASSISTANT,
-                            content=assistant_text,
-                            index=next_index,
-                        )
-                    )
-                    chat.updated_at = datetime.now(timezone.utc)
-                    await db.commit()
 
     headers = {"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
-    if chat is not None:
-        headers["X-Chat-ID"] = str(chat.id)
+    if thread_id_value:
+        headers["X-Thread-ID"] = thread_id_value
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
 

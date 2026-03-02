@@ -16,6 +16,8 @@ from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
+from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
+from app.services.thread_service import ThreadAccessError, ThreadService
 from app.services.usage_quota_service import UsageQuotaService
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,27 @@ class AgentExecutorService:
                 continue
         return 0
 
+    @staticmethod
+    def _extract_assistant_output_text(output_result: Dict[str, Any] | None) -> str | None:
+        if not isinstance(output_result, dict):
+            return None
+        final_output = output_result.get("final_output")
+        if isinstance(final_output, str) and final_output.strip():
+            return final_output
+        messages = output_result.get("messages")
+        if isinstance(messages, list):
+            parts: list[str] = []
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                role = str(msg.get("role") or msg.get("type") or "").strip().lower()
+                content = msg.get("content")
+                if role in {"assistant", "ai"} and isinstance(content, str) and content:
+                    parts.append(content)
+            if parts:
+                return "\n".join(parts)
+        return None
+
     async def start_run(
         self, 
         agent_id: UUID, 
@@ -116,6 +139,7 @@ class AgentExecutorService:
         depth: int = 0,
         spawn_key: Optional[str] = None,
         orchestration_group_id: Optional[UUID] = None,
+        thread_id: Optional[UUID] = None,
     ) -> UUID:
         """
         Starts a new agent execution run.
@@ -154,8 +178,43 @@ class AgentExecutorService:
         run_id = uuid4()
         effective_initiator_id = user_id or parsed_initiator_id
 
-        # Reserve quota (if enabled) before creating the run record.
+        # Resolve/create thread before creating the run record.
         input_params = dict(input_params or {})
+        raw_thread_id = thread_id or runtime_context.get("thread_id") or input_params.get("thread_id")
+        parsed_thread_id: Optional[UUID] = None
+        try:
+            parsed_thread_id = UUID(str(raw_thread_id)) if raw_thread_id else None
+        except Exception:
+            raise ValueError("Invalid thread_id")
+
+        surface = AgentThreadSurface.internal
+        if runtime_context.get("published_app_preview"):
+            surface = AgentThreadSurface.preview_runtime
+        elif runtime_context.get("published_app_id"):
+            surface = AgentThreadSurface.published_host_runtime
+
+        published_app_id: Optional[UUID] = None
+        raw_published_app_id = runtime_context.get("published_app_id")
+        try:
+            published_app_id = UUID(str(raw_published_app_id)) if raw_published_app_id else None
+        except Exception:
+            published_app_id = None
+
+        thread_service = ThreadService(self.db)
+        try:
+            thread_result = await thread_service.resolve_or_create_thread(
+                tenant_id=agent.tenant_id,
+                user_id=effective_initiator_id,
+                agent_id=agent_id,
+                published_app_id=published_app_id,
+                surface=surface,
+                thread_id=parsed_thread_id,
+                input_text=input_params.get("input") if isinstance(input_params.get("input"), str) else None,
+            )
+        except ThreadAccessError as exc:
+            raise ValueError(str(exc)) from exc
+
+        # Reserve quota (if enabled) before creating the run record.
         quota_metadata = {"max_output_cap": None}
         if str(runtime_context.get("surface") or "").strip().lower() != "published_app_coding_agent":
             try:
@@ -171,15 +230,18 @@ class AgentExecutorService:
                 raise
         context_payload = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         context_payload = dict(context_payload)
+        context_payload["thread_id"] = str(thread_result.thread.id)
         if quota_metadata.get("max_output_cap"):
             context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
         input_params["context"] = context_payload
+        input_params["thread_id"] = str(thread_result.thread.id)
 
         run = AgentRun(
             id=run_id,
             agent_id=agent_id,
             tenant_id=agent.tenant_id,
             user_id=effective_initiator_id,
+            thread_id=thread_result.thread.id,
             initiator_user_id=effective_initiator_id,
             workload_principal_id=parsed_principal_id,
             delegation_grant_id=parsed_grant_id,
@@ -327,6 +389,8 @@ class AgentExecutorService:
             runtime_context["parent_run_id"] = str(run.parent_run_id)
         if run.parent_node_id:
             runtime_context["parent_node_id"] = str(run.parent_node_id)
+        if run.thread_id:
+            runtime_context["thread_id"] = str(run.thread_id)
         runtime_context["depth"] = int(run.depth or 0)
         if run.spawn_key:
             runtime_context["spawn_key"] = run.spawn_key
@@ -411,6 +475,14 @@ class AgentExecutorService:
 
         try:
             max_observed_usage_tokens = 0
+            if run.thread_id:
+                thread_service = ThreadService(db)
+                await thread_service.start_turn(
+                    thread_id=run.thread_id,
+                    run_id=run_id,
+                    user_input_text=run_input_params.get("input") if isinstance(run_input_params, dict) else None,
+                    metadata={"mode": mode.value},
+                )
             # 5. Stream Execution Events (Platform-normalized)
             async for event in adapter.stream(executable, run_input_params, config):
                 max_observed_usage_tokens = max(
@@ -480,6 +552,20 @@ class AgentExecutorService:
                 run_id=run_id,
                 actual_usage_tokens=int(run.usage_tokens or 0),
             )
+            if run.thread_id:
+                thread_service = ThreadService(db)
+                await thread_service.complete_turn(
+                    run_id=run_id,
+                    status=(
+                        AgentThreadTurnStatus.paused
+                        if run.status == RunStatus.paused
+                        else AgentThreadTurnStatus.completed
+                    ),
+                    assistant_output_text=self._extract_assistant_output_text(
+                        run.output_result if isinstance(run.output_result, dict) else None
+                    ),
+                    usage_tokens=int(run.usage_tokens or 0),
+                )
             await db.commit()
 
         except Exception as e:
@@ -511,6 +597,17 @@ class AgentExecutorService:
                             run_id=run_id,
                             actual_usage_tokens=int(err_run.usage_tokens or 0),
                         )
+                        if err_run.thread_id:
+                            thread_service = ThreadService(err_db)
+                            await thread_service.complete_turn(
+                                run_id=run_id,
+                                status=AgentThreadTurnStatus.failed,
+                                assistant_output_text=self._extract_assistant_output_text(
+                                    err_run.output_result if isinstance(err_run.output_result, dict) else None
+                                ),
+                                usage_tokens=int(err_run.usage_tokens or 0),
+                                metadata={"error": str(e)},
+                            )
                         await err_db.commit()
             except Exception as se:
                 logger.error(f"Failed to save error status for {run_id}: {se}")

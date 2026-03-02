@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { adminService, Chat } from "@/services"
+import { useCallback, useEffect, useState } from "react"
+import { adminService, Thread } from "@/services"
 import { DataTable } from "@/components/ui/data-table"
 import { ColumnDef } from "@tanstack/react-table"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -18,8 +18,8 @@ import {
 import { format } from "date-fns"
 import Link from "next/link"
 
-interface ChatsTableProps {
-  data?: Chat[]
+interface ThreadsTableProps {
+  data?: Thread[]
   pageCount?: number
   pagination?: { pageIndex: number; pageSize: number }
   onPaginationChange?: (pagination: { pageIndex: number; pageSize: number }) => void
@@ -27,52 +27,52 @@ interface ChatsTableProps {
   basePath?: string
 }
 
-export function ChatsTable({
+export function ThreadsTable({
   data: externalData,
-  basePath = "/admin/chats",
-}: ChatsTableProps) {
-  const [internalChats, setInternalChats] = useState<Chat[]>([])
+  basePath = "/admin/threads",
+}: ThreadsTableProps) {
+  const [internalThreads, setInternalThreads] = useState<Thread[]>([])
   const [loading, setLoading] = useState(true)
 
-  const chats = externalData || internalChats
+  const threads = externalData || internalThreads
 
-  const fetchChats = async () => {
+  const fetchThreads = useCallback(async () => {
     if (externalData) {
-        setLoading(false)
-        return
+      setLoading(false)
+      return
     }
     setLoading(true)
     try {
-      const data = await adminService.getChats(1, 1000)
-      setInternalChats(data.items)
+      const data = await adminService.getThreads(1, 1000)
+      setInternalThreads(data.items)
     } catch (error) {
-      console.error("Failed to fetch chats", error)
+      console.error("Failed to fetch threads", error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [externalData])
 
   useEffect(() => {
-    fetchChats()
-  }, [externalData])
+    fetchThreads()
+  }, [fetchThreads])
 
   const handleBulkDelete = async (ids: string[]) => {
     try {
-      await adminService.bulkDeleteChats(ids)
+      await adminService.bulkDeleteThreads(ids)
       if (!externalData) {
-          await fetchChats()
+          await fetchThreads()
       } else {
           // If external data, we can't easily refresh without a callback, 
           // but for now let's assume the parent handles it or we just reload the page if critical.
           window.location.reload() 
       }
     } catch (error) {
-      console.error("Failed to delete chats", error)
-      alert("Failed to delete chats")
+      console.error("Failed to delete threads", error)
+      alert("Failed to delete threads")
     }
   }
 
-  const columns: ColumnDef<Chat>[] = [
+  const columns: ColumnDef<Thread>[] = [
     {
       id: "select",
       header: ({ table }) => (
@@ -99,7 +99,7 @@ export function ChatsTable({
         const chat = row.original
         return (
             <Link href={`${basePath}/${chat.id}`} className="hover:underline font-medium">
-                {chat.title || "Untitled Chat"}
+                {chat.title || "Untitled Thread"}
             </Link>
         )
       }
@@ -135,15 +135,15 @@ export function ChatsTable({
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
                 <Link href={`${basePath}/${chat.id}`}>
-                    <ExternalLink className="mr-2 h-4 w-4" /> View Chat
+                    <ExternalLink className="mr-2 h-4 w-4" /> View Thread
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem 
                 className="text-red-600"
                 onClick={async () => {
                     if(confirm("Are you sure?")) {
-                        await adminService.bulkDeleteChats([chat.id])
-                        if (!externalData) fetchChats()
+                        await adminService.bulkDeleteThreads([chat.id])
+                        if (!externalData) fetchThreads()
                         else window.location.reload()
                     }
                 }}
@@ -158,12 +158,12 @@ export function ChatsTable({
   ]
 
   return (
-    <DataTable 
+        <DataTable 
         columns={columns} 
-        data={chats} 
+        data={threads} 
         onBulkDelete={handleBulkDelete}
         filterColumn="title"
-        filterPlaceholder="Filter chats..."
+        filterPlaceholder="Filter threads..."
         isLoading={loading}
     />
   )

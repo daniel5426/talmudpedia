@@ -43,6 +43,7 @@ from app.api.schemas.agents import (
     ExecuteAgentRequest,
     ExecuteAgentResponse,
 )
+from app.db.postgres.models.agents import AgentRun
 from sqlalchemy import select
 from typing import Optional
 
@@ -542,18 +543,19 @@ async def stream_agent(
             current_messages.append({"role": "user", "content": request.input})
             
         tenant_id = context.get("tenant_id")
+        request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
+        request_context.setdefault("token", context.get("auth_token"))
+        request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
+        request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
+        request_context.setdefault("requested_scopes", context.get("scopes", []))
+        request_context.setdefault("grant_id", context.get("grant_id"))
+        request_context.setdefault("principal_id", context.get("principal_id"))
+        request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
         input_params = {
             "messages": current_messages,
             "input": request.input,
-            "context": {
-                "token": context.get("auth_token"),
-                "tenant_id": str(tenant_id) if tenant_id is not None else None,
-                "user_id": str(context["user"].id) if context.get("user") else context.get("initiator_user_id"),
-                "requested_scopes": context.get("scopes", []),
-                "grant_id": context.get("grant_id"),
-                "principal_id": context.get("principal_id"),
-                "initiator_user_id": context.get("initiator_user_id"),
-            },
+            "thread_id": str(request.thread_id) if request.thread_id else None,
+            "context": request_context,
         }
         # Start run with explicit mode metadata
         requested_scopes = None
@@ -570,9 +572,15 @@ async def stream_agent(
                 background=False,
                 mode=execution_mode,
                 requested_scopes=requested_scopes,
+                thread_id=request.thread_id,
             )
         except QuotaExceededError as exc:
             return JSONResponse(status_code=429, content=exc.to_payload())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    run_row = await db.get(AgentRun, run_id)
+    thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
 
     async def event_generator():
         # raw stream from engine (full firehose)
@@ -590,7 +598,7 @@ async def stream_agent(
                 run_id=str(run_id),
                 event="run.accepted",
                 stage="run",
-                payload={"status": "running"},
+                payload={"status": "running", "thread_id": thread_id_value},
             )
             seq += 1
             yield f"data: {json.dumps(accepted, default=str)}\n\n"
@@ -637,6 +645,7 @@ async def stream_agent(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
             "Content-Encoding": "identity", # Disable compression
+            "X-Thread-ID": thread_id_value or "",
         }
     )
     
@@ -673,18 +682,19 @@ async def start_run_v2(
         current_messages.append({"role": "user", "content": request.input})
         
     tenant_id = context.get("tenant_id")
+    request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
+    request_context.setdefault("token", context.get("auth_token"))
+    request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
+    request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
+    request_context.setdefault("requested_scopes", context.get("scopes", []))
+    request_context.setdefault("grant_id", context.get("grant_id"))
+    request_context.setdefault("principal_id", context.get("principal_id"))
+    request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
     input_params = {
         "messages": current_messages,
         "input": request.input,
-        "context": {
-            "token": context.get("auth_token"),
-            "tenant_id": str(tenant_id) if tenant_id is not None else None,
-            "user_id": str(context["user"].id) if context.get("user") else context.get("initiator_user_id"),
-            "requested_scopes": context.get("scopes", []),
-            "grant_id": context.get("grant_id"),
-            "principal_id": context.get("principal_id"),
-            "initiator_user_id": context.get("initiator_user_id"),
-        },
+        "thread_id": str(request.thread_id) if request.thread_id else None,
+        "context": request_context,
     }
     
     try:
@@ -699,10 +709,17 @@ async def start_run_v2(
             input_params,
             user_id=initiating_user_id,
             requested_scopes=requested_scopes,
+            thread_id=request.thread_id,
         )
-        return {"run_id": str(run_id)}
+        run_row = await db.get(AgentRun, run_id)
+        return {
+            "run_id": str(run_id),
+            "thread_id": str(run_row.thread_id) if run_row and run_row.thread_id else None,
+        }
     except QuotaExceededError as exc:
         return JSONResponse(status_code=429, content=exc.to_payload())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -20,14 +20,15 @@ Last Updated: 2026-03-02
 - Builder state includes app + template + current draft metadata.
 - Public runtime/config endpoints enforce visibility and auth constraints.
 - Path-mode published auth/chat/runtime endpoints are removed (`410`), while admin user-management tests use host-runtime auth (`/_talmudpedia/*`).
-- Public chat persistence and scoping behavior.
+- Public preview stream uses token auth and persists run-native thread records.
+- Runtime bootstrap contract includes `request_contract_version=thread.v1`.
 - Agent integration contract payload is exposed and validated.
 - Legacy publish helper now routes publish through selected version flow.
 
 ## Last run command + date/time + result
 - Command: `pytest -q backend/tests/published_apps`
 - Date: 2026-03-02
-- Result: PASS (16 passed)
+- Result: PASS (17 passed)
 
 ## Known gaps or follow-ups
 - Add explicit regression tests for removed `/admin/apps/{app_id}/publish` route in this folder (currently covered under `backend/tests/app_versions/`).
