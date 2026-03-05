@@ -108,21 +108,25 @@ class AgentExecutorService:
     def _extract_assistant_output_text(output_result: Dict[str, Any] | None) -> str | None:
         if not isinstance(output_result, dict):
             return None
-        final_output = output_result.get("final_output")
-        if isinstance(final_output, str) and final_output.strip():
-            return final_output
         messages = output_result.get("messages")
         if isinstance(messages, list):
-            parts: list[str] = []
+            # Runtime state usually carries full conversation history.
+            # Persist only the latest assistant turn to avoid cumulative replay.
+            last_assistant: str | None = None
             for msg in messages:
                 if not isinstance(msg, dict):
                     continue
                 role = str(msg.get("role") or msg.get("type") or "").strip().lower()
                 content = msg.get("content")
-                if role in {"assistant", "ai"} and isinstance(content, str) and content:
-                    parts.append(content)
-            if parts:
-                return "\n".join(parts)
+                if role in {"assistant", "ai"} and isinstance(content, str):
+                    text = content.strip()
+                    if text:
+                        last_assistant = text
+            if last_assistant:
+                return last_assistant
+        final_output = output_result.get("final_output")
+        if isinstance(final_output, str) and final_output.strip():
+            return final_output.strip()
         return None
 
     async def start_run(

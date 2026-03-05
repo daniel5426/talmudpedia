@@ -40,11 +40,12 @@ const mapTurnsToMessages = (threadId: string, turns: ThreadTurn[]): ChatMessage[
     (a, b) => Number(a.turn_index ?? 0) - Number(b.turn_index ?? 0)
   );
   const next: ChatMessage[] = [];
+  const priorAssistantParts: string[] = [];
 
   sortedTurns.forEach((turn, index) => {
     const baseTimestamp = parseTimestamp(turn.created_at);
     const userText = String(turn.user_input_text ?? "").trim();
-    const assistantText = String(turn.assistant_output_text ?? "").trim();
+    const rawAssistantText = String(turn.assistant_output_text ?? "").trim();
     const turnKey = String(turn.id ?? index);
 
     if (userText) {
@@ -56,6 +57,21 @@ const mapTurnsToMessages = (threadId: string, turns: ThreadTurn[]): ChatMessage[
       });
     }
 
+    let assistantText = rawAssistantText;
+    if (assistantText && priorAssistantParts.length > 0) {
+      const candidates = [
+        priorAssistantParts.join("\n"),
+        priorAssistantParts.join(" "),
+        priorAssistantParts.join(""),
+      ].filter(Boolean);
+      for (const prefix of candidates) {
+        if (assistantText.startsWith(prefix) && assistantText.length > prefix.length) {
+          assistantText = assistantText.slice(prefix.length).trimStart();
+          break;
+        }
+      }
+    }
+
     if (assistantText) {
       const assistantTimestamp = parseTimestamp(turn.completed_at, baseTimestamp + 1);
       next.push({
@@ -64,6 +80,7 @@ const mapTurnsToMessages = (threadId: string, turns: ThreadTurn[]): ChatMessage[
         content: assistantText,
         createdAt: new Date(assistantTimestamp),
       });
+      priorAssistantParts.push(assistantText);
     }
   });
 
