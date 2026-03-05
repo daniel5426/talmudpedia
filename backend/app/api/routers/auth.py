@@ -14,6 +14,7 @@ from google.auth.transport import requests as google_requests
 from app.db.postgres.models.identity import User, UserRole, Tenant, OrgUnit, OrgMembership, OrgUnitType, OrgRole, MembershipStatus
 from app.db.postgres.session import get_db
 from app.core.security import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 router = APIRouter()
 
@@ -116,7 +117,7 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
         email=user_in.email,
         hashed_password=get_password_hash(user_in.password),
         full_name=user_in.full_name,
-        role="admin",
+        role="user",
         avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={user_in.full_name or user_in.email}"
     )
     db.add(user)
@@ -147,6 +148,9 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
         status=MembershipStatus.active
     )
     db.add(membership)
+    security_bootstrap = SecurityBootstrapService(db)
+    await security_bootstrap.ensure_default_roles(tenant.id)
+    await security_bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
     
     await db.commit()
     
@@ -225,7 +229,7 @@ async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db))
             email=email,
             google_id=google_id,
             full_name=full_name,
-            role="admin",
+            role="user",
             avatar=avatar or f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or email}"
         )
         db.add(user)
@@ -256,6 +260,9 @@ async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db))
             status=MembershipStatus.active
         )
         db.add(membership)
+        security_bootstrap = SecurityBootstrapService(db)
+        await security_bootstrap.ensure_default_roles(tenant.id)
+        await security_bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
         
         await db.commit()
         await db.refresh(user)

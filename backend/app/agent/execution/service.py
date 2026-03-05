@@ -182,6 +182,28 @@ class AgentExecutorService:
         run_id = uuid4()
         effective_initiator_id = user_id or parsed_initiator_id
 
+        # Strict workload delegation: runtime cannot create principal/policy intent.
+        # Runs must mint grants only from pre-provisioned, approved policies.
+        resolved_principal_id = parsed_principal_id
+        resolved_grant_id = parsed_grant_id
+        maybe_context = input_params.get("context") if isinstance(input_params, dict) else {}
+        if effective_initiator_id is not None and resolved_grant_id is None:
+            from app.services.delegation_service import DelegationService, DelegationPolicyError
+
+            delegation = DelegationService(self.db)
+            try:
+                principal, grant, _approval_required = await delegation.create_agent_run_grant(
+                    agent=agent,
+                    initiator_user_id=effective_initiator_id,
+                    run_id=run_id,
+                    requested_scopes=requested_scopes or ((maybe_context or {}).get("requested_scopes") if isinstance(maybe_context, dict) else None),
+                )
+            except DelegationPolicyError as exc:
+                raise ValueError(f"{exc.code}: {exc.message}") from exc
+
+            resolved_principal_id = principal.id
+            resolved_grant_id = grant.id
+
         # Resolve/create thread before creating the run record.
         input_params = dict(input_params or {})
         raw_thread_id = thread_id or runtime_context.get("thread_id") or input_params.get("thread_id")
@@ -247,8 +269,8 @@ class AgentExecutorService:
             user_id=effective_initiator_id,
             thread_id=thread_result.thread.id,
             initiator_user_id=effective_initiator_id,
-            workload_principal_id=parsed_principal_id,
-            delegation_grant_id=parsed_grant_id,
+            workload_principal_id=resolved_principal_id,
+            delegation_grant_id=resolved_grant_id,
             input_params=input_params,
             status=RunStatus.queued,
             root_run_id=root_run_id,
@@ -269,23 +291,6 @@ class AgentExecutorService:
             run.root_run_id = run.id
             await self.db.commit()
             await self.db.refresh(run)
-
-        # Create delegation context for runs with an initiator user context.
-        # This covers both direct user-initiated runs and workload-initiated runs
-        # that propagate initiator_user_id in runtime context.
-        if effective_initiator_id is not None and run.delegation_grant_id is None:
-            from app.services.delegation_service import DelegationService
-            delegation = DelegationService(self.db)
-            principal, grant, _approval_required = await delegation.create_agent_run_grant(
-                agent=agent,
-                initiator_user_id=effective_initiator_id,
-                run_id=run.id,
-                requested_scopes=requested_scopes or ((input_params.get("context") or {}).get("requested_scopes")),
-            )
-            run.workload_principal_id = principal.id
-            run.delegation_grant_id = grant.id
-            run.initiator_user_id = effective_initiator_id
-            await self.db.commit()
 
         # Trigger background execution if requested
         if background:
@@ -357,21 +362,8 @@ class AgentExecutorService:
         if not agent:
             raise ValueError(f"Agent {run.agent_id} not found")
 
-        # Self-heal legacy/incomplete runs: ensure delegation context exists
-        # before node execution so artifact workloads can mint scoped tokens.
-        if run.delegation_grant_id is None and (run.user_id is not None or run.initiator_user_id is not None):
-            from app.services.delegation_service import DelegationService
-            delegation = DelegationService(db)
-            effective_initiator_id = run.initiator_user_id or run.user_id
-            principal, grant, _approval_required = await delegation.create_agent_run_grant(
-                agent=agent,
-                initiator_user_id=effective_initiator_id,
-                run_id=run.id,
-            )
-            run.workload_principal_id = principal.id
-            run.delegation_grant_id = grant.id
-            run.initiator_user_id = effective_initiator_id
-            await db.commit()
+        if (run.user_id is not None or run.initiator_user_id is not None) and run.delegation_grant_id is None:
+            raise ValueError("WORKLOAD_PRINCIPAL_MISSING: Run is missing delegation grant context")
 
         # Capture input params before commit to avoid async lazy-loads
         run_input_params = run.input_params

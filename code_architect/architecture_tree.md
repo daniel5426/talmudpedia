@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-05
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -28,6 +28,7 @@ backend/app/api/schemas/
 backend/app/core/
 backend/app/core/security.py
 backend/app/core/rbac.py
+backend/app/core/scope_registry.py
 backend/app/core/audit.py
 backend/app/core/internal_token.py
 backend/app/core/jwt_keys.py
@@ -98,6 +99,7 @@ backend/app/db/postgres/seeds/
 
 backend/app/services/
 backend/app/services/agent_service.py
+backend/app/services/security_bootstrap_service.py
 backend/app/services/retrieval_service.py
 backend/app/services/rag_admin_service.py
 backend/app/services/model_resolver.py
@@ -109,6 +111,7 @@ backend/app/services/tool_function_registry.py
 backend/app/services/artifact_registry.py
 backend/app/services/builtin_tools.py
 backend/app/services/delegation_service.py
+backend/app/services/workload_provisioning_service.py
 backend/app/services/workload_identity_service.py
 backend/app/services/token_broker_service.py
 backend/app/services/orchestration_kernel_service.py

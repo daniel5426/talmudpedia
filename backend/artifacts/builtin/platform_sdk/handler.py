@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from sdk import Client
 from talmudpedia_control_sdk import ControlPlaneClient
+from app.core.scope_registry import get_required_scopes_for_action
 from app.services.orchestration_policy_service import (
     ORCHESTRATION_SURFACE_OPTION_B,
     is_orchestration_surface_enabled,
@@ -63,79 +64,6 @@ ORCHESTRATION_PRIMITIVE_ACTIONS = {
     "orchestration.cancel_subtree",
     "orchestration.evaluate_and_replan",
     "orchestration.query_tree",
-}
-
-PRIVILEGED_ACTION_SCOPES = {
-    "catalog.list_capabilities": ["pipelines.catalog.read"],
-    "catalog.get_rag_operator_catalog": ["pipelines.catalog.read"],
-    "catalog.list_rag_operators": ["pipelines.catalog.read"],
-    "catalog.get_rag_operator": ["pipelines.catalog.read"],
-    "catalog.list_agent_operators": ["pipelines.catalog.read"],
-    "rag.list_pipelines": ["pipelines.read"],
-    "rag.list_visual_pipelines": ["pipelines.read"],
-    "rag.create_or_update_pipeline": ["pipelines.write"],
-    "rag.create_visual_pipeline": ["pipelines.write"],
-    "rag.update_visual_pipeline": ["pipelines.write"],
-    "rag.compile_pipeline": ["pipelines.write"],
-    "rag.compile_visual_pipeline": ["pipelines.write"],
-    "rag.create_job": ["pipelines.write"],
-    "rag.get_job": ["pipelines.read"],
-    "rag.get_executable_pipeline": ["pipelines.read"],
-    "rag.get_executable_input_schema": ["pipelines.read"],
-    "rag.get_step_data": ["pipelines.read"],
-    "artifacts.list": ["artifacts.read"],
-    "artifacts.get": ["artifacts.read"],
-    "artifacts.create_or_update_draft": ["artifacts.write"],
-    "artifacts.promote": ["artifacts.write"],
-    "artifacts.delete": ["artifacts.write"],
-    "artifacts.test": ["artifacts.write"],
-    "tools.list": ["tools.read"],
-    "tools.get": ["tools.read"],
-    "tools.create_or_update": ["tools.write"],
-    "tools.publish": ["tools.write"],
-    "tools.create_version": ["tools.write"],
-    "tools.delete": ["tools.write"],
-    "agents.list": ["agents.read"],
-    "agents.get": ["agents.read"],
-    "agents.create": ["agents.write"],
-    "agents.update": ["agents.write"],
-    "agents.create_or_update": ["agents.write"],
-    "agents.publish": ["agents.write"],
-    "agents.validate": ["agents.write"],
-    "agents.execute": ["agents.execute"],
-    "agents.start_run": ["agents.execute"],
-    "agents.resume_run": ["agents.execute"],
-    "agents.get_run": ["agents.execute"],
-    "agents.get_run_tree": ["agents.execute"],
-    "agents.run_tests": ["agents.run_tests"],
-    "models.list": ["models.read"],
-    "models.create_or_update": ["models.write"],
-    "models.add_provider": ["models.write"],
-    "models.update_provider": ["models.write"],
-    "models.delete_provider": ["models.write"],
-    "credentials.list": ["credentials.read"],
-    "credentials.create_or_update": ["credentials.write"],
-    "credentials.delete": ["credentials.write"],
-    "credentials.usage": ["credentials.read"],
-    "credentials.status": ["credentials.read"],
-    "knowledge_stores.list": ["knowledge_stores.read"],
-    "knowledge_stores.create_or_update": ["knowledge_stores.write"],
-    "knowledge_stores.delete": ["knowledge_stores.write"],
-    "knowledge_stores.stats": ["knowledge_stores.read"],
-    "auth.create_delegation_grant": ["auth.write"],
-    "auth.mint_workload_token": ["auth.write"],
-    "workload_security.list_pending": ["workload_security.read"],
-    "workload_security.approve_policy": ["workload_security.write"],
-    "workload_security.reject_policy": ["workload_security.write"],
-    "workload_security.list_approvals": ["workload_security.read"],
-    "workload_security.decide_approval": ["workload_security.write"],
-    "orchestration.spawn_run": ["agents.execute"],
-    "orchestration.spawn_group": ["agents.execute"],
-    "orchestration.join": ["agents.execute"],
-    "orchestration.cancel_subtree": ["agents.execute"],
-    "orchestration.evaluate_and_replan": ["agents.execute"],
-    "orchestration.query_tree": ["agents.execute"],
-    "respond": [],
 }
 
 DOMAIN_TOOL_ALLOWED_PREFIXES = {
@@ -531,7 +459,7 @@ def _finalize_output(
 
 
 def _resolve_required_scopes(action: str) -> List[str]:
-    scopes = set(PRIVILEGED_ACTION_SCOPES.get(action, []))
+    scopes = set(get_required_scopes_for_action(action))
     return sorted(scopes)
 
 

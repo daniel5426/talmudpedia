@@ -5,7 +5,7 @@ import pytest
 from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgUnitType, OrgMembership, OrgRole, MembershipStatus
 from app.db.postgres.models.security import WorkloadPrincipalType, WorkloadPolicyStatus
 from app.services.workload_identity_service import WorkloadIdentityService
-from app.services.delegation_service import DelegationService
+from app.services.delegation_service import DelegationPolicyError, DelegationService
 
 
 @pytest.mark.asyncio
@@ -47,11 +47,11 @@ async def test_scope_intersection_enforces_least_privilege(db_session):
     await db_session.commit()
 
     delegation = DelegationService(db_session)
-    grant, _approval_required = await delegation.create_delegation_grant(
-        tenant_id=tenant.id,
-        principal_id=principal.id,
-        initiator_user_id=user.id,
-        requested_scopes=["pipelines.catalog.read", "agents.write", "tools.write"],
-    )
-
-    assert grant.effective_scopes == ["pipelines.catalog.read", "tools.write"]
+    with pytest.raises(DelegationPolicyError) as exc:
+        await delegation.create_delegation_grant(
+            tenant_id=tenant.id,
+            principal_id=principal.id,
+            initiator_user_id=user.id,
+            requested_scopes=["pipelines.catalog.read", "agents.write", "tools.write"],
+        )
+    assert exc.value.code == "INSUFFICIENT_APPROVED_SCOPES"

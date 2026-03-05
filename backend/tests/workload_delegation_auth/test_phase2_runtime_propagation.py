@@ -74,7 +74,7 @@ async def test_tool_executor_requires_grant_for_workload_token_mode(db_session):
 
     with pytest.raises(PermissionError):
         await executor._execute_http_tool(
-            tool=None,
+            _tool=None,
             input_data={"hello": "world"},
             implementation_config={
                 "type": "http",

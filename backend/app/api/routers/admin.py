@@ -8,10 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.postgres.session import get_db
-from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import User, OrgMembership, OrgRole
+from app.api.dependencies import get_current_principal, require_scopes
+from app.db.postgres.models.identity import User, OrgMembership
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import AgentRun
+from app.core.scope_registry import is_platform_admin_role
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -29,32 +30,43 @@ def _current_month_bounds_utc() -> tuple[datetime, datetime]:
 # --- Dependencies & Helpers ---
 
 async def get_admin_context(
-    current_user: User = Depends(get_current_user),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
     """
-    Returns a context dict with 'user' and 'tenant_id'.
-    If user is System Admin (role='admin'), tenant_id is None (Global View).
-    If user is Tenant Admin/Owner, tenant_id is set to their tenant.
-    Otherwise raises 403.
+    Returns admin context.
+    - platform admin users can access global view (tenant_id=None)
+    - tenant users require membership and operate within token tenant context
     """
-    if current_user.role == "admin":
+    if principal.get("type") != "user":
+        raise HTTPException(status_code=403, detail="Only user principals can access admin APIs")
+
+    current_user = await db.get(User, UUID(str(principal["user_id"])))
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    if is_platform_admin_role(getattr(current_user, "role", None)):
         return {"user": current_user, "tenant_id": None}
 
-    # Check Tenant Admin/Owner Role via Postgres
-    result = await db.execute(
-        select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
-    )
+    tenant_id_raw = principal.get("tenant_id")
+    if not tenant_id_raw:
+        raise HTTPException(status_code=403, detail="Tenant context required")
+    try:
+        tenant_id = UUID(str(tenant_id_raw))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid tenant context")
+
+    result = await db.execute(select(OrgMembership).where(
+        OrgMembership.user_id == current_user.id,
+        OrgMembership.tenant_id == tenant_id,
+    ).limit(1))
     membership = result.scalar_one_or_none()
-    
-    if membership and membership.role in [OrgRole.owner, OrgRole.admin]:
-        return {"user": current_user, "tenant_id": membership.tenant_id}
-        
-    raise HTTPException(status_code=403, detail="Not authorized")
+    if membership is None:
+        raise HTTPException(status_code=403, detail="Not authorized for tenant")
+    return {"user": current_user, "tenant_id": membership.tenant_id}
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
-    role: Optional[str] = None
 
 # --- Endpoints ---
 
@@ -62,6 +74,7 @@ class UserUpdate(BaseModel):
 async def get_admin_stats(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("stats.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -218,6 +231,7 @@ async def get_admin_stats(
 @router.post("/users/bulk-delete")
 async def bulk_delete_users(
     user_ids: List[str], 
+    _: Dict[str, Any] = Depends(require_scopes("users.write")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -250,6 +264,7 @@ async def bulk_delete_users(
 @router.post("/threads/bulk-delete")
 async def bulk_delete_threads(
     thread_ids: List[str], 
+    _: Dict[str, Any] = Depends(require_scopes("threads.write")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -277,6 +292,7 @@ async def get_users(
     skip: int = 0, 
     limit: int = 20, 
     search: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("users.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -351,6 +367,7 @@ async def get_threads(
     skip: int = 0, 
     limit: int = 20, 
     search: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("threads.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -392,6 +409,7 @@ async def get_threads(
 @router.get("/threads/{thread_id}")
 async def get_thread_details(
     thread_id: str,
+    _: Dict[str, Any] = Depends(require_scopes("threads.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -444,6 +462,7 @@ async def get_thread_details(
 @router.get("/users/{user_id}")
 async def get_user_details(
     user_id: str, 
+    _: Dict[str, Any] = Depends(require_scopes("users.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -511,6 +530,7 @@ async def get_user_details(
 async def update_user(
     user_id: str, 
     user_update: UserUpdate,
+    _: Dict[str, Any] = Depends(require_scopes("users.write")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -536,7 +556,6 @@ async def update_user(
              
         if user_update.full_name is not None:
             user.full_name = user_update.full_name
-        # Note: Role updates might need more security logic (e.g. can't promote to system admin)
         
         await db.commit()
         return {"status": "success"}
@@ -549,6 +568,7 @@ async def get_user_threads(
     skip: int = 0,
     limit: int = 20,
     search: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("threads.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):

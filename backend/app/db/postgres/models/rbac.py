@@ -59,14 +59,17 @@ class RolePermission(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=False, index=True)
-    resource_type = Column(SQLEnum(ResourceType), nullable=False)
-    action = Column(SQLEnum(Action), nullable=False)
+    # Canonical permission key used by scope-based auth (e.g. `agents.write`).
+    scope_key = Column(String, nullable=False, index=True)
+    # Legacy fields kept nullable for backward compatibility during migration.
+    resource_type = Column(SQLEnum(ResourceType), nullable=True)
+    action = Column(SQLEnum(Action), nullable=True)
 
     # Relationships
     role = relationship("Role", back_populates="permissions")
 
     __table_args__ = (
-        UniqueConstraint('role_id', 'resource_type', 'action', name='uq_role_permission'),
+        UniqueConstraint('role_id', 'scope_key', name='uq_role_permission_scope'),
     )
 
 class RoleAssignment(Base):

@@ -422,6 +422,7 @@ def test_tools_publish_contract_parity(monkeypatch):
                 "tenant_id": "tenant-1",
                 "token": "token",
                 "payload": {"tool_id": "tool-22"},
+                "objective_flags": {"allow_publish": True},
             }
         },
     )

@@ -41,7 +41,7 @@ export { orgUnitsService } from "./org-units";
 export type { Tenant, TenantStatus, RetrievalPolicy, TenantSettings, OrgUnit, OrgUnitTree, OrgMember } from "./org-units";
 
 export { rbacService } from "./rbac";
-export type { Permission, Role, RoleAssignment, UserPermissions } from "./rbac";
+export type { Role, RoleAssignment, UserPermissions, ScopeCatalog } from "./rbac";
 
 export { auditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";

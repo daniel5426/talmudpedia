@@ -22,20 +22,15 @@ export interface OrgUnit {
   created_at: string
 }
 
-export interface Permission {
-  resource_type: string
-  action: string
-}
-
 export interface RoleScope {
   scope_id: string
   scope_type: string
   role_name: string
-  permissions: Permission[]
+  permissions: string[]
 }
 
 export interface UserPermissions {
-  permissions: Permission[]
+  permissions: string[]
   scopes: RoleScope[]
 }
 
@@ -102,11 +97,10 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
 
   const hasPermission = useCallback(
     (resourceType: string, action: string): boolean => {
-      if (user?.role === "admin") return true
+      if (user?.role === "admin" || user?.role === "system_admin" || user?.role === "system") return true
       if (!permissions) return false
-      return permissions.permissions.some(
-        (p) => p.resource_type === resourceType && p.action === action
-      )
+      const wanted = resolveRequestedScope(resourceType, action)
+      return permissions.permissions.includes(wanted)
     },
     [permissions, user]
   )
@@ -192,4 +186,34 @@ export function useTenant() {
     throw new Error("useTenant must be used within a TenantProvider")
   }
   return context
+}
+const LEGACY_PERMISSION_TO_SCOPE: Record<string, string> = {
+  "index.read": "pipelines.catalog.read",
+  "index.write": "pipelines.write",
+  "index.delete": "pipelines.delete",
+  "pipeline.read": "pipelines.read",
+  "pipeline.write": "pipelines.write",
+  "pipeline.delete": "pipelines.delete",
+  "job.read": "pipelines.read",
+  "job.write": "pipelines.write",
+  "job.delete": "pipelines.delete",
+  "tenant.read": "tenants.read",
+  "tenant.write": "tenants.write",
+  "tenant.admin": "tenants.write",
+  "org_unit.read": "membership.read",
+  "org_unit.write": "membership.write",
+  "org_unit.delete": "membership.delete",
+  "role.read": "roles.read",
+  "role.write": "roles.write",
+  "role.delete": "roles.write",
+  "role.admin": "roles.assign",
+  "membership.read": "membership.read",
+  "membership.write": "membership.write",
+  "membership.delete": "membership.delete",
+  "audit.read": "audit.read",
+}
+
+function resolveRequestedScope(resourceType: string, action: string): string {
+  const key = `${resourceType}.${action}`.toLowerCase()
+  return LEGACY_PERMISSION_TO_SCOPE[key] || key
 }

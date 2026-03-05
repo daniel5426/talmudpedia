@@ -12,6 +12,8 @@ from app.db.postgres.models.rag import RetrievalPolicy
 from app.db.postgres.session import get_db
 from app.api.routers.auth import get_current_user
 from app.core.rbac import get_tenant_context, check_permission, Permission, Action, ResourceType, parse_id
+from app.core.scope_registry import is_platform_admin_role
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 router = APIRouter()
 
@@ -81,7 +83,7 @@ def _tenant_status_value(status_value: TenantStatus | str) -> str:
 
 async def _ensure_tenant_settings_editor(tenant: Tenant, user: User, db: AsyncSession) -> None:
     """Allow mutations only for global admins or tenant owner/admin memberships."""
-    if user.role == "admin":
+    if is_platform_admin_role(getattr(user, "role", None)):
         return
 
     membership_stmt = select(OrgMembership).where(
@@ -142,7 +144,7 @@ async def create_tenant(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if current_user.role != "admin":
+    if not is_platform_admin_role(getattr(current_user, "role", None)):
         raise HTTPException(status_code=403, detail="Only global admins can create tenants")
 
     # Check for existing
@@ -177,6 +179,13 @@ async def create_tenant(
         status=MembershipStatus.active
     )
     db.add(membership)
+    bootstrap = SecurityBootstrapService(db)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_owner_assignment(
+        tenant_id=tenant.id,
+        user_id=current_user.id,
+        assigned_by=current_user.id,
+    )
     await db.commit()
     await db.refresh(tenant)
 
@@ -193,7 +202,7 @@ async def list_tenants(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if current_user.role == "admin":
+    if is_platform_admin_role(getattr(current_user, "role", None)):
         stmt = select(Tenant)
     else:
         stmt = select(Tenant).join(OrgMembership).where(OrgMembership.user_id == current_user.id)
@@ -381,7 +390,7 @@ async def create_org_unit(
         db=db
     )
 
-    if not has_permission and user.role != "admin":
+    if not has_permission and not is_platform_admin_role(getattr(user, "role", None)):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     stmt = select(OrgUnit).where(and_(OrgUnit.tenant_id == tenant.id, OrgUnit.slug == request.slug))
@@ -463,7 +472,7 @@ async def update_org_unit(
         resource_id=uid,
     )
 
-    if not has_permission and user.role != "admin":
+    if not has_permission and not is_platform_admin_role(getattr(user, "role", None)):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     stmt = select(OrgUnit).where(and_(OrgUnit.id == uid, OrgUnit.tenant_id == tenant.id))
@@ -509,7 +518,7 @@ async def delete_org_unit(
         resource_id=uid,
     )
 
-    if not has_permission and user.role != "admin":
+    if not has_permission and not is_platform_admin_role(getattr(user, "role", None)):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     stmt = select(OrgUnit).where(and_(OrgUnit.id == uid, OrgUnit.tenant_id == tenant.id))
@@ -586,7 +595,7 @@ async def add_member(
         db=db
     )
 
-    if not has_permission and user.role != "admin":
+    if not has_permission and not is_platform_admin_role(getattr(user, "role", None)):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     uid = parse_id(request.user_id)
@@ -624,6 +633,12 @@ async def add_member(
         status=MembershipStatus.active
     )
     db.add(membership)
+    bootstrap = SecurityBootstrapService(db)
+    await bootstrap.ensure_member_assignment(
+        tenant_id=tenant.id,
+        user_id=uid,
+        assigned_by=user.id,
+    )
     await db.commit()
     await db.refresh(membership)
 
@@ -646,7 +661,7 @@ async def remove_member(
         db=db
     )
 
-    if not has_permission and user.role != "admin":
+    if not has_permission and not is_platform_admin_role(getattr(user, "role", None)):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     stmt = select(OrgMembership).where(and_(OrgMembership.id == mid, OrgMembership.tenant_id == tenant.id))

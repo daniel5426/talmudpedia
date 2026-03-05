@@ -416,16 +416,16 @@ def test_rag_update_visual_pipeline_translates_graph_definition_patch(monkeypatc
 
 
 def test_dispatch_actions_have_parity_test_coverage():
-    handler_text = Path("artifacts/builtin/platform_sdk/handler.py").read_text()
+    handler_text = Path("backend/artifacts/builtin/platform_sdk/handler.py").read_text()
     dispatched = set(re.findall(r'"([a-z_]+\.[a-z_]+)": lambda:', handler_text))
 
     parity_text = "\n".join(
         Path(p).read_text()
         for p in [
-            "tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py",
-            "tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py",
-            "tests/platform_sdk_tool/test_platform_sdk_actions.py",
-            "tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py",
+            "backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py",
+            "backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py",
+            "backend/tests/platform_sdk_tool/test_platform_sdk_actions.py",
+            "backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py",
         ]
     )
     covered = set(re.findall(r"([a-z_]+\.[a-z_]+)", parity_text))

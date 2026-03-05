@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any
+
+# Canonical action -> scope requirements for control-plane actions.
+ACTION_REQUIRED_SCOPES: dict[str, list[str]] = {
+    "catalog.list_capabilities": ["pipelines.catalog.read"],
+    "catalog.get_rag_operator_catalog": ["pipelines.catalog.read"],
+    "catalog.list_rag_operators": ["pipelines.catalog.read"],
+    "catalog.get_rag_operator": ["pipelines.catalog.read"],
+    "catalog.list_agent_operators": ["pipelines.catalog.read"],
+    "rag.list_pipelines": ["pipelines.read"],
+    "rag.list_visual_pipelines": ["pipelines.read"],
+    "rag.create_or_update_pipeline": ["pipelines.write"],
+    "rag.create_visual_pipeline": ["pipelines.write"],
+    "rag.update_visual_pipeline": ["pipelines.write"],
+    "rag.compile_pipeline": ["pipelines.write"],
+    "rag.compile_visual_pipeline": ["pipelines.write"],
+    "rag.create_job": ["pipelines.write"],
+    "rag.get_job": ["pipelines.read"],
+    "rag.get_executable_pipeline": ["pipelines.read"],
+    "rag.get_executable_input_schema": ["pipelines.read"],
+    "rag.get_step_data": ["pipelines.read"],
+    "artifacts.list": ["artifacts.read"],
+    "artifacts.get": ["artifacts.read"],
+    "artifacts.create_or_update_draft": ["artifacts.write"],
+    "artifacts.promote": ["artifacts.write"],
+    "artifacts.delete": ["artifacts.write"],
+    "artifacts.test": ["artifacts.write"],
+    "tools.list": ["tools.read"],
+    "tools.get": ["tools.read"],
+    "tools.create_or_update": ["tools.write"],
+    "tools.publish": ["tools.write"],
+    "tools.create_version": ["tools.write"],
+    "tools.delete": ["tools.write"],
+    "agents.list": ["agents.read"],
+    "agents.get": ["agents.read"],
+    "agents.create": ["agents.write"],
+    "agents.update": ["agents.write"],
+    "agents.create_or_update": ["agents.write"],
+    "agents.publish": ["agents.write"],
+    "agents.validate": ["agents.write"],
+    "agents.execute": ["agents.execute"],
+    "agents.start_run": ["agents.execute"],
+    "agents.resume_run": ["agents.execute"],
+    "agents.get_run": ["agents.execute"],
+    "agents.get_run_tree": ["agents.execute"],
+    "agents.run_tests": ["agents.run_tests"],
+    "models.list": ["models.read"],
+    "models.create_or_update": ["models.write"],
+    "models.add_provider": ["models.write"],
+    "models.update_provider": ["models.write"],
+    "models.delete_provider": ["models.write"],
+    "credentials.list": ["credentials.read"],
+    "credentials.create_or_update": ["credentials.write"],
+    "credentials.delete": ["credentials.write"],
+    "credentials.usage": ["credentials.read"],
+    "credentials.status": ["credentials.read"],
+    "knowledge_stores.list": ["knowledge_stores.read"],
+    "knowledge_stores.create_or_update": ["knowledge_stores.write"],
+    "knowledge_stores.delete": ["knowledge_stores.write"],
+    "knowledge_stores.stats": ["knowledge_stores.read"],
+    "auth.create_delegation_grant": ["auth.write"],
+    "auth.mint_workload_token": ["auth.write"],
+    "workload_security.list_pending": ["workload_security.read"],
+    "workload_security.approve_policy": ["workload_security.write"],
+    "workload_security.reject_policy": ["workload_security.write"],
+    "workload_security.list_approvals": ["workload_security.read"],
+    "workload_security.decide_approval": ["workload_security.write"],
+    "orchestration.spawn_run": ["agents.execute"],
+    "orchestration.spawn_group": ["agents.execute"],
+    "orchestration.join": ["agents.execute"],
+    "orchestration.cancel_subtree": ["agents.execute"],
+    "orchestration.evaluate_and_replan": ["agents.execute"],
+    "orchestration.query_tree": ["agents.execute"],
+    "respond": [],
+}
+
+# Shared scope set used by control-plane APIs and RBAC.
+ALL_SCOPES: list[str] = sorted(
+    {
+        scope
+        for scopes in ACTION_REQUIRED_SCOPES.values()
+        for scope in scopes
+    }.union(
+        {
+            "apps.read",
+            "apps.write",
+            "pipelines.delete",
+            "agents.delete",
+            "tools.delete",
+            "artifacts.delete",
+            "roles.read",
+            "roles.write",
+            "roles.assign",
+            "membership.read",
+            "membership.write",
+            "membership.delete",
+            "audit.read",
+            "stats.read",
+            "users.read",
+            "users.write",
+            "threads.read",
+            "threads.write",
+            "tenants.read",
+            "tenants.write",
+        }
+    )
+)
+
+# Default tenant role bundles (immutable seeded system roles).
+TENANT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
+    "owner": sorted(set(ALL_SCOPES)),
+    "admin": sorted(
+        {
+            s
+            for s in ALL_SCOPES
+            if not s.startswith("auth.")
+        }
+    ),
+    "member": sorted(
+        {
+            "pipelines.catalog.read",
+            "pipelines.read",
+            "agents.read",
+            "agents.execute",
+            "artifacts.read",
+            "tools.read",
+            "models.read",
+            "knowledge_stores.read",
+            "credentials.read",
+            "threads.read",
+            "users.read",
+            "stats.read",
+            "apps.read",
+        }
+    ),
+}
+
+# Workload scope profile for the built-in platform architect agent.
+PLATFORM_ARCHITECT_SCOPE_PROFILE_V1: list[str] = sorted(
+    {
+        "pipelines.catalog.read",
+        "pipelines.read",
+        "pipelines.write",
+        "agents.read",
+        "agents.write",
+        "agents.execute",
+        "agents.run_tests",
+        "tools.read",
+        "tools.write",
+        "artifacts.read",
+        "artifacts.write",
+        "models.read",
+        "models.write",
+        "credentials.read",
+        "credentials.write",
+        "knowledge_stores.read",
+        "knowledge_stores.write",
+        "workload_security.read",
+        "workload_security.write",
+        "auth.write",
+    }
+)
+
+DEFAULT_AGENT_RUN_SCOPES: list[str] = ["agents.execute"]
+
+
+# Legacy RBAC migration bridge: existing enum permissions -> canonical scope keys.
+LEGACY_PERMISSION_TO_SCOPE: dict[tuple[str, str], str] = {
+    ("index", "read"): "pipelines.catalog.read",
+    ("index", "write"): "pipelines.write",
+    ("index", "delete"): "pipelines.delete",
+    ("pipeline", "read"): "pipelines.read",
+    ("pipeline", "write"): "pipelines.write",
+    ("pipeline", "delete"): "pipelines.delete",
+    ("job", "read"): "pipelines.read",
+    ("job", "write"): "pipelines.write",
+    ("job", "delete"): "pipelines.delete",
+    ("tenant", "read"): "tenants.read",
+    ("tenant", "write"): "tenants.write",
+    ("tenant", "admin"): "tenants.write",
+    ("org_unit", "read"): "membership.read",
+    ("org_unit", "write"): "membership.write",
+    ("org_unit", "delete"): "membership.delete",
+    ("role", "read"): "roles.read",
+    ("role", "write"): "roles.write",
+    ("role", "delete"): "roles.write",
+    ("role", "admin"): "roles.assign",
+    ("membership", "read"): "membership.read",
+    ("membership", "write"): "membership.write",
+    ("membership", "delete"): "membership.delete",
+    ("audit", "read"): "audit.read",
+}
+
+
+def get_required_scopes_for_action(action: str) -> list[str]:
+    return list(ACTION_REQUIRED_SCOPES.get(action, []))
+
+
+def is_valid_scope(scope: str) -> bool:
+    return str(scope or "") in set(ALL_SCOPES)
+
+
+def normalize_scope_list(scopes: list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
+    raw = scopes or []
+    cleaned = {str(s).strip() for s in raw if str(s).strip()}
+    return sorted(cleaned)
+
+
+def legacy_permission_to_scope(resource_type: str | None, action: str | None) -> str | None:
+    key = (str(resource_type or "").lower(), str(action or "").lower())
+    return LEGACY_PERMISSION_TO_SCOPE.get(key)
+
+
+def build_scope_catalog() -> dict[str, Any]:
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for scope in ALL_SCOPES:
+        prefix = scope.split(".", 1)[0]
+        grouped[prefix].append(scope)
+    return {
+        "groups": {k: sorted(v) for k, v in sorted(grouped.items())},
+        "all_scopes": list(ALL_SCOPES),
+        "default_roles": {k: list(v) for k, v in TENANT_DEFAULT_ROLE_SCOPES.items()},
+        "workload_profiles": {
+            "platform_architect_v1": list(PLATFORM_ARCHITECT_SCOPE_PROFILE_V1),
+            "default_agent_run": list(DEFAULT_AGENT_RUN_SCOPES),
+        },
+    }
+
+
+def is_platform_admin_role(role_value: str | None) -> bool:
+    return str(role_value or "").strip().lower() in {"admin", "system", "system_admin"}

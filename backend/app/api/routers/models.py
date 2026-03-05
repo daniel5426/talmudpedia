@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional, List
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ from app.db.postgres.models.registry import (
     ModelProviderBinding,
 )
 from app.db.postgres.session import get_db
-from app.api.dependencies import get_current_user, get_tenant_context
+from app.api.dependencies import get_current_principal, get_tenant_context, require_scopes
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -97,9 +97,11 @@ async def list_models(
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.read")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """List all logical models."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelRegistry).where(
@@ -161,9 +163,11 @@ async def create_model(
     request: CreateModelRequest,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Register a new logical model."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     # Check for existing slug in tenant
@@ -192,16 +196,18 @@ async def create_model(
     await db.refresh(model)
     
     # Re-fetch with providers
-    return await get_model(model.id, db, tenant_ctx, current_user)
+    return await get_model(model.id, db, tenant_ctx)
 
 @router.get("/{model_id}", response_model=ModelResponse)
 async def get_model(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.read")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Get details for a specific model."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelRegistry).where(
@@ -249,9 +255,11 @@ async def update_model(
     request: UpdateModelRequest,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Update a logical model definition."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelRegistry).where(
@@ -279,16 +287,18 @@ async def update_model(
         model.default_resolution_policy = request.default_resolution_policy
         
     await db.commit()
-    return await get_model(model.id, db, tenant_ctx, current_user)
+    return await get_model(model.id, db, tenant_ctx)
 
 @router.delete("/{model_id}")
 async def delete_model(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Remove a model from the registry."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelRegistry).where(
@@ -313,9 +323,11 @@ async def add_provider_binding(
     request: CreateProviderRequest,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Add a provider binding to a logical model."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     # Verify model exists and belongs to tenant
@@ -358,9 +370,11 @@ async def update_provider_binding(
     request: UpdateProviderRequest,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Update a provider binding."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
 
     stmt = select(ModelProviderBinding).where(
@@ -406,9 +420,11 @@ async def remove_provider_binding(
     provider_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Remove a provider binding."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelProviderBinding).where(

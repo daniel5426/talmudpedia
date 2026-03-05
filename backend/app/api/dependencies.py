@@ -5,6 +5,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from .routers.auth import get_current_user
 from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgMembership
+from app.db.postgres.models.rbac import RoleAssignment, RolePermission
 from app.db.postgres.models.security import ApprovalDecision, ApprovalStatus
 from app.db.postgres.models.published_apps import (
     PublishedApp,
@@ -18,6 +19,7 @@ from sqlalchemy import and_, select
 from uuid import UUID
 import jwt
 from app.core.security import SECRET_KEY, ALGORITHM
+from app.core.scope_registry import legacy_permission_to_scope, is_platform_admin_role
 from app.core.workload_jwt import decode_workload_token
 from app.core.security import decode_published_app_preview_token, decode_published_app_session_token
 from app.services.token_broker_service import TokenBrokerService
@@ -31,21 +33,6 @@ class AuthContext(BaseModel):
         arbitrary_types_allowed = True
 
 
-SECURITY_SCOPES_ADMIN = {
-    "pipelines.catalog.read",
-    "pipelines.write",
-    "agents.write",
-    "tools.write",
-    "artifacts.write",
-    "agents.execute",
-    "agents.run_tests",
-    "apps.read",
-    "apps.write",
-}
-SECURITY_SCOPES_MEMBER = {
-    "pipelines.catalog.read",
-    "agents.execute",
-}
 WORKLOAD_JWT_AUDIENCE = "talmudpedia-internal-api"
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -57,23 +44,16 @@ async def get_tenant_context(
     Dependency to get the current tenant context.
     Matches the placeholder logic but uses Postgres effectively.
     """
-    if x_tenant_id:
-        try:
-            tenant_uuid = UUID(x_tenant_id)
-            result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
-            tenant = result.scalar_one_or_none()
-            if tenant:
-                return {"tenant_id": str(tenant.id), "tenant": tenant}
-        except ValueError:
-            pass
-
-    # Fallback to first tenant for development/demo
-    result = await db.execute(select(Tenant).limit(1))
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header is required")
+    try:
+        tenant_uuid = UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header")
+    result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
     tenant = result.scalar_one_or_none()
-    
     if not tenant:
-        raise HTTPException(status_code=500, detail="No tenant configured in database")
-        
+        raise HTTPException(status_code=404, detail="Tenant not found")
     return {"tenant_id": str(tenant.id), "tenant": tenant}
 
 async def get_auth_context(
@@ -95,7 +75,7 @@ async def get_auth_context(
     
     if not membership:
         # Fallback to global tenant if user is a system admin without membership
-        if user.role == "admin":
+        if _is_platform_admin(user):
             result = await db.execute(select(Tenant).limit(1))
             tenant = result.scalar_one_or_none()
             if not tenant:
@@ -114,15 +94,52 @@ async def get_auth_context(
     return AuthContext(user=user, tenant=tenant, org_unit=org_unit)
 
 
-def _derive_user_scopes(payload: Dict[str, Any], user: User) -> set[str]:
-    user_role = str(getattr(user, "role", "")).lower()
-    if user_role == "admin":
+def _is_platform_admin(user: User) -> bool:
+    return is_platform_admin_role(getattr(user, "role", None))
+
+
+async def _derive_user_scopes(payload: Dict[str, Any], user: User, db: AsyncSession) -> set[str]:
+    if _is_platform_admin(user):
         return {"*"}
 
-    org_role = str(payload.get("org_role") or "").lower()
-    if org_role in {"owner", "admin"}:
-        return set(SECURITY_SCOPES_ADMIN)
-    return set(SECURITY_SCOPES_MEMBER)
+    tenant_id_raw = payload.get("tenant_id")
+    if not tenant_id_raw:
+        return set()
+    try:
+        tenant_id = UUID(str(tenant_id_raw))
+    except Exception:
+        return set()
+
+    scopes: set[str] = set()
+    assignments_res = await db.execute(
+        select(RoleAssignment).where(
+            RoleAssignment.tenant_id == tenant_id,
+            RoleAssignment.user_id == user.id,
+        )
+    )
+    assignments = list(assignments_res.scalars().all())
+    if not assignments:
+        return scopes
+
+    role_ids = {a.role_id for a in assignments if a.role_id is not None}
+    if not role_ids:
+        return scopes
+
+    perm_res = await db.execute(
+        select(RolePermission).where(RolePermission.role_id.in_(list(role_ids)))
+    )
+    for perm in perm_res.scalars().all():
+        scope_key = getattr(perm, "scope_key", None)
+        if scope_key:
+            scopes.add(str(scope_key))
+            continue
+        mapped = legacy_permission_to_scope(
+            getattr(getattr(perm, "resource_type", None), "value", getattr(perm, "resource_type", None)),
+            getattr(getattr(perm, "action", None), "value", getattr(perm, "action", None)),
+        )
+        if mapped:
+            scopes.add(mapped)
+    return scopes
 
 
 async def _extract_bearer_token(
@@ -153,7 +170,7 @@ async def get_current_principal(
         tenant_id = payload.get("tenant_id")
         if not tenant_id:
             raise HTTPException(status_code=403, detail="Tenant context required")
-        scopes = _derive_user_scopes(payload, user)
+        scopes = await _derive_user_scopes(payload, user, db)
         if isinstance(payload.get("scope"), list):
             scopes.update(str(s) for s in payload.get("scope"))
         return {

@@ -14,7 +14,12 @@ from talmudpedia_control_sdk import ControlPlaneClient
 from tests.platform_architect_e2e.db_checks import check_agent_run_exists, resolve_tenant_slug
 from tests.platform_architect_e2e.reporting import E2EReport
 from tests.platform_architect_e2e.scenario_matrix import SCENARIOS, ScenarioDefinition
-from tests.platform_architect_e2e.verifiers import contains_token, extract_assistant_text, extract_first_json_object
+from tests.platform_architect_e2e.verifiers import (
+    contains_action_evidence,
+    contains_token,
+    extract_assistant_text,
+    extract_first_json_object,
+)
 
 
 TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "paused"}
@@ -172,6 +177,7 @@ def _action_specific_api_check(
     sdk_client: ControlPlaneClient,
     tenant_slug: str | None,
     unique_prefix: str,
+    assistant_json: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     action = scenario.target_action
 
@@ -189,8 +195,29 @@ def _action_specific_api_check(
 
         if action == "rag.create_visual_pipeline" and tenant_slug:
             pipelines = _unwrap_data(sdk_client.rag.list_visual_pipelines(tenant_slug=tenant_slug)).get("data", [])
-            found = [p for p in pipelines if isinstance(p, dict) and str(p.get("slug", "")).startswith(unique_prefix)]
-            return (len(found) > 0, "No created pipeline with expected prefix")
+            pipeline_by_id = {
+                str(p.get("id")): p
+                for p in pipelines
+                if isinstance(p, dict) and p.get("id") is not None
+            }
+            resources = assistant_json.get("resources") if isinstance(assistant_json, dict) else None
+            candidate_ids: set[str] = set()
+            if isinstance(resources, list):
+                for item in resources:
+                    if isinstance(item, dict) and item.get("id"):
+                        candidate_ids.add(str(item.get("id")))
+            elif isinstance(resources, dict) and resources.get("id"):
+                candidate_ids.add(str(resources.get("id")))
+
+            if candidate_ids:
+                found = [resource_id for resource_id in candidate_ids if resource_id in pipeline_by_id]
+                return (len(found) > 0, "Created pipeline id not found in visual pipeline listing")
+
+            found_by_name = [
+                p for p in pipelines
+                if isinstance(p, dict) and str(p.get("name", "")).startswith(unique_prefix)
+            ]
+            return (len(found_by_name) > 0, "No created pipeline found by id or name prefix")
 
         if action == "tools.create_or_update":
             tools = _unwrap_data(sdk_client.tools.list(limit=200)).get("tools", [])
@@ -275,10 +302,9 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
     assistant_text = extract_assistant_text(run_status)
     assistant_json = extract_first_json_object(assistant_text)
 
-    action_seen = (
-        contains_token(run_status, scenario.target_action)
-        or contains_token(run_tree, scenario.target_action)
-        or contains_token(assistant_text, scenario.target_action)
+    action_seen = contains_action_evidence(run_status.get("result"), scenario.target_action) or contains_action_evidence(
+        run_tree,
+        scenario.target_action,
     )
 
     db_check = check_agent_run_exists(run_id, e2e_runtime["tenant_id"])
@@ -287,6 +313,7 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
         sdk_client=e2e_runtime["sdk"],
         tenant_slug=e2e_runtime.get("tenant_slug"),
         unique_prefix=unique_prefix,
+        assistant_json=assistant_json,
     )
 
     errors_blob = {
@@ -298,10 +325,15 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
 
     passed = True
     failure_reasons: list[str] = []
+    assistant_status = ""
+    assistant_errors_blob: Any = None
+    if isinstance(assistant_json, dict):
+        assistant_status = str(assistant_json.get("status") or "").strip().lower()
+        assistant_errors_blob = assistant_json.get("errors")
 
     if not action_seen:
         passed = False
-        failure_reasons.append("Target action not observed in run evidence")
+        failure_reasons.append("Target action not observed in structured run evidence")
 
     if not db_check.ok:
         passed = False
@@ -309,11 +341,20 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
 
     if scenario.expected_outcome == "expected_block":
         expected_code = str(scenario.expected_error_code or "")
-        saw_code = contains_token(errors_blob, expected_code)
+        if assistant_status not in {"error", "blocked", "failed"}:
+            passed = False
+            failure_reasons.append(f"Assistant status is not a blocked/error status: {assistant_status or 'missing'}")
+        saw_code = contains_token(assistant_errors_blob, expected_code) or contains_token(errors_blob, expected_code)
         if not saw_code:
             passed = False
             failure_reasons.append(f"Expected block code not found: {expected_code}")
     else:
+        if assistant_status and assistant_status not in {"success", "ok", "completed"}:
+            passed = False
+            failure_reasons.append(f"Assistant reported non-success status: {assistant_status}")
+        if isinstance(assistant_json, dict) and assistant_errors_blob:
+            passed = False
+            failure_reasons.append(f"Assistant reported errors: {assistant_errors_blob}")
         terminal_status = str(run_status.get("status") or "").lower()
         if terminal_status != "completed":
             passed = False

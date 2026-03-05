@@ -26,6 +26,51 @@ def contains_token(payload: Any, token: str) -> bool:
     return False
 
 
+ACTION_FIELD_KEYS = {
+    "action",
+    "tool_action",
+    "tool_name",
+    "name",
+    "operation",
+    "method",
+    "target_action",
+}
+
+NOISY_TEXT_KEYS = {"input", "prompt", "instructions", "content", "message", "text"}
+
+
+def contains_action_evidence(payload: Any, action: str) -> bool:
+    target = str(action or "").strip().lower()
+    if not target:
+        return False
+
+    def _matches(value: Any) -> bool:
+        if not isinstance(value, str):
+            return False
+        normalized = value.strip().lower()
+        return normalized == target or normalized.endswith(f".{target}")
+
+    def _walk(value: Any) -> bool:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key_normalized = str(key).strip().lower()
+                if key_normalized in ACTION_FIELD_KEYS and _matches(item):
+                    return True
+                if key_normalized in NOISY_TEXT_KEYS and isinstance(item, str):
+                    continue
+                if _walk(item):
+                    return True
+            return False
+        if isinstance(value, list):
+            for item in value:
+                if _walk(item):
+                    return True
+            return False
+        return False
+
+    return _walk(payload)
+
+
 def extract_first_json_object(text: str) -> dict[str, Any] | None:
     if not isinstance(text, str):
         return None

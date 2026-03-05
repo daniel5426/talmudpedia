@@ -56,6 +56,10 @@ class Agent(Base):
         "max_iterations": 10,
         "allow_parallel_tools": True
     }, nullable=False)
+
+    # Workload provisioning metadata (security control plane).
+    workload_scope_profile = Column(String, nullable=False, default="default_agent_run")
+    workload_scope_overrides = Column(JSONB, default=[], nullable=False)
     
     # Versioning & Status
     version = Column(Integer, default=1, nullable=False)

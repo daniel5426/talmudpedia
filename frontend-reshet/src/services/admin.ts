@@ -67,7 +67,7 @@ class AdminService {
     return httpClient.get<Record<string, unknown>>(`/admin/threads/${threadId}`);
   }
 
-  async updateUser(userId: string, data: { full_name?: string; role?: string }): Promise<void> {
+  async updateUser(userId: string, data: { full_name?: string }): Promise<void> {
     return httpClient.patch<void>(`/admin/users/${userId}`, data);
   }
 

@@ -273,8 +273,17 @@ class ControlPlaneClient:
                     code = str(body["code"])
                 if body.get("message"):
                     message = str(body["message"])
-                elif body.get("detail"):
-                    message = str(body["detail"])
+                detail = body.get("detail")
+                if isinstance(detail, dict):
+                    details = detail
+                    if detail.get("code"):
+                        code = str(detail["code"])
+                    if detail.get("message"):
+                        message = str(detail["message"])
+                    else:
+                        message = str(detail)
+                elif detail:
+                    message = str(detail)
                 if body.get("retryable") is not None:
                     retryable = bool(body.get("retryable"))
         except Exception:

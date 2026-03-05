@@ -14,7 +14,8 @@ import os
 
 from app.db.postgres.session import get_db
 from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
-from app.db.postgres.models.identity import User, OrgMembership, OrgRole
+from app.db.postgres.models.identity import OrgMembership
+from app.core.scope_registry import is_platform_admin_role
 from typing import Dict, Any
 from fastapi import Request
 
@@ -91,63 +92,46 @@ async def get_agent_context(
 
     # Prefer explicit tenant header so multi-tenant users can target the selected tenant.
     header_tenant = request.headers.get("X-Tenant-ID")
+    resolved_tenant: UUID | None = None
     if header_tenant:
         try:
             header_tenant_uuid = UUID(str(header_tenant))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header")
+        resolved_tenant = header_tenant_uuid
+    else:
+        tenant_id = context.get("tenant_id")
+        if tenant_id is None:
+            raise HTTPException(status_code=403, detail="Tenant context required")
+        try:
+            resolved_tenant = UUID(str(tenant_id))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid tenant context")
 
-        membership_res = await db.execute(
-            select(OrgMembership).where(
-                OrgMembership.user_id == current_user.id,
-                OrgMembership.tenant_id == header_tenant_uuid,
-            ).limit(1)
-        )
-        membership = membership_res.scalar_one_or_none()
-        if membership is None and current_user.role != "admin":
-            raise HTTPException(status_code=403, detail="Not a member of the requested tenant")
-        return {
-            "user": current_user,
-            "tenant_id": header_tenant_uuid,
-            "auth_token": token,
-            "is_service": False,
-            "scopes": context.get("scopes", []),
-        }
-
-    # Fallback: first membership tenant for users that do not pass X-Tenant-ID.
-    result = await db.execute(
-        select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
+    membership_res = await db.execute(
+        select(OrgMembership).where(
+            OrgMembership.user_id == current_user.id,
+            OrgMembership.tenant_id == resolved_tenant,
+        ).limit(1)
     )
-    membership = result.scalar_one_or_none()
-    if membership:
-        return {
-            "user": current_user,
-            "tenant_id": membership.tenant_id,
-            "auth_token": token,
-            "is_service": False,
-            "scopes": context.get("scopes", []),
-        }
+    membership = membership_res.scalar_one_or_none()
+    if membership is None and not is_platform_admin_role(getattr(current_user, "role", None)):
+        raise HTTPException(status_code=403, detail="Not a member of the requested tenant")
 
-    # System admin fallback without membership.
-    tenant_id = context.get("tenant_id")
-    if tenant_id is None:
-        raise HTTPException(status_code=403, detail="Tenant context required")
     return {
         "user": current_user,
-        "tenant_id": tenant_id,
+        "tenant_id": resolved_tenant,
         "auth_token": token,
         "is_service": False,
         "scopes": context.get("scopes", []),
     }
-        
-    raise HTTPException(status_code=403, detail="Not authorized to manage agents")
 
 
 def agent_to_response(agent, compact: bool = False) -> AgentResponse:
     """Convert Agent model to response."""
     return AgentResponse(
-        id=str(agent.id),
-        tenant_id=str(agent.tenant_id),
+        id=agent.id,
+        tenant_id=agent.tenant_id,
         name=agent.name,
         slug=agent.slug,
         description=agent.description,
@@ -159,6 +143,8 @@ def agent_to_response(agent, compact: bool = False) -> AgentResponse:
 
         is_active=agent.is_active,
         is_public=agent.is_public,
+        workload_scope_profile=getattr(agent, "workload_scope_profile", "default_agent_run") or "default_agent_run",
+        workload_scope_overrides=list(getattr(agent, "workload_scope_overrides", []) or []),
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         published_at=agent.published_at,
@@ -246,6 +232,8 @@ async def create_agent(
                 graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
                 memory_config=request.memory_config,
                 execution_constraints=request.execution_constraints,
+                workload_scope_profile=request.workload_scope_profile,
+                workload_scope_overrides=request.workload_scope_overrides,
             ),
             user_id=context["user"].id if context.get("user") else None
         )
@@ -291,7 +279,9 @@ async def update_agent(
             graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
             memory_config=request.memory_config,
             execution_constraints=request.execution_constraints,
-        ))
+            workload_scope_profile=request.workload_scope_profile,
+            workload_scope_overrides=request.workload_scope_overrides,
+        ), user_id=context["user"].id if context.get("user") else None)
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
@@ -385,7 +375,7 @@ async def publish_agent(
     )
 
     try:
-        agent = await service.publish_agent(agent_id)
+        agent = await service.publish_agent(agent_id, user_id=context["user"].id if context.get("user") else None)
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
@@ -751,7 +741,7 @@ async def resume_run_v2(
     # User principals can only resume their own runs (unless system admin).
     if not context.get("is_service"):
         user = context.get("user")
-        if user is not None and str(getattr(user, "role", "")).lower() != "admin":
+        if user is not None and not is_platform_admin_role(getattr(user, "role", None)):
             allowed_user_ids = {
                 str(uid)
                 for uid in (run.user_id, run.initiator_user_id)

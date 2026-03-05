@@ -9,7 +9,7 @@ def test_platform_sdk_fetch_catalog_uses_internal_delegation(monkeypatch):
         captured["audience"] = audience
         return "delegated-token"
 
-    monkeypatch.setattr(handler, "_fetch_catalog", lambda client, payload: {"ok": True})
+    monkeypatch.setattr(handler, "_fetch_catalog", lambda client, payload: ({"ok": True}, []))
 
     result = handler.execute(
         state={},
