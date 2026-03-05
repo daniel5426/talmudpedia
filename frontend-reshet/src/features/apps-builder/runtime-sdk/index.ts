@@ -1,7 +1,7 @@
 export type AppRuntimeInput = {
   input?: string;
   messages?: Array<{ role: string; content: string }>;
-  chat_id?: string;
+  thread_id?: string;
   context?: Record<string, unknown>;
 };
 

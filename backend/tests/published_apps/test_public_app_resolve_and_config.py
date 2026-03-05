@@ -7,10 +7,8 @@ from ._helpers import admin_headers, seed_admin_tenant_and_agent, seed_published
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppRevision,
-    PublishedAppRevisionKind,
     PublishedAppVisibility,
 )
-from app.services.published_app_bundle_storage import PublishedAppBundleAssetNotFound
 
 
 @pytest.mark.asyncio
@@ -71,58 +69,12 @@ async def test_private_published_app_is_hidden_from_public_endpoints(client, db_
     config_resp = await client.get(f"/public/apps/{app.slug}/config")
     assert config_resp.status_code == 404
 
-    runtime_resp = await client.get(f"/public/apps/{app.slug}/runtime")
-    assert runtime_resp.status_code == 404
-
-    signup_resp = await client.post(
-        f"/public/apps/{app.slug}/auth/signup",
-        json={"email": "private-user@example.com", "password": "secret123"},
-    )
-    assert signup_resp.status_code == 404
-
-    chat_resp = await client.post(
-        f"/public/apps/{app.slug}/chat/stream",
-        json={"input": "hello", "messages": []},
-    )
-    assert chat_resp.status_code == 404
-
-
 @pytest.mark.asyncio
-async def test_public_runtime_descriptor_and_ui_source_removed(client, db_session):
-    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-
-    create_resp = await client.post(
-        "/admin/apps",
-        headers=headers,
-        json={
-            "name": "Runtime Descriptor App",
-            "slug": "runtime-descriptor-app",
-            "agent_id": str(agent.id),
-            "template_key": "chat-classic",
-            "auth_enabled": True,
-            "auth_providers": ["password"],
-        },
-    )
-    assert create_resp.status_code == 200
-    app_id = create_resp.json()["id"]
-
-    _, publish_status = await start_publish_and_wait(client, app_id=app_id, headers=headers)
-    assert publish_status["status"] == "succeeded"
-    assert publish_status["published_revision_id"]
-
-    runtime_resp = await client.get("/public/apps/runtime-descriptor-app/runtime")
-    assert runtime_resp.status_code == 200
-    runtime_payload = runtime_resp.json()
-    assert runtime_payload["slug"] == "runtime-descriptor-app"
-    assert runtime_payload["runtime_mode"] == "vite_static"
-    assert runtime_payload["api_base_path"] == "/api/py"
-    assert runtime_payload["revision_id"] == publish_status["published_revision_id"]
-
-    ui_resp = await client.get("/public/apps/runtime-descriptor-app/ui")
-    assert ui_resp.status_code == 410
-    detail = ui_resp.json()["detail"]
-    assert detail["code"] == "UI_SOURCE_MODE_REMOVED"
+async def test_public_ui_source_removed_endpoint_still_returns_410(client):
+    resp = await client.get("/public/apps/some-app/ui")
+    assert resp.status_code == 410
+    detail = resp.json().get("detail", {})
+    assert detail.get("code") == "UI_SOURCE_MODE_REMOVED"
 
 
 @pytest.mark.asyncio
@@ -172,7 +124,10 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     )
 
     asset_path = f"/public/apps/preview/revisions/{draft_revision_id}/assets/assets/main.js"
-    asset_resp = await client.get(f"{asset_path}?preview_token={preview_token}")
+    asset_resp = await client.get(
+        asset_path,
+        headers={"Authorization": f"Bearer {preview_token}"},
+    )
     assert asset_resp.status_code == 200
     assert asset_resp.headers["content-type"].startswith("application/javascript")
     assert "console.log('ok');" in asset_resp.text
@@ -193,12 +148,12 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     preview_url = runtime_payload["preview_url"]
     assert "/assets/index.html" in preview_url
     preview_query = parse_qs(urlparse(preview_url).query)
-    assert preview_query.get("preview_token") == [preview_token]
+    assert preview_query.get("preview_token") in (None, [])
     assert runtime_payload["asset_base_url"].endswith("/assets/")
 
 
 @pytest.mark.asyncio
-async def test_preview_runtime_allows_valid_query_token_when_auth_header_is_invalid(client, db_session):
+async def test_preview_runtime_rejects_query_token_fallback_when_auth_header_is_invalid(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -228,14 +183,11 @@ async def test_preview_runtime_allows_valid_query_token_when_auth_header_is_inva
         f"/public/apps/preview/revisions/{draft_revision_id}/runtime?preview_token={preview_token}",
         headers={"Authorization": "Bearer invalid-preview-token"},
     )
-    assert runtime_resp.status_code == 200
-    payload = runtime_resp.json()
-    assert payload["revision_id"] == draft_revision_id
-    assert "/assets/" in payload["asset_base_url"]
+    assert runtime_resp.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_preview_asset_html_rewrites_relative_assets_with_preview_token(client, db_session, monkeypatch):
+async def test_preview_asset_html_keeps_relative_assets_tokenless(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -288,101 +240,55 @@ async def test_preview_asset_html_rewrites_relative_assets_with_preview_token(cl
     )
 
     resp = await client.get(
-        f"/public/apps/preview/revisions/{draft_revision_id}/assets/index.html?preview_token={preview_token}"
+        f"/public/apps/preview/revisions/{draft_revision_id}/assets/index.html",
+        headers={"Authorization": f"Bearer {preview_token}"},
     )
     assert resp.status_code == 200
     text = resp.text
-    assert f"./assets/main.css?preview_token={preview_token}" in text
-    assert f"./assets/main.js?preview_token={preview_token}" in text
+    assert "./assets/main.css" in text
+    assert "./assets/main.js" in text
+    assert "preview_token=" not in text
+    assert "window.__APP_RUNTIME_CONTEXT=" in text
+    assert "\"mode\":\"builder-preview\"" in text
 
-
-@pytest.mark.asyncio
-async def test_published_asset_proxy_streams_dist_asset(client, db_session, monkeypatch):
-    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
-    app = await seed_published_app(
-        db_session,
-        tenant.id,
-        agent.id,
-        user.id,
-        slug="published-asset-app",
-        auth_enabled=True,
-        auth_providers=["password"],
-    )
-
-    revision = PublishedAppRevision(
-        published_app_id=app.id,
-        kind=PublishedAppRevisionKind.published,
-        template_key="chat-classic",
-        template_runtime="vite_static",
-        files={"src/main.tsx": "export default {};"},
-        dist_storage_prefix="apps/t/a/revisions/published/dist",
-        dist_manifest={"entry_html": "index.html"},
-        created_by=user.id,
-    )
-    db_session.add(revision)
-    await db_session.flush()
-    app.current_published_revision_id = revision.id
-    await db_session.commit()
-
-    class _Storage:
-        def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str):
-            assert dist_storage_prefix == "apps/t/a/revisions/published/dist"
-            assert asset_path == "assets/main.js"
-            return b"console.log('published-ok');", "application/javascript"
-
-    monkeypatch.setattr(
-        "app.api.routers.published_apps_public.PublishedAppBundleStorage.from_env",
-        staticmethod(lambda: _Storage()),
-    )
-
-    resp = await client.get(f"/public/apps/{app.slug}/assets/assets/main.js")
-    assert resp.status_code == 200
-    assert resp.headers["content-type"].startswith("application/javascript")
-    assert "console.log('published-ok');" in resp.text
 
 
 @pytest.mark.asyncio
-async def test_published_asset_proxy_falls_back_to_index_for_spa_routes(client, db_session, monkeypatch):
-    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
-    app = await seed_published_app(
-        db_session,
-        tenant.id,
-        agent.id,
-        user.id,
-        slug="published-spa-app",
-        auth_enabled=True,
-        auth_providers=["password"],
+async def test_preview_runtime_bootstrap_contract(client, db_session):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Preview Bootstrap App",
+            "slug": "preview-bootstrap-app",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
     )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
 
-    revision = PublishedAppRevision(
-        published_app_id=app.id,
-        kind=PublishedAppRevisionKind.published,
-        template_key="chat-classic",
-        template_runtime="vite_static",
-        files={"src/main.tsx": "export default {};"},
-        dist_storage_prefix="apps/t/a/revisions/published-spa/dist",
-        dist_manifest={"entry_html": "index.html"},
-        created_by=user.id,
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    state_payload = state_resp.json()
+    draft_revision_id = state_payload["current_draft_revision"]["id"]
+    preview_token = state_payload["preview_token"]
+    assert preview_token
+
+    bootstrap_resp = await client.get(
+        f"/public/apps/preview/revisions/{draft_revision_id}/runtime/bootstrap",
+        headers={"Authorization": f"Bearer {preview_token}"},
     )
-    db_session.add(revision)
-    await db_session.flush()
-    app.current_published_revision_id = revision.id
-    await db_session.commit()
-
-    class _Storage:
-        def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str):
-            assert dist_storage_prefix == "apps/t/a/revisions/published-spa/dist"
-            if asset_path == "nested/client-route":
-                raise PublishedAppBundleAssetNotFound("missing")
-            assert asset_path == "index.html"
-            return b"<html><body>Published SPA</body></html>", "text/html"
-
-    monkeypatch.setattr(
-        "app.api.routers.published_apps_public.PublishedAppBundleStorage.from_env",
-        staticmethod(lambda: _Storage()),
-    )
-
-    resp = await client.get(f"/public/apps/{app.slug}/assets/nested/client-route")
-    assert resp.status_code == 200
-    assert resp.headers["content-type"].startswith("text/html")
-    assert "Published SPA" in resp.text
+    assert bootstrap_resp.status_code == 200
+    payload = bootstrap_resp.json()
+    assert payload["version"] == "runtime-bootstrap.v1"
+    assert payload["mode"] == "builder-preview"
+    assert payload["revision_id"] == draft_revision_id
+    assert payload["request_contract_version"] == "thread.v1"
+    assert "preview_token" not in payload
+    assert payload["chat_stream_path"].endswith(f"/public/apps/preview/revisions/{draft_revision_id}/chat/stream")

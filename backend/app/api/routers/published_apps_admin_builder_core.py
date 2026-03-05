@@ -22,6 +22,10 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionBuildStatus,
 )
 from app.services.published_app_bundle_storage import PublishedAppBundleStorage
+from app.services.published_app_revision_build_dispatch import (
+    enqueue_revision_build as dispatch_enqueue_revision_build,
+    mark_revision_build_enqueue_failed as dispatch_mark_revision_build_enqueue_failed,
+)
 
 from .published_apps_admin_shared import (
     BUILDER_AGENT_MAX_ITERATIONS,
@@ -233,15 +237,7 @@ def _mark_revision_build_enqueue_failed(
     revision: PublishedAppRevision,
     reason: str,
 ) -> None:
-    normalized_reason = (reason or "").strip()
-    if len(normalized_reason) > 4000:
-        normalized_reason = f"{normalized_reason[:4000]}... [truncated]"
-    revision.build_status = PublishedAppRevisionBuildStatus.failed
-    revision.build_error = normalized_reason or "Build enqueue failed"
-    revision.build_started_at = None
-    revision.build_finished_at = datetime.now(timezone.utc)
-    revision.dist_storage_prefix = None
-    revision.dist_manifest = None
+    dispatch_mark_revision_build_enqueue_failed(revision=revision, reason=reason)
 
 
 def _enqueue_revision_build(
@@ -250,42 +246,31 @@ def _enqueue_revision_build(
     app: PublishedApp,
     build_kind: str,
 ) -> Optional[str]:
-    if not _builder_auto_enqueue_enabled():
-        return (
-            "Build automation is disabled (`APPS_BUILDER_BUILD_AUTOMATION_ENABLED=0`). "
-            "Enable it and retry build."
-        )
-    try:
-        from app.workers.tasks import build_published_app_revision_task
-    except Exception as exc:
-        return f"Build worker task import failed: {exc}"
-
-    try:
-        build_published_app_revision_task.delay(
-            revision_id=str(revision.id),
-            tenant_id=str(app.tenant_id),
-            app_id=str(app.id),
-            slug=app.slug,
-            build_kind=build_kind,
-        )
-    except Exception as exc:
-        logger.warning(
-            "Failed to enqueue published app build task",
-            extra={
-                "revision_id": str(revision.id),
-                "app_id": str(app.id),
-                "build_kind": build_kind,
-                "error": str(exc),
-            },
-        )
-        return f"Failed to enqueue build task: {exc}"
-    return None
+    return dispatch_enqueue_revision_build(
+        revision=revision,
+        app=app,
+        build_kind=build_kind,
+    )
 
 
 def _enqueue_publish_job(
     *,
     job: PublishedAppPublishJob,
 ) -> Optional[str]:
+    try:
+        from app.services.published_app_publish_runtime import (
+            dispatch_sandbox_publish_job,
+            sandbox_publish_enabled,
+        )
+    except Exception:
+        dispatch_sandbox_publish_job = None
+        sandbox_publish_enabled = None
+
+    if sandbox_publish_enabled and sandbox_publish_enabled():
+        if dispatch_sandbox_publish_job is None:
+            return "Sandbox publish runtime is unavailable"
+        return dispatch_sandbox_publish_job(job_id=job.id)
+
     try:
         from app.workers.tasks import publish_published_app_task
     except Exception as exc:

@@ -1,6 +1,6 @@
 # Settings Hub Spec (Tenant-Centric)
 
-Last Updated: 2026-02-15
+Last Updated: 2026-02-22
 
 ## Purpose
 Define `/admin/settings` as a tenant-centric hub for real settings, without duplicating analytics or activity surfaces that already exist elsewhere.
@@ -21,18 +21,16 @@ Define `/admin/settings` as a tenant-centric hub for real settings, without dupl
 - Existing credential categories:
   - `llm_provider`
   - `vector_store`
-  - `artifact_secret`
+  - `tool_provider`
   - `custom`
 - Credentials stay write-only.
-- Includes a dedicated simplified Web Search setup card:
-  - `Serper API Key` single input (no manual JSON required in UX)
-  - Persists to integration credentials as:
-    - `category=custom`
-    - `provider_key=web_search`
-    - `provider_variant=serper`
-    - `credentials.api_key=<value>`
-  - If present and enabled, this tenant key overrides platform default web-search key.
-  - If tenant key is not set, runtime falls back to platform-level `SERPER_API_KEY`.
+- `Tools` is now a first-class credentials section (same list behavior as other provider categories).
+- Provider selection behavior:
+  - `llm_provider`: provider dropdown aligned with model registry provider list.
+  - `vector_store`: provider dropdown (pinecone/qdrant/pgvector).
+  - `tool_provider`: provider dropdown (`serper`, `tavily`, `exa`).
+  - `custom`: free-form provider key input.
+- Each credential supports `is_default` and default switching in-scope (tenant/category/provider[/variant]).
 
 ### 3. Defaults
 - `default_chat_model_id`
@@ -57,20 +55,26 @@ Define `/admin/settings` as a tenant-centric hub for real settings, without dupl
   - `default_retrieval_policy`
 
 ### IntegrationCredential
-- Unchanged:
-  - `category`, `provider_key`, `provider_variant`, `credentials`, `is_enabled`.
+- Current shape:
+  - `tenant_id` nullable (`null` remains schema-capable but platform defaults are env-managed in this phase)
+  - `category`, `provider_key`, `provider_variant`
+  - `credentials`, `is_enabled`, `is_default`
 
 ## Security Requirements
 - Credentials are never returned as values (keys only).
 - Tenant settings/profile mutation endpoints enforce owner/admin/global-admin permissions.
 - Credential delete remains blocked when referenced by model bindings or knowledge stores.
+- Integrations delete flow now exposes linked-resource usage and supports force-disconnect delete:
+  - linked model providers and knowledge stores are switched to platform default (`credentials_ref = null`)
+  - linked tools drop `implementation.credentials_ref` and then use platform default env keys at runtime
 
 ## API Surface
 - Existing credentials APIs:
   - `GET /admin/settings/credentials`
   - `POST /admin/settings/credentials`
   - `PATCH /admin/settings/credentials/{id}`
-  - `DELETE /admin/settings/credentials/{id}`
+  - `GET /admin/settings/credentials/{id}/usage`
+  - `DELETE /admin/settings/credentials/{id}` (`force_disconnect=true` to detach linked resources)
   - `GET /admin/settings/credentials/status`
 - New tenant settings/profile APIs:
   - `PATCH /api/tenants/{tenant_slug}`
@@ -78,5 +82,9 @@ Define `/admin/settings` as a tenant-centric hub for real settings, without dupl
   - `PATCH /api/tenants/{tenant_slug}/settings`
 
 ## Notes
-- No DB migration required for v1; defaults are new keys in existing JSONB.
+- Runtime precedence for provider credentials:
+  1. Explicit `credentials_ref` on model/tool/store binding.
+  2. Tenant default credential.
+  3. Platform env default.
+- Platform credentials are env-only in this phase (no startup seeding into `integration_credentials`).
 - Activity/stats remain in dedicated stats/audit pages, not in settings hub.

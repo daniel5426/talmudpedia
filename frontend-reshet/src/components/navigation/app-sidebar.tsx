@@ -66,8 +66,8 @@ const data = {
       items: [],
     },
     {
-      title: "Chats",
-      url: "/admin/chats",
+      title: "Threads",
+      url: "/admin/threads",
       icon: MessageSquare,
       items: [],
     },
@@ -137,16 +137,17 @@ const data = {
           icon: Play,
         },
         {
-          title: "Models Registry",
-          url: "/admin/models",
-          icon: Database,
-        },
-        {
           title: "Tools Registry",
           url: "/admin/tools",
           icon: Settings2,
         },
       ],
+    },
+    {
+      title: "Models Registry",
+      url: "/admin/models",
+      icon: Database,
+      items: [],
     },
     {
       title: "Apps",

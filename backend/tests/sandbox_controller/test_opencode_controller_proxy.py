@@ -34,6 +34,18 @@ async def test_start_run_routes_via_sandbox_controller(monkeypatch):
         captured["messages"] = messages
         return {"run_ref": "sandbox-run-ref-1"}
 
+    async def _fake_read_file(*, sandbox_id: str, path: str):
+        return {"path": path, "content": ""}
+
+    async def _fake_write_file(*, sandbox_id: str, path: str, content: str):
+        return {"path": path, "bytes": len(content)}
+
+    async def _fake_delete_file(*, sandbox_id: str, path: str):
+        return {"deleted": True}
+
+    monkeypatch.setattr(client._sandbox_runtime_client, "read_file", _fake_read_file)
+    monkeypatch.setattr(client._sandbox_runtime_client, "write_file", _fake_write_file)
+    monkeypatch.setattr(client._sandbox_runtime_client, "delete_file", _fake_delete_file)
     monkeypatch.setattr(client._sandbox_runtime_client, "start_opencode_run", _fake_start_opencode_run)
 
     run_ref = await client.start_run(
@@ -83,6 +95,29 @@ async def test_stream_and_cancel_route_via_sandbox_controller(monkeypatch):
 
     client._sandbox_run_ref_to_sandbox_id["sandbox-run-ref-2"] = "sandbox-2"
     cancelled = await client.cancel_run(run_ref="sandbox-run-ref-2")
+    assert cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_routes_via_sandbox_controller_with_explicit_sandbox_id(monkeypatch):
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_ENABLED", "1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
+    monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_URL", "http://sandbox-controller.local")
+    monkeypatch.delenv("APPS_CODING_AGENT_OPENCODE_BASE_URL", raising=False)
+
+    client = OpenCodeServerClient.from_env()
+
+    async def _fake_cancel_opencode_run(*, sandbox_id: str, run_ref: str):
+        assert sandbox_id == "sandbox-explicit"
+        assert run_ref == "sandbox-run-ref-explicit"
+        return {"cancelled": True}
+
+    monkeypatch.setattr(client._sandbox_runtime_client, "cancel_opencode_run", _fake_cancel_opencode_run)
+
+    cancelled = await client.cancel_run(
+        run_ref="sandbox-run-ref-explicit",
+        sandbox_id="sandbox-explicit",
+    )
     assert cancelled is True
 
 

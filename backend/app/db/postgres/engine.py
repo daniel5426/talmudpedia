@@ -2,67 +2,96 @@ import os
 import urllib.parse
 from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine, async_sessionmaker, AsyncEngine
 
-# Postgres (Supabase) configuration from environment variables
-DATABASE_URL = os.getenv("DATABASE_URL")
+def _build_local_database_url() -> str:
+    """
+    Build a local DB URL without inheriting remote POSTGRES_* values.
+    Override with LOCAL_POSTGRES_* only when needed.
+    """
+    user = os.getenv("LOCAL_POSTGRES_USER", "postgres")
+    password = os.getenv("LOCAL_POSTGRES_PASSWORD", "postgres")
+    host = os.getenv("LOCAL_POSTGRES_HOST", "127.0.0.1")
+    port = os.getenv("LOCAL_POSTGRES_PORT", "5432")
+    db = os.getenv("LOCAL_POSTGRES_DB", "talmudpedia_dev")
+    quoted_password = urllib.parse.quote_plus(password)
+    return f"postgresql+asyncpg://{user}:{quoted_password}@{host}:{port}/{db}"
 
-if DATABASE_URL:
-    try:
-        # Heroku/Supabase often sets the password plain text in DATABASE_URL,
-        # but SQLAlchemy/asyncpg needs special chars to be URL-encoded.
-        if "://" in DATABASE_URL:
-             # Basic parse to handle simple cases where special chars might be in password
-            scheme, rest = DATABASE_URL.split("://", 1)
-            
-            # Switch driver first
-            if scheme == "postgres" or scheme == "postgresql":
-                if "+asyncpg" not in scheme:
-                    scheme = "postgresql+asyncpg"
 
-            # Use rsplit('@', 1) to split at the LAST @, which separates creds from host.
-            # This correctly handles passwords that contain '@'.
-            if "@" in rest:
-                creds, location = rest.rsplit("@", 1)
-                
-                if ":" in creds:
-                    # Split username:password
-                    u, p = creds.split(":", 1)
-                    
-                    # Log the username we found to verify we aren't truncating it
-                    # (Helpful if error says "failed for user 'postgres'")
-                    print(f"DEBUG: Parsed DB User: '{u}'")
-                    print(f"DEBUG: Parsed DB Host: '{location}'")
-                    
-                    # Force encode the password part
-                    p_encoded = urllib.parse.quote_plus(p)
-                    DATABASE_URL = f"{scheme}://{u}:{p_encoded}@{location}"
-                else:
-                    # No password found in creds section
-                    print("DEBUG: No password found in connection string credentials.")
-                    DATABASE_URL = f"{scheme}://{rest}"
-            else:
-                 print("DEBUG: No '@' found in connection string (no host/creds separation).")
-                 DATABASE_URL = f"{scheme}://{rest}"
-                 
-    except Exception as e:
-        print(f"ERROR: Failed to re-encode DATABASE_URL password: {e}")
-        # Fallback to simple replacement if parsing fails
-        if DATABASE_URL.startswith("postgres://"):
-            DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
-        elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
-            DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-else:
+def _build_legacy_postgres_url() -> str:
+    """
+    Keep pre-existing fallback behavior for environments not using DB_TARGET.
+    """
     user = os.getenv("POSTGRES_USER", "postgres")
     password = os.getenv("POSTGRES_PASSWORD", "")
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     db = os.getenv("POSTGRES_DB", "postgres")
-    # Quote password for URL characters (like &, $, #)
     quoted_password = urllib.parse.quote_plus(password)
-    
-    # Construct the Async Database URL
-    DATABASE_URL = f"postgresql+asyncpg://{user}:{quoted_password}@{host}:{port}/{db}"
-    print(f"DEBUG: Initializing DB Engine with URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else 'HIDDEN'}")  # Log host/db only
-from sqlalchemy.pool import NullPool
+    return f"postgresql+asyncpg://{user}:{quoted_password}@{host}:{port}/{db}"
+
+
+def _resolve_database_url() -> tuple[str, str]:
+    """
+    Resolve DB URL with one-variable target switching.
+
+    DB_TARGET values:
+    - local: use DATABASE_URL_LOCAL if provided, else LOCAL_POSTGRES_* defaults
+    - remote/supabase/prod: use DATABASE_URL_REMOTE, fallback DATABASE_URL
+    - unset/other: keep legacy behavior (DATABASE_URL first, else local POSTGRES_*)
+    """
+    target = (os.getenv("DB_TARGET") or "").strip().lower()
+
+    if target == "local":
+        local_url = (os.getenv("DATABASE_URL_LOCAL") or "").strip()
+        return (local_url or _build_local_database_url(), "local")
+
+    if target in {"remote", "supabase", "prod", "production"}:
+        remote_url = (os.getenv("DATABASE_URL_REMOTE") or os.getenv("DATABASE_URL") or "").strip()
+        if remote_url:
+            return (remote_url, "remote")
+        return (_build_local_database_url(), "local-fallback")
+
+    legacy_url = (os.getenv("DATABASE_URL") or "").strip()
+    if legacy_url:
+        return (legacy_url, "legacy-database-url")
+    return (_build_legacy_postgres_url(), "legacy-postgres-vars")
+
+
+def _normalize_database_url(raw_url: str) -> str:
+    database_url = raw_url
+    try:
+        if "://" in database_url:
+            scheme, rest = database_url.split("://", 1)
+            if scheme in {"postgres", "postgresql"} and "+asyncpg" not in scheme:
+                scheme = "postgresql+asyncpg"
+
+            if "@" in rest:
+                creds, location = rest.rsplit("@", 1)
+                if ":" in creds:
+                    user, password = creds.split(":", 1)
+                    print(f"DEBUG: Parsed DB User: '{user}'")
+                    print(f"DEBUG: Parsed DB Host: '{location}'")
+                    encoded_password = urllib.parse.quote_plus(password)
+                    database_url = f"{scheme}://{user}:{encoded_password}@{location}"
+                else:
+                    database_url = f"{scheme}://{rest}"
+            else:
+                database_url = f"{scheme}://{rest}"
+    except Exception as exc:
+        print(f"ERROR: Failed to normalize DATABASE_URL password: {exc}")
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif database_url.startswith("postgresql://") and "+asyncpg" not in database_url:
+            database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return database_url
+
+
+DATABASE_URL, DATABASE_TARGET = _resolve_database_url()
+DATABASE_URL = _normalize_database_url(DATABASE_URL)
+print(
+    "DEBUG: Initializing DB Engine target="
+    f"{DATABASE_TARGET} host={DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else 'HIDDEN'}"
+)
+
 
 def create_async_engine() -> AsyncEngine:
     """

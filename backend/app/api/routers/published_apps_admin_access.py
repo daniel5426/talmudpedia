@@ -2,24 +2,30 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, Request
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres.models.agents import Agent, AgentStatus
+from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import OrgMembership, OrgRole
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppCustomDomain,
     PublishedAppDraftDevSession,
     PublishedAppPublishJob,
+    PublishedAppPublishJobStatus,
     PublishedAppRevision,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
 )
 from app.services.published_app_templates import build_template_files, get_template
+from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_builder_core import _next_build_seq
-from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify, json, sha256
+from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify
+
+CODING_AGENT_SURFACE = "published_app_coding_agent"
+
 
 async def _resolve_tenant_admin_context(
     request: Request,
@@ -168,14 +174,61 @@ async def _get_draft_dev_session_for_scope(
     user_id: UUID,
 ) -> Optional[PublishedAppDraftDevSession]:
     result = await db.execute(
-        select(PublishedAppDraftDevSession).where(
+        select(PublishedAppDraftDevSession)
+        .options(
+            load_only(
+                PublishedAppDraftDevSession.id,
+                PublishedAppDraftDevSession.published_app_id,
+                PublishedAppDraftDevSession.user_id,
+                PublishedAppDraftDevSession.revision_id,
+                PublishedAppDraftDevSession.status,
+                PublishedAppDraftDevSession.sandbox_id,
+                PublishedAppDraftDevSession.preview_url,
+                PublishedAppDraftDevSession.idle_timeout_seconds,
+                PublishedAppDraftDevSession.expires_at,
+                PublishedAppDraftDevSession.last_activity_at,
+                PublishedAppDraftDevSession.dependency_hash,
+                PublishedAppDraftDevSession.last_error,
+                PublishedAppDraftDevSession.created_at,
+                PublishedAppDraftDevSession.updated_at,
+            )
+        )
+        .where(
             and_(
                 PublishedAppDraftDevSession.published_app_id == app_id,
                 PublishedAppDraftDevSession.user_id == user_id,
             )
-        ).limit(1)
+        )
+        .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _count_active_coding_runs_for_scope(
+    db: AsyncSession,
+    *,
+    app_id: UUID,
+    user_id: UUID | None,
+) -> int:
+    if user_id is None:
+        return 0
+    result = await db.execute(
+        select(func.count(AgentRun.id)).where(
+            and_(
+                AgentRun.surface == CODING_AGENT_SURFACE,
+                AgentRun.published_app_id == app_id,
+                or_(
+                    AgentRun.initiator_user_id == user_id,
+                    and_(
+                        AgentRun.initiator_user_id.is_(None),
+                        AgentRun.user_id == user_id,
+                    ),
+                ),
+                AgentRun.status.in_([RunStatus.queued, RunStatus.running]),
+            )
+        )
+    )
+    return int(result.scalar() or 0)
 
 
 async def _get_publish_job_for_app(
@@ -196,6 +249,30 @@ async def _get_publish_job_for_app(
     if job is None:
         raise HTTPException(status_code=404, detail="Publish job not found")
     return job
+
+
+async def _get_active_publish_job_for_app(
+    db: AsyncSession,
+    *,
+    app_id: UUID,
+) -> Optional[PublishedAppPublishJob]:
+    result = await db.execute(
+        select(PublishedAppPublishJob)
+        .where(
+            and_(
+                PublishedAppPublishJob.published_app_id == app_id,
+                PublishedAppPublishJob.status.in_(
+                    [
+                        PublishedAppPublishJobStatus.queued,
+                        PublishedAppPublishJobStatus.running,
+                    ]
+                ),
+            )
+        )
+        .order_by(PublishedAppPublishJob.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _get_custom_domain_for_app(
@@ -223,28 +300,28 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
     if draft is not None:
         return draft
 
-    files = build_template_files(app.template_key or "chat-classic")
-    created = PublishedAppRevision(
-        published_app_id=app.id,
+    files = build_template_files(
+        app.template_key or "chat-classic",
+        runtime_context={
+            "app_id": str(app.id),
+            "app_slug": app.slug,
+            "agent_id": str(app.agent_id),
+        },
+    )
+    created = await create_app_version(
+        db,
+        app=app,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key or "chat-classic",
         entry_file=get_template(app.template_key or "chat-classic").entry_file,
         files=files,
+        created_by=actor_id,
+        source_revision_id=None,
+        origin_kind="app_init",
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=1,
-        build_error=None,
-        build_started_at=None,
-        build_finished_at=None,
-        dist_storage_prefix=None,
-        dist_manifest=None,
         template_runtime="vite_static",
-        compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
-        source_revision_id=None,
-        created_by=actor_id,
     )
-    db.add(created)
-    await db.flush()
     app.current_draft_revision_id = created.id
     return created
 
@@ -258,26 +335,19 @@ async def _create_draft_revision_snapshot(
     files: Dict[str, str],
     entry_file: str,
 ) -> PublishedAppRevision:
-    revision = PublishedAppRevision(
-        published_app_id=app.id,
+    revision = await create_app_version(
+        db,
+        app=app,
         kind=PublishedAppRevisionKind.draft,
         template_key=app.template_key,
         entry_file=entry_file,
         files=files,
+        created_by=actor_id,
+        source_revision_id=current.id,
+        origin_kind="draft_snapshot",
         build_status=PublishedAppRevisionBuildStatus.queued,
         build_seq=_next_build_seq(current),
-        build_error=None,
-        build_started_at=None,
-        build_finished_at=None,
-        dist_storage_prefix=None,
-        dist_manifest=None,
         template_runtime="vite_static",
-        compiled_bundle=None,
-        bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
-        source_revision_id=current.id,
-        created_by=actor_id,
     )
-    db.add(revision)
-    await db.flush()
     app.current_draft_revision_id = revision.id
     return revision

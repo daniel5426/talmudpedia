@@ -1,6 +1,5 @@
-import { ChatPane } from "@/components/layout/ChatPane";
+import { redirect } from "next/navigation";
 
 export default function ChatPage() {
-  return <ChatPane />;
+  redirect("/admin/agents/playground");
 }
-

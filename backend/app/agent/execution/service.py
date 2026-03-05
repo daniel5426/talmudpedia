@@ -2,8 +2,8 @@ import logging
 import asyncio
 import traceback
 import json
-from uuid import UUID
-from datetime import datetime
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,9 @@ from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
+from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
+from app.services.thread_service import ThreadAccessError, ThreadService
+from app.services.usage_quota_service import UsageQuotaService
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,73 @@ class AgentExecutorService:
         patched["nodes"] = patched_nodes
         return patched
 
+    @staticmethod
+    def _estimate_usage_tokens_from_payload(input_params: Dict[str, Any], output_result: Dict[str, Any] | None) -> int:
+        total_chars = 0
+        if isinstance(input_params, dict):
+            raw_input = input_params.get("input")
+            if isinstance(raw_input, str):
+                total_chars += len(raw_input)
+            messages = input_params.get("messages")
+            if isinstance(messages, list):
+                for msg in messages:
+                    if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+                        total_chars += len(msg["content"])
+        if isinstance(output_result, dict):
+            messages = output_result.get("messages")
+            if isinstance(messages, list):
+                for msg in messages:
+                    if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+                        total_chars += len(msg["content"])
+            text = output_result.get("final_output")
+            if isinstance(text, str):
+                total_chars += len(text)
+        return max(0, int(total_chars // 4))
+
+    @staticmethod
+    def _extract_usage_tokens_from_event(event: ExecutionEvent) -> int:
+        payload = event.data if isinstance(event.data, dict) else {}
+        candidates: list[Any] = []
+        for key in ("usage_tokens", "total_tokens", "tokens"):
+            candidates.append(payload.get(key))
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            for key in ("total_tokens", "tokens", "usage_tokens"):
+                candidates.append(usage.get(key))
+        for candidate in candidates:
+            try:
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+            except Exception:
+                continue
+        return 0
+
+    @staticmethod
+    def _extract_assistant_output_text(output_result: Dict[str, Any] | None) -> str | None:
+        if not isinstance(output_result, dict):
+            return None
+        messages = output_result.get("messages")
+        if isinstance(messages, list):
+            # Runtime state usually carries full conversation history.
+            # Persist only the latest assistant turn to avoid cumulative replay.
+            last_assistant: str | None = None
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                role = str(msg.get("role") or msg.get("type") or "").strip().lower()
+                content = msg.get("content")
+                if role in {"assistant", "ai"} and isinstance(content, str):
+                    text = content.strip()
+                    if text:
+                        last_assistant = text
+            if last_assistant:
+                return last_assistant
+        final_output = output_result.get("final_output")
+        if isinstance(final_output, str) and final_output.strip():
+            return final_output.strip()
+        return None
+
     async def start_run(
         self, 
         agent_id: UUID, 
@@ -73,6 +143,7 @@ class AgentExecutorService:
         depth: int = 0,
         spawn_key: Optional[str] = None,
         orchestration_group_id: Optional[UUID] = None,
+        thread_id: Optional[UUID] = None,
     ) -> UUID:
         """
         Starts a new agent execution run.
@@ -108,13 +179,98 @@ class AgentExecutorService:
         except Exception:
             parsed_initiator_id = None
 
+        run_id = uuid4()
+        effective_initiator_id = user_id or parsed_initiator_id
+
+        # Strict workload delegation: runtime cannot create principal/policy intent.
+        # Runs must mint grants only from pre-provisioned, approved policies.
+        resolved_principal_id = parsed_principal_id
+        resolved_grant_id = parsed_grant_id
+        maybe_context = input_params.get("context") if isinstance(input_params, dict) else {}
+        if effective_initiator_id is not None and resolved_grant_id is None:
+            from app.services.delegation_service import DelegationService, DelegationPolicyError
+
+            delegation = DelegationService(self.db)
+            try:
+                principal, grant, _approval_required = await delegation.create_agent_run_grant(
+                    agent=agent,
+                    initiator_user_id=effective_initiator_id,
+                    run_id=run_id,
+                    requested_scopes=requested_scopes or ((maybe_context or {}).get("requested_scopes") if isinstance(maybe_context, dict) else None),
+                )
+            except DelegationPolicyError as exc:
+                raise ValueError(f"{exc.code}: {exc.message}") from exc
+
+            resolved_principal_id = principal.id
+            resolved_grant_id = grant.id
+
+        # Resolve/create thread before creating the run record.
+        input_params = dict(input_params or {})
+        raw_thread_id = thread_id or runtime_context.get("thread_id") or input_params.get("thread_id")
+        parsed_thread_id: Optional[UUID] = None
+        try:
+            parsed_thread_id = UUID(str(raw_thread_id)) if raw_thread_id else None
+        except Exception:
+            raise ValueError("Invalid thread_id")
+
+        surface = AgentThreadSurface.internal
+        if runtime_context.get("published_app_preview"):
+            surface = AgentThreadSurface.preview_runtime
+        elif runtime_context.get("published_app_id"):
+            surface = AgentThreadSurface.published_host_runtime
+
+        published_app_id: Optional[UUID] = None
+        raw_published_app_id = runtime_context.get("published_app_id")
+        try:
+            published_app_id = UUID(str(raw_published_app_id)) if raw_published_app_id else None
+        except Exception:
+            published_app_id = None
+
+        thread_service = ThreadService(self.db)
+        try:
+            thread_result = await thread_service.resolve_or_create_thread(
+                tenant_id=agent.tenant_id,
+                user_id=effective_initiator_id,
+                agent_id=agent_id,
+                published_app_id=published_app_id,
+                surface=surface,
+                thread_id=parsed_thread_id,
+                input_text=input_params.get("input") if isinstance(input_params.get("input"), str) else None,
+            )
+        except ThreadAccessError as exc:
+            raise ValueError(str(exc)) from exc
+
+        # Reserve quota (if enabled) before creating the run record.
+        quota_metadata = {"max_output_cap": None}
+        if str(runtime_context.get("surface") or "").strip().lower() != "published_app_coding_agent":
+            try:
+                quota_service = UsageQuotaService(self.db)
+                quota_metadata = await quota_service.reserve_for_run(
+                    run_id=run_id,
+                    tenant_id=agent.tenant_id,
+                    user_id=effective_initiator_id,
+                    input_params=input_params,
+                )
+            except Exception:
+                await self.db.rollback()
+                raise
+        context_payload = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        context_payload = dict(context_payload)
+        context_payload["thread_id"] = str(thread_result.thread.id)
+        if quota_metadata.get("max_output_cap"):
+            context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
+        input_params["context"] = context_payload
+        input_params["thread_id"] = str(thread_result.thread.id)
+
         run = AgentRun(
+            id=run_id,
             agent_id=agent_id,
             tenant_id=agent.tenant_id,
-            user_id=user_id or parsed_initiator_id,
-            initiator_user_id=user_id or parsed_initiator_id,
-            workload_principal_id=parsed_principal_id,
-            delegation_grant_id=parsed_grant_id,
+            user_id=effective_initiator_id,
+            thread_id=thread_result.thread.id,
+            initiator_user_id=effective_initiator_id,
+            workload_principal_id=resolved_principal_id,
+            delegation_grant_id=resolved_grant_id,
             input_params=input_params,
             status=RunStatus.queued,
             root_run_id=root_run_id,
@@ -135,24 +291,6 @@ class AgentExecutorService:
             run.root_run_id = run.id
             await self.db.commit()
             await self.db.refresh(run)
-
-        # Create delegation context for runs with an initiator user context.
-        # This covers both direct user-initiated runs and workload-initiated runs
-        # that propagate initiator_user_id in runtime context.
-        effective_initiator_id = user_id or parsed_initiator_id
-        if effective_initiator_id is not None and run.delegation_grant_id is None:
-            from app.services.delegation_service import DelegationService
-            delegation = DelegationService(self.db)
-            principal, grant, _approval_required = await delegation.create_agent_run_grant(
-                agent=agent,
-                initiator_user_id=effective_initiator_id,
-                run_id=run.id,
-                requested_scopes=requested_scopes or ((input_params.get("context") or {}).get("requested_scopes")),
-            )
-            run.workload_principal_id = principal.id
-            run.delegation_grant_id = grant.id
-            run.initiator_user_id = effective_initiator_id
-            await self.db.commit()
 
         # Trigger background execution if requested
         if background:
@@ -224,21 +362,8 @@ class AgentExecutorService:
         if not agent:
             raise ValueError(f"Agent {run.agent_id} not found")
 
-        # Self-heal legacy/incomplete runs: ensure delegation context exists
-        # before node execution so artifact workloads can mint scoped tokens.
-        if run.delegation_grant_id is None and (run.user_id is not None or run.initiator_user_id is not None):
-            from app.services.delegation_service import DelegationService
-            delegation = DelegationService(db)
-            effective_initiator_id = run.initiator_user_id or run.user_id
-            principal, grant, _approval_required = await delegation.create_agent_run_grant(
-                agent=agent,
-                initiator_user_id=effective_initiator_id,
-                run_id=run.id,
-            )
-            run.workload_principal_id = principal.id
-            run.delegation_grant_id = grant.id
-            run.initiator_user_id = effective_initiator_id
-            await db.commit()
+        if (run.user_id is not None or run.initiator_user_id is not None) and run.delegation_grant_id is None:
+            raise ValueError("WORKLOAD_PRINCIPAL_MISSING: Run is missing delegation grant context")
 
         # Capture input params before commit to avoid async lazy-loads
         run_input_params = run.input_params
@@ -260,6 +385,8 @@ class AgentExecutorService:
             runtime_context["parent_run_id"] = str(run.parent_run_id)
         if run.parent_node_id:
             runtime_context["parent_node_id"] = str(run.parent_node_id)
+        if run.thread_id:
+            runtime_context["thread_id"] = str(run.thread_id)
         runtime_context["depth"] = int(run.depth or 0)
         if run.spawn_key:
             runtime_context["spawn_key"] = run.spawn_key
@@ -343,8 +470,21 @@ class AgentExecutorService:
         }
 
         try:
+            max_observed_usage_tokens = 0
+            if run.thread_id:
+                thread_service = ThreadService(db)
+                await thread_service.start_turn(
+                    thread_id=run.thread_id,
+                    run_id=run_id,
+                    user_input_text=run_input_params.get("input") if isinstance(run_input_params, dict) else None,
+                    metadata={"mode": mode.value},
+                )
             # 5. Stream Execution Events (Platform-normalized)
             async for event in adapter.stream(executable, run_input_params, config):
+                max_observed_usage_tokens = max(
+                    max_observed_usage_tokens,
+                    self._extract_usage_tokens_from_event(event),
+                )
                 self._schedule_trace_persistence(run_id, {
                     "event": event.event,
                     "data": event.data,
@@ -367,7 +507,13 @@ class AgentExecutorService:
                 run.status = RunStatus.completed
                 run.output_result = self._serialize_state(snapshot.values)
                 run.completed_at = datetime.utcnow()
-                run.usage_tokens = 0
+                run.usage_tokens = max(
+                    int(max_observed_usage_tokens or 0),
+                    self._estimate_usage_tokens_from_payload(
+                        run_input_params if isinstance(run_input_params, dict) else {},
+                        run.output_result if isinstance(run.output_result, dict) else None,
+                    ),
+                )
 
             # Emit final status event
             next_nodes = []
@@ -397,6 +543,25 @@ class AgentExecutorService:
                 metadata={"mode": mode.value}
             )
 
+            quota_service = UsageQuotaService(db)
+            await quota_service.settle_for_run(
+                run_id=run_id,
+                actual_usage_tokens=int(run.usage_tokens or 0),
+            )
+            if run.thread_id:
+                thread_service = ThreadService(db)
+                await thread_service.complete_turn(
+                    run_id=run_id,
+                    status=(
+                        AgentThreadTurnStatus.paused
+                        if run.status == RunStatus.paused
+                        else AgentThreadTurnStatus.completed
+                    ),
+                    assistant_output_text=self._extract_assistant_output_text(
+                        run.output_result if isinstance(run.output_result, dict) else None
+                    ),
+                    usage_tokens=int(run.usage_tokens or 0),
+                )
             await db.commit()
 
         except Exception as e:
@@ -421,6 +586,24 @@ class AgentExecutorService:
                         err_run.status = RunStatus.failed
                         err_run.error_message = str(e)
                         err_run.completed_at = datetime.utcnow()
+                        if err_run.usage_tokens is None:
+                            err_run.usage_tokens = 0
+                        quota_service = UsageQuotaService(err_db)
+                        await quota_service.settle_for_run(
+                            run_id=run_id,
+                            actual_usage_tokens=int(err_run.usage_tokens or 0),
+                        )
+                        if err_run.thread_id:
+                            thread_service = ThreadService(err_db)
+                            await thread_service.complete_turn(
+                                run_id=run_id,
+                                status=AgentThreadTurnStatus.failed,
+                                assistant_output_text=self._extract_assistant_output_text(
+                                    err_run.output_result if isinstance(err_run.output_result, dict) else None
+                                ),
+                                usage_tokens=int(err_run.usage_tokens or 0),
+                                metadata={"error": str(e)},
+                            )
                         await err_db.commit()
             except Exception as se:
                 logger.error(f"Failed to save error status for {run_id}: {se}")

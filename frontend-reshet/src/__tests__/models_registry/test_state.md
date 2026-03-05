@@ -1,6 +1,6 @@
 # Models Registry UI Tests
 
-Last Updated: 2026-02-05
+Last Updated: 2026-02-22
 
 ## Scope
 Models Registry page editing flows for logical models and provider bindings.
@@ -11,11 +11,12 @@ Models Registry page editing flows for logical models and provider bindings.
 ## Key Scenarios Covered
 - Edit Model dialog opens and triggers update call.
 - Edit Provider dialog opens and triggers update call.
+- Provider rows show `Platform Default (ENV)` when no explicit credential ref is set.
 
 ## Last Run
-- Command: `npm test -- src/__tests__/models_registry`
-- Date: 2026-02-05 23:28 EET
-- Result: Pass
+- Command: `npm test -- --runInBand src/__tests__/models_registry`
+- Date: 2026-02-22
+- Result: Pass (1 suite, 3 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for credentials selection and delete confirmations.

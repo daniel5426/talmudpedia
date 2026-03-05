@@ -1,7 +1,7 @@
 export type RuntimeInput = {
   input?: string;
   messages?: Array<{ role: string; content: string }>;
-  chat_id?: string;
+  thread_id?: string;
   context?: Record<string, unknown>;
 };
 
@@ -17,14 +17,31 @@ type RuntimeContext = {
   appSlug?: string;
   basePath?: string;
   token?: string | null;
+  previewToken?: string | null;
 };
 
-const TOKEN_PREFIX = "published-app-auth-token";
+const getRuntimeContextFromQuery = (): RuntimeContext => {
+  if (typeof window === "undefined") return {};
+  const query = new URLSearchParams(window.location.search);
+  const mode = query.get("runtime_mode");
+  const appSlug = query.get("runtime_app_slug");
+  const basePath = query.get("runtime_base_path");
+  const token = query.get("runtime_token");
+  const previewToken = query.get("runtime_preview_token") || query.get("preview_token");
+  return {
+    mode: mode === "builder-preview" || mode === "published-runtime" ? mode : undefined,
+    appSlug: appSlug || undefined,
+    basePath: basePath || undefined,
+    token: token || null,
+    previewToken: previewToken || null,
+  };
+};
 
 const getRuntimeContext = (): RuntimeContext => {
   if (typeof window === "undefined") return {};
+  const queryContext = getRuntimeContextFromQuery();
   const candidate = (window as Window & { __APP_RUNTIME_CONTEXT?: RuntimeContext }).__APP_RUNTIME_CONTEXT;
-  return candidate || {};
+  return { ...queryContext, ...(candidate || {}) };
 };
 
 const safeEncodeSegment = (value: string): string => {
@@ -71,11 +88,13 @@ const resolveBasePath = (basePath?: string): string | null => {
 const resolveToken = (): string | null => {
   const ctx = getRuntimeContext();
   if (ctx.token) return ctx.token;
-  if (typeof window === "undefined" || !ctx.appSlug) return null;
-  return window.localStorage.getItem(`${TOKEN_PREFIX}:${ctx.appSlug}`);
+  // Published runtime auth uses same-origin HttpOnly cookies via the host runtime gateway.
+  return null;
 };
 
 const resolvePreviewToken = (): string | null => {
+  const ctx = getRuntimeContext();
+  if (ctx.previewToken) return ctx.previewToken;
   if (typeof window === "undefined") return null;
   return new URLSearchParams(window.location.search).get("preview_token");
 };
@@ -92,7 +111,7 @@ const buildStreamUrl = (resolvedBasePath: string): string => {
 
 export const createRuntimeClient = (basePath?: string) => {
   return {
-    async stream(input: RuntimeInput, onEvent: (event: RuntimeEvent) => void): Promise<{ chatId: string | null }> {
+    async stream(input: RuntimeInput, onEvent: (event: RuntimeEvent) => void): Promise<{ threadId: string | null }> {
       const resolvedBasePath = resolveBasePath(basePath);
       if (!resolvedBasePath) {
         throw new Error("Runtime context is missing app slug/base path.");
@@ -120,7 +139,7 @@ export const createRuntimeClient = (basePath?: string) => {
         throw new Error(message);
       }
 
-      const chatId = response.headers.get("X-Chat-ID");
+      const threadId = response.headers.get("X-Thread-ID");
       const reader = response.body?.getReader();
       if (!reader) {
         throw new Error("Streaming reader unavailable");
@@ -148,7 +167,7 @@ export const createRuntimeClient = (basePath?: string) => {
         }
       }
 
-      return { chatId };
+      return { threadId };
     },
   };
 };

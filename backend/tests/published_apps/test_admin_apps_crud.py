@@ -3,7 +3,12 @@ from sqlalchemy import select
 from uuid import UUID
 
 from app.db.postgres.models.published_apps import PublishedAppCustomDomain
+from app.db.postgres.models.published_apps import PublishedAppRevision, PublishedAppRevisionBuildStatus
 from ._helpers import admin_headers, seed_admin_tenant_and_agent
+
+
+def _host_headers(slug: str) -> dict[str, str]:
+    return {"Host": f"{slug}.apps.localhost"}
 
 
 @pytest.mark.asyncio
@@ -76,6 +81,79 @@ async def test_admin_apps_crud(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_admin_app_create_enqueues_initial_revision_build(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    enqueue_calls: list[tuple[str, str]] = []
+
+    def _enqueue_stub(*, revision, app, build_kind):
+        _ = app
+        enqueue_calls.append((str(revision.id), str(build_kind)))
+        return None
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_apps.enqueue_revision_build",
+        _enqueue_stub,
+    )
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Init Build App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    revision_id = state_resp.json()["current_draft_revision"]["id"]
+    assert enqueue_calls == [(revision_id, "app_init")]
+
+
+@pytest.mark.asyncio
+async def test_admin_app_create_marks_initial_revision_build_failed_on_enqueue_error(client, db_session, monkeypatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    def _enqueue_fail(*, revision, app, build_kind):
+        _ = revision, app, build_kind
+        return "enqueue boom"
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_admin_routes_apps.enqueue_revision_build",
+        _enqueue_fail,
+    )
+
+    create_resp = await client.post(
+        "/admin/apps",
+        headers=headers,
+        json={
+            "name": "Init Build Fail App",
+            "agent_id": str(agent.id),
+            "template_key": "chat-classic",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
+    )
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    revision_id = state_resp.json()["current_draft_revision"]["id"]
+    revision = await db_session.get(PublishedAppRevision, UUID(revision_id))
+    assert revision is not None
+    assert revision.build_status == PublishedAppRevisionBuildStatus.failed
+    assert "enqueue boom" in str(revision.build_error or "")
+
+
+@pytest.mark.asyncio
 async def test_admin_lists_auth_templates(client, db_session):
     tenant, user, org_unit, _ = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -114,7 +192,8 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
     assert publish_toggle_resp.status_code == 200
 
     signup_resp = await client.post(
-        f"/public/apps/{app['slug']}/auth/signup",
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app["slug"]),
         json={
             "email": "member@example.com",
             "password": "secret123",
@@ -122,7 +201,6 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
         },
     )
     assert signup_resp.status_code == 200
-    session_token = signup_resp.json()["token"]
 
     users_resp = await client.get(f"/admin/apps/{app['id']}/users", headers=headers)
     assert users_resp.status_code == 200
@@ -142,11 +220,12 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
     assert blocked["membership_status"] == "blocked"
     assert blocked["active_sessions"] == 0
 
-    me_resp = await client.get(
-        f"/public/apps/{app['slug']}/auth/me",
-        headers={"Authorization": f"Bearer {session_token}"},
+    state_resp = await client.get(
+        "/_talmudpedia/auth/state",
+        headers=_host_headers(app["slug"]),
     )
-    assert me_resp.status_code == 401
+    assert state_resp.status_code == 200
+    assert state_resp.json()["authenticated"] is False
 
     unblock_resp = await client.patch(
         f"/admin/apps/{app['id']}/users/{user_id}",

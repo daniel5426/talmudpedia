@@ -329,7 +329,7 @@ export function App() {
   const [sources, setSources] = useState<SourceCitation[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [chatId, setChatId] = useState<string | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(null);
   const [hiddenRecentIds, setHiddenRecentIds] = useState<Set<string>>(new Set());
 
   const runtime = useMemo(() => createRuntimeClient(), []);
@@ -371,7 +371,7 @@ export function App() {
     ]);
 
     try {
-      const result = await runtime.stream({ input: prompt, chat_id: chatId || undefined }, (event: RuntimeEvent) => {
+      const result = await runtime.stream({ input: prompt, thread_id: threadId || undefined }, (event: RuntimeEvent) => {
         const chunk = extractTokenChunk(event);
         const reasoning = extractReasoningStep(event);
         const sourceHits = extractSources(event);
@@ -410,7 +410,7 @@ export function App() {
         }));
       });
 
-      if (result.chatId) setChatId(result.chatId);
+      if (result.threadId) setThreadId(result.threadId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to stream runtime response";
       setRuntimeError(message);
@@ -424,7 +424,7 @@ export function App() {
     setMessages([]);
     setSources([]);
     setRuntimeError(null);
-    setChatId(null);
+    setThreadId(null);
     setHiddenRecentIds(new Set());
   };
 

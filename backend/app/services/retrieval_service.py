@@ -16,6 +16,7 @@ from app.db.postgres.models import KnowledgeStore, RetrievalPolicy
 from app.rag.adapters import create_adapter, SearchResult, VectorBackendAdapter
 from app.services.model_resolver import ModelResolver
 from app.services.credentials_service import CredentialsService
+from app.db.postgres.models.registry import IntegrationCredentialCategory
 
 
 class RetrievalResult(BaseModel):
@@ -58,11 +59,13 @@ class RetrievalService:
     async def _resolve_backend_config(self, store: KnowledgeStore) -> Dict[str, Any]:
         """Merge backend config with credentials (if provided)."""
         base_config = store.backend_config or {}
-        if not store.credentials_ref:
-            return dict(base_config)
-
         credentials_service = CredentialsService(self._db, store.tenant_id)
-        return await credentials_service.resolve_backend_config(base_config, store.credentials_ref)
+        return await credentials_service.resolve_backend_config(
+            base_config,
+            store.credentials_ref,
+            category=IntegrationCredentialCategory.VECTOR_STORE,
+            provider_key=store.backend.value,
+        )
 
     @staticmethod
     def _resolve_namespace(store: KnowledgeStore, namespace: Optional[str]) -> Optional[str]:

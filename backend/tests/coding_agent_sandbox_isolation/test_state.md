@@ -1,6 +1,6 @@
 # Coding Agent Sandbox Isolation Tests
 
-Last Updated: 2026-02-19
+Last Updated: 2026-03-01
 
 ## Scope of the feature
 - Run-level sandbox isolation guardrails for coding-agent execution paths.
@@ -13,6 +13,7 @@ Last Updated: 2026-02-19
 - `engine=opencode` run creation is rejected with deterministic `400` contract when sandbox-required mode is enabled but no controller URL is configured.
 - Run stream fails closed when a queued run lacks run-scoped sandbox context and sandbox recovery is unavailable.
 - Run sandbox session persistence uses controller-provided `workspace_path` (instead of generic `/workspace` fallback) when session start returns it.
+- Completed runs terminate cleanly without legacy `checkpoint.created` event semantics.
 
 ## Last run command + date/time + result
 - Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_sandbox_isolation/test_run_sandbox_isolation.py -q`
@@ -21,6 +22,9 @@ Last Updated: 2026-02-19
 - Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_api/test_run_lifecycle.py tests/sandbox_controller/test_dev_shim.py tests/coding_agent_sandbox_isolation/test_run_sandbox_isolation.py -q`
 - Date: 2026-02-19 03:21:28 EET
 - Result: PASS (29 passed overall, including sandbox-isolation coverage)
+- Command: `cd backend && pytest -q tests/coding_agent_sandbox_isolation/test_run_sandbox_isolation.py`
+- Date: 2026-02-24 01:48:07 EET
+- Result: PASS (3 passed)
 
 ## Known gaps or follow-ups
 - Add coverage for cross-tenant sandbox visibility constraints once multi-tenant queue admission lands.

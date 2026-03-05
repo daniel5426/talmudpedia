@@ -8,7 +8,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
@@ -492,7 +492,8 @@ async def list_tools(
     if scope:
         conditions.append(ToolRegistry.scope == scope)
     if status is not None:
-        conditions.append(ToolRegistry.status == status)
+        # Compatibility: some environments store toolstatus enum labels as lowercase.
+        conditions.append(func.lower(cast(ToolRegistry.status, String)) == status.value.lower())
     elif is_active is not None:
         conditions.append(ToolRegistry.is_active == is_active)
     if implementation_type is not None:

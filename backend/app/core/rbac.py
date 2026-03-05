@@ -9,6 +9,7 @@ from app.db.postgres.models.identity import User, Tenant, OrgUnit, OrgMembership
 from app.db.postgres.models.rbac import Role, RoleAssignment, Action, ResourceType, RolePermission
 from app.db.postgres.session import get_db
 from app.api.routers.auth import get_current_user
+from app.core.scope_registry import legacy_permission_to_scope, is_platform_admin_role
 
 # Re-define Permission model for core logic use if needed, 
 # but we can use the enums directly.
@@ -17,6 +18,22 @@ from pydantic import BaseModel
 class Permission(BaseModel):
     resource_type: ResourceType
     action: Action
+
+
+def _required_scope(permission: Permission) -> str | None:
+    return legacy_permission_to_scope(
+        getattr(permission.resource_type, "value", permission.resource_type),
+        getattr(permission.action, "value", permission.action),
+    )
+
+
+def _permission_scope_key(row: RolePermission) -> str | None:
+    if getattr(row, "scope_key", None):
+        return str(row.scope_key)
+    return legacy_permission_to_scope(
+        getattr(getattr(row, "resource_type", None), "value", getattr(row, "resource_type", None)),
+        getattr(getattr(row, "action", None), "value", getattr(row, "action", None)),
+    )
 
 def parse_id(id_str: Any) -> Optional[uuid.UUID]:
     """
@@ -80,6 +97,14 @@ async def check_permission(
     resource_id: Optional[uuid.UUID] = None,
     resource_owner_id: Optional[uuid.UUID] = None,
 ) -> bool:
+    user = await db.get(User, user_id)
+    if user is not None and is_platform_admin_role(getattr(user, "role", None)):
+        return True
+
+    required_scope = _required_scope(required_permission)
+    if not required_scope:
+        return False
+
     # 1. Fetch all role assignments for this user in this tenant
     stmt = select(RoleAssignment).where(
         and_(
@@ -106,18 +131,11 @@ async def check_permission(
         if assignment.scope_id not in scope_ids_to_check:
             continue
 
-        # Check permissions of the associated role
-        # We can use the relationship or query specifically
-        stmt = select(RolePermission).where(
-            and_(
-                RolePermission.role_id == assignment.role_id,
-                RolePermission.resource_type == required_permission.resource_type,
-                RolePermission.action == required_permission.action
-            )
-        )
+        stmt = select(RolePermission).where(RolePermission.role_id == assignment.role_id)
         res = await db.execute(stmt)
-        if res.scalar_one_or_none():
-            return True
+        for permission in res.scalars().all():
+            if _permission_scope_key(permission) == required_scope:
+                return True
 
     return False
 
@@ -127,6 +145,10 @@ async def get_accessible_scopes(
     permission: Permission,
     db: AsyncSession,
 ) -> List[uuid.UUID]:
+    required_scope = _required_scope(permission)
+    if not required_scope:
+        return []
+
     stmt = select(RoleAssignment).where(
         and_(
             RoleAssignment.tenant_id == tenant_id,
@@ -142,16 +164,12 @@ async def get_accessible_scopes(
     accessible_scopes = set()
 
     for assignment in assignments:
-        stmt = select(RolePermission).where(
-            and_(
-                RolePermission.role_id == assignment.role_id,
-                RolePermission.resource_type == permission.resource_type,
-                RolePermission.action == permission.action
-            )
-        )
+        stmt = select(RolePermission).where(RolePermission.role_id == assignment.role_id)
         res = await db.execute(stmt)
-        if res.scalar_one_or_none():
-            accessible_scopes.add(assignment.scope_id)
+        for role_permission in res.scalars().all():
+            if _permission_scope_key(role_permission) == required_scope:
+                accessible_scopes.add(assignment.scope_id)
+                break
 
     return list(accessible_scopes)
 
@@ -180,7 +198,7 @@ async def get_tenant_context(
     res = await db.execute(stmt)
     membership = res.scalar_one_or_none()
 
-    if not membership and current_user.role != "admin":
+    if not membership and not is_platform_admin_role(getattr(current_user, "role", None)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this tenant",
@@ -212,7 +230,7 @@ async def get_auth_context(
     res = await db.execute(stmt)
     membership = res.scalar_one_or_none()
 
-    if not membership and current_user.role != "admin":
+    if not membership and not is_platform_admin_role(getattr(current_user, "role", None)):
         raise HTTPException(status_code=403, detail="Not a member of this tenant")
 
     # 3. Get Org Unit if requested

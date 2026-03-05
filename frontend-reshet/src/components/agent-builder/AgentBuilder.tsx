@@ -479,13 +479,20 @@ function AgentBuilderInner({
             staticChanges.push(change)
         })
 
-        if (staticChanges.length > 0) {
-            onNodesChange(staticChanges)
+        // In execute mode, keep static graph structure immutable but allow UX interactions
+        // like move/select on existing nodes.
+        const allowedStaticChangeTypes = new Set(["position", "dimensions", "select"])
+        const staticInteractionChanges = staticChanges.filter((change) =>
+            "type" in change && allowedStaticChangeTypes.has(String(change.type))
+        )
+        if (staticInteractionChanges.length > 0) {
+            onNodesChange(staticInteractionChanges)
         }
+
         if (runtimeChanges.length > 0) {
             runtimeOverlay.applyRuntimeNodeChanges(runtimeChanges)
         }
-    }, [mode, onNodesChange, runtimeOverlay])
+    }, [mode, runtimeOverlay, onNodesChange])
 
     const isValidConnection = useCallback(
         (connection: Edge | Connection) => {
@@ -637,32 +644,39 @@ function AgentBuilderInner({
     }, [nodes, edges, setNodes, takeSnapshot, fitView])
 
     const handleOrganizeRuntime = useCallback(() => {
-        if (runtimeOverlay.runtimeNodes.length === 0) return
-        const layouted = computeAutoLayout(runtimeOverlay.runtimeNodes, runtimeOverlay.runtimeEdges)
-        if (layouted.length === 0) return
+        if (runtimeOverlay.runtimeNodes.length > 0) {
+            const layouted = computeAutoLayout(runtimeOverlay.runtimeNodes, runtimeOverlay.runtimeEdges)
+            if (layouted.length === 0) return
 
-        const currentMinX = Math.min(...runtimeOverlay.runtimeNodes.map((node) => node.position.x))
-        const currentMinY = Math.min(...runtimeOverlay.runtimeNodes.map((node) => node.position.y))
-        const layoutMinX = Math.min(...layouted.map((node) => node.position.x))
-        const layoutMinY = Math.min(...layouted.map((node) => node.position.y))
-        const offsetX = currentMinX - layoutMinX
-        const offsetY = currentMinY - layoutMinY
+            const currentMinX = Math.min(...runtimeOverlay.runtimeNodes.map((node) => node.position.x))
+            const currentMinY = Math.min(...runtimeOverlay.runtimeNodes.map((node) => node.position.y))
+            const layoutMinX = Math.min(...layouted.map((node) => node.position.x))
+            const layoutMinY = Math.min(...layouted.map((node) => node.position.y))
+            const offsetX = currentMinX - layoutMinX
+            const offsetY = currentMinY - layoutMinY
 
-        runtimeOverlay.setRuntimeNodes(
-            layouted.map((node) => ({
-                ...node,
-                position: {
-                    x: node.position.x + offsetX,
-                    y: node.position.y + offsetY,
-                },
-                draggable: true,
-                selectable: true,
-                connectable: false,
-            }))
-        )
+            runtimeOverlay.setRuntimeNodes(
+                layouted.map((node) => ({
+                    ...node,
+                    position: {
+                        x: node.position.x + offsetX,
+                        y: node.position.y + offsetY,
+                    },
+                    draggable: true,
+                    selectable: true,
+                    connectable: false,
+                }))
+            )
 
+            setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 0)
+            return
+        }
+
+        if (nodes.length === 0) return
+        const layoutedStaticNodes = computeAutoLayout(nodes, edges)
+        setNodes(layoutedStaticNodes)
         setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 0)
-    }, [runtimeOverlay, fitView])
+    }, [runtimeOverlay, fitView, nodes, edges, setNodes])
 
 
 
@@ -759,7 +773,7 @@ function AgentBuilderInner({
                     nodes={renderNodes}
                     edges={renderEdges}
                     onNodesChange={handleNodesChange}
-                    onEdgesChange={onEdgesChange}
+                    onEdgesChange={mode === "build" ? onEdgesChange : undefined}
                     onConnect={mode === "build" ? onConnect : undefined}
                     onDrop={mode === "build" ? onDrop : undefined}
                     onDragOver={mode === "build" ? onDragOver : undefined}
@@ -769,10 +783,14 @@ function AgentBuilderInner({
                     nodeTypes={nodeTypes}
                     nodesDraggable={true}
                     nodesConnectable={mode === "build"}
+                    elementsSelectable={true}
+                    edgesFocusable={mode === "build"}
+                    deleteKeyCode={mode === "build" ? ["Backspace", "Delete"] : null}
                     defaultEdgeOptions={{
                         animated: true,
                         style: { stroke: "#6b7280", strokeWidth: 2 },
                     }}
+                    edgesReconnectable={mode === "build"}
                     panOnDrag={interactionMode === "pan"}
                     selectionOnDrag={interactionMode === "select"}
                     selectionMode={SelectionMode.Partial}
@@ -811,7 +829,7 @@ function AgentBuilderInner({
                             <ToolbarButton
                                 icon={<LayoutGrid className="h-4 w-4" />}
                                 onClick={handleOrganizeRuntime}
-                                disabled={runtimeOverlay.runtimeNodes.length === 0}
+                                disabled={runtimeOverlay.runtimeNodes.length === 0 && nodes.length === 0}
                                 title="Organize Overlay"
                             />
                             <ToolbarButton

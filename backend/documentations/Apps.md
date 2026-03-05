@@ -1,6 +1,6 @@
 # Apps Feature (Published Client Web Apps)
 
-Last Updated: 2026-02-19
+Last Updated: 2026-03-01
 
 ## Purpose
 `Apps` lets each tenant publish a production app bound to one of their published agents, with a builder flow for custom UI templates, revisions, and published snapshots.
@@ -29,9 +29,13 @@ Last Updated: 2026-02-19
 - App create/update now supports `description`, `logo_url`, `visibility`, and `auth_template_key`.
 - `chat-grid` now maps to a premium multi-file LayoutShell-style workspace template (sidebar + chat + source list + resizable source viewer + mobile overlays) with generic placeholder source data.
 - Each app tracks both current draft and current published revision pointers.
+- Revisions created by app-init, coding-run finalization, and manual save now auto-enqueue async dist builds (when build automation is enabled).
 - Template switch is destructive for draft state and requires explicit confirmation in the UI.
 - Users tab supports list + block/unblock and block action revokes active app sessions.
 - Domains tab supports list/create/delete for pending custom domain requests.
+- Version preview runtime now fails fast with `409 VERSION_BUILD_NOT_READY` when selected revision dist artifacts are missing.
+- Version publish is now build-aware and asynchronous for missing-dist revisions: publish job remains queued/running while waiting for that revision build to finish.
+- If build-wait publish fails, app publish pointer remains on the previously working published revision and a best-effort coding-agent auto-fix prompt is submitted to the latest existing chat session.
 
 ## Backend Architecture
 - Admin API router: `backend/app/api/routers/published_apps_admin.py`

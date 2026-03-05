@@ -25,7 +25,7 @@ def _enable_builtin_tools(monkeypatch):
 async def _seed_tenant_and_user(db_session):
     suffix = uuid4().hex[:8]
     tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
-    user = User(email=f"owner-{suffix}@example.com", role="user")
+    user = User(email=f"owner-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
     await db_session.refresh(tenant)

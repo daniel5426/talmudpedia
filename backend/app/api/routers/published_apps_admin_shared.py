@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -74,6 +75,7 @@ DOMAIN_HOST_PATTERN = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z
 BUILDER_ALLOWED_DIR_ROOTS = ()
 BUILDER_BLOCKED_DIR_PREFIXES = (
     "node_modules/",
+    ".talmudpedia/",
     ".git/",
     ".next/",
     ".vite/",
@@ -133,7 +135,7 @@ BUILDER_ALLOWED_EXTENSIONS = {
     ".gif",
     ".webp",
 }
-BUILDER_MAX_FILES = int(os.getenv("BUILDER_MAX_FILES", "200"))
+BUILDER_MAX_FILES = int(os.getenv("BUILDER_MAX_FILES", "400"))
 BUILDER_MAX_OPS = int(os.getenv("BUILDER_MAX_OPS", "200"))
 BUILDER_MAX_FILE_BYTES = int(os.getenv("BUILDER_MAX_FILE_BYTES", str(256 * 1024)))
 BUILDER_MAX_LOCKFILE_BYTES = int(os.getenv("BUILDER_MAX_LOCKFILE_BYTES", str(2 * 1024 * 1024)))
@@ -166,6 +168,8 @@ class PublishedAppResponse(BaseModel):
     auth_enabled: bool
     auth_providers: List[str]
     auth_template_key: str
+    allowed_origins: List[str] = Field(default_factory=list)
+    external_auth_oidc: Optional[Dict[str, Any]] = None
     template_key: str
     current_draft_revision_id: Optional[str] = None
     current_published_revision_id: Optional[str] = None
@@ -234,6 +238,10 @@ class PublishedAppRevisionResponse(BaseModel):
     template_runtime: str = "vite_static"
     compiled_bundle: Optional[str] = None
     bundle_hash: Optional[str] = None
+    version_seq: int = 0
+    origin_kind: str = "unknown"
+    origin_run_id: Optional[str] = None
+    restored_from_revision_id: Optional[str] = None
     source_revision_id: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
@@ -268,6 +276,8 @@ class CreatePublishedAppRequest(BaseModel):
     auth_enabled: bool = True
     auth_providers: List[str] = Field(default_factory=lambda: ["password"])
     auth_template_key: str = "auth-classic"
+    allowed_origins: List[str] = Field(default_factory=list)
+    external_auth_oidc: Optional[Dict[str, Any]] = None
 
 
 class UpdatePublishedAppRequest(BaseModel):
@@ -280,6 +290,8 @@ class UpdatePublishedAppRequest(BaseModel):
     auth_enabled: Optional[bool] = None
     auth_providers: Optional[List[str]] = None
     auth_template_key: Optional[str] = None
+    allowed_origins: Optional[List[str]] = None
+    external_auth_oidc: Optional[Dict[str, Any]] = None
     status: Optional[str] = None
 
 
@@ -332,7 +344,11 @@ class DraftDevSessionResponse(BaseModel):
     app_id: str
     revision_id: Optional[str] = None
     status: str
+    has_active_coding_runs: bool
+    active_coding_run_count: int
     preview_url: Optional[str] = None
+    preview_auth_token: Optional[str] = None
+    preview_auth_expires_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     idle_timeout_seconds: int = 180
     last_activity_at: Optional[datetime] = None
@@ -349,6 +365,7 @@ class PublishJobResponse(BaseModel):
     job_id: str
     app_id: str
     status: str
+    stage: Optional[str] = None
     source_revision_id: Optional[str] = None
     saved_draft_revision_id: Optional[str] = None
     published_revision_id: Optional[str] = None
@@ -513,6 +530,56 @@ def _validate_providers(providers: List[str]) -> List[str]:
     return sorted(set(normalized))
 
 
+def _normalize_allowed_origin(origin: str) -> str:
+    value = (origin or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="Allowed origin cannot be empty")
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail=f"Invalid allowed origin: {value}")
+    normalized = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    return normalized.rstrip("/")
+
+
+def _validate_allowed_origins(origins: List[str]) -> List[str]:
+    normalized = [_normalize_allowed_origin(item) for item in origins]
+    return sorted(set(normalized))
+
+
+def _validate_external_auth_oidc(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if config is None:
+        return None
+    if not isinstance(config, dict):
+        raise HTTPException(status_code=400, detail="external_auth_oidc must be an object")
+
+    issuer = str(config.get("issuer") or "").strip().rstrip("/")
+    audience = str(config.get("audience") or "").strip()
+    jwks_uri = str(config.get("jwks_uri") or "").strip()
+    email_claim = str(config.get("email_claim") or "email").strip() or "email"
+    name_claim = str(config.get("name_claim") or "name").strip() or "name"
+
+    if not issuer or not audience or not jwks_uri:
+        raise HTTPException(
+            status_code=400,
+            detail="external_auth_oidc must include issuer, audience, and jwks_uri",
+        )
+
+    issuer_origin = urlparse(issuer)
+    jwks_origin = urlparse(jwks_uri)
+    if issuer_origin.scheme != "https" or not issuer_origin.netloc:
+        raise HTTPException(status_code=400, detail="external_auth_oidc.issuer must be an https URL")
+    if jwks_origin.scheme != "https" or not jwks_origin.netloc:
+        raise HTTPException(status_code=400, detail="external_auth_oidc.jwks_uri must be an https URL")
+
+    return {
+        "issuer": issuer,
+        "audience": audience,
+        "jwks_uri": jwks_uri,
+        "email_claim": email_claim,
+        "name_claim": name_claim,
+    }
+
+
 def _normalize_domain_host(host: str) -> str:
     normalized = (host or "").strip().lower().rstrip(".")
     if not normalized:
@@ -536,10 +603,12 @@ def _app_to_response(app: PublishedApp) -> PublishedAppResponse:
         auth_enabled=bool(app.auth_enabled),
         auth_providers=list(app.auth_providers or []),
         auth_template_key=app.auth_template_key or "auth-classic",
+        allowed_origins=list(app.allowed_origins or []),
+        external_auth_oidc=dict(app.external_auth_oidc or {}) if app.external_auth_oidc else None,
         template_key=app.template_key or "chat-classic",
         current_draft_revision_id=str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
         current_published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
-        published_url=app.published_url,
+        published_url=_build_published_url(app.slug) if app.status == PublishedAppStatus.published else None,
         created_by=str(app.created_by) if app.created_by else None,
         created_at=app.created_at,
         updated_at=app.updated_at,
@@ -600,6 +669,14 @@ def _revision_to_response(revision: PublishedAppRevision) -> PublishedAppRevisio
         template_runtime=revision.template_runtime or "vite_static",
         compiled_bundle=revision.compiled_bundle,
         bundle_hash=revision.bundle_hash,
+        version_seq=int(revision.version_seq or 0),
+        origin_kind=str(revision.origin_kind or "unknown"),
+        origin_run_id=str(revision.origin_run_id) if revision.origin_run_id else None,
+        restored_from_revision_id=(
+            str(revision.restored_from_revision_id)
+            if revision.restored_from_revision_id
+            else None
+        ),
         source_revision_id=str(revision.source_revision_id) if revision.source_revision_id else None,
         created_by=str(revision.created_by) if revision.created_by else None,
         created_at=revision.created_at,
@@ -620,12 +697,19 @@ def _revision_build_status_to_response(revision: PublishedAppRevision) -> Revisi
     )
 
 
-def _draft_dev_session_to_response(session: PublishedAppDraftDevSession) -> DraftDevSessionResponse:
+def _draft_dev_session_to_response(
+    session: PublishedAppDraftDevSession,
+    *,
+    active_coding_run_count: int = 0,
+) -> DraftDevSessionResponse:
+    normalized_active_count = max(0, int(active_coding_run_count or 0))
     return DraftDevSessionResponse(
         session_id=str(session.id),
         app_id=str(session.published_app_id),
         revision_id=str(session.revision_id) if session.revision_id else None,
         status=session.status.value if hasattr(session.status, "value") else str(session.status),
+        has_active_coding_runs=normalized_active_count > 0,
+        active_coding_run_count=normalized_active_count,
         preview_url=session.preview_url,
         expires_at=session.expires_at,
         idle_timeout_seconds=int(session.idle_timeout_seconds or 180),
@@ -641,6 +725,7 @@ def _publish_job_to_response(job: PublishedAppPublishJob) -> PublishJobResponse:
         job_id=str(job.id),
         app_id=str(job.published_app_id),
         status=job.status.value if hasattr(job.status, "value") else str(job.status),
+        stage=str(job.stage) if getattr(job, "stage", None) else None,
         source_revision_id=str(job.source_revision_id) if job.source_revision_id else None,
         saved_draft_revision_id=str(job.saved_draft_revision_id) if job.saved_draft_revision_id else None,
         published_revision_id=str(job.published_revision_id) if job.published_revision_id else None,

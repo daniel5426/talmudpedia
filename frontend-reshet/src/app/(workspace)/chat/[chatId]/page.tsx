@@ -1,10 +1,5 @@
-import { ChatPane } from "@/components/layout/ChatPane";
+import { redirect } from "next/navigation";
 
-interface ChatPageProps {
-  params: Promise<{ chatId: string }>;
-}
-
-export default async function ChatPage({ params }: ChatPageProps) {
-  const { chatId } = await params;
-  return <ChatPane chatId={chatId} />;
+export default async function ChatPage() {
+  redirect("/admin/agents/playground");
 }

@@ -1,0 +1,2298 @@
+{
+  "session_id": "ses_368f5dbc5ffem5OctfgU3U03dG",
+  "scenarios": [
+    {
+      "scenario": "grep_search",
+      "prompt": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP",
+      "event_counts": {
+        "message.updated": 10,
+        "message.part.updated": 12,
+        "session.status": 6,
+        "session.diff": 3,
+        "message.part.delta": 3,
+        "session.idle": 1
+      },
+      "toolish_message_events": [
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a252800183PLTGUd8Jp6UY",
+            "type": "text",
+            "messageID": "msg-3521fdb4",
+            "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+            "type": "step-start",
+            "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+            "type": "reasoning",
+            "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+            "text": ""
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+            "type": "reasoning",
+            "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+            "text": ""
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a3171001V93lJ25qcqru24",
+            "type": "tool",
+            "state": {
+              "status": "pending",
+              "input": {},
+              "raw": ""
+            },
+            "tool": "grep",
+            "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+            "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a3171001V93lJ25qcqru24",
+            "type": "tool",
+            "state": {
+              "status": "running",
+              "input": {
+                "pattern": "consumeRunStream",
+                "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+              },
+              "time": {
+                "start": 1772060553704
+              }
+            },
+            "tool": "grep",
+            "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+            "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a3171001V93lJ25qcqru24",
+            "type": "tool",
+            "state": {
+              "status": "completed",
+              "input": {
+                "pattern": "consumeRunStream",
+                "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+              },
+              "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+              "title": "consumeRunStream",
+              "metadata": {
+                "matches": 13,
+                "truncated": false
+              },
+              "time": {
+                "start": 1772060553704,
+                "end": 1772060553712
+              }
+            },
+            "tool": "grep",
+            "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+            "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+            "type": "step-finish",
+            "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+            "type": "step-start",
+            "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+            "type": "text",
+            "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+            "text": ""
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+            "type": "text",
+            "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+            "text": "DONE_GREP"
+          }
+        },
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a3aab001EWJOLHkhmpon03",
+            "type": "step-finish",
+            "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3521fdb4",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060550439
+          },
+          "parts": [
+            {
+              "id": "prt_c970a252800183PLTGUd8Jp6UY",
+              "type": "text",
+              "messageID": "msg-3521fdb4",
+              "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "role": "assistant",
+          "finish": "tool-calls",
+          "time": {
+            "created": 1772060550446,
+            "completed": 1772060554605
+          },
+          "parts": [
+            {
+              "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+              "type": "step-start",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+              "type": "reasoning",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+              "text": ""
+            },
+            {
+              "id": "prt_c970a3171001V93lJ25qcqru24",
+              "type": "tool",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "pattern": "consumeRunStream",
+                  "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+                },
+                "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+                "title": "consumeRunStream",
+                "metadata": {
+                  "matches": 13,
+                  "truncated": false
+                },
+                "time": {
+                  "start": 1772060553704,
+                  "end": 1772060553712
+                }
+              },
+              "tool": "grep",
+              "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+              "type": "step-finish",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "role": "assistant",
+          "finish": "stop",
+          "time": {
+            "created": 1772060554606,
+            "completed": 1772060556654
+          },
+          "parts": [
+            {
+              "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+              "type": "step-start",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            },
+            {
+              "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+              "type": "text",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+              "text": "DONE_GREP"
+            },
+            {
+              "id": "prt_c970a3aab001EWJOLHkhmpon03",
+              "type": "step-finish",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": "glob_search",
+      "prompt": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB",
+      "event_counts": {
+        "message.updated": 1,
+        "message.part.updated": 1,
+        "session.status": 2,
+        "session.idle": 1
+      },
+      "toolish_message_events": [
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a40e3001U6JZscP18y66Cf",
+            "type": "text",
+            "messageID": "msg-904dfbd3",
+            "text": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3521fdb4",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060550439
+          },
+          "parts": [
+            {
+              "id": "prt_c970a252800183PLTGUd8Jp6UY",
+              "type": "text",
+              "messageID": "msg-3521fdb4",
+              "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "role": "assistant",
+          "finish": "tool-calls",
+          "time": {
+            "created": 1772060550446,
+            "completed": 1772060554605
+          },
+          "parts": [
+            {
+              "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+              "type": "step-start",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+              "type": "reasoning",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+              "text": ""
+            },
+            {
+              "id": "prt_c970a3171001V93lJ25qcqru24",
+              "type": "tool",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "pattern": "consumeRunStream",
+                  "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+                },
+                "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+                "title": "consumeRunStream",
+                "metadata": {
+                  "matches": 13,
+                  "truncated": false
+                },
+                "time": {
+                  "start": 1772060553704,
+                  "end": 1772060553712
+                }
+              },
+              "tool": "grep",
+              "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+              "type": "step-finish",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "role": "assistant",
+          "finish": "stop",
+          "time": {
+            "created": 1772060554606,
+            "completed": 1772060556654
+          },
+          "parts": [
+            {
+              "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+              "type": "step-start",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            },
+            {
+              "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+              "type": "text",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+              "text": "DONE_GREP"
+            },
+            {
+              "id": "prt_c970a3aab001EWJOLHkhmpon03",
+              "type": "step-finish",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-904dfbd3",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060557539
+          },
+          "parts": [
+            {
+              "id": "prt_c970a40e3001U6JZscP18y66Cf",
+              "type": "text",
+              "messageID": "msg-904dfbd3",
+              "text": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": "read_file",
+      "prompt": "Use the read tool exactly once to read the first 25 lines of `frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. After the tool call, respond with exactly: DONE_READ",
+      "event_counts": {
+        "message.updated": 1,
+        "message.part.updated": 1,
+        "session.status": 2,
+        "session.idle": 1
+      },
+      "toolish_message_events": [
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a44e3001042dL3YiXD29gM",
+            "type": "text",
+            "messageID": "msg-83efc8d9",
+            "text": "Use the read tool exactly once to read the first 25 lines of `frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. After the tool call, respond with exactly: DONE_READ"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3521fdb4",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060550439
+          },
+          "parts": [
+            {
+              "id": "prt_c970a252800183PLTGUd8Jp6UY",
+              "type": "text",
+              "messageID": "msg-3521fdb4",
+              "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "role": "assistant",
+          "finish": "tool-calls",
+          "time": {
+            "created": 1772060550446,
+            "completed": 1772060554605
+          },
+          "parts": [
+            {
+              "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+              "type": "step-start",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+              "type": "reasoning",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+              "text": ""
+            },
+            {
+              "id": "prt_c970a3171001V93lJ25qcqru24",
+              "type": "tool",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "pattern": "consumeRunStream",
+                  "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+                },
+                "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+                "title": "consumeRunStream",
+                "metadata": {
+                  "matches": 13,
+                  "truncated": false
+                },
+                "time": {
+                  "start": 1772060553704,
+                  "end": 1772060553712
+                }
+              },
+              "tool": "grep",
+              "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+              "type": "step-finish",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "role": "assistant",
+          "finish": "stop",
+          "time": {
+            "created": 1772060554606,
+            "completed": 1772060556654
+          },
+          "parts": [
+            {
+              "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+              "type": "step-start",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            },
+            {
+              "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+              "type": "text",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+              "text": "DONE_GREP"
+            },
+            {
+              "id": "prt_c970a3aab001EWJOLHkhmpon03",
+              "type": "step-finish",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-904dfbd3",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060557539
+          },
+          "parts": [
+            {
+              "id": "prt_c970a40e3001U6JZscP18y66Cf",
+              "type": "text",
+              "messageID": "msg-904dfbd3",
+              "text": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-83efc8d9",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060558562
+          },
+          "parts": [
+            {
+              "id": "prt_c970a44e3001042dL3YiXD29gM",
+              "type": "text",
+              "messageID": "msg-83efc8d9",
+              "text": "Use the read tool exactly once to read the first 25 lines of `frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. After the tool call, respond with exactly: DONE_READ"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": "edit_file",
+      "prompt": "Use the edit tool exactly once on `/tmp/opencode_tool_probe_edit.txt` to replace the text `ORIGINAL_LINE` with `UPDATED_LINE`. Do not use write, only edit. After the tool call, respond with exactly: DONE_EDIT",
+      "event_counts": {
+        "message.updated": 1,
+        "message.part.updated": 1,
+        "session.status": 2,
+        "session.idle": 1
+      },
+      "toolish_message_events": [
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a48e2001P3fiNqVDVc13x7",
+            "type": "text",
+            "messageID": "msg-4350634e",
+            "text": "Use the edit tool exactly once on `/tmp/opencode_tool_probe_edit.txt` to replace the text `ORIGINAL_LINE` with `UPDATED_LINE`. Do not use write, only edit. After the tool call, respond with exactly: DONE_EDIT"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3521fdb4",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060550439
+          },
+          "parts": [
+            {
+              "id": "prt_c970a252800183PLTGUd8Jp6UY",
+              "type": "text",
+              "messageID": "msg-3521fdb4",
+              "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "role": "assistant",
+          "finish": "tool-calls",
+          "time": {
+            "created": 1772060550446,
+            "completed": 1772060554605
+          },
+          "parts": [
+            {
+              "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+              "type": "step-start",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+              "type": "reasoning",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+              "text": ""
+            },
+            {
+              "id": "prt_c970a3171001V93lJ25qcqru24",
+              "type": "tool",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "pattern": "consumeRunStream",
+                  "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+                },
+                "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+                "title": "consumeRunStream",
+                "metadata": {
+                  "matches": 13,
+                  "truncated": false
+                },
+                "time": {
+                  "start": 1772060553704,
+                  "end": 1772060553712
+                }
+              },
+              "tool": "grep",
+              "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+              "type": "step-finish",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "role": "assistant",
+          "finish": "stop",
+          "time": {
+            "created": 1772060554606,
+            "completed": 1772060556654
+          },
+          "parts": [
+            {
+              "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+              "type": "step-start",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            },
+            {
+              "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+              "type": "text",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+              "text": "DONE_GREP"
+            },
+            {
+              "id": "prt_c970a3aab001EWJOLHkhmpon03",
+              "type": "step-finish",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-904dfbd3",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060557539
+          },
+          "parts": [
+            {
+              "id": "prt_c970a40e3001U6JZscP18y66Cf",
+              "type": "text",
+              "messageID": "msg-904dfbd3",
+              "text": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-83efc8d9",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060558562
+          },
+          "parts": [
+            {
+              "id": "prt_c970a44e3001042dL3YiXD29gM",
+              "type": "text",
+              "messageID": "msg-83efc8d9",
+              "text": "Use the read tool exactly once to read the first 25 lines of `frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. After the tool call, respond with exactly: DONE_READ"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-4350634e",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060559586
+          },
+          "parts": [
+            {
+              "id": "prt_c970a48e2001P3fiNqVDVc13x7",
+              "type": "text",
+              "messageID": "msg-4350634e",
+              "text": "Use the edit tool exactly once on `/tmp/opencode_tool_probe_edit.txt` to replace the text `ORIGINAL_LINE` with `UPDATED_LINE`. Do not use write, only edit. After the tool call, respond with exactly: DONE_EDIT"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": "bash_success",
+      "prompt": "Use the bash tool exactly once and run: `printf 'BASH_OK_FROM_TOOL'`. After the tool call, respond with exactly: DONE_BASH_OK",
+      "event_counts": {
+        "message.updated": 1,
+        "message.part.updated": 1,
+        "session.status": 2,
+        "session.idle": 1
+      },
+      "toolish_message_events": [
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a4ce0001YDqSLmrd4Nd0oE",
+            "type": "text",
+            "messageID": "msg-dd3ec6e1",
+            "text": "Use the bash tool exactly once and run: `printf 'BASH_OK_FROM_TOOL'`. After the tool call, respond with exactly: DONE_BASH_OK"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3521fdb4",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060550439
+          },
+          "parts": [
+            {
+              "id": "prt_c970a252800183PLTGUd8Jp6UY",
+              "type": "text",
+              "messageID": "msg-3521fdb4",
+              "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "role": "assistant",
+          "finish": "tool-calls",
+          "time": {
+            "created": 1772060550446,
+            "completed": 1772060554605
+          },
+          "parts": [
+            {
+              "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+              "type": "step-start",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+              "type": "reasoning",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+              "text": ""
+            },
+            {
+              "id": "prt_c970a3171001V93lJ25qcqru24",
+              "type": "tool",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "pattern": "consumeRunStream",
+                  "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+                },
+                "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+                "title": "consumeRunStream",
+                "metadata": {
+                  "matches": 13,
+                  "truncated": false
+                },
+                "time": {
+                  "start": 1772060553704,
+                  "end": 1772060553712
+                }
+              },
+              "tool": "grep",
+              "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+              "type": "step-finish",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "role": "assistant",
+          "finish": "stop",
+          "time": {
+            "created": 1772060554606,
+            "completed": 1772060556654
+          },
+          "parts": [
+            {
+              "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+              "type": "step-start",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            },
+            {
+              "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+              "type": "text",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+              "text": "DONE_GREP"
+            },
+            {
+              "id": "prt_c970a3aab001EWJOLHkhmpon03",
+              "type": "step-finish",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-904dfbd3",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060557539
+          },
+          "parts": [
+            {
+              "id": "prt_c970a40e3001U6JZscP18y66Cf",
+              "type": "text",
+              "messageID": "msg-904dfbd3",
+              "text": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-83efc8d9",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060558562
+          },
+          "parts": [
+            {
+              "id": "prt_c970a44e3001042dL3YiXD29gM",
+              "type": "text",
+              "messageID": "msg-83efc8d9",
+              "text": "Use the read tool exactly once to read the first 25 lines of `frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. After the tool call, respond with exactly: DONE_READ"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-4350634e",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060559586
+          },
+          "parts": [
+            {
+              "id": "prt_c970a48e2001P3fiNqVDVc13x7",
+              "type": "text",
+              "messageID": "msg-4350634e",
+              "text": "Use the edit tool exactly once on `/tmp/opencode_tool_probe_edit.txt` to replace the text `ORIGINAL_LINE` with `UPDATED_LINE`. Do not use write, only edit. After the tool call, respond with exactly: DONE_EDIT"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-dd3ec6e1",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060560608
+          },
+          "parts": [
+            {
+              "id": "prt_c970a4ce0001YDqSLmrd4Nd0oE",
+              "type": "text",
+              "messageID": "msg-dd3ec6e1",
+              "text": "Use the bash tool exactly once and run: `printf 'BASH_OK_FROM_TOOL'`. After the tool call, respond with exactly: DONE_BASH_OK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": "bash_error_stack",
+      "prompt": "Use the bash tool exactly once and run this command exactly: `node -e \"throw new Error('probe stack line')\"`. After the tool call, respond with exactly: DONE_BASH_ERR",
+      "event_counts": {
+        "message.updated": 1,
+        "message.part.updated": 1,
+        "session.status": 2,
+        "session.idle": 1
+      },
+      "toolish_message_events": [
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a50de001P9TjBhNyxPxWSO",
+            "type": "text",
+            "messageID": "msg-873d675a",
+            "text": "Use the bash tool exactly once and run this command exactly: `node -e \"throw new Error('probe stack line')\"`. After the tool call, respond with exactly: DONE_BASH_ERR"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3521fdb4",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060550439
+          },
+          "parts": [
+            {
+              "id": "prt_c970a252800183PLTGUd8Jp6UY",
+              "type": "text",
+              "messageID": "msg-3521fdb4",
+              "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "role": "assistant",
+          "finish": "tool-calls",
+          "time": {
+            "created": 1772060550446,
+            "completed": 1772060554605
+          },
+          "parts": [
+            {
+              "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+              "type": "step-start",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+              "type": "reasoning",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+              "text": ""
+            },
+            {
+              "id": "prt_c970a3171001V93lJ25qcqru24",
+              "type": "tool",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "pattern": "consumeRunStream",
+                  "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+                },
+                "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+                "title": "consumeRunStream",
+                "metadata": {
+                  "matches": 13,
+                  "truncated": false
+                },
+                "time": {
+                  "start": 1772060553704,
+                  "end": 1772060553712
+                }
+              },
+              "tool": "grep",
+              "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+              "type": "step-finish",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "role": "assistant",
+          "finish": "stop",
+          "time": {
+            "created": 1772060554606,
+            "completed": 1772060556654
+          },
+          "parts": [
+            {
+              "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+              "type": "step-start",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            },
+            {
+              "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+              "type": "text",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+              "text": "DONE_GREP"
+            },
+            {
+              "id": "prt_c970a3aab001EWJOLHkhmpon03",
+              "type": "step-finish",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-904dfbd3",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060557539
+          },
+          "parts": [
+            {
+              "id": "prt_c970a40e3001U6JZscP18y66Cf",
+              "type": "text",
+              "messageID": "msg-904dfbd3",
+              "text": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-83efc8d9",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060558562
+          },
+          "parts": [
+            {
+              "id": "prt_c970a44e3001042dL3YiXD29gM",
+              "type": "text",
+              "messageID": "msg-83efc8d9",
+              "text": "Use the read tool exactly once to read the first 25 lines of `frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. After the tool call, respond with exactly: DONE_READ"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-4350634e",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060559586
+          },
+          "parts": [
+            {
+              "id": "prt_c970a48e2001P3fiNqVDVc13x7",
+              "type": "text",
+              "messageID": "msg-4350634e",
+              "text": "Use the edit tool exactly once on `/tmp/opencode_tool_probe_edit.txt` to replace the text `ORIGINAL_LINE` with `UPDATED_LINE`. Do not use write, only edit. After the tool call, respond with exactly: DONE_EDIT"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-dd3ec6e1",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060560608
+          },
+          "parts": [
+            {
+              "id": "prt_c970a4ce0001YDqSLmrd4Nd0oE",
+              "type": "text",
+              "messageID": "msg-dd3ec6e1",
+              "text": "Use the bash tool exactly once and run: `printf 'BASH_OK_FROM_TOOL'`. After the tool call, respond with exactly: DONE_BASH_OK"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-873d675a",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060561630
+          },
+          "parts": [
+            {
+              "id": "prt_c970a50de001P9TjBhNyxPxWSO",
+              "type": "text",
+              "messageID": "msg-873d675a",
+              "text": "Use the bash tool exactly once and run this command exactly: `node -e \"throw new Error('probe stack line')\"`. After the tool call, respond with exactly: DONE_BASH_ERR"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": "codesearch",
+      "prompt": "Use the codesearch tool exactly once with query `consumeRunStream`. If codesearch is unavailable, explicitly say `CODESEARCH_UNAVAILABLE`. Then respond with exactly: DONE_CODESEARCH",
+      "event_counts": {
+        "message.updated": 1,
+        "message.part.updated": 1,
+        "session.status": 2,
+        "session.idle": 1
+      },
+      "toolish_message_events": [
+        {
+          "event_type": "message.part.updated",
+          "message_id": null,
+          "role": null,
+          "part": {
+            "id": "prt_c970a54d4001sVuWhnXXlsOTGn",
+            "type": "text",
+            "messageID": "msg-bcadbf06",
+            "text": "Use the codesearch tool exactly once with query `consumeRunStream`. If codesearch is unavailable, explicitly say `CODESEARCH_UNAVAILABLE`. Then respond with exactly: DONE_CODESEARCH"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3521fdb4",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060550439
+          },
+          "parts": [
+            {
+              "id": "prt_c970a252800183PLTGUd8Jp6UY",
+              "type": "text",
+              "messageID": "msg-3521fdb4",
+              "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "role": "assistant",
+          "finish": "tool-calls",
+          "time": {
+            "created": 1772060550446,
+            "completed": 1772060554605
+          },
+          "parts": [
+            {
+              "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+              "type": "step-start",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+              "type": "reasoning",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+              "text": ""
+            },
+            {
+              "id": "prt_c970a3171001V93lJ25qcqru24",
+              "type": "tool",
+              "state": {
+                "status": "completed",
+                "input": {
+                  "pattern": "consumeRunStream",
+                  "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+                },
+                "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+                "title": "consumeRunStream",
+                "metadata": {
+                  "matches": 13,
+                  "truncated": false
+                },
+                "time": {
+                  "start": 1772060553704,
+                  "end": 1772060553712
+                }
+              },
+              "tool": "grep",
+              "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            },
+            {
+              "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+              "type": "step-finish",
+              "messageID": "msg_c970a252e001FqCbblKj3HgJt3"
+            }
+          ]
+        },
+        {
+          "message_id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "role": "assistant",
+          "finish": "stop",
+          "time": {
+            "created": 1772060554606,
+            "completed": 1772060556654
+          },
+          "parts": [
+            {
+              "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+              "type": "step-start",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            },
+            {
+              "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+              "type": "text",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+              "text": "DONE_GREP"
+            },
+            {
+              "id": "prt_c970a3aab001EWJOLHkhmpon03",
+              "type": "step-finish",
+              "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-904dfbd3",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060557539
+          },
+          "parts": [
+            {
+              "id": "prt_c970a40e3001U6JZscP18y66Cf",
+              "type": "text",
+              "messageID": "msg-904dfbd3",
+              "text": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-83efc8d9",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060558562
+          },
+          "parts": [
+            {
+              "id": "prt_c970a44e3001042dL3YiXD29gM",
+              "type": "text",
+              "messageID": "msg-83efc8d9",
+              "text": "Use the read tool exactly once to read the first 25 lines of `frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. After the tool call, respond with exactly: DONE_READ"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-4350634e",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060559586
+          },
+          "parts": [
+            {
+              "id": "prt_c970a48e2001P3fiNqVDVc13x7",
+              "type": "text",
+              "messageID": "msg-4350634e",
+              "text": "Use the edit tool exactly once on `/tmp/opencode_tool_probe_edit.txt` to replace the text `ORIGINAL_LINE` with `UPDATED_LINE`. Do not use write, only edit. After the tool call, respond with exactly: DONE_EDIT"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-dd3ec6e1",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060560608
+          },
+          "parts": [
+            {
+              "id": "prt_c970a4ce0001YDqSLmrd4Nd0oE",
+              "type": "text",
+              "messageID": "msg-dd3ec6e1",
+              "text": "Use the bash tool exactly once and run: `printf 'BASH_OK_FROM_TOOL'`. After the tool call, respond with exactly: DONE_BASH_OK"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-873d675a",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060561630
+          },
+          "parts": [
+            {
+              "id": "prt_c970a50de001P9TjBhNyxPxWSO",
+              "type": "text",
+              "messageID": "msg-873d675a",
+              "text": "Use the bash tool exactly once and run this command exactly: `node -e \"throw new Error('probe stack line')\"`. After the tool call, respond with exactly: DONE_BASH_ERR"
+            }
+          ]
+        },
+        {
+          "message_id": "msg-bcadbf06",
+          "role": "user",
+          "finish": null,
+          "time": {
+            "created": 1772060562644
+          },
+          "parts": [
+            {
+              "id": "prt_c970a54d4001sVuWhnXXlsOTGn",
+              "type": "text",
+              "messageID": "msg-bcadbf06",
+              "text": "Use the codesearch tool exactly once with query `consumeRunStream`. If codesearch is unavailable, explicitly say `CODESEARCH_UNAVAILABLE`. Then respond with exactly: DONE_CODESEARCH"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "raw_events_tail": [
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-3521fdb4",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060550439
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a252800183PLTGUd8Jp6UY",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg-3521fdb4",
+          "type": "text",
+          "text": "Use the grep tool exactly once to search for pattern `consumeRunStream` under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GREP"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "assistant",
+          "time": {
+            "created": 1772060550446
+          },
+          "parentID": "msg-3521fdb4",
+          "modelID": "gpt-5.2-chat-latest",
+          "providerID": "openai",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/Users/danielbenassaya/Code/personal/talmudpedia",
+            "root": "/Users/danielbenassaya/Code/personal/talmudpedia"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-3521fdb4",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060550439
+          },
+          "summary": {
+            "diffs": []
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a2a97001F4OUAGcUhhqoxK",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+          "type": "step-start",
+          "snapshot": "8927cfd09c5243b0af2cb113175c0ffb5c506502"
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+          "type": "reasoning",
+          "text": "",
+          "metadata": {
+            "openai": {
+              "itemId": "rs_0d7924d3b607152d01699f7f88513c819dadce058c382fbd6d",
+              "reasoningEncryptedContent": "gAAAAABpn3-IgHqzuX6uW2QOchOCZr1jeBytFjIoE13KvFUD4HJbt_NHbPNO1NAjn-zz0Y2667o7Vs58MXza3RXpTtZBDaOgb8cKTMIM3yXZDbX0sFpkN30x6MZoodiN64UskXn4vzUugiXTHM45yFC14uzjtJ98lvpP2LDrOj8Fam66e0QRkJ7aXzWHd1fajOxeiIuN5Fwck3dOgugvUBARHb9708ht2l9Bls4pH0tRKE66VYO8IHH9EMKmlYWIRUkwQMc3BaE2skW2YCAiVBCcw2oXeGd8UCg3iDbnociz5XySlDqc6FJ9xyvFPQ6oaA5JbTpTfqrv21gBFbEK3IqyYgOP5wiJmNS-YCGfCnr7yxceCcMyYVSkBhmB1RXSfQZ0Z77ZOZe9-PEjdG8FivA6BqSC2tAC_fHsENnnpb5GG9zneXNnv4wufsJD8AxBVgV2s4yKmLxqBeGUD7wiLGsCR9SINzAZweCpAlkpZ3R6cUvlHh5OJSuPLc2dvPIvya5OrcdW0bZeKoVDEoVsD_lOyiGOEoegE-5VjOWxeroK3UgqcqM9DZE6UN2JtJbwSGNwslI_n272m5Ji_Hki_LsL6Fvh7GLfj3adCxjdulgPHrvPe52UnK10EMWnO3u77KEzG4zta2RCtXtovbfiGo33nK0HElTW5s1lk-ar3QUXizslEhhJfR_e1iEfURpOruVU1ujKqzr-JFFxmhDfadQSQbyIaGBj47RcN5as0BAwc_oRFtnGtjjEyHNdo750VGdCcepFdMa4yvIQdZJ8Zai8xaqjVZ2qkr_FSpffWMUFTCWgC9CcxkzipNmK1EJ7dCykTDH2wWNE"
+            }
+          },
+          "time": {
+            "start": 1772060552100
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a2ba4001oXyb1lDarkEPuK",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+          "type": "reasoning",
+          "text": "",
+          "metadata": {
+            "openai": {
+              "itemId": "rs_0d7924d3b607152d01699f7f88513c819dadce058c382fbd6d",
+              "reasoningEncryptedContent": "gAAAAABpn3-JJSt4o50kceuNQJRcGJQViKMLjlUrrq2AfDCZAR511juxUv44twQpR_1E1KsOo93VcJsN3_C9ggc-gyqeLEh-ahJDddPCGmcmPPq4tLahD0nfRt4UNiYG30i6H3j2LD-GhR3eCxxFU6RYsNQFd62dzAm_nYNJUX2J4elbovXU3rmWa4MXROR3vLoReRyTvtVTW-PDXewq4lFJpZZENYZijgchI_A02l65qCD_uUTe35d7wGNmTiBONkuIhtMRgo8D-0IDrahHuk-VDFquQhhkq2NAUKXJQDnDfLuVIw9CR6x2N7DUBW0yIgkyKuSpCuF8jMx7esaisO9qVDiBpI6zKWaTwMkQwG-SKAXud7O8lw278WDhLBlkqx3bT68LQCaGEUy2m8xtUZY68rLR9XU6m-r3VccZhRkaemcFBVH-gnKIn4AOeuT9qOWvjCTVektn7eQdb-1SIGoqAtLjErkA10TaX2dGk2TndasEFgmnPz4AyZbBW88nYPUaVe-Wr93oifkD40J1IXsrszZ2LT0AVlwc_yzTl3XZs8uHp-fxV9SuuP9h5ICCK3X622xTWBMhD_6qATmPMpqKSADxtDlc6owUuqQkElq-4kbQ_u5bWPdtJDOaZQ_ACiiYPiB3l_-cYbd3eXWh9xjUbmwMxRxoquEcpSePTifH0q9Vxnu0z9LnKIqvlyIWJvT4UqhZmZUmdq2qCHQLgJes6ZLKSMsZl3gKOiCKwYImVei3xWmI0YPhxhr5oc_yknJCOy_vwSAhsUHqEaPdtX1Az1dawFfApYZwhGFvYE6B88wJuph-fk7bQsL9s2S1F6fPtpYlzvbxvVShhGL_UAQtDALYnPMm5Pk6M0O037rKwlifyph4KctDb3WgLxsgABv6bFdNv5h0eRu3WtDzqDuM9b_ki8uwarZ21pZVIy1h_qmo7VzOwo_Ij97yBhBy-VJ5nFTuUlYK0ME4au64_AFb9TSBt3i-hkks8APaVziMPMbu9KUATaN6T8xau1NrVpcjPti16CDP8S10dDmNyiI1wobv-bc5eR5TkXG7Wr68aHJaG2npcZWbpGvKJfuHnRCx9pEivkb2"
+            }
+          },
+          "time": {
+            "start": 1772060552100,
+            "end": 1772060553584
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a3171001V93lJ25qcqru24",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+          "type": "tool",
+          "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+          "tool": "grep",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a3171001V93lJ25qcqru24",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+          "type": "tool",
+          "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+          "tool": "grep",
+          "state": {
+            "status": "running",
+            "input": {
+              "pattern": "consumeRunStream",
+              "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+            },
+            "time": {
+              "start": 1772060553704
+            }
+          },
+          "metadata": {
+            "openai": {
+              "itemId": "fc_0d7924d3b607152d01699f7f89bd20819db04406f5e29466dd"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a3171001V93lJ25qcqru24",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+          "type": "tool",
+          "callID": "call_mdOCyoJzT3rjg31kOHrBzebR",
+          "tool": "grep",
+          "state": {
+            "status": "completed",
+            "input": {
+              "pattern": "consumeRunStream",
+              "path": "frontend-reshet/src/features/apps-builder/workspace/chat"
+            },
+            "output": "Found 13 matches\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts:\n  Line 92: export async function consumeRunStream(options: ConsumeRunStreamOptions): Promise<void> {\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-actions.ts:\n  Line 43:   consumeRunStreamForSession: (sessionKey: string, runId: string, runSessionId: string | null) => Promise<void>;\n  Line 69:   consumeRunStreamForSession,\n  Line 133:           await consumeRunStreamForSession(targetSessionKey, runActive.active_run_id, runActiveSessionId || null);\n  Line 190:       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);\n  Line 207:   }, [activeChatSessionIdRef, appId, consumeRunStreamForSession, ensureSessionKeyByServerSessionId, getSession, markSessionRunActive, moveSessionTitleHint, mutateSession, onError, requestCancelForRun, setActiveChatSessionId]);\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.session-streams.ts:\n  Line 1: import { consumeRunStream as consumeRunStreamImpl } from \"./useAppsBuilderChat.stream\";\n  Line 77:   await consumeRunStreamImpl({\n\n/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.ts:\n  Line 494:   const consumeRunStreamForSession = useCallback(async (\n  Line 555:             void consumeRunStreamForSession(normalizedSessionId, active.run_id, normalizedSessionId);\n  Line 599:       void consumeRunStreamForSession(detail.session.id, runIdToAttach, detail.session.id);\n  Line 603:   }, [appId, consumeRunStreamForSession, getSession, mutateSession, onError, probeSessionRunActivity]);\n  Line 699:     consumeRunStreamForSession,",
+            "title": "consumeRunStream",
+            "metadata": {
+              "matches": 13,
+              "truncated": false
+            },
+            "time": {
+              "start": 1772060553704,
+              "end": 1772060553712
+            }
+          },
+          "metadata": {
+            "openai": {
+              "itemId": "fc_0d7924d3b607152d01699f7f89bd20819db04406f5e29466dd"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a32650013Ib8wvnrUfYr8t",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a252e001FqCbblKj3HgJt3",
+          "type": "step-finish",
+          "reason": "tool-calls",
+          "snapshot": "8927cfd09c5243b0af2cb113175c0ffb5c506502",
+          "cost": 0.01901025,
+          "tokens": {
+            "total": 10303,
+            "input": 10223,
+            "output": 80,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "assistant",
+          "time": {
+            "created": 1772060550446
+          },
+          "parentID": "msg-3521fdb4",
+          "modelID": "gpt-5.2-chat-latest",
+          "providerID": "openai",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/Users/danielbenassaya/Code/personal/talmudpedia",
+            "root": "/Users/danielbenassaya/Code/personal/talmudpedia"
+          },
+          "cost": 0.01901025,
+          "tokens": {
+            "total": 10303,
+            "input": 10223,
+            "output": 80,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg_c970a252e001FqCbblKj3HgJt3",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "assistant",
+          "time": {
+            "created": 1772060550446,
+            "completed": 1772060554605
+          },
+          "parentID": "msg-3521fdb4",
+          "modelID": "gpt-5.2-chat-latest",
+          "providerID": "openai",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/Users/danielbenassaya/Code/personal/talmudpedia",
+            "root": "/Users/danielbenassaya/Code/personal/talmudpedia"
+          },
+          "cost": 0.01901025,
+          "tokens": {
+            "total": 10303,
+            "input": 10223,
+            "output": 80,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "assistant",
+          "time": {
+            "created": 1772060554606
+          },
+          "parentID": "msg-3521fdb4",
+          "modelID": "gpt-5.2-chat-latest",
+          "providerID": "openai",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/Users/danielbenassaya/Code/personal/talmudpedia",
+            "root": "/Users/danielbenassaya/Code/personal/talmudpedia"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-3521fdb4",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060550439
+          },
+          "summary": {
+            "diffs": []
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a3a15001a6cc3hNjDT0jex",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "type": "step-start",
+          "snapshot": "8927cfd09c5243b0af2cb113175c0ffb5c506502"
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1772060555838
+          },
+          "metadata": {
+            "openai": {
+              "itemId": "msg_09fe3cd8113542a501699f7f8c0f6c81a3b5641cd31d395a68"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+        "partID": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+        "field": "text",
+        "delta": "DONE"
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+        "partID": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+        "field": "text",
+        "delta": "_G"
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+        "partID": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+        "field": "text",
+        "delta": "REP"
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a3a3e001ZAfJLayr3ZbbGd",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "type": "text",
+          "text": "DONE_GREP",
+          "time": {
+            "start": 1772060555938,
+            "end": 1772060555938
+          },
+          "metadata": {
+            "openai": {
+              "itemId": "msg_09fe3cd8113542a501699f7f8c0f6c81a3b5641cd31d395a68"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a3aab001EWJOLHkhmpon03",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "type": "step-finish",
+          "reason": "stop",
+          "snapshot": "8927cfd09c5243b0af2cb113175c0ffb5c506502",
+          "cost": 0.0030366,
+          "tokens": {
+            "total": 10787,
+            "input": 668,
+            "output": 7,
+            "reasoning": 0,
+            "cache": {
+              "read": 10112,
+              "write": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "assistant",
+          "time": {
+            "created": 1772060554606
+          },
+          "parentID": "msg-3521fdb4",
+          "modelID": "gpt-5.2-chat-latest",
+          "providerID": "openai",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/Users/danielbenassaya/Code/personal/talmudpedia",
+            "root": "/Users/danielbenassaya/Code/personal/talmudpedia"
+          },
+          "cost": 0.0030366,
+          "tokens": {
+            "total": 10787,
+            "input": 668,
+            "output": 7,
+            "reasoning": 0,
+            "cache": {
+              "read": 10112,
+              "write": 0
+            }
+          },
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg_c970a356e001tQbhAfFBUEF0Xj",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "assistant",
+          "time": {
+            "created": 1772060554606,
+            "completed": 1772060556654
+          },
+          "parentID": "msg-3521fdb4",
+          "modelID": "gpt-5.2-chat-latest",
+          "providerID": "openai",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/Users/danielbenassaya/Code/personal/talmudpedia",
+            "root": "/Users/danielbenassaya/Code/personal/talmudpedia"
+          },
+          "cost": 0.0030366,
+          "tokens": {
+            "total": 10787,
+            "input": 668,
+            "output": 7,
+            "reasoning": 0,
+            "cache": {
+              "read": 10112,
+              "write": 0
+            }
+          },
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG"
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-3521fdb4",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060550439
+          },
+          "summary": {
+            "diffs": []
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-904dfbd3",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060557539
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a40e3001U6JZscP18y66Cf",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg-904dfbd3",
+          "type": "text",
+          "text": "Use the glob tool exactly once to find `*.ts` files under `frontend-reshet/src/features/apps-builder/workspace/chat`. After the tool call, respond with exactly: DONE_GLOB"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG"
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-83efc8d9",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060558562
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a44e3001042dL3YiXD29gM",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg-83efc8d9",
+          "type": "text",
+          "text": "Use the read tool exactly once to read the first 25 lines of `frontend-reshet/src/features/apps-builder/workspace/chat/useAppsBuilderChat.stream.ts`. After the tool call, respond with exactly: DONE_READ"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG"
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-4350634e",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060559586
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a48e2001P3fiNqVDVc13x7",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg-4350634e",
+          "type": "text",
+          "text": "Use the edit tool exactly once on `/tmp/opencode_tool_probe_edit.txt` to replace the text `ORIGINAL_LINE` with `UPDATED_LINE`. Do not use write, only edit. After the tool call, respond with exactly: DONE_EDIT"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG"
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-dd3ec6e1",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060560608
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a4ce0001YDqSLmrd4Nd0oE",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg-dd3ec6e1",
+          "type": "text",
+          "text": "Use the bash tool exactly once and run: `printf 'BASH_OK_FROM_TOOL'`. After the tool call, respond with exactly: DONE_BASH_OK"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG"
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-873d675a",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060561630
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a50de001P9TjBhNyxPxWSO",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg-873d675a",
+          "type": "text",
+          "text": "Use the bash tool exactly once and run this command exactly: `node -e \"throw new Error('probe stack line')\"`. After the tool call, respond with exactly: DONE_BASH_ERR"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG"
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg-bcadbf06",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "role": "user",
+          "time": {
+            "created": 1772060562644
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "openai",
+            "modelID": "gpt-5.2-chat-latest"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "part": {
+          "id": "prt_c970a54d4001sVuWhnXXlsOTGn",
+          "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+          "messageID": "msg-bcadbf06",
+          "type": "text",
+          "text": "Use the codesearch tool exactly once with query `consumeRunStream`. If codesearch is unavailable, explicitly say `CODESEARCH_UNAVAILABLE`. Then respond with exactly: DONE_CODESEARCH"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_368f5dbc5ffem5OctfgU3U03dG"
+      }
+    }
+  ],
+  "edited_file_content": "ORIGINAL_LINE\n"
+}

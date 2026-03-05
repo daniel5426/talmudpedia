@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-02-19
+Last Updated: 2026-03-05
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -21,11 +21,14 @@ backend/app/api/
 backend/app/api/dependencies.py
 backend/app/api/routers/
 backend/app/api/routers/sandbox_controller_dev_shim.py
+backend/app/api/routers/published_apps_admin_routes_coding_agent_v2.py
+backend/app/api/routers/published_apps_host_runtime.py
 backend/app/api/schemas/
 
 backend/app/core/
 backend/app/core/security.py
 backend/app/core/rbac.py
+backend/app/core/scope_registry.py
 backend/app/core/audit.py
 backend/app/core/internal_token.py
 backend/app/core/jwt_keys.py
@@ -60,6 +63,7 @@ backend/app/agent/execution/durable_checkpointer.py
 backend/app/agent/execution/adapter.py
 backend/app/agent/execution/field_resolver.py
 backend/app/agent/execution/emitter.py
+backend/app/agent/execution/stream_contract_v2.py
 backend/app/agent/execution/types.py
 
 backend/app/agent/executors/
@@ -89,18 +93,25 @@ backend/app/db/postgres/
 backend/app/db/postgres/engine.py
 backend/app/db/postgres/session.py
 backend/app/db/postgres/models/
+backend/app/db/postgres/models/agent_threads.py
+backend/app/db/postgres/models/usage_quota.py
 backend/app/db/postgres/seeds/
 
 backend/app/services/
 backend/app/services/agent_service.py
+backend/app/services/security_bootstrap_service.py
 backend/app/services/retrieval_service.py
 backend/app/services/rag_admin_service.py
 backend/app/services/model_resolver.py
 backend/app/services/credentials_service.py
+backend/app/services/integration_provider_catalog.py
+backend/app/services/registry_seeding.py
+backend/app/services/platform_architect_contracts.py
 backend/app/services/tool_function_registry.py
 backend/app/services/artifact_registry.py
 backend/app/services/builtin_tools.py
 backend/app/services/delegation_service.py
+backend/app/services/workload_provisioning_service.py
 backend/app/services/workload_identity_service.py
 backend/app/services/token_broker_service.py
 backend/app/services/orchestration_kernel_service.py
@@ -109,20 +120,30 @@ backend/app/services/orchestration_lineage_service.py
 backend/app/services/mcp_client.py
 backend/app/services/web_search.py
 backend/app/services/published_app_auth_service.py
+backend/app/services/published_app_auth_shell_renderer.py
 backend/app/services/published_app_bundle_storage.py
 backend/app/services/published_app_draft_dev_runtime.py
 backend/app/services/published_app_draft_dev_local_runtime.py
 backend/app/services/published_app_draft_dev_runtime_client.py
 backend/app/services/published_app_draft_dev_patching.py
-backend/app/services/published_app_coding_run_sandbox_service.py
 backend/app/services/published_app_coding_chat_history_service.py
 backend/app/services/published_app_coding_agent_tools.py
-backend/app/services/published_app_coding_agent_capabilities.py
 backend/app/services/published_app_agent_integration_contract.py
 backend/app/services/published_app_coding_agent_profile.py
 backend/app/services/published_app_coding_agent_runtime.py
+backend/app/services/published_app_coding_agent_runtime_sandbox.py
+backend/app/services/published_app_coding_agent_runtime_checkpoints.py
+backend/app/services/published_app_coding_agent_runtime_streaming.py
+backend/app/services/published_app_coding_run_monitor.py
+backend/app/services/published_app_coding_run_monitor_config.py
+backend/app/services/published_app_coding_pipeline_trace.py
+backend/app/services/published_app_revision_store.py
+backend/app/services/published_app_revision_build_dispatch.py
+backend/app/services/published_app_publish_runtime.py
+backend/app/services/published_app_publish_autofix.py
+backend/app/services/usage_quota_service.py
+backend/app/services/thread_service.py
 backend/app/services/published_app_coding_agent_engines/base.py
-backend/app/services/published_app_coding_agent_engines/native_engine.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
 backend/app/services/published_app_coding_agent_engines/prompt_history.py
 backend/app/services/opencode_server_client.py
@@ -134,6 +155,10 @@ backend/app/services/stt/
 backend/app/services/text/
 backend/app/services/voice/
 
+backend/app/middleware/
+backend/app/middleware/published_apps_cors.py
+backend/app/middleware/published_apps_host_runtime.py
+
 backend/app/workers/
 backend/app/workers/celery_app.py
 backend/app/workers/tasks.py
@@ -144,8 +169,39 @@ backend/app/templates/
 
 backend/alembic/
 backend/artifacts/
+backend/artifacts/builtin/
+backend/artifacts/builtin/platform_sdk/
+backend/artifacts/builtin/platform_sdk/handler.py
+backend/artifacts/builtin/platform_sdk/actions/
+backend/artifacts/builtin/platform_sdk/actions/catalog.py
+backend/artifacts/builtin/platform_sdk/actions/agents.py
+backend/artifacts/builtin/platform_sdk/actions/artifacts.py
+backend/artifacts/builtin/platform_sdk/actions/tools.py
+backend/artifacts/builtin/platform_sdk/actions/orchestration.py
+backend/artifacts/builtin/platform_sdk/actions/rag.py
+backend/artifacts/builtin/platform_sdk/actions/models.py
+backend/artifacts/builtin/platform_sdk/actions/credentials.py
+backend/artifacts/builtin/platform_sdk/actions/knowledge_stores.py
+backend/artifacts/builtin/platform_sdk/actions/auth.py
+backend/artifacts/builtin/platform_sdk/actions/workload_security.py
+backend/artifacts/builtin/platform_sdk/actions/shared.py
 backend/ingestion/
 backend/sdk/
+backend/talmudpedia_control_sdk/
+backend/talmudpedia_control_sdk/client.py
+backend/talmudpedia_control_sdk/catalog.py
+backend/talmudpedia_control_sdk/agents.py
+backend/talmudpedia_control_sdk/tools.py
+backend/talmudpedia_control_sdk/artifacts.py
+backend/talmudpedia_control_sdk/rag.py
+backend/talmudpedia_control_sdk/models.py
+backend/talmudpedia_control_sdk/credentials.py
+backend/talmudpedia_control_sdk/knowledge_stores.py
+backend/talmudpedia_control_sdk/workload_security.py
+backend/talmudpedia_control_sdk/auth.py
+backend/talmudpedia_control_sdk/orchestration.py
+backend/talmudpedia_control_sdk/errors.py
+backend/talmudpedia_control_sdk/types.py
 backend/library_chunks/
 backend/scripts/
 backend/tests/

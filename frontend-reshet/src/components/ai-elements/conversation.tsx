@@ -86,7 +86,7 @@ export const ConversationScrollButton = ({
     !isAtBottom && (
       <Button
         className={cn(
-          "absolute bottom-40 z-999 left-[50%] translate-x-[-50%] rounded-full",
+          "absolute bottom-4 z-50 left-[50%] translate-x-[-50%] rounded-full shadow-md",
           className
         )}
         onClick={handleScrollToBottom}

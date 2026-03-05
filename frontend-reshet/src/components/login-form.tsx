@@ -40,7 +40,7 @@ export function LoginForm({
       
       const user = await authService.getProfile()
       setAuth(user, access_token)
-      router.push("/chat")
+      router.push("/admin/agents/playground")
     } catch (err: any) {
       setError(err.message || "Login failed")
       // Clear token if login failed
@@ -60,7 +60,7 @@ export function LoginForm({
       useAuthStore.getState().setAuth(null as any, access_token);
       const user = await authService.getProfile();
       setAuth(user, access_token);
-      router.push("/chat");
+      router.push("/admin/agents/playground");
     } catch (err: any) {
       setError(err.message || "Google login failed");
     } finally {

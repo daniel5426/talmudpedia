@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional, List
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, delete, func
 
@@ -14,10 +14,9 @@ from app.db.postgres.models.registry import (
     ModelCapabilityType, 
     ModelStatus,
     ModelProviderBinding,
-    ProviderConfig
 )
 from app.db.postgres.session import get_db
-from app.api.dependencies import get_current_user, get_tenant_context
+from app.api.dependencies import get_current_principal, get_tenant_context, require_scopes
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -98,9 +97,11 @@ async def list_models(
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.read")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """List all logical models."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelRegistry).where(
@@ -162,9 +163,11 @@ async def create_model(
     request: CreateModelRequest,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Register a new logical model."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     # Check for existing slug in tenant
@@ -193,16 +196,18 @@ async def create_model(
     await db.refresh(model)
     
     # Re-fetch with providers
-    return await get_model(model.id, db, tenant_ctx, current_user)
+    return await get_model(model.id, db, tenant_ctx)
 
 @router.get("/{model_id}", response_model=ModelResponse)
 async def get_model(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.read")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Get details for a specific model."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelRegistry).where(
@@ -250,9 +255,11 @@ async def update_model(
     request: UpdateModelRequest,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Update a logical model definition."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelRegistry).where(
@@ -280,16 +287,18 @@ async def update_model(
         model.default_resolution_policy = request.default_resolution_policy
         
     await db.commit()
-    return await get_model(model.id, db, tenant_ctx, current_user)
+    return await get_model(model.id, db, tenant_ctx)
 
 @router.delete("/{model_id}")
 async def delete_model(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Remove a model from the registry."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelRegistry).where(
@@ -314,9 +323,11 @@ async def add_provider_binding(
     request: CreateProviderRequest,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Add a provider binding to a logical model."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     # Verify model exists and belongs to tenant
@@ -359,9 +370,11 @@ async def update_provider_binding(
     request: UpdateProviderRequest,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Update a provider binding."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
 
     stmt = select(ModelProviderBinding).where(
@@ -407,9 +420,11 @@ async def remove_provider_binding(
     provider_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
+    _: dict[str, Any] = Depends(require_scopes("models.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
 ):
     """Remove a provider binding."""
+    del principal
     tid = uuid.UUID(tenant_ctx["tenant_id"])
     
     stmt = select(ModelProviderBinding).where(
@@ -429,152 +444,3 @@ async def remove_provider_binding(
     await db.commit()
     
     return {"status": "deleted"}
-
-
-# ============================================================================
-# Provider Config Endpoints
-# ============================================================================
-
-class ProviderConfigResponse(BaseModel):
-    id: uuid.UUID
-    provider: ModelProviderType
-    provider_variant: Optional[str]
-    is_enabled: bool
-    source: str # "tenant" or "global"
-    updated_at: datetime
-
-class CreateProviderConfigRequest(BaseModel):
-    provider: ModelProviderType
-    provider_variant: Optional[str] = None
-    credentials: dict = Field(..., description="API Keys, Base URL, etc.")
-    is_enabled: bool = True
-
-class ProviderStatus(BaseModel):
-    provider: ModelProviderType
-    provider_variant: Optional[str]
-    is_configured: bool
-    source: Optional[str] # tenant | global
-    is_enabled: bool
-
-@router.post("/providers", response_model=ProviderConfigResponse)
-async def configure_provider(
-    request: CreateProviderConfigRequest,
-    db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
-):
-    """Set credentials for a provider."""
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    
-    # Check if exists
-    stmt = select(ProviderConfig).where(
-        ProviderConfig.tenant_id == tid,
-        ProviderConfig.provider == request.provider,
-        ProviderConfig.provider_variant == request.provider_variant
-    )
-    res = await db.execute(stmt)
-    config = res.scalar_one_or_none()
-    
-    if config:
-        # Update
-        config.credentials = request.credentials
-        config.is_enabled = request.is_enabled
-    else:
-        # Create
-        config = ProviderConfig(
-            tenant_id=tid,
-            provider=request.provider,
-            provider_variant=request.provider_variant,
-            credentials=request.credentials,
-            is_enabled=request.is_enabled
-        )
-        db.add(config)
-        
-    await db.commit()
-    await db.refresh(config)
-    
-    return ProviderConfigResponse(
-        id=config.id,
-        provider=config.provider,
-        provider_variant=config.provider_variant,
-        is_enabled=config.is_enabled,
-        source="tenant",
-        updated_at=config.updated_at
-    )
-
-@router.get("/providers", response_model=List[ProviderConfigResponse])
-async def list_configured_providers(
-    db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
-):
-    """List configured providers (masked)."""
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    
-    # Get Tenant Configs
-    stmt = select(ProviderConfig).where(ProviderConfig.tenant_id == tid)
-    res = await db.execute(stmt)
-    tenant_configs = res.scalars().all()
-    
-    # We could also show global configs that are available?
-    # For now, let's just show what the tenant has configured.
-    
-    return [
-        ProviderConfigResponse(
-            id=c.id,
-            provider=c.provider,
-            provider_variant=c.provider_variant,
-            is_enabled=c.is_enabled,
-            source="tenant",
-            updated_at=c.updated_at
-        ) for c in tenant_configs
-    ]
-
-@router.get("/providers/status", response_model=List[ProviderStatus])
-async def get_provider_status(
-    db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
-    current_user=Depends(get_current_user),
-):
-    """Check status of all known providers (Tenant > Global)."""
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    
-    # List of all relevant provider types/variants could be hardcoded or distinct from DB
-    # For now, distinct from DB is safer.
-    
-    # 1. Fetch all tenant configs
-    t_stmt = select(ProviderConfig).where(ProviderConfig.tenant_id == tid)
-    t_res = await db.execute(t_stmt)
-    t_configs = t_res.scalars().all()
-    
-    # 2. Fetch all global configs
-    g_stmt = select(ProviderConfig).where(ProviderConfig.tenant_id == None)
-    g_res = await db.execute(g_stmt)
-    g_configs = g_res.scalars().all()
-    
-    # Map (provider, variant) -> Config
-    status_map = {}
-    
-    # Process Global First
-    for c in g_configs:
-        key = (c.provider, c.provider_variant)
-        status_map[key] = ProviderStatus(
-            provider=c.provider,
-            provider_variant=c.provider_variant,
-            is_configured=True,
-            source="global",
-            is_enabled=c.is_enabled
-        )
-        
-    # Override with Tenant
-    for c in t_configs:
-        key = (c.provider, c.provider_variant)
-        status_map[key] = ProviderStatus(
-            provider=c.provider,
-            provider_variant=c.provider_variant,
-            is_configured=True,
-            source="tenant",
-            is_enabled=c.is_enabled
-        )
-        
-    return list(status_map.values())

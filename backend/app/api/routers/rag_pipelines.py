@@ -187,6 +187,45 @@ async def get_pipeline_context(
         return tenant, None, db
 
     if not tenant_slug:
+        # Prefer explicit principal tenant context when available.
+        principal_tenant_id = context.get("tenant_id") if isinstance(context, dict) else None
+        if principal_tenant_id:
+            try:
+                tenant_uuid = UUID(str(principal_tenant_id))
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid tenant context")
+
+            tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
+            tenant = tenant_result.scalar_one_or_none()
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+
+            if current_user is not None and current_user.role != "admin":
+                membership_result = await db.execute(
+                    select(OrgMembership).where(
+                        OrgMembership.tenant_id == tenant.id,
+                        OrgMembership.user_id == current_user.id,
+                    )
+                )
+                membership = membership_result.scalar_one_or_none()
+                if not membership:
+                    raise HTTPException(status_code=403, detail="Not a member of this tenant")
+            return tenant, current_user, db
+
+        # For non-admin user flows, fall back to user's first membership tenant.
+        if current_user is not None and current_user.role != "admin":
+            membership_result = await db.execute(
+                select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
+            )
+            membership = membership_result.scalar_one_or_none()
+            if not membership:
+                raise HTTPException(status_code=403, detail="Tenant context required")
+            tenant_result = await db.execute(select(Tenant).where(Tenant.id == membership.tenant_id))
+            tenant = tenant_result.scalar_one_or_none()
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            return tenant, current_user, db
+
         if current_user is None or current_user.role != "admin":
             raise HTTPException(status_code=403, detail="Tenant context required")
         return None, current_user, db

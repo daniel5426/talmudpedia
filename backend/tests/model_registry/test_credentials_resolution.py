@@ -9,7 +9,6 @@ from app.db.postgres.models.registry import (
     ModelStatus,
     IntegrationCredential,
     IntegrationCredentialCategory,
-    ProviderConfig,
 )
 from app.services.model_resolver import ModelResolver
 from app.rag.providers.embedding.openai import OpenAIEmbeddingProvider
@@ -64,12 +63,14 @@ async def test_resolve_credentials_prefers_integration_credentials(db_session):
 
 
 @pytest.mark.asyncio
-async def test_resolve_credentials_falls_back_to_provider_config(db_session):
+async def test_resolve_credentials_prefers_tenant_default_over_env_fallback(db_session, monkeypatch):
     tenant_id = uuid4()
+    provider_variant = f"tenant-{uuid4().hex[:8]}"
+    monkeypatch.setenv("OPENAI_API_KEY", "env-default-key")
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Chat",
-        slug="test-chat-legacy",
+        slug="test-chat-defaults",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         metadata_={},
@@ -77,14 +78,17 @@ async def test_resolve_credentials_falls_back_to_provider_config(db_session):
     db_session.add(model)
     await db_session.flush()
 
-    provider_config = ProviderConfig(
+    tenant_default = IntegrationCredential(
         tenant_id=tenant_id,
-        provider=ModelProviderType.OPENAI,
-        provider_variant=None,
-        credentials={"api_key": "legacy-key"},
+        category=IntegrationCredentialCategory.LLM_PROVIDER,
+        provider_key="openai",
+        provider_variant=provider_variant,
+        display_name="Tenant OpenAI Default",
+        credentials={"api_key": "tenant-default-key"},
         is_enabled=True,
+        is_default=True,
     )
-    db_session.add(provider_config)
+    db_session.add(tenant_default)
     await db_session.flush()
 
     binding = ModelProviderBinding(
@@ -93,7 +97,7 @@ async def test_resolve_credentials_falls_back_to_provider_config(db_session):
         provider=ModelProviderType.OPENAI,
         provider_model_id="gpt-4o-mini",
         priority=0,
-        config={},
+        config={"provider_variant": provider_variant},
         is_enabled=True,
     )
     db_session.add(binding)
@@ -104,8 +108,44 @@ async def test_resolve_credentials_falls_back_to_provider_config(db_session):
         binding, IntegrationCredentialCategory.LLM_PROVIDER
     )
 
-    assert api_key == "legacy-key"
-    assert payload.get("api_key") == "legacy-key"
+    assert api_key == "tenant-default-key"
+    assert payload.get("api_key") == "tenant-default-key"
+
+@pytest.mark.asyncio
+async def test_resolve_credentials_falls_back_to_env_platform_default(db_session, monkeypatch):
+    tenant_id = uuid4()
+    provider_variant = f"platform-{uuid4().hex[:8]}"
+    monkeypatch.setenv("OPENAI_API_KEY", "platform-default-key")
+    model = ModelRegistry(
+        tenant_id=tenant_id,
+        name="Test Chat",
+        slug="test-chat-platform-default",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.flush()
+
+    binding = ModelProviderBinding(
+        model_id=model.id,
+        tenant_id=tenant_id,
+        provider=ModelProviderType.OPENAI,
+        provider_model_id="gpt-4o-mini",
+        priority=0,
+        config={"provider_variant": provider_variant},
+        is_enabled=True,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    resolver = ModelResolver(db_session, tenant_id)
+    payload, api_key, _ = await resolver._resolve_provider_credentials(
+        binding, IntegrationCredentialCategory.LLM_PROVIDER
+    )
+
+    assert api_key == "platform-default-key"
+    assert payload.get("api_key") == "platform-default-key"
 
 
 @pytest.mark.asyncio

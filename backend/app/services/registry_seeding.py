@@ -17,22 +17,16 @@ from app.db.postgres.models.registry import (
 )
 from app.db.postgres.models.identity import Tenant
 from app.db.postgres.models.agents import Agent, AgentStatus
-from app.db.postgres.models.orchestration import (
-    OrchestratorPolicy,
-    OrchestratorTargetAllowlist,
-)
 from app.services.builtin_tools import BUILTIN_TEMPLATE_SPECS, is_builtin_tools_v1_enabled
+from app.services.platform_architect_contracts import (
+    PLATFORM_ARCHITECT_DOMAIN_TOOLS,
+    build_architect_graph_definition,
+    build_platform_domain_tool_schema,
+)
 
-
-ARCHITECT_ORCHESTRATION_SCOPE_SUBSET = [
-    "pipelines.catalog.read",
-    "pipelines.write",
-    "agents.write",
-    "tools.write",
-    "artifacts.write",
-    "agents.execute",
-    "agents.run_tests",
-]
+# Backward-compatible exports for tests and internal callers.
+_build_architect_graph_definition = build_architect_graph_definition
+_build_platform_domain_tool_schema = build_platform_domain_tool_schema
 
 async def seed_global_models(db):
     """
@@ -133,13 +127,9 @@ async def _normalize_tool_status_values(db):
     Align any lowercase tool status values with the uppercase ENUM literals
     used by the database. Safe for Postgres and SQLite.
     """
-    mappings = {
-        "draft": "DRAFT",
-        "published": "PUBLISHED",
-        "deprecated": "DEPRECATED",
-        "disabled": "DISABLED",
-    }
-    for old, new in mappings.items():
+    labels = await _get_enum_labels(db, "toolstatus")
+    for old in ("draft", "published", "deprecated", "disabled"):
+        new = _resolve_enum_value(labels, old)
         await db.execute(
             text("UPDATE tool_registry SET status=:new WHERE lower(status::text)=:old"),
             {"new": new, "old": old},
@@ -151,17 +141,9 @@ async def _normalize_tool_impl_values(db):
     """
     Align lowercase implementation_type values with uppercase ENUM literals.
     """
-    mappings = {
-        "internal": "INTERNAL",
-        "http": "HTTP",
-        "rag_retrieval": "RAG_RETRIEVAL",
-        "agent_call": "AGENT_CALL",
-        "function": "FUNCTION",
-        "custom": "CUSTOM",
-        "artifact": "ARTIFACT",
-        "mcp": "MCP",
-    }
-    for old, new in mappings.items():
+    labels = await _get_enum_labels(db, "toolimplementationtype")
+    for old in ("internal", "http", "rag_retrieval", "agent_call", "function", "custom", "artifact", "mcp"):
+        new = _resolve_enum_value(labels, old)
         await db.execute(
             text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type::text)=:old"),
             {"new": new, "old": old},
@@ -409,9 +391,100 @@ async def seed_builtin_tool_templates(db):
     return seeded
 
 
+async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
+    required_cols = {
+        "id",
+        "tenant_id",
+        "name",
+        "slug",
+        "description",
+        "scope",
+        "schema",
+        "config_schema",
+        "status",
+        "version",
+        "implementation_type",
+        "published_at",
+        "artifact_id",
+        "artifact_version",
+        "is_active",
+        "is_system",
+    }
+    tool_columns = await _get_table_columns(db, "tool_registry")
+    if not required_cols.issubset(tool_columns):
+        print("tool_registry missing required columns; skipping platform architect domain tool seed.")
+        return {}
+
+    seeded: dict[str, str] = {}
+    for slug, spec in PLATFORM_ARCHITECT_DOMAIN_TOOLS.items():
+        schema = build_platform_domain_tool_schema(slug, spec)
+        config_schema = {
+            "implementation": {
+                "type": "artifact",
+                "artifact_id": "builtin/platform_sdk",
+                "artifact_version": "1.0.0",
+            },
+            "execution": {
+                "allowed_actions": list(spec["actions"].keys()),
+            },
+        }
+
+        result = await db.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.slug == slug,
+                ToolRegistry.tenant_id == None,
+            )
+        )
+        tool = result.scalars().first()
+        if tool is None:
+            tool = ToolRegistry(
+                tenant_id=None,
+                name=spec["name"],
+                slug=slug,
+                description=spec["description"],
+                scope=ToolDefinitionScope.GLOBAL,
+                schema=schema,
+                config_schema=config_schema,
+                status=ToolStatus.PUBLISHED,
+                version="1.0.0",
+                implementation_type=ToolImplementationType.ARTIFACT,
+                artifact_id="builtin/platform_sdk",
+                artifact_version="1.0.0",
+                builtin_key=f"platform_architect_{slug.replace('-', '_')}",
+                builtin_template_id=None,
+                is_builtin_template=False,
+                is_active=True,
+                is_system=True,
+                published_at=datetime.utcnow(),
+            )
+            db.add(tool)
+        else:
+            tool.name = spec["name"]
+            tool.description = spec["description"]
+            tool.scope = ToolDefinitionScope.GLOBAL
+            tool.schema = schema
+            tool.config_schema = config_schema
+            tool.status = ToolStatus.PUBLISHED
+            tool.version = "1.0.0"
+            tool.implementation_type = ToolImplementationType.ARTIFACT
+            tool.artifact_id = "builtin/platform_sdk"
+            tool.artifact_version = "1.0.0"
+            tool.builtin_key = f"platform_architect_{slug.replace('-', '_')}"
+            tool.builtin_template_id = None
+            tool.is_builtin_template = False
+            tool.is_active = True
+            tool.is_system = True
+            tool.published_at = tool.published_at or datetime.utcnow()
+        await db.flush()
+        seeded[slug] = str(tool.id)
+
+    await db.commit()
+    return seeded
+
+
 async def seed_platform_architect_agent(db):
     """
-    Seeds a tenant-scoped Platform Architect orchestrator and sub-agents (multi-agent flow).
+    Seeds a tenant-scoped Platform Architect single-agent runtime (v1).
     """
     # Prevent enum mismatches when loading tool references
     await _normalize_tool_status_values(db)
@@ -423,9 +496,10 @@ async def seed_platform_architect_agent(db):
         print("No tenant found; skipping Platform Architect agent seed.")
         return None
 
-    tool_id = await _get_platform_sdk_tool_id(db)
-    if not tool_id:
-        print("Platform SDK tool missing; skipping Platform Architect agent seed.")
+    tool_ids = await seed_platform_architect_domain_tools(db)
+    expected_slugs = tuple(PLATFORM_ARCHITECT_DOMAIN_TOOLS.keys())
+    if not all(tool_ids.get(slug) for slug in expected_slugs):
+        print("Platform architect domain tools missing; skipping Platform Architect agent seed.")
         return None
 
     model_id = await _resolve_default_chat_model_id(db, tenant.id)
@@ -433,15 +507,11 @@ async def seed_platform_architect_agent(db):
         print("No chat model available; skipping Platform Architect agent seed.")
         return None
 
-    subagent_slugs = {
-        "catalog": "architect-catalog",
-        "planner": "architect-planner",
-        "builder": "architect-builder",
-        "coder": "architect-coder",
-        "tester": "architect-tester",
-    }
-
-    graph_definition = _build_architect_graph_definition(tool_id, model_id, subagent_slugs)
+    architect_tool_ids = [tool_ids[slug] for slug in expected_slugs]
+    graph_definition = build_architect_graph_definition(
+        model_id=model_id,
+        tool_ids=architect_tool_ids,
+    )
 
     agent_columns = await _get_table_columns(db, "agents")
     minimal_agent_cols = {"id", "tenant_id", "name", "slug", "description", "graph_definition"}
@@ -491,16 +561,15 @@ async def seed_platform_architect_agent(db):
             use_orm = False
 
     if use_orm:
-        subagents = await _seed_architect_subagents(db, tenant.id, model_id, tool_id, subagent_slugs)
         if agent is None:
             agent = Agent(
                 tenant_id=tenant.id,
                 name="Platform Architect",
                 slug="platform-architect",
-                description="GraphSpec v2 multi-agent orchestrator for platform architecture and draft execution.",
+                description="Dynamic single-agent platform architect runtime using Control Plane SDK domain tools.",
                 graph_definition=graph_definition,
-                tools=[],
-                referenced_tool_ids=[],
+                tools=architect_tool_ids,
+                referenced_tool_ids=architect_tool_ids,
                 status=AgentStatus.published,
                 is_active=True,
                 is_public=False,
@@ -508,27 +577,19 @@ async def seed_platform_architect_agent(db):
             db.add(agent)
         else:
             agent.name = "Platform Architect"
-            agent.description = "GraphSpec v2 multi-agent orchestrator for platform architecture and draft execution."
+            agent.description = "Dynamic single-agent platform architect runtime using Control Plane SDK domain tools."
             agent.graph_definition = graph_definition
-            agent.tools = []
-            agent.referenced_tool_ids = []
+            agent.tools = architect_tool_ids
+            agent.referenced_tool_ids = architect_tool_ids
             agent.status = AgentStatus.published
             agent.is_active = True
             agent.is_public = False
 
-        await db.flush()
-        await _seed_architect_orchestration_policy(
-            db=db,
-            tenant_id=tenant.id,
-            orchestrator=agent,
-            subagents=subagents,
-            scope_subset=ARCHITECT_ORCHESTRATION_SCOPE_SUBSET,
-        )
         await db.commit()
         return agent
 
     await db.rollback()
-    return await _seed_platform_architect_agent_legacy(db, tenant.id, graph_definition, tool_id, agent_columns)
+    return await _seed_platform_architect_agent_legacy(db, tenant.id, graph_definition, architect_tool_ids, agent_columns)
 
 
 async def _resolve_default_chat_model_id(db, tenant_id):
@@ -562,598 +623,6 @@ async def _resolve_default_chat_model_id(db, tenant_id):
     res = await db.execute(fallback_stmt)
     model = res.scalars().first()
     return str(model.id) if model else None
-
-
-def _build_architect_graph_definition(_tool_id: str, model_id: str, subagent_slugs: dict | None = None) -> dict:
-    slugs = subagent_slugs or {
-        "catalog": "architect-catalog",
-        "planner": "architect-planner",
-        "builder": "architect-builder",
-        "coder": "architect-coder",
-        "tester": "architect-tester",
-    }
-
-    instructions = (
-        "You are the Platform Architect final reporter. "
-        f"This run uses a linear staged multi-agent orchestration via GraphSpec v2 nodes. Sub-agent slugs: catalog={slugs['catalog']}, "
-        f"planner={slugs['planner']}, builder={slugs['builder']}, coder={slugs['coder']}, tester={slugs['tester']}. "
-        "Read orchestration outcomes from state._node_outputs and summarize run health, child activity, stage-by-stage results, and next draft-safe actions. "
-        "Never claim publish/promote occurred unless explicitly shown in node outputs. "
-        "Return JSON only."
-    )
-
-    output_schema = {
-        "type": "object",
-        "properties": {
-            "notes": {"type": "string"},
-            "orchestration_summary": {"type": "object"},
-            "child_run_summary": {"type": "object"},
-            "draft_assets": {"type": "object"},
-            "next_actions": {"type": "array", "items": {"type": "string"}},
-            "errors": {"type": "array", "items": {"type": "object"}},
-        },
-        "required": ["notes"],
-        "additionalProperties": True,
-    }
-
-    scope_subset = list(ARCHITECT_ORCHESTRATION_SCOPE_SUBSET)
-
-    return {
-        "spec_version": "2.0",
-        "nodes": [
-            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
-            {
-                "id": "spawn_catalog_stage",
-                "type": "spawn_group",
-                "position": {"x": 220, "y": -120},
-                "config": {
-                    "targets": [
-                        {
-                            "target_agent_slug": slugs["catalog"],
-                            "mapped_input_payload": {
-                                "messages": [
-                                    {"role": "user", "content": "Fetch and summarize platform catalog capabilities as JSON."}
-                                ],
-                                "context": {"orchestrator_stage": "catalog"},
-                            },
-                        }
-                    ],
-                    "scope_subset": scope_subset,
-                    "join_mode": "best_effort",
-                    "failure_policy": "best_effort",
-                    "timeout_s": 90,
-                    "start_background": True,
-                    "idempotency_key_prefix": "platform-architect:catalog-stage:v3",
-                },
-            },
-            {
-                "id": "join_catalog_stage",
-                "type": "join",
-                "position": {"x": 420, "y": -120},
-                "config": {
-                    "mode": "best_effort",
-                    "timeout_s": 90,
-                },
-            },
-            {
-                "id": "spawn_planner_stage",
-                "type": "spawn_group",
-                "position": {"x": 620, "y": -120},
-                "config": {
-                    "targets": [
-                        {
-                            "target_agent_slug": slugs["planner"],
-                            "mapped_input_payload": {
-                                "messages": [
-                                    {"role": "user", "content": "Produce strict plan JSON for draft-only execution."}
-                                ],
-                                "context": {"orchestrator_stage": "planner"},
-                            },
-                        }
-                    ],
-                    "scope_subset": scope_subset,
-                    "join_mode": "best_effort",
-                    "failure_policy": "best_effort",
-                    "timeout_s": 120,
-                    "start_background": True,
-                    "idempotency_key_prefix": "platform-architect:planner-stage:v3",
-                },
-            },
-            {
-                "id": "join_planner_stage",
-                "type": "join",
-                "position": {"x": 820, "y": -120},
-                "config": {
-                    "mode": "best_effort",
-                    "timeout_s": 120,
-                },
-            },
-            {
-                "id": "spawn_builder_stage",
-                "type": "spawn_group",
-                "position": {"x": 1020, "y": -120},
-                "config": {
-                    "targets": [
-                        {
-                            "target_agent_slug": slugs["builder"],
-                            "mapped_input_payload": {
-                                "messages": [
-                                    {"role": "user", "content": "Produce deploy-ready payload JSON from the plan."}
-                                ],
-                                "context": {"orchestrator_stage": "builder"},
-                            },
-                        }
-                    ],
-                    "scope_subset": scope_subset,
-                    "join_mode": "best_effort",
-                    "failure_policy": "best_effort",
-                    "timeout_s": 120,
-                    "start_background": True,
-                    "idempotency_key_prefix": "platform-architect:builder-stage:v3",
-                },
-            },
-            {
-                "id": "join_builder_stage",
-                "type": "join",
-                "position": {"x": 1220, "y": -120},
-                "config": {
-                    "mode": "best_effort",
-                    "timeout_s": 120,
-                },
-            },
-            {
-                "id": "spawn_coder_stage",
-                "type": "spawn_group",
-                "position": {"x": 1420, "y": -120},
-                "config": {
-                    "targets": [
-                        {
-                            "target_agent_slug": slugs["coder"],
-                            "mapped_input_payload": {
-                                "messages": [
-                                    {"role": "user", "content": "Draft missing artifacts/tools as JSON only."}
-                                ],
-                                "context": {"orchestrator_stage": "coder"},
-                            },
-                        }
-                    ],
-                    "scope_subset": scope_subset,
-                    "join_mode": "best_effort",
-                    "failure_policy": "best_effort",
-                    "timeout_s": 120,
-                    "start_background": True,
-                    "idempotency_key_prefix": "platform-architect:coder-stage:v3",
-                },
-            },
-            {
-                "id": "join_coder_stage",
-                "type": "join",
-                "position": {"x": 1620, "y": -120},
-                "config": {
-                    "mode": "best_effort",
-                    "timeout_s": 120,
-                },
-            },
-            {
-                "id": "spawn_tester_stage",
-                "type": "spawn_group",
-                "position": {"x": 1820, "y": -120},
-                "config": {
-                    "targets": [
-                        {
-                            "target_agent_slug": slugs["tester"],
-                            "mapped_input_payload": {
-                                "messages": [
-                                    {"role": "user", "content": "Run provided multi-case tests and return test report JSON."}
-                                ],
-                                "context": {"orchestrator_stage": "tester"},
-                            },
-                        }
-                    ],
-                    "scope_subset": scope_subset,
-                    "join_mode": "best_effort",
-                    "failure_policy": "best_effort",
-                    "timeout_s": 180,
-                    "start_background": True,
-                    "idempotency_key_prefix": "platform-architect:tester-stage:v3",
-                },
-            },
-            {
-                "id": "join_tester_stage",
-                "type": "join",
-                "position": {"x": 2020, "y": -120},
-                "config": {
-                    "mode": "best_effort",
-                    "timeout_s": 180,
-                },
-            },
-            {
-                "id": "replan_core",
-                "type": "replan",
-                "position": {"x": 2220, "y": -120},
-                "config": {},
-            },
-            {
-                "id": "spawn_replanner_stage",
-                "type": "spawn_group",
-                "position": {"x": 2420, "y": -220},
-                "config": {
-                    "targets": [
-                        {
-                            "target_agent_slug": slugs["planner"],
-                            "mapped_input_payload": {
-                                "messages": [
-                                    {"role": "user", "content": "Produce a revised plan JSON after orchestration failure."}
-                                ],
-                                "context": {"orchestrator_stage": "replan"},
-                            },
-                        }
-                    ],
-                    "scope_subset": scope_subset,
-                    "join_mode": "best_effort",
-                    "failure_policy": "best_effort",
-                    "timeout_s": 90,
-                    "start_background": True,
-                    "idempotency_key_prefix": "platform-architect:replanner-stage:v3",
-                },
-            },
-            {
-                "id": "join_replanner_stage",
-                "type": "join",
-                "position": {"x": 2620, "y": -220},
-                "config": {
-                    "mode": "best_effort",
-                    "timeout_s": 90,
-                },
-            },
-            {
-                "id": "cancel_subtree",
-                "type": "cancel_subtree",
-                "position": {"x": 2820, "y": -120},
-                "config": {
-                    "include_root": False,
-                    "reason": "platform_architect_orchestration_cleanup",
-                },
-            },
-            {
-                "id": "final_report",
-                "type": "agent",
-                "position": {"x": 3020, "y": -120},
-                "config": {
-                    "name": "Platform Architect Final Report",
-                    "model_id": model_id,
-                    "instructions": instructions,
-                    "include_chat_history": True,
-                    "reasoning_effort": "medium",
-                    "output_format": "json",
-                    "output_schema": output_schema,
-                    "write_output_to_context": True,
-                },
-            },
-            {"id": "end", "type": "end", "position": {"x": 3220, "y": -120}, "config": {"output_variable": "context"}},
-        ],
-        "edges": [
-            {"id": "e1", "source": "start", "target": "spawn_catalog_stage", "type": "control"},
-            {"id": "e2", "source": "spawn_catalog_stage", "target": "join_catalog_stage", "type": "control"},
-            {"id": "e3", "source": "join_catalog_stage", "target": "spawn_planner_stage", "type": "control", "source_handle": "completed"},
-            {"id": "e4", "source": "join_catalog_stage", "target": "spawn_planner_stage", "type": "control", "source_handle": "completed_with_errors"},
-            {"id": "e5", "source": "join_catalog_stage", "target": "spawn_planner_stage", "type": "control", "source_handle": "failed"},
-            {"id": "e6", "source": "join_catalog_stage", "target": "spawn_planner_stage", "type": "control", "source_handle": "timed_out"},
-            {"id": "e7", "source": "join_catalog_stage", "target": "join_catalog_stage", "type": "control", "source_handle": "pending"},
-            {"id": "e8", "source": "spawn_planner_stage", "target": "join_planner_stage", "type": "control"},
-            {"id": "e9", "source": "join_planner_stage", "target": "spawn_builder_stage", "type": "control", "source_handle": "completed"},
-            {"id": "e10", "source": "join_planner_stage", "target": "spawn_builder_stage", "type": "control", "source_handle": "completed_with_errors"},
-            {"id": "e11", "source": "join_planner_stage", "target": "spawn_builder_stage", "type": "control", "source_handle": "failed"},
-            {"id": "e12", "source": "join_planner_stage", "target": "spawn_builder_stage", "type": "control", "source_handle": "timed_out"},
-            {"id": "e13", "source": "join_planner_stage", "target": "join_planner_stage", "type": "control", "source_handle": "pending"},
-            {"id": "e14", "source": "spawn_builder_stage", "target": "join_builder_stage", "type": "control"},
-            {"id": "e15", "source": "join_builder_stage", "target": "spawn_coder_stage", "type": "control", "source_handle": "completed"},
-            {"id": "e16", "source": "join_builder_stage", "target": "spawn_coder_stage", "type": "control", "source_handle": "completed_with_errors"},
-            {"id": "e17", "source": "join_builder_stage", "target": "spawn_coder_stage", "type": "control", "source_handle": "failed"},
-            {"id": "e18", "source": "join_builder_stage", "target": "spawn_coder_stage", "type": "control", "source_handle": "timed_out"},
-            {"id": "e19", "source": "join_builder_stage", "target": "join_builder_stage", "type": "control", "source_handle": "pending"},
-            {"id": "e20", "source": "spawn_coder_stage", "target": "join_coder_stage", "type": "control"},
-            {"id": "e21", "source": "join_coder_stage", "target": "spawn_tester_stage", "type": "control", "source_handle": "completed"},
-            {"id": "e22", "source": "join_coder_stage", "target": "spawn_tester_stage", "type": "control", "source_handle": "completed_with_errors"},
-            {"id": "e23", "source": "join_coder_stage", "target": "spawn_tester_stage", "type": "control", "source_handle": "failed"},
-            {"id": "e24", "source": "join_coder_stage", "target": "spawn_tester_stage", "type": "control", "source_handle": "timed_out"},
-            {"id": "e25", "source": "join_coder_stage", "target": "join_coder_stage", "type": "control", "source_handle": "pending"},
-            {"id": "e26", "source": "spawn_tester_stage", "target": "join_tester_stage", "type": "control"},
-            {"id": "e27", "source": "join_tester_stage", "target": "replan_core", "type": "control", "source_handle": "completed"},
-            {"id": "e28", "source": "join_tester_stage", "target": "replan_core", "type": "control", "source_handle": "completed_with_errors"},
-            {"id": "e29", "source": "join_tester_stage", "target": "replan_core", "type": "control", "source_handle": "failed"},
-            {"id": "e30", "source": "join_tester_stage", "target": "replan_core", "type": "control", "source_handle": "timed_out"},
-            {"id": "e31", "source": "join_tester_stage", "target": "join_tester_stage", "type": "control", "source_handle": "pending"},
-            {"id": "e32", "source": "replan_core", "target": "spawn_replanner_stage", "type": "control", "source_handle": "replan"},
-            {"id": "e33", "source": "replan_core", "target": "final_report", "type": "control", "source_handle": "continue"},
-            {"id": "e34", "source": "spawn_replanner_stage", "target": "join_replanner_stage", "type": "control"},
-            {"id": "e35", "source": "join_replanner_stage", "target": "cancel_subtree", "type": "control", "source_handle": "completed"},
-            {"id": "e36", "source": "join_replanner_stage", "target": "cancel_subtree", "type": "control", "source_handle": "completed_with_errors"},
-            {"id": "e37", "source": "join_replanner_stage", "target": "cancel_subtree", "type": "control", "source_handle": "failed"},
-            {"id": "e38", "source": "join_replanner_stage", "target": "cancel_subtree", "type": "control", "source_handle": "timed_out"},
-            {"id": "e39", "source": "join_replanner_stage", "target": "join_replanner_stage", "type": "control", "source_handle": "pending"},
-            {"id": "e40", "source": "cancel_subtree", "target": "final_report", "type": "control"},
-            {"id": "e41", "source": "final_report", "target": "end", "type": "control"},
-        ],
-    }
-
-
-def _build_architect_subagent_graph(
-    model_id: str,
-    instructions: str,
-    output_schema: dict | None = None,
-    tools: list | None = None,
-) -> dict:
-    config = {
-        "name": "Architect Sub-Agent",
-        "model_id": model_id,
-        "instructions": instructions,
-        "include_chat_history": True,
-        "reasoning_effort": "medium",
-        "output_format": "json",
-        "write_output_to_context": True,
-    }
-    if output_schema:
-        config["output_schema"] = output_schema
-    if tools:
-        config["tools"] = tools
-
-    return {
-        "nodes": [
-            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
-            {"id": "agent", "type": "agent", "position": {"x": 200, "y": 0}, "config": config},
-            {"id": "end", "type": "end", "position": {"x": 400, "y": 0}, "config": {"output_variable": "context"}},
-        ],
-        "edges": [
-            {"id": "e1", "source": "start", "target": "agent", "type": "control"},
-            {"id": "e2", "source": "agent", "target": "end", "type": "control"},
-        ],
-    }
-
-
-def _build_architect_subagent_specs(tool_id: str, model_id: str, slugs: dict) -> list[dict]:
-    catalog_schema = {
-        "type": "object",
-        "properties": {"catalog": {"type": "object"}, "notes": {"type": "string"}},
-        "required": ["catalog"],
-        "additionalProperties": True,
-    }
-    planner_schema = {
-        "type": "object",
-        "properties": {
-            "intent": {"type": "string"},
-            "actions": {"type": "array", "items": {"type": "object"}},
-            "tests": {"type": "array", "items": {"type": "object"}},
-        },
-        "required": ["actions"],
-        "additionalProperties": True,
-    }
-    builder_schema = {
-        "type": "object",
-        "properties": {
-            "actions": {"type": "array", "items": {"type": "object"}},
-            "notes": {"type": "string"},
-        },
-        "required": ["actions"],
-        "additionalProperties": True,
-    }
-    coder_schema = {
-        "type": "object",
-        "properties": {
-            "artifacts": {"type": "array", "items": {"type": "object"}},
-            "tools": {"type": "array", "items": {"type": "object"}},
-            "notes": {"type": "string"},
-        },
-        "additionalProperties": True,
-    }
-    tester_schema = {
-        "type": "object",
-        "properties": {
-            "tests": {"type": "array", "items": {"type": "object"}},
-            "summary": {"type": "object"},
-        },
-        "additionalProperties": True,
-    }
-
-    return [
-        {
-            "slug": slugs["catalog"],
-            "name": "Architect Catalog",
-            "description": "Catalog/Introspector sub-agent for the Platform Architect.",
-            "tools": [tool_id],
-            "graph_definition": _build_architect_subagent_graph(
-                model_id=model_id,
-                instructions=(
-                    "You are the Catalog/Introspector. Use the Platform SDK tool to call action \"fetch_catalog\" "
-                    "exactly once and summarize available RAG/Agent capabilities. Do not call fetch_catalog repeatedly. "
-                    "If fetch fails once, return an error JSON and stop. Return JSON with key \"catalog\" and optional notes. "
-                    "Output JSON only."
-                ),
-                output_schema=catalog_schema,
-                tools=[tool_id],
-            ),
-        },
-        {
-            "slug": slugs["planner"],
-            "name": "Architect Planner",
-            "description": "Planner sub-agent producing Plan JSON for the Platform Architect.",
-            "tools": [],
-            "graph_definition": _build_architect_subagent_graph(
-                model_id=model_id,
-                instructions=(
-                    "You are the Planner. Produce a strict Plan JSON with actions and tests. "
-                    "Use action types: create_artifact_draft, promote_artifact, create_tool, deploy_agent, deploy_rag_pipeline, run_tests. "
-                    "Output JSON only."
-                ),
-                output_schema=planner_schema,
-            ),
-        },
-        {
-            "slug": slugs["builder"],
-            "name": "Architect Builder",
-            "description": "Builder sub-agent producing deploy payloads for agents and pipelines.",
-            "tools": [],
-            "graph_definition": _build_architect_subagent_graph(
-                model_id=model_id,
-                instructions=(
-                    "You are the Builder. Convert Plan actions into executable payloads for deploy_agent and deploy_rag_pipeline. "
-                    "Return JSON with key \"actions\" containing ready-to-execute payloads. Output JSON only."
-                ),
-                output_schema=builder_schema,
-            ),
-        },
-        {
-            "slug": slugs["coder"],
-            "name": "Architect Coder",
-            "description": "Coder sub-agent drafting artifacts and tools for missing capabilities.",
-            "tools": [],
-            "graph_definition": _build_architect_subagent_graph(
-                model_id=model_id,
-                instructions=(
-                    "You are the Coder. Draft artifact/tool definitions for missing capabilities. "
-                    "Return JSON with keys \"artifacts\" and \"tools\". Output JSON only."
-                ),
-                output_schema=coder_schema,
-            ),
-        },
-        {
-            "slug": slugs["tester"],
-            "name": "Architect Tester",
-            "description": "Tester sub-agent executing multi-case tests via the Platform SDK tool.",
-            "tools": [tool_id],
-            "graph_definition": _build_architect_subagent_graph(
-                model_id=model_id,
-                instructions=(
-                    "You are the Tester. Use the Platform SDK tool action \"run_tests\" to execute the provided test suite. "
-                    "Return the test report JSON. Output JSON only."
-                ),
-                output_schema=tester_schema,
-                tools=[tool_id],
-            ),
-        },
-    ]
-
-
-async def _seed_architect_subagents(db, tenant_id, model_id, tool_id, slugs: dict) -> dict[str, Agent]:
-    specs = _build_architect_subagent_specs(tool_id, model_id, slugs)
-    seeded: dict[str, Agent] = {}
-    for spec in specs:
-        slug = spec["slug"]
-        tools = spec.get("tools") or []
-        result = await db.execute(
-            select(Agent).where(Agent.slug == slug, Agent.tenant_id == tenant_id)
-        )
-        agent = result.scalar_one_or_none()
-        if agent is None:
-            agent = Agent(
-                tenant_id=tenant_id,
-                name=spec["name"],
-                slug=slug,
-                description=spec["description"],
-                graph_definition=spec["graph_definition"],
-                tools=tools,
-                referenced_tool_ids=tools,
-                status=AgentStatus.published,
-                is_active=True,
-                is_public=False,
-            )
-            db.add(agent)
-        else:
-            agent.name = spec["name"]
-            agent.description = spec["description"]
-            agent.graph_definition = spec["graph_definition"]
-            agent.tools = tools
-            agent.referenced_tool_ids = tools
-            agent.status = AgentStatus.published
-            agent.is_active = True
-            agent.is_public = False
-        seeded[slug] = agent
-
-    await db.flush()
-    return seeded
-
-
-async def _seed_architect_orchestration_policy(
-    *,
-    db,
-    tenant_id,
-    orchestrator: Agent,
-    subagents: dict[str, Agent],
-    scope_subset: list[str],
-) -> None:
-    policy_columns = await _get_table_columns(db, "orchestrator_policies")
-    allowlist_columns = await _get_table_columns(db, "orchestrator_target_allowlists")
-    if not policy_columns or not allowlist_columns:
-        print("Orchestration policy tables are missing; skipping Platform Architect policy seed.")
-        return
-
-    policy_res = await db.execute(
-        select(OrchestratorPolicy).where(
-            OrchestratorPolicy.tenant_id == tenant_id,
-            OrchestratorPolicy.orchestrator_agent_id == orchestrator.id,
-        )
-    )
-    policy = policy_res.scalar_one_or_none()
-    if policy is None:
-        policy = OrchestratorPolicy(
-            tenant_id=tenant_id,
-            orchestrator_agent_id=orchestrator.id,
-            is_active=True,
-            enforce_published_only=True,
-            default_failure_policy="best_effort",
-            max_depth=8,
-            max_fanout=8,
-            max_children_total=32,
-            join_timeout_s=180,
-            allowed_scope_subset=list(scope_subset),
-            capability_manifest_version=2,
-        )
-        db.add(policy)
-    else:
-        policy.is_active = True
-        policy.enforce_published_only = True
-        policy.default_failure_policy = "best_effort"
-        policy.max_depth = 8
-        policy.max_fanout = 8
-        policy.max_children_total = 32
-        policy.join_timeout_s = 180
-        policy.allowed_scope_subset = list(scope_subset)
-        policy.capability_manifest_version = 2
-
-    await db.flush()
-
-    expected_targets = {
-        slug: agent
-        for slug, agent in (subagents or {}).items()
-        if agent is not None
-    }
-    for slug, target in expected_targets.items():
-        entry_res = await db.execute(
-            select(OrchestratorTargetAllowlist).where(
-                OrchestratorTargetAllowlist.tenant_id == tenant_id,
-                OrchestratorTargetAllowlist.orchestrator_agent_id == orchestrator.id,
-                or_(
-                    OrchestratorTargetAllowlist.target_agent_id == target.id,
-                    OrchestratorTargetAllowlist.target_agent_slug == slug,
-                ),
-            )
-        )
-        entry = entry_res.scalar_one_or_none()
-        if entry is None:
-            entry = OrchestratorTargetAllowlist(
-                tenant_id=tenant_id,
-                orchestrator_agent_id=orchestrator.id,
-                target_agent_id=target.id,
-                target_agent_slug=slug,
-                is_active=True,
-            )
-            db.add(entry)
-        else:
-            entry.target_agent_id = target.id
-            entry.target_agent_slug = slug
-            entry.is_active = True
-
-    await db.flush()
 
 
 async def _get_table_columns(db, table_name: str) -> set:
@@ -1273,7 +742,7 @@ async def _seed_platform_architect_agent_legacy(
     db,
     tenant_id,
     graph_definition: dict,
-    tool_id: str,
+    tool_ids: list[str],
     columns: set,
 ):
     slug = "platform-architect"
@@ -1299,8 +768,8 @@ async def _seed_platform_architect_agent_legacy(
         "slug": slug,
         "description": description,
         "graph_definition": graph_definition,
-        "tools": [],
-        "referenced_tool_ids": [],
+        "tools": list(tool_ids or []),
+        "referenced_tool_ids": list(tool_ids or []),
         "status": "published",
         "is_active": True,
         "is_public": False,

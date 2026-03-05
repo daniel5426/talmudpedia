@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Optional
+from uuid import UUID
+
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.db.postgres.models.agent_threads import (
+    AgentThread,
+    AgentThreadStatus,
+    AgentThreadSurface,
+    AgentThreadTurn,
+    AgentThreadTurnStatus,
+)
+
+
+class ThreadAccessError(Exception):
+    pass
+
+
+@dataclass
+class ThreadResolveResult:
+    thread: AgentThread
+    created: bool
+
+
+class ThreadService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    @staticmethod
+    def _derive_title(*, input_text: Optional[str], fallback: str = "New Thread") -> str:
+        text = (input_text or "").strip()
+        if not text:
+            return fallback
+        return text[:120]
+
+    async def resolve_or_create_thread(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: Optional[UUID],
+        agent_id: Optional[UUID],
+        published_app_id: Optional[UUID],
+        surface: AgentThreadSurface,
+        thread_id: Optional[UUID],
+        input_text: Optional[str],
+    ) -> ThreadResolveResult:
+        if thread_id is not None:
+            thread = await self.db.get(AgentThread, thread_id)
+            if thread is None or thread.tenant_id != tenant_id:
+                raise ThreadAccessError("Thread not found")
+            if thread.status == AgentThreadStatus.archived:
+                raise ThreadAccessError("Thread is archived")
+            if published_app_id is not None and thread.published_app_id != published_app_id:
+                raise ThreadAccessError("Thread scope mismatch")
+            if thread.user_id is not None and user_id is not None and thread.user_id != user_id:
+                raise ThreadAccessError("Thread ownership mismatch")
+            return ThreadResolveResult(thread=thread, created=False)
+
+        thread = AgentThread(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            published_app_id=published_app_id,
+            surface=surface,
+            status=AgentThreadStatus.active,
+            title=self._derive_title(input_text=input_text),
+            last_activity_at=datetime.now(timezone.utc),
+        )
+        self.db.add(thread)
+        await self.db.flush()
+        return ThreadResolveResult(thread=thread, created=True)
+
+    async def start_turn(
+        self,
+        *,
+        thread_id: UUID,
+        run_id: UUID,
+        user_input_text: Optional[str],
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> AgentThreadTurn:
+        existing_result = await self.db.execute(
+            select(AgentThreadTurn).where(AgentThreadTurn.run_id == run_id).limit(1)
+        )
+        existing = existing_result.scalar_one_or_none()
+        if existing is not None:
+            return existing
+
+        thread = await self.db.get(AgentThread, thread_id)
+        if thread is None:
+            raise ThreadAccessError("Thread not found")
+        max_index = (
+            await self.db.execute(
+                select(func.coalesce(func.max(AgentThreadTurn.turn_index), -1)).where(AgentThreadTurn.thread_id == thread_id)
+            )
+        ).scalar()
+        next_index = int(max_index or -1) + 1
+        turn = AgentThreadTurn(
+            thread_id=thread_id,
+            run_id=run_id,
+            turn_index=next_index,
+            user_input_text=user_input_text,
+            status=AgentThreadTurnStatus.running,
+            metadata_=(metadata or {}),
+        )
+        thread.last_activity_at = datetime.now(timezone.utc)
+        thread.last_run_id = run_id
+        self.db.add(turn)
+        await self.db.flush()
+        return turn
+
+    async def complete_turn(
+        self,
+        *,
+        run_id: UUID,
+        status: AgentThreadTurnStatus,
+        assistant_output_text: Optional[str],
+        usage_tokens: int,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> Optional[AgentThreadTurn]:
+        result = await self.db.execute(
+            select(AgentThreadTurn).where(AgentThreadTurn.run_id == run_id).with_for_update().limit(1)
+        )
+        turn = result.scalar_one_or_none()
+        if turn is None:
+            return None
+        turn.status = status
+        turn.assistant_output_text = assistant_output_text
+        turn.usage_tokens = max(0, int(usage_tokens or 0))
+        turn.completed_at = datetime.now(timezone.utc)
+        if metadata:
+            current = dict(turn.metadata_ or {})
+            current.update(metadata)
+            turn.metadata_ = current
+
+        thread = await self.db.get(AgentThread, turn.thread_id)
+        if thread is not None:
+            thread.last_activity_at = datetime.now(timezone.utc)
+            thread.last_run_id = run_id
+            if not thread.title:
+                thread.title = self._derive_title(input_text=turn.user_input_text)
+        return turn
+
+    async def list_threads(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: Optional[UUID] = None,
+        published_app_id: Optional[UUID] = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[AgentThread], int]:
+        base = select(AgentThread).where(AgentThread.tenant_id == tenant_id)
+        if user_id is not None:
+            base = base.where(AgentThread.user_id == user_id)
+        if published_app_id is not None:
+            base = base.where(AgentThread.published_app_id == published_app_id)
+        count = (
+            await self.db.execute(
+                select(func.count()).select_from(base.subquery())
+            )
+        ).scalar() or 0
+        rows = (
+            await self.db.execute(
+                base.order_by(AgentThread.last_activity_at.desc().nullslast(), AgentThread.updated_at.desc())
+                .offset(max(0, int(skip)))
+                .limit(max(1, int(limit)))
+            )
+        ).scalars().all()
+        return list(rows), int(count)
+
+    async def get_thread_with_turns(
+        self,
+        *,
+        tenant_id: UUID,
+        thread_id: UUID,
+        user_id: Optional[UUID] = None,
+        published_app_id: Optional[UUID] = None,
+    ) -> Optional[AgentThread]:
+        query = (
+            select(AgentThread)
+            .where(and_(AgentThread.id == thread_id, AgentThread.tenant_id == tenant_id))
+            .options(selectinload(AgentThread.turns))
+            .limit(1)
+        )
+        thread = (await self.db.execute(query)).scalar_one_or_none()
+        if thread is None:
+            return None
+        if user_id is not None and thread.user_id is not None and thread.user_id != user_id:
+            return None
+        if published_app_id is not None and thread.published_app_id != published_app_id:
+            return None
+        return thread
+
+    async def delete_threads(self, *, tenant_id: UUID, thread_ids: list[UUID]) -> int:
+        if not thread_ids:
+            return 0
+        result = await self.db.execute(
+            select(AgentThread).where(
+                and_(AgentThread.tenant_id == tenant_id, AgentThread.id.in_(thread_ids))
+            )
+        )
+        rows = list(result.scalars().all())
+        for row in rows:
+            await self.db.delete(row)
+        await self.db.flush()
+        return len(rows)

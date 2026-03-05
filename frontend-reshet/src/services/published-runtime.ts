@@ -122,7 +122,7 @@ export const publishedRuntimeService = {
 
   async getPreviewRuntime(revisionId: string, token: string): Promise<PreviewRuntimeDescriptor> {
     return runtimeRequest<PreviewRuntimeDescriptor>(
-      `/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime?preview_token=${encodeURIComponent(token)}`,
+      `/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime`,
       { token },
     );
   },
@@ -172,7 +172,7 @@ export const publishedRuntimeService = {
 
   async streamChat(
     appSlug: string,
-    payload: { input?: string; messages?: Array<Record<string, unknown>>; chat_id?: string; context?: Record<string, unknown> },
+    payload: { input?: string; messages?: Array<Record<string, unknown>>; thread_id?: string; context?: Record<string, unknown> },
     token?: string,
   ): Promise<Response> {
     const headers: Record<string, string> = {

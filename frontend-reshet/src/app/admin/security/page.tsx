@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react"
 import { useTenant } from "@/contexts/TenantContext"
 import { useDirection } from "@/components/direction-provider"
 import { cn } from "@/lib/utils"
-import { rbacService, Role, RoleAssignment, Permission } from "@/services/rbac"
+import { rbacService, Role, RoleAssignment, ScopeCatalog } from "@/services/rbac"
 import { orgUnitsService, OrgUnit } from "@/services/org-units"
 import {
   workloadSecurityService,
@@ -62,9 +62,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
-const RESOURCE_TYPES = ["index", "pipeline", "job", "org_unit", "role", "membership", "audit"]
-const ACTIONS = ["read", "write", "delete", "execute", "admin"]
-
 export default function SecurityPage() {
   const { currentTenant } = useTenant()
   const { direction } = useDirection()
@@ -72,6 +69,7 @@ export default function SecurityPage() {
   const [roles, setRoles] = useState<Role[]>([])
   const [assignments, setAssignments] = useState<RoleAssignment[]>([])
   const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([])
+  const [scopeCatalog, setScopeCatalog] = useState<ScopeCatalog | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isWorkloadLoading, setIsWorkloadLoading] = useState(true)
   const [searchRoles, setSearchRoles] = useState("")
@@ -90,12 +88,12 @@ export default function SecurityPage() {
   const [isRoleDialogOpen, setIsRoleDialogOpen] = useState(false)
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
-  const [newRoleData, setNewRoleData] = useState<{ name: string; description: string; permissions: Permission[] }>({
+  const [newRoleData, setNewRoleData] = useState<{ name: string; description: string; permissions: string[] }>({
     name: "",
     description: "",
     permissions: []
   })
-  const [editRoleData, setEditRoleData] = useState<{ id: string; name: string; description: string; permissions: Permission[] }>({
+  const [editRoleData, setEditRoleData] = useState<{ id: string; name: string; description: string; permissions: string[] }>({
     id: "",
     name: "",
     description: "",
@@ -117,9 +115,11 @@ export default function SecurityPage() {
         rbacService.listRoleAssignments(currentTenant.slug),
         orgUnitsService.listOrgUnits(currentTenant.slug)
       ])
+      const catalog = await rbacService.getScopeCatalog(currentTenant.slug)
       setRoles(rolesData)
       setAssignments(assignmentsData)
       setOrgUnits(unitsData)
+      setScopeCatalog(catalog)
     } catch (error) {
       console.error("Failed to fetch security data", error)
     } finally {
@@ -249,35 +249,35 @@ export default function SecurityPage() {
     }
   }
 
-  const togglePermission = (res: string, action: string) => {
+  const togglePermission = (scope: string) => {
     setNewRoleData(prev => {
-      const exists = prev.permissions.some(p => p.resource_type === res && p.action === action)
+      const exists = prev.permissions.includes(scope)
       if (exists) {
         return {
           ...prev,
-          permissions: prev.permissions.filter(p => !(p.resource_type === res && p.action === action))
+          permissions: prev.permissions.filter(p => p !== scope)
         }
       } else {
         return {
           ...prev,
-          permissions: [...prev.permissions, { resource_type: res, action: action }]
+          permissions: [...prev.permissions, scope]
         }
       }
     })
   }
 
-  const toggleEditPermission = (res: string, action: string) => {
+  const toggleEditPermission = (scope: string) => {
     setEditRoleData(prev => {
-      const exists = prev.permissions.some(p => p.resource_type === res && p.action === action)
+      const exists = prev.permissions.includes(scope)
       if (exists) {
         return {
           ...prev,
-          permissions: prev.permissions.filter(p => !(p.resource_type === res && p.action === action))
+          permissions: prev.permissions.filter(p => p !== scope)
         }
       } else {
         return {
           ...prev,
-          permissions: [...prev.permissions, { resource_type: res, action: action }]
+          permissions: [...prev.permissions, scope]
         }
       }
     })
@@ -919,19 +919,19 @@ export default function SecurityPage() {
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-muted-foreground">Permissions</Label>
               <div className="grid grid-cols-1 gap-2 max-h-64 overflow-auto pr-1">
-                {RESOURCE_TYPES.map(res => (
-                  <div key={res} className="rounded-lg border border-border/50 p-3">
+                {Object.entries(scopeCatalog?.groups || {}).map(([group, scopes]) => (
+                  <div key={group} className="rounded-lg border border-border/50 p-3">
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-2">
-                      {res}
+                      {group}
                     </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                      {ACTIONS.map(action => (
-                        <label key={`${res}-${action}`} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                      {scopes.map((scope) => (
+                        <label key={scope} className="flex items-center gap-1.5 text-xs cursor-pointer">
                           <Checkbox
-                            checked={newRoleData.permissions.some(p => p.resource_type === res && p.action === action)}
-                            onCheckedChange={() => togglePermission(res, action)}
+                            checked={newRoleData.permissions.includes(scope)}
+                            onCheckedChange={() => togglePermission(scope)}
                           />
-                          <span className="text-muted-foreground">{action}</span>
+                          <span className="text-muted-foreground">{scope}</span>
                         </label>
                       ))}
                     </div>
@@ -1082,19 +1082,19 @@ export default function SecurityPage() {
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-muted-foreground">Permissions</Label>
               <div className="grid grid-cols-1 gap-2 max-h-64 overflow-auto pr-1">
-                {RESOURCE_TYPES.map(res => (
-                  <div key={res} className="rounded-lg border border-border/50 p-3">
+                {Object.entries(scopeCatalog?.groups || {}).map(([group, scopes]) => (
+                  <div key={group} className="rounded-lg border border-border/50 p-3">
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-2">
-                      {res}
+                      {group}
                     </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                      {ACTIONS.map(action => (
-                        <label key={`${res}-${action}`} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                      {scopes.map((scope) => (
+                        <label key={scope} className="flex items-center gap-1.5 text-xs cursor-pointer">
                           <Checkbox
-                            checked={editRoleData.permissions.some(p => p.resource_type === res && p.action === action)}
-                            onCheckedChange={() => toggleEditPermission(res, action)}
+                            checked={editRoleData.permissions.includes(scope)}
+                            onCheckedChange={() => toggleEditPermission(scope)}
                           />
-                          <span className="text-muted-foreground">{action}</span>
+                          <span className="text-muted-foreground">{scope}</span>
                         </label>
                       ))}
                     </div>

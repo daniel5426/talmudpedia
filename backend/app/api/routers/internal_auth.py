@@ -12,7 +12,7 @@ from app.api.dependencies import get_current_principal
 from app.db.postgres.session import get_db
 from app.db.postgres.models.security import WorkloadPrincipalType
 from app.services.workload_identity_service import WorkloadIdentityService
-from app.services.delegation_service import DelegationService
+from app.services.delegation_service import DelegationService, DelegationPolicyError
 from app.services.token_broker_service import TokenBrokerService
 from app.core.workload_jwt import get_workload_jwks
 
@@ -77,6 +77,15 @@ async def create_delegation_grant(
     else:
         if not request.principal_slug:
             raise HTTPException(status_code=400, detail="principal_id or principal_slug is required")
+        principal_slug = str(request.principal_slug or "").strip().lower()
+        if request.principal_type == WorkloadPrincipalType.AGENT or principal_slug.startswith("agent:"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "WORKLOAD_PRINCIPAL_MISSING",
+                    "message": "Agent workload principal must be provisioned before runtime grant creation",
+                },
+            )
         principal = await identity.ensure_principal(
             tenant_id=request.tenant_id,
             slug=request.principal_slug,
@@ -88,13 +97,22 @@ async def create_delegation_grant(
         )
 
     delegation = DelegationService(db)
-    grant, approval_required = await delegation.create_delegation_grant(
-        tenant_id=request.tenant_id,
-        principal_id=principal.id,
-        initiator_user_id=initiator_user_id,
-        requested_scopes=request.requested_scopes,
-        run_id=request.run_id,
-    )
+    try:
+        grant, approval_required = await delegation.create_delegation_grant(
+            tenant_id=request.tenant_id,
+            principal_id=principal.id,
+            initiator_user_id=initiator_user_id,
+            requested_scopes=request.requested_scopes,
+            run_id=request.run_id,
+        )
+    except DelegationPolicyError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": exc.code,
+                "message": exc.message,
+            },
+        ) from exc
     await db.commit()
 
     return DelegationGrantCreateResponse(
@@ -128,7 +146,13 @@ async def mint_workload_token(
             scope_subset=request.scope_subset,
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "INSUFFICIENT_APPROVED_SCOPES",
+                "message": str(exc),
+            },
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

@@ -1,7 +1,7 @@
 # Tools Overview
 
 Date: 2026-02-03
-Last Updated: 2026-02-15
+Last Updated: 2026-02-22
 
 This document describes the full Tools domain in the app: data model, APIs, execution flow, UI, and tests. It reflects the current architecture after removing built-in template/instance behavior from runtime and introducing first-class `agent_call`.
 
@@ -170,7 +170,7 @@ Backend-only execution metadata used by the Agent tool loop:
   - `function_call`
   - `mcp_call`
   - `web_fetch` (allow-any-URL policy in v1)
-  - `web_search` (provider interface, Serper first)
+  - `web_search` (provider interface, `serper` / `tavily` / `exa`)
   - `json_transform`
   - `datetime_utils`
 
@@ -187,17 +187,16 @@ Backend-only execution metadata used by the Agent tool loop:
 `web_search` uses a single credential strategy with clear precedence:
 1. `config_schema.implementation.api_key` (explicit per-tool override)
 2. `config_schema.implementation.credentials_ref` (tool-linked credential)
-3. Tenant Settings credential lookup:
-   - `category = custom`
-   - preferred: `provider_key = web_search`, `provider_variant = serper`
-   - accepted fallback: `provider_key = serper`
+3. Integration credential default lookup:
+   - `category = tool_provider`
+   - `provider_key = <serper|tavily|exa>`
    - credential payload keys: `api_key` (preferred) or `token`; optional `endpoint`
-4. Environment fallback for platform default:
-   - `SERPER_API_KEY`
+4. Environment fallback for bootstrap reliability:
+   - `SERPER_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` (provider-specific)
 
 Recommended production posture:
-- Set `SERPER_API_KEY` once at platform/runtime level for out-of-box tenant behavior.
-- Let tenants override with their own key via Settings credentials.
+- Keep platform tool-provider defaults in env vars (`SERPER_API_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY`).
+- Let tenants override with tenant-scoped credentials and default selection in Settings.
 - Avoid hardcoding provider secrets directly in tool definitions unless explicitly required.
 
 ### Agent Call Tools

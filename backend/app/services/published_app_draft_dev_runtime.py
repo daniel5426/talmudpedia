@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -8,20 +9,25 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.core.security import create_published_app_draft_dev_token
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
+    PublishedAppPublishJob,
+    PublishedAppPublishJobStatus,
     PublishedAppRevision,
 )
 from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientError,
 )
+from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
 
 
 LOCKFILE_PATHS = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock")
@@ -100,10 +106,34 @@ class PublishedAppDraftDevRuntimeService:
         )
 
     @staticmethod
+    def _is_timeout_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "readtimeout" in message or "timed out" in message
+
+    @staticmethod
     def _mark_session_error(session: PublishedAppDraftDevSession, exc: Exception) -> PublishedAppDraftDevSession:
         session.status = PublishedAppDraftDevSessionStatus.error
         session.last_error = str(exc)
         return session
+
+    @staticmethod
+    def _draft_session_load_only_options():
+        return load_only(
+            PublishedAppDraftDevSession.id,
+            PublishedAppDraftDevSession.published_app_id,
+            PublishedAppDraftDevSession.user_id,
+            PublishedAppDraftDevSession.revision_id,
+            PublishedAppDraftDevSession.status,
+            PublishedAppDraftDevSession.sandbox_id,
+            PublishedAppDraftDevSession.preview_url,
+            PublishedAppDraftDevSession.idle_timeout_seconds,
+            PublishedAppDraftDevSession.expires_at,
+            PublishedAppDraftDevSession.last_activity_at,
+            PublishedAppDraftDevSession.dependency_hash,
+            PublishedAppDraftDevSession.last_error,
+            PublishedAppDraftDevSession.created_at,
+            PublishedAppDraftDevSession.updated_at,
+        )
 
     async def _start_session_runtime(
         self,
@@ -126,18 +156,33 @@ class PublishedAppDraftDevRuntimeService:
             user_id=str(user_id),
             session_id=str(session.id),
         )
-        started = await self.client.start_session(
-            session_id=str(session.id),
-            tenant_id=str(app.tenant_id),
-            app_id=str(app.id),
-            user_id=str(user_id),
-            revision_id=str(revision.id),
-            entry_file=entry_value,
-            files=files_payload,
-            idle_timeout_seconds=self.settings.idle_timeout_seconds,
-            dependency_hash=dependency_hash,
-            draft_dev_token=token,
-        )
+        last_exc: PublishedAppDraftDevRuntimeClientError | None = None
+        started: dict[str, object] | None = None
+        for attempt in range(2):
+            try:
+                started = await self.client.start_session(
+                    session_id=str(session.id),
+                    tenant_id=str(app.tenant_id),
+                    app_id=str(app.id),
+                    user_id=str(user_id),
+                    revision_id=str(revision.id),
+                    entry_file=entry_value,
+                    files=files_payload,
+                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                    dependency_hash=dependency_hash,
+                    draft_dev_token=token,
+                )
+                break
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                last_exc = exc
+                if attempt == 0 and self._is_timeout_error(exc):
+                    await asyncio.sleep(0.25)
+                    continue
+                raise
+        if started is None:
+            if last_exc is not None:
+                raise last_exc
+            raise PublishedAppDraftDevRuntimeClientError("Failed to start draft dev session")
         session.sandbox_id = str(started.get("sandbox_id") or session.id)
         session.preview_url = str(started.get("preview_url") or "")
         session.status = PublishedAppDraftDevSessionStatus.running
@@ -147,12 +192,15 @@ class PublishedAppDraftDevRuntimeService:
 
     async def get_session(self, *, app_id: UUID, user_id: UUID) -> Optional[PublishedAppDraftDevSession]:
         result = await self.db.execute(
-            select(PublishedAppDraftDevSession).where(
+            select(PublishedAppDraftDevSession)
+            .options(self._draft_session_load_only_options())
+            .where(
                 and_(
                     PublishedAppDraftDevSession.published_app_id == app_id,
                     PublishedAppDraftDevSession.user_id == user_id,
                 )
-            ).limit(1)
+            )
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -172,21 +220,21 @@ class PublishedAppDraftDevRuntimeService:
 
         now = self._now()
         await self.expire_idle_sessions(app_id=app.id, user_id=user_id)
-        files_payload = dict(files or revision.files or {})
+        runtime_context = TemplateRuntimeContext(
+            app_id=str(app.id),
+            app_slug=str(app.slug or ""),
+            agent_id=str(app.agent_id or ""),
+        )
+        files_payload = apply_runtime_bootstrap_overlay(
+            dict(files or revision.files or {}),
+            runtime_context=runtime_context,
+        )
         entry_value = entry_file or revision.entry_file
         dependency_hash = self._dependency_hash(files_payload)
         session = await self.get_session(app_id=app.id, user_id=user_id)
-        must_start = session is None or session.status in {
-            PublishedAppDraftDevSessionStatus.stopped,
-            PublishedAppDraftDevSessionStatus.expired,
-            PublishedAppDraftDevSessionStatus.error,
-        }
-        if session is not None and session.expires_at and session.expires_at <= now:
-            must_start = True
-            session.status = PublishedAppDraftDevSessionStatus.expired
 
         if session is None:
-            session = PublishedAppDraftDevSession(
+            candidate_session = PublishedAppDraftDevSession(
                 id=uuid4(),
                 published_app_id=app.id,
                 user_id=user_id,
@@ -197,8 +245,26 @@ class PublishedAppDraftDevRuntimeService:
                 expires_at=self._expires_at(now),
                 dependency_hash=dependency_hash,
             )
-            self.db.add(session)
-            await self.db.flush()
+            try:
+                # Another request can concurrently ensure the same (app_id, user_id)
+                # scope; preserve API stability by reusing the winning row.
+                async with self.db.begin_nested():
+                    self.db.add(candidate_session)
+                    await self.db.flush()
+                session = candidate_session
+            except IntegrityError:
+                session = await self.get_session(app_id=app.id, user_id=user_id)
+                if session is None:
+                    raise
+
+        must_start = session.status in {
+            PublishedAppDraftDevSessionStatus.stopped,
+            PublishedAppDraftDevSessionStatus.expired,
+            PublishedAppDraftDevSessionStatus.error,
+        }
+        if session.expires_at and session.expires_at <= now:
+            must_start = True
+            session.status = PublishedAppDraftDevSessionStatus.expired
 
         session.revision_id = revision.id
         session.idle_timeout_seconds = self.settings.idle_timeout_seconds
@@ -372,6 +438,22 @@ class PublishedAppDraftDevRuntimeService:
         session.last_error = None
         return session
 
+    async def get_publish_ready_session(
+        self,
+        *,
+        app_id: UUID,
+        user_id: UUID,
+    ) -> Optional[PublishedAppDraftDevSession]:
+        await self.expire_idle_sessions(app_id=app_id, user_id=user_id)
+        session = await self.get_session(app_id=app_id, user_id=user_id)
+        if session is None:
+            return None
+        if session.status != PublishedAppDraftDevSessionStatus.running:
+            return None
+        if not str(session.sandbox_id or "").strip():
+            return None
+        return session
+
     async def stop_session(
         self,
         *,
@@ -411,8 +493,29 @@ class PublishedAppDraftDevRuntimeService:
         if user_id:
             filters.append(PublishedAppDraftDevSession.user_id == user_id)
 
-        result = await self.db.execute(select(PublishedAppDraftDevSession).where(and_(*filters)))
+        result = await self.db.execute(
+            select(PublishedAppDraftDevSession)
+            .options(self._draft_session_load_only_options())
+            .where(and_(*filters))
+        )
         rows = list(result.scalars().all())
+        expired_count = 0
         for row in rows:
+            active_publish_result = await self.db.execute(
+                select(func.count(PublishedAppPublishJob.id)).where(
+                    and_(
+                        PublishedAppPublishJob.published_app_id == row.published_app_id,
+                        PublishedAppPublishJob.status.in_(
+                            [
+                                PublishedAppPublishJobStatus.queued,
+                                PublishedAppPublishJobStatus.running,
+                            ]
+                        ),
+                    )
+                )
+            )
+            if int(active_publish_result.scalar() or 0) > 0:
+                continue
             await self.stop_session(session=row, reason=PublishedAppDraftDevSessionStatus.expired)
-        return len(rows)
+            expired_count += 1
+        return expired_count

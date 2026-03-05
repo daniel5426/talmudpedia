@@ -18,24 +18,33 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _target_roles() -> list[str]:
+    bind = op.get_bind()
+    rows = bind.execute(
+        sa.text(
+            """
+            SELECT rolname
+            FROM pg_roles
+            WHERE rolname IN ('anon', 'authenticated')
+            """
+        )
+    ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
 def upgrade() -> None:
-    # Revoke all privileges from anon and authenticated roles for existing tables
-    op.execute("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;")
-    # Revoke all privileges from anon and authenticated roles for existing sequences
-    op.execute("REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;")
-    # Revoke usage on public schema itself
-    # op.execute("REVOKE USAGE ON SCHEMA public FROM anon, authenticated;")
-    
-    # Update default privileges for future tables
-    op.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;")
-    op.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;")
+    roles = _target_roles()
+    for role in roles:
+        op.execute(f"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {role};")
+        op.execute(f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {role};")
+        op.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM {role};")
+        op.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM {role};")
 
 
 def downgrade() -> None:
-    # Grant back basic privileges (Supabase defaults)
-    op.execute("GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;")
-    op.execute("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;")
-    
-    # Restore default privileges
-    op.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;")
-    op.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated;")
+    roles = _target_roles()
+    for role in roles:
+        op.execute(f"GRANT ALL ON ALL TABLES IN SCHEMA public TO {role};")
+        op.execute(f"GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {role};")
+        op.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {role};")
+        op.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {role};")

@@ -4,6 +4,27 @@ from kombu import Queue
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+
+def _is_truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_quota_beat_enabled = _is_truthy(os.getenv("QUOTA_WORKERS_BEAT_ENABLED", "1"))
+_expire_interval_seconds = int(os.getenv("QUOTA_EXPIRE_SWEEP_INTERVAL_SECONDS", "300"))
+_reconcile_interval_seconds = int(os.getenv("QUOTA_RECONCILE_INTERVAL_SECONDS", "1800"))
+_beat_schedule = {}
+if _quota_beat_enabled:
+    _beat_schedule = {
+        "usage-quota-expire-reservations": {
+            "task": "app.workers.tasks.expire_usage_quota_reservations_task",
+            "schedule": max(60, _expire_interval_seconds),
+        },
+        "usage-quota-reconcile-counters": {
+            "task": "app.workers.tasks.reconcile_usage_quota_counters_task",
+            "schedule": max(300, _reconcile_interval_seconds),
+        },
+    }
+
 celery_app = Celery(
     "rag_workers",
     broker=REDIS_URL,
@@ -40,9 +61,14 @@ celery_app.conf.update(
         "app.workers.tasks.ingest_documents_task": {"queue": "ingestion"},
         "app.workers.tasks.embed_chunks_task": {"queue": "embedding"},
         "app.workers.tasks.build_published_app_revision_task": {"queue": "apps_build"},
+        "app.workers.tasks.publish_version_pointer_after_build_task": {"queue": "apps_build"},
         "app.workers.tasks.publish_published_app_task": {"queue": "apps_build"},
         "app.workers.tasks.reap_published_app_draft_dev_sessions_task": {"queue": "default"},
+        "app.workers.tasks.expire_usage_quota_reservations_task": {"queue": "default"},
+        "app.workers.tasks.reconcile_usage_quota_counters_task": {"queue": "default"},
     },
+
+    beat_schedule=_beat_schedule,
     
     result_expires=86400,
     

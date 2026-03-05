@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index, and_
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, Index, and_
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -206,32 +206,10 @@ class ModelProviderBinding(Base):
     )
 
 
-class ProviderConfig(Base):
-    """Centralized configuration for model providers (credentials, base_url, etc)."""
-    __tablename__ = "provider_configs"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True) # Null for Global
-    
-    provider = Column(SQLEnum(ModelProviderType), nullable=False)
-    provider_variant = Column(String, nullable=True) # e.g. "azure", "org_abc", or null
-    
-    # Stores SECRETS (api_key, base_url, org_id) - Encrypted in future
-    credentials = Column(JSONB, default={}, nullable=False)
-    
-    is_enabled = Column(Boolean, default=True, nullable=False)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    # Relationships
-    tenant = relationship("Tenant")
-
-
 class IntegrationCredentialCategory(str, enum.Enum):
     LLM_PROVIDER = "llm_provider"
     VECTOR_STORE = "vector_store"
-    ARTIFACT_SECRET = "artifact_secret"
+    TOOL_PROVIDER = "tool_provider"
     CUSTOM = "custom"
 
 
@@ -240,7 +218,7 @@ class IntegrationCredential(Base):
     __tablename__ = "integration_credentials"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
 
     category = Column(
         SQLEnum(
@@ -255,6 +233,7 @@ class IntegrationCredential(Base):
 
     credentials = Column(JSONB, default={}, nullable=False)
     is_enabled = Column(Boolean, default=True, nullable=False)
+    is_default = Column(Boolean, default=True, nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -263,20 +242,29 @@ class IntegrationCredential(Base):
 
     __table_args__ = (
         Index(
-            "uq_integration_credentials_variant",
+            "ix_integration_credentials_lookup",
+            "tenant_id",
+            "category",
+            "provider_key",
+            "provider_variant",
+        ),
+        Index(
+            "uq_integration_credentials_default_with_variant",
             "tenant_id",
             "category",
             "provider_key",
             "provider_variant",
             unique=True,
-            postgresql_where=(provider_variant != None),
+            postgresql_where=and_(is_default == True, provider_variant != None),
+            sqlite_where=and_(is_default == True, provider_variant != None),
         ),
         Index(
-            "uq_integration_credentials_no_variant",
+            "uq_integration_credentials_default_no_variant",
             "tenant_id",
             "category",
             "provider_key",
             unique=True,
-            postgresql_where=(provider_variant == None),
+            postgresql_where=and_(is_default == True, provider_variant == None),
+            sqlite_where=and_(is_default == True, provider_variant == None),
         ),
     )

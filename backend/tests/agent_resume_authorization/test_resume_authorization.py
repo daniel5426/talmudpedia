@@ -14,6 +14,7 @@ from app.db.postgres.models.identity import (
     Tenant,
     User,
 )
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 def _headers(user: User, tenant: Tenant) -> dict[str, str]:
@@ -61,6 +62,10 @@ async def _seed_tenant_with_users(db_session):
             ),
         ]
     )
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
+    await bootstrap.ensure_member_assignment(tenant_id=tenant.id, user_id=intruder.id, assigned_by=owner.id)
     await db_session.commit()
     await db_session.refresh(tenant)
     await db_session.refresh(owner)
@@ -94,6 +99,9 @@ async def _seed_second_tenant_user(db_session):
             status=MembershipStatus.active,
         )
     )
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
     await db_session.commit()
     await db_session.refresh(tenant)
     await db_session.refresh(user)

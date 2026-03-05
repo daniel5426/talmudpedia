@@ -41,7 +41,7 @@ export { orgUnitsService } from "./org-units";
 export type { Tenant, TenantStatus, RetrievalPolicy, TenantSettings, OrgUnit, OrgUnitTree, OrgMember } from "./org-units";
 
 export { rbacService } from "./rbac";
-export type { Permission, Role, RoleAssignment, UserPermissions } from "./rbac";
+export type { Role, RoleAssignment, UserPermissions, ScopeCatalog } from "./rbac";
 
 export { auditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";
@@ -54,8 +54,13 @@ export { modelsService } from "./models";
 export { toolsService } from "./tools";
 export { credentialsService } from "./credentials";
 export { publishedAppsService } from "./published-apps";
-export { resolveAppsCodingAgentEngine } from "./published-apps";
 export { publishedRuntimeService } from "./published-runtime";
+export {
+  OPENCODE_CODING_MODELS,
+  OPENCODE_CODING_MODEL_AUTO_ID,
+  listOpenCodeCodingModels,
+} from "./coding-agent-models";
+export { LLM_PROVIDER_OPTIONS, VECTOR_STORE_PROVIDER_OPTIONS, TOOL_PROVIDER_OPTIONS } from "./provider-catalog";
 
 export type {
   Agent,
@@ -89,6 +94,9 @@ export type {
 export type {
   PublishedApp,
   PublishedAppTemplate,
+  PublishedAppAuthTemplate,
+  PublishedAppUser,
+  PublishedAppDomain,
   PublishedAppRevision,
   PublishedAppStatus,
   PublishedAppAuthProvider,
@@ -98,25 +106,23 @@ export type {
   DraftDevSessionResponse,
   DraftDevSessionStatus,
   DraftDevSyncRequest,
-  PublishRequest,
   PublishJobResponse,
   PublishJobStatusResponse,
-  RevisionBuildStatusResponse,
   RevisionConflictResponse,
+  AppVersionListItem,
   CodingAgentStreamEvent,
   CodingAgentRun,
   CodingAgentChatSession,
   CodingAgentChatMessage,
   CodingAgentChatSessionDetail,
-  CodingAgentCheckpoint,
-  CodingAgentRestoreCheckpointResponse,
-  CodingAgentCapabilities,
-  CodingAgentCapabilityTool,
-  CodingAgentOpenCodePolicy,
+  CodingAgentRunEvent,
+  CodingAgentPromptSubmissionResponse,
+  CodingAgentAnswerQuestionRequest,
   CreatePublishedAppRequest,
   CreateBuilderRevisionRequest,
   UpdatePublishedAppRequest,
 } from "./published-apps";
+export type { OpenCodeCodingModelOption } from "./coding-agent-models";
 
 export type {
   PublishedRuntimeConfig,
@@ -135,6 +141,10 @@ export type {
   CreateCredentialRequest,
   UpdateCredentialRequest,
   CredentialStatus,
+  CredentialUsageModelProvider,
+  CredentialUsageKnowledgeStore,
+  CredentialUsageTool,
+  CredentialUsageResponse,
 } from "./credentials";
 
 // Knowledge Stores

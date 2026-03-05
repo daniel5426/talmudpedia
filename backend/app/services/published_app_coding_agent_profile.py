@@ -1,17 +1,34 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import Agent, AgentStatus
-from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry
 from app.services.published_app_coding_agent_tools import ensure_coding_agent_tools
 
 CODING_AGENT_PROFILE_SLUG = "published-app-coding-agent"
 CODING_AGENT_PROFILE_NAME = "Published App Coding Agent"
+DEFAULT_CODING_AGENT_OPENCODE_MODEL_ID = "opencode/big-pickle"
+
+
+def _normalize_opencode_model_id(raw_model_id: str | None) -> str:
+    raw = str(raw_model_id or "").strip()
+    if not raw:
+        return DEFAULT_CODING_AGENT_OPENCODE_MODEL_ID
+    if "/" not in raw:
+        return f"opencode/{raw}"
+    provider, model = raw.split("/", 1)
+    provider = provider.strip()
+    model = model.strip()
+    if not provider or not model:
+        return DEFAULT_CODING_AGENT_OPENCODE_MODEL_ID
+    return f"{provider}/{model}"
+
+
+def resolve_coding_agent_profile_model_id() -> str:
+    return _normalize_opencode_model_id(DEFAULT_CODING_AGENT_OPENCODE_MODEL_ID)
 
 
 def _build_coding_agent_graph(model_id: str, tool_ids: list[str]) -> dict:
@@ -38,9 +55,8 @@ def _build_coding_agent_graph(model_id: str, tool_ids: list[str]) -> dict:
         "Do not claim that changes are complete unless an apply_patch/rename/delete tool call succeeded. "
         "If a tool fails, explain the failure clearly instead of pretending the edit was applied. "
         "When patch apply fails, use returned refresh windows to re-read only the relevant line ranges before retrying. "
-        "At the start of every run, inspect the selected-agent contract from context and call "
-        "`coding_agent_describe_selected_agent_contract` for compact summaries, or "
-        "`coding_agent_get_agent_integration_contract` for full raw contract payloads when needed. "
+        "At the start of every run, inspect the selected-agent contract from context and use the available "
+        "contract-context tool to retrieve compact summaries first, then request full payload only when needed. "
         "When implementing runtime-agent integrations in the app UI, use tool input/output schemas plus optional `x-ui` hints as source of truth. "
         "and summarize completed changes and verification results. "
         "Always respond with natural-language text to every user message. "
@@ -80,63 +96,9 @@ def _build_coding_agent_graph(model_id: str, tool_ids: list[str]) -> dict:
     }
 
 
-async def _resolve_default_chat_model_id(db: AsyncSession, tenant_id) -> str:
-    default_stmt = select(ModelRegistry).where(
-        ModelRegistry.tenant_id == tenant_id,
-        ModelRegistry.capability_type == ModelCapabilityType.CHAT,
-        ModelRegistry.is_default == True,
-        ModelRegistry.is_active == True,
-    )
-    res = await db.execute(default_stmt)
-    model = res.scalar_one_or_none()
-    if model:
-        return str(model.id)
-
-    global_default_stmt = select(ModelRegistry).where(
-        ModelRegistry.tenant_id == None,
-        ModelRegistry.capability_type == ModelCapabilityType.CHAT,
-        ModelRegistry.is_default == True,
-        ModelRegistry.is_active == True,
-    )
-    res = await db.execute(global_default_stmt)
-    model = res.scalar_one_or_none()
-    if model:
-        return str(model.id)
-
-    fallback_stmt = select(ModelRegistry).where(
-        ModelRegistry.capability_type == ModelCapabilityType.CHAT,
-        ModelRegistry.is_active == True,
-        or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id == None),
-    )
-    res = await db.execute(fallback_stmt)
-    model = res.scalars().first()
-    if model is None:
-        raise ValueError("No active chat model is available for coding-agent profile")
-    return str(model.id)
-
-
 async def resolve_coding_agent_chat_model_id(db: AsyncSession, tenant_id) -> str:
-    return await _resolve_default_chat_model_id(db, tenant_id)
-
-
-def _extract_profile_model_id(graph_definition: dict[str, Any] | None) -> str | None:
-    if not isinstance(graph_definition, dict):
-        return None
-    nodes = graph_definition.get("nodes")
-    if not isinstance(nodes, list):
-        return None
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        if str(node.get("type") or "").strip().lower() != "agent":
-            continue
-        config = node.get("config")
-        if not isinstance(config, dict):
-            continue
-        model_id = str(config.get("model_id") or "").strip()
-        if model_id:
-            return model_id
-    return None
+    _ = db, tenant_id
+    return resolve_coding_agent_profile_model_id()
 
 
 async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
@@ -152,9 +114,9 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
         )
     )
     agent = result.scalar_one_or_none()
+    model_id = resolve_coding_agent_profile_model_id()
 
     if agent is None:
-        model_id = await resolve_coding_agent_chat_model_id(db, tenant_id)
         graph_definition = _build_coding_agent_graph(model_id, tool_ids)
         agent = Agent(
             tenant_id=tenant_id,
@@ -172,9 +134,6 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
         await db.flush()
         return agent
 
-    model_id = _extract_profile_model_id(agent.graph_definition)
-    if not model_id:
-        model_id = await resolve_coding_agent_chat_model_id(db, tenant_id)
     graph_definition = _build_coding_agent_graph(model_id, tool_ids)
 
     agent.name = CODING_AGENT_PROFILE_NAME

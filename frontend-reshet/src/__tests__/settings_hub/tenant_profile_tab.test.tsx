@@ -72,13 +72,13 @@ describe("Tenant Profile Tab", () => {
     render(<SettingsPage />)
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Tenant Profile" })).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByText("Save Profile")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "General" }).length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getByText("Save")).toBeInTheDocument())
 
-    const nameInput = screen.getByLabelText("Name")
+    const nameInput = screen.getAllByRole("textbox")[0]
     fireEvent.change(nameInput, { target: { value: "Tenant Updated" } })
 
-    const saveButton = screen.getByText("Save Profile")
+    const saveButton = screen.getByText("Save")
     fireEvent.click(saveButton)
 
     await waitFor(() => expect(orgUnitsService.updateTenant).toHaveBeenCalledWith("tenant-1", {
@@ -94,8 +94,8 @@ describe("Tenant Profile Tab", () => {
     render(<SettingsPage />)
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getByText("You have read-only access to tenant profile settings.")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("Read-only access. Contact an admin to make changes.")).toBeInTheDocument())
 
-    expect(screen.getByText("Save Profile")).toBeDisabled()
+    expect(screen.getByText("Save")).toBeDisabled()
   })
 })

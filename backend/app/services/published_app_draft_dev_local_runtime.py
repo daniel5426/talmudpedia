@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import logging
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from app.services.published_app_draft_dev_patching import apply_unified_patch_transaction, hash_text
 
@@ -478,13 +482,275 @@ class LocalDraftDevRuntimeManager:
     async def snapshot_files(self, *, sandbox_id: str) -> Dict[str, object]:
         async with self._lock:
             state = self._require_running_session_locked(sandbox_id)
-            files: Dict[str, str] = {}
-            for rel_path in self._collect_project_files(state.project_dir):
-                files[rel_path] = (state.project_dir / rel_path).read_text(encoding="utf-8", errors="replace")
+            files = self._collect_workspace_files_from_root(state.project_dir)
             return {
                 "sandbox_id": sandbox_id,
                 "files": files,
                 "file_count": len(files),
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def prepare_stage_workspace(self, *, sandbox_id: str, reset: bool) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            stage_workspace = self._stage_workspace_dir(project_dir=state.project_dir)
+            live_files: Dict[str, str] = {}
+            if bool(reset):
+                live_files = self._collect_workspace_files_from_root(state.project_dir)
+                await self._sync_files_locked(stage_workspace, live_files)
+            elif not stage_workspace.exists() or not stage_workspace.is_dir():
+                live_files = self._collect_workspace_files_from_root(state.project_dir)
+                await self._sync_files_locked(stage_workspace, live_files)
+            return {
+                "sandbox_id": sandbox_id,
+                "reset": bool(reset),
+                "live_workspace_path": str(state.project_dir),
+                "stage_workspace_path": str(stage_workspace),
+                "workspace_path": str(stage_workspace),
+                "file_count": len(live_files),
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def snapshot_workspace(
+        self,
+        *,
+        sandbox_id: str,
+        workspace: str = "live",
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            workspace_key = str(workspace or "live").strip().lower() or "live"
+            workspace_root = state.project_dir
+            if workspace_key == "stage":
+                workspace_root = self._stage_workspace_dir(project_dir=state.project_dir)
+                if not workspace_root.exists() or not workspace_root.is_dir():
+                    raise LocalDraftDevRuntimeError("Stage workspace is not prepared")
+            elif workspace_key != "live":
+                raise LocalDraftDevRuntimeError(f"Unsupported workspace scope: {workspace}")
+            files = self._collect_workspace_files_from_root(workspace_root)
+            return {
+                "sandbox_id": sandbox_id,
+                "workspace": workspace_key,
+                "workspace_path": str(workspace_root),
+                "files": files,
+                "file_count": len(files),
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def promote_stage_workspace(self, *, sandbox_id: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            stage_workspace = self._stage_workspace_dir(project_dir=state.project_dir)
+            if not stage_workspace.exists() or not stage_workspace.is_dir():
+                raise LocalDraftDevRuntimeError("Stage workspace is not prepared")
+            stage_files = self._collect_workspace_files_from_root(stage_workspace)
+            await self._sync_files_locked(state.project_dir, stage_files)
+            return {
+                "sandbox_id": sandbox_id,
+                "live_workspace_path": str(state.project_dir),
+                "stage_workspace_path": str(stage_workspace),
+                "promoted_file_count": len(stage_files),
+                "revision_token": self._bump_revision_token(state),
+            }
+
+    async def prepare_publish_workspace(self, *, sandbox_id: str) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            publish_workspace = self._publish_workspace_dir(project_dir=state.project_dir)
+            live_files = self._collect_workspace_files_from_root(state.project_dir)
+            await self._sync_files_locked(publish_workspace, live_files)
+            return {
+                "sandbox_id": sandbox_id,
+                "workspace": "publish",
+                "live_workspace_path": str(state.project_dir),
+                "publish_workspace_path": str(publish_workspace),
+                "workspace_path": str(publish_workspace),
+                "files": live_files,
+                "file_count": len(live_files),
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def prepare_publish_dependencies(
+        self,
+        *,
+        sandbox_id: str,
+        workspace_path: str,
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            publish_workspace = self._resolve_workspace_path_locked(
+                state=state,
+                workspace_path=workspace_path,
+                require_exists=True,
+                require_dir=True,
+            )
+            live_workspace = state.project_dir
+
+            publish_package_json = publish_workspace / "package.json"
+            live_package_json = live_workspace / "package.json"
+            if not publish_package_json.exists():
+                return {
+                    "sandbox_id": sandbox_id,
+                    "workspace_path": str(publish_workspace),
+                    "live_workspace_path": str(live_workspace),
+                    "status": "no_package_json",
+                    "strategy": "none",
+                    "reason": "publish workspace has no package.json",
+                    "revision_token": self._current_revision_token(state),
+                }
+            if not live_package_json.exists():
+                return {
+                    "sandbox_id": sandbox_id,
+                    "workspace_path": str(publish_workspace),
+                    "live_workspace_path": str(live_workspace),
+                    "status": "fallback_required",
+                    "strategy": "none",
+                    "reason": "live workspace has no package.json",
+                    "revision_token": self._current_revision_token(state),
+                }
+
+            manifests_match, manifest_reason = self._publish_dependency_manifests_match(
+                live_workspace=live_workspace,
+                publish_workspace=publish_workspace,
+            )
+            if not manifests_match:
+                return {
+                    "sandbox_id": sandbox_id,
+                    "workspace_path": str(publish_workspace),
+                    "live_workspace_path": str(live_workspace),
+                    "status": "incompatible_lockfile",
+                    "strategy": "none",
+                    "reason": manifest_reason,
+                    "revision_token": self._current_revision_token(state),
+                }
+
+            live_node_modules = live_workspace / "node_modules"
+            if not live_node_modules.exists() or not live_node_modules.is_dir():
+                return {
+                    "sandbox_id": sandbox_id,
+                    "workspace_path": str(publish_workspace),
+                    "live_workspace_path": str(live_workspace),
+                    "status": "missing_live_node_modules",
+                    "strategy": "none",
+                    "reason": "live workspace node_modules is missing",
+                    "revision_token": self._current_revision_token(state),
+                }
+
+            publish_node_modules = publish_workspace / "node_modules"
+            try:
+                if (
+                    publish_node_modules.is_symlink()
+                    and publish_node_modules.resolve(strict=False) == live_node_modules.resolve(strict=False)
+                ):
+                    return {
+                        "sandbox_id": sandbox_id,
+                        "workspace_path": str(publish_workspace),
+                        "live_workspace_path": str(live_workspace),
+                        "status": "reused",
+                        "strategy": "symlink",
+                        "reason": "publish workspace already links to live node_modules",
+                        "revision_token": self._current_revision_token(state),
+                    }
+            except Exception:
+                pass
+
+            self._remove_path_if_exists(publish_node_modules)
+
+            symlink_error: str | None = None
+            try:
+                publish_node_modules.parent.mkdir(parents=True, exist_ok=True)
+                publish_node_modules.symlink_to(live_node_modules, target_is_directory=True)
+                return {
+                    "sandbox_id": sandbox_id,
+                    "workspace_path": str(publish_workspace),
+                    "live_workspace_path": str(live_workspace),
+                    "status": "reused",
+                    "strategy": "symlink",
+                    "reason": "reused live workspace node_modules via symlink",
+                    "revision_token": self._current_revision_token(state),
+                }
+            except Exception as exc:
+                symlink_error = str(exc)
+                self._remove_path_if_exists(publish_node_modules)
+
+            try:
+                shutil.copytree(live_node_modules, publish_node_modules, symlinks=True)
+                return {
+                    "sandbox_id": sandbox_id,
+                    "workspace_path": str(publish_workspace),
+                    "live_workspace_path": str(live_workspace),
+                    "status": "reused",
+                    "strategy": "copy",
+                    "reason": "reused live workspace node_modules via copy fallback",
+                    "revision_token": self._current_revision_token(state),
+                }
+            except Exception as exc:
+                self._remove_path_if_exists(publish_node_modules)
+                return {
+                    "sandbox_id": sandbox_id,
+                    "workspace_path": str(publish_workspace),
+                    "live_workspace_path": str(live_workspace),
+                    "status": "fallback_required",
+                    "strategy": "none",
+                    "reason": (
+                        "dependency reuse unavailable; "
+                        f"symlink_error={symlink_error or 'unknown'}; copy_error={exc}"
+                    ),
+                    "revision_token": self._current_revision_token(state),
+                }
+
+    async def export_workspace_archive(
+        self,
+        *,
+        sandbox_id: str,
+        workspace_path: str,
+        format: str = "tar.gz",
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            archive_root = self._resolve_workspace_path_locked(
+                state=state,
+                workspace_path=workspace_path,
+                require_exists=True,
+                require_dir=True,
+            )
+            fmt = str(format or "tar.gz").strip().lower()
+            if fmt != "tar.gz":
+                raise LocalDraftDevRuntimeError(f"Unsupported archive format: {format}")
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+                tar.add(str(archive_root), arcname=".")
+            payload = buffer.getvalue()
+            return {
+                "sandbox_id": sandbox_id,
+                "workspace_path": str(archive_root),
+                "format": "tar.gz",
+                "archive_base64": base64.b64encode(payload).decode("ascii"),
+                "size_bytes": len(payload),
+                "revision_token": self._current_revision_token(state),
+            }
+
+    async def sync_workspace_files(
+        self,
+        *,
+        sandbox_id: str,
+        workspace_path: str,
+        files: Dict[str, str],
+    ) -> Dict[str, object]:
+        async with self._lock:
+            state = self._require_running_session_locked(sandbox_id)
+            target_workspace = self._resolve_workspace_path_locked(
+                state=state,
+                workspace_path=workspace_path,
+                require_exists=False,
+                require_dir=False,
+            )
+            target_workspace.mkdir(parents=True, exist_ok=True)
+            await self._sync_files_locked(target_workspace, files)
+            return {
+                "sandbox_id": sandbox_id,
+                "workspace_path": str(target_workspace),
+                "file_count": len(files or {}),
                 "revision_token": self._current_revision_token(state),
             }
 
@@ -495,43 +761,104 @@ class LocalDraftDevRuntimeManager:
         command: list[str],
         timeout_seconds: int = 180,
         max_output_bytes: int = 12000,
+        workspace_path: str | None = None,
     ) -> Dict[str, object]:
         async with self._lock:
             state = self._require_running_session_locked(sandbox_id)
             if not command:
                 raise LocalDraftDevRuntimeError("Command is required")
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=str(state.project_dir),
-                env=dict(os.environ),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            resolved_cwd = self._resolve_workspace_path_locked(
+                state=state,
+                workspace_path=workspace_path,
+                require_exists=True,
+                require_dir=True,
             )
-            try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=float(timeout_seconds))
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.communicate()
-                raise LocalDraftDevRuntimeError(
-                    f"Command timed out after {timeout_seconds}s: {' '.join(command)}"
-                )
-            out_text = (stdout or b"").decode("utf-8", errors="replace")
-            err_text = (stderr or b"").decode("utf-8", errors="replace")
-            if len(out_text) > max_output_bytes:
-                out_text = out_text[:max_output_bytes] + "... [truncated]"
-            if len(err_text) > max_output_bytes:
-                err_text = err_text[:max_output_bytes] + "... [truncated]"
-            return {
-                "sandbox_id": sandbox_id,
-                "command": command,
-                "code": int(process.returncode or 0),
-                "stdout": out_text,
-                "stderr": err_text,
-                "revision_token": self._current_revision_token(state),
-            }
+            revision_token = self._current_revision_token(state)
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(resolved_cwd),
+            env=dict(os.environ),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=float(timeout_seconds))
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            raise LocalDraftDevRuntimeError(
+                f"Command timed out after {timeout_seconds}s: {' '.join(command)}"
+            )
+        out_text = (stdout or b"").decode("utf-8", errors="replace")
+        err_text = (stderr or b"").decode("utf-8", errors="replace")
+        if len(out_text) > max_output_bytes:
+            out_text = out_text[:max_output_bytes] + "... [truncated]"
+        if len(err_text) > max_output_bytes:
+            err_text = err_text[:max_output_bytes] + "... [truncated]"
+        return {
+            "sandbox_id": sandbox_id,
+            "command": command,
+            "code": int(process.returncode or 0),
+            "stdout": out_text,
+            "stderr": err_text,
+            "workspace_path": str(resolved_cwd),
+            "revision_token": revision_token,
+        }
 
     def _preview_url(self, port: int, draft_dev_token: str) -> str:
         return f"http://{self._host}:{port}/?draft_dev_token={draft_dev_token}"
+
+    def _stage_workspace_dir(self, *, project_dir: Path) -> Path:
+        return project_dir / ".talmudpedia" / "stage" / "shared" / "workspace"
+
+    def _publish_workspace_dir(self, *, project_dir: Path) -> Path:
+        return project_dir / ".talmudpedia" / "publish" / "current" / "workspace"
+
+    def _resolve_workspace_path_locked(
+        self,
+        *,
+        state: _SessionProcess,
+        workspace_path: str | None,
+        require_exists: bool = True,
+        require_dir: bool = True,
+    ) -> Path:
+        requested = str(workspace_path or "").strip()
+        project_dir = state.project_dir.resolve()
+        if not requested:
+            candidate = project_dir
+        else:
+            raw = requested
+            if raw == "/workspace" or raw.startswith("/workspace/"):
+                raw = raw[len("/workspace") :].lstrip("/")
+            if os.path.isabs(raw):
+                candidate = Path(raw).expanduser().resolve()
+            else:
+                candidate = (project_dir / raw).resolve()
+        try:
+            in_scope = os.path.commonpath([str(project_dir), str(candidate)]) == str(project_dir)
+        except Exception:
+            in_scope = False
+        if not in_scope:
+            raise LocalDraftDevRuntimeError("Requested workspace path is invalid or outside sandbox project scope")
+        if require_exists and not candidate.exists():
+            raise LocalDraftDevRuntimeError(f"Workspace path not found: {candidate}")
+        if require_dir and require_exists and not candidate.is_dir():
+            raise LocalDraftDevRuntimeError(f"Workspace path is not a directory: {candidate}")
+        return candidate
+
+    def _collect_workspace_files_from_root(self, workspace_root: Path) -> Dict[str, str]:
+        files: Dict[str, str] = {}
+        if not workspace_root.exists() or not workspace_root.is_dir():
+            return files
+        for existing in sorted(workspace_root.rglob("*")):
+            if not existing.is_file():
+                continue
+            relative = existing.relative_to(workspace_root).as_posix()
+            if self._is_runtime_ignored_artifact_path(relative):
+                continue
+            files[relative] = existing.read_text(encoding="utf-8", errors="replace")
+        return files
 
     def _normalize_runtime_path(self, raw_path: str) -> str:
         cleaned = (raw_path or "").replace("\\", "/").strip().lstrip("/")
@@ -547,9 +874,33 @@ class LocalDraftDevRuntimeManager:
         normalized = "/".join(parts)
         if not normalized:
             raise LocalDraftDevRuntimeError("File path is required")
-        if normalized.startswith("node_modules/") or normalized in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+        segments = [segment for segment in normalized.split("/") if segment]
+        if (
+            "node_modules" in segments
+            or normalized.startswith(".talmudpedia/")
+            or normalized == ".talmudpedia"
+            or normalized.startswith(".opencode/.bun/")
+            or normalized == ".opencode/.bun"
+            or normalized in {".draft-dev.log", ".draft-dev-dependency-hash"}
+        ):
             raise LocalDraftDevRuntimeError(f"Path is not editable: {normalized}")
         return normalized
+
+    @staticmethod
+    def _is_runtime_ignored_artifact_path(path: str) -> bool:
+        normalized = str(path or "").replace("\\", "/").strip().lstrip("/")
+        if not normalized:
+            return True
+        if normalized in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+            return True
+        if normalized.startswith(".talmudpedia/") or normalized == ".talmudpedia":
+            return True
+        segments = [segment for segment in normalized.split("/") if segment]
+        if "node_modules" in segments:
+            return True
+        if normalized.startswith(".opencode/.bun/") or normalized == ".opencode/.bun":
+            return True
+        return False
 
     def _collect_project_files(self, project_dir: Path) -> list[str]:
         paths: list[str] = []
@@ -557,9 +908,7 @@ class LocalDraftDevRuntimeManager:
             if not existing.is_file():
                 continue
             relative = existing.relative_to(project_dir).as_posix()
-            if relative.startswith("node_modules/") or relative == "node_modules":
-                continue
-            if relative in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+            if self._is_runtime_ignored_artifact_path(relative):
                 continue
             paths.append(relative)
         return paths
@@ -741,9 +1090,7 @@ class LocalDraftDevRuntimeManager:
 
         for existing in sorted(project_dir.rglob("*"), reverse=True):
             relative = existing.relative_to(project_dir).as_posix()
-            if relative.startswith("node_modules/") or relative == "node_modules":
-                continue
-            if relative in {".draft-dev.log", ".draft-dev-dependency-hash"}:
+            if self._is_runtime_ignored_artifact_path(relative):
                 continue
             if existing.is_file() and relative not in normalized:
                 existing.unlink(missing_ok=True)
@@ -766,6 +1113,38 @@ class LocalDraftDevRuntimeManager:
                     pass
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
+
+    @staticmethod
+    def _publish_dependency_manifests_match(*, live_workspace: Path, publish_workspace: Path) -> tuple[bool, str]:
+        paths_to_compare = ["package.json", "package-lock.json"]
+        for relative in paths_to_compare:
+            live_path = live_workspace / relative
+            publish_path = publish_workspace / relative
+            live_exists = live_path.exists()
+            publish_exists = publish_path.exists()
+            if live_exists != publish_exists:
+                return False, f"{relative} presence differs between live and publish workspaces"
+            if not live_exists:
+                continue
+            try:
+                live_bytes = live_path.read_bytes()
+                publish_bytes = publish_path.read_bytes()
+            except Exception as exc:
+                return False, f"failed to read {relative} for dependency reuse validation: {exc}"
+            if live_bytes != publish_bytes:
+                return False, f"{relative} differs between live and publish workspaces"
+        return True, "dependency manifests match"
+
+    @staticmethod
+    def _remove_path_if_exists(target: Path) -> None:
+        try:
+            if target.is_symlink() or target.is_file():
+                target.unlink(missing_ok=True)
+                return
+            if target.exists() and target.is_dir():
+                shutil.rmtree(target)
+        except FileNotFoundError:
+            return
 
     def _read_dependency_hash_marker(self, project_dir: Path) -> str:
         marker = project_dir / ".draft-dev-dependency-hash"

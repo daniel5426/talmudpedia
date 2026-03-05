@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+from hashlib import sha256
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from app.services.published_app_templates import (
     OPENCODE_BOOTSTRAP_CONTEXT_PATH,
     build_opencode_bootstrap_files,
 )
+from app.services.published_app_coding_pipeline_trace import pipeline_trace
 
 
 class OpenCodeServerClientError(Exception):
@@ -28,6 +30,15 @@ class OpenCodeServerClientError(Exception):
 
 
 logger = logging.getLogger(__name__)
+
+OPENCODE_DEPRECATED_TOOL_PATHS = (
+    ".opencode/tools/coding_agent_get_agent_integration_contract.ts",
+    ".opencode/tools/coding_agent_describe_selected_agent_contract.ts",
+)
+
+
+def _opencode_trace(event: str, **fields: Any) -> None:
+    pipeline_trace(event, pipeline="opencode_client", **fields)
 
 
 @dataclass(frozen=True)
@@ -50,6 +61,19 @@ class OpenCodeServerClient:
         self._official_run_state: dict[str, dict[str, Any]] = {}
         self._sandbox_runtime_client = PublishedAppDraftDevRuntimeClient.from_env()
         self._sandbox_run_ref_to_sandbox_id: dict[str, str] = {}
+        self._sandbox_bootstrap_hash: dict[str, str] = {}
+        self._sandbox_context_hash: dict[str, str] = {}
+        self._host_bootstrap_hash: dict[str, str] = {}
+        self._host_context_hash: dict[str, str] = {}
+        self._bootstrap_cleanup_done_targets: set[str] = set()
+
+    @staticmethod
+    def _seed_bootstrap_files_on_run_start() -> bool:
+        raw = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "0")
+            or "0"
+        ).strip().lower()
+        return raw in {"1", "true", "yes", "on"}
 
     @classmethod
     def from_env(cls) -> "OpenCodeServerClient":
@@ -115,10 +139,7 @@ class OpenCodeServerClient:
         if force:
             self._api_mode = None
         await self._ensure_api_mode()
-        if self._api_mode == "official":
-            await self._request("GET", "/global/health", json_payload={}, retries=1, expect_json=True)
-        else:
-            await self._request("GET", "/health", json_payload={}, retries=1, expect_json=False)
+        await self._request("GET", "/global/health", json_payload={}, retries=1, expect_json=True)
         self._health_checked_at = now
         self._health_ok = True
 
@@ -134,6 +155,15 @@ class OpenCodeServerClient:
         messages: list[dict[str, str]],
         selected_agent_contract: dict[str, Any] | None = None,
     ) -> str:
+        _opencode_trace(
+            "opencode.start.requested",
+            run_id=run_id,
+            app_id=app_id,
+            sandbox_id=sandbox_id or None,
+            workspace_path=workspace_path,
+            model_id=model_id,
+            mode="sandbox" if self._sandbox_controller_mode_enabled() else "host",
+        )
         if self._sandbox_controller_mode_enabled():
             if not sandbox_id:
                 raise OpenCodeServerClientError("OpenCode sandbox mode requires sandbox_id.")
@@ -155,11 +185,28 @@ class OpenCodeServerClient:
                     messages=messages,
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
+                _opencode_trace(
+                    "opencode.start.failed",
+                    run_id=run_id,
+                    app_id=app_id,
+                    sandbox_id=sandbox_id or None,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                    mode="sandbox",
+                )
                 raise OpenCodeServerClientError(f"OpenCode sandbox start request failed: {exc}") from exc
             run_ref = str(response.get("run_ref") or response.get("id") or run_id).strip()
             if not run_ref:
                 raise OpenCodeServerClientError("OpenCode sandbox start response is missing run_ref.")
             self._sandbox_run_ref_to_sandbox_id[run_ref] = sandbox_id
+            _opencode_trace(
+                "opencode.start.confirmed",
+                run_id=run_id,
+                app_id=app_id,
+                run_ref=run_ref,
+                sandbox_id=sandbox_id or None,
+                mode="sandbox",
+            )
             return run_ref
 
         await self._seed_custom_tools_and_context(
@@ -170,33 +217,25 @@ class OpenCodeServerClient:
             selected_agent_contract=selected_agent_contract,
         )
 
-        mode = await self._ensure_api_mode()
-        if mode == "official":
-            return await self._start_run_official(
-                run_id=run_id,
-                app_id=app_id,
-                sandbox_id=sandbox_id,
-                workspace_path=workspace_path,
-                model_id=model_id,
-                prompt=prompt,
-                messages=messages,
-            )
-
-        payload = {
-            "run_id": run_id,
-            "app_id": app_id,
-            "sandbox_id": sandbox_id,
-            "workspace_path": workspace_path,
-            "model_id": model_id,
-            "prompt": prompt,
-            "messages": messages,
-            "ephemeral": True,
-        }
-        response = await self._request("POST", "/v1/runs", json_payload=payload, retries=0)
-        run_ref = response.get("run_ref") or response.get("id")
-        if not run_ref:
-            raise OpenCodeServerClientError("OpenCode run start response is missing run_ref.")
-        return str(run_ref)
+        await self._ensure_api_mode()
+        run_ref = await self._start_run_official(
+            run_id=run_id,
+            app_id=app_id,
+            sandbox_id=sandbox_id,
+            workspace_path=workspace_path,
+            model_id=model_id,
+            prompt=prompt,
+            messages=messages,
+        )
+        _opencode_trace(
+            "opencode.start.confirmed",
+            run_id=run_id,
+            app_id=app_id,
+            run_ref=run_ref,
+            sandbox_id=sandbox_id or None,
+            mode="host",
+        )
+        return run_ref
 
     async def stream_run_events(self, *, run_ref: str) -> AsyncGenerator[dict[str, Any], None]:
         sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref))
@@ -216,77 +255,154 @@ class OpenCodeServerClient:
 
         if not self._config.base_url:
             raise OpenCodeServerClientError("OpenCode base URL is not configured.")
-        mode = await self._ensure_api_mode()
-        if mode == "official":
-            async for event in self._stream_official_run_events(session_id=run_ref):
-                yield event
-            return
+        await self._ensure_api_mode()
+        async for event in self._stream_official_run_events(session_id=run_ref):
+            yield event
+        return
 
-        url = f"{self._config.base_url.rstrip('/')}/v1/runs/{run_ref}/events"
-        headers = self._headers()
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout()) as client:
-                async with client.stream("GET", url, headers=headers) as response:
-                    if response.status_code >= 400:
-                        body = (await response.aread()).decode("utf-8", errors="replace").strip()
-                        raise OpenCodeServerClientError(
-                            f"OpenCode stream request failed ({response.status_code}): {body or response.reason_phrase}"
-                        )
-                    async for line in response.aiter_lines():
-                        raw = (line or "").strip()
-                        if not raw or raw.startswith(":"):
-                            continue
-                        if raw.startswith("data:"):
-                            raw = raw[5:].strip()
-                        if not raw or raw == "[DONE]":
-                            continue
-                        try:
-                            parsed = json.loads(raw)
-                        except Exception as exc:
-                            raise OpenCodeServerClientError(f"OpenCode event stream returned invalid JSON: {raw}") from exc
-                        if isinstance(parsed, dict):
-                            yield parsed
-        except OpenCodeServerClientError:
-            raise
-        except Exception as exc:
-            raise OpenCodeServerClientError(f"OpenCode stream request failed: {exc}") from exc
-
-    async def cancel_run(self, *, run_ref: str) -> bool:
-        sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref))
-        if sandbox_id:
+    async def cancel_run(self, *, run_ref: str, sandbox_id: str | None = None) -> bool:
+        resolved_sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref)) or str(sandbox_id or "").strip() or None
+        _opencode_trace(
+            "opencode.cancel.requested",
+            run_ref=str(run_ref),
+            sandbox_id=resolved_sandbox_id,
+            mode="sandbox" if self._sandbox_controller_mode_enabled() and resolved_sandbox_id else "host",
+        )
+        if self._sandbox_controller_mode_enabled() and resolved_sandbox_id:
             try:
                 response = await self._sandbox_runtime_client.cancel_opencode_run(
-                    sandbox_id=sandbox_id,
+                    sandbox_id=resolved_sandbox_id,
                     run_ref=str(run_ref),
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
+                _opencode_trace(
+                    "opencode.cancel.failed",
+                    run_ref=str(run_ref),
+                    sandbox_id=resolved_sandbox_id,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                    mode="sandbox",
+                )
                 raise OpenCodeServerClientError(f"OpenCode sandbox cancel request failed: {exc}") from exc
             finally:
                 self._sandbox_run_ref_to_sandbox_id.pop(str(run_ref), None)
             cancelled = response.get("cancelled")
             if isinstance(cancelled, bool):
+                _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=cancelled, mode="sandbox")
                 return cancelled
             ok = response.get("ok")
             if isinstance(ok, bool):
+                _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=ok, mode="sandbox")
                 return ok
+            _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=True, mode="sandbox")
             return True
 
-        mode = await self._ensure_api_mode()
-        if mode == "official":
-            response = await self._request("POST", f"/session/{run_ref}/abort", json_payload={}, retries=0)
-            if isinstance(response.get("cancelled"), bool):
-                return bool(response.get("cancelled"))
-            if isinstance(response.get("ok"), bool):
-                return bool(response.get("ok"))
-            if isinstance(response.get("aborted"), bool):
-                return bool(response.get("aborted"))
-            return True
+        # Host/API mode: never bounce back through sandbox controller even if a sandbox_id is present.
+        self._sandbox_run_ref_to_sandbox_id.pop(str(run_ref), None)
 
-        response = await self._request("POST", f"/v1/runs/{run_ref}/cancel", json_payload={}, retries=0)
-        cancelled = response.get("cancelled")
-        if isinstance(cancelled, bool):
+        await self._ensure_api_mode()
+        response = await self._request("POST", f"/session/{run_ref}/abort", json_payload={}, retries=0)
+        if isinstance(response.get("cancelled"), bool):
+            cancelled = bool(response.get("cancelled"))
+            _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=cancelled, mode="host")
             return cancelled
+        if isinstance(response.get("ok"), bool):
+            cancelled = bool(response.get("ok"))
+            _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=cancelled, mode="host")
+            return cancelled
+        if isinstance(response.get("aborted"), bool):
+            cancelled = bool(response.get("aborted"))
+            _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=cancelled, mode="host")
+            return cancelled
+        _opencode_trace("opencode.cancel.result", run_ref=str(run_ref), cancelled=True, mode="host")
         return True
+
+    async def answer_question(
+        self,
+        *,
+        run_ref: str,
+        question_id: str,
+        answers: list[list[str]],
+        sandbox_id: str | None = None,
+    ) -> bool:
+        request_id = str(question_id or "").strip()
+        if not request_id:
+            raise OpenCodeServerClientError("OpenCode question response requires question_id.")
+
+        normalized_answers: list[list[str]] = []
+        for row in answers or []:
+            if not isinstance(row, list):
+                continue
+            values = [str(item).strip() for item in row if str(item).strip()]
+            normalized_answers.append(values)
+        if not normalized_answers:
+            raise OpenCodeServerClientError("OpenCode question response requires at least one answer.")
+
+        resolved_sandbox_id = self._sandbox_run_ref_to_sandbox_id.get(str(run_ref)) or str(sandbox_id or "").strip() or None
+        _opencode_trace(
+            "opencode.answer.requested",
+            run_ref=str(run_ref),
+            question_id=request_id,
+            answer_groups=len(normalized_answers),
+            sandbox_id=resolved_sandbox_id,
+            mode="sandbox" if self._sandbox_controller_mode_enabled() and resolved_sandbox_id else "host",
+        )
+        if self._sandbox_controller_mode_enabled() and resolved_sandbox_id:
+            try:
+                response = await self._sandbox_runtime_client.answer_opencode_question(
+                    sandbox_id=resolved_sandbox_id,
+                    run_ref=str(run_ref),
+                    question_id=request_id,
+                    answers=normalized_answers,
+                )
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                _opencode_trace(
+                    "opencode.answer.failed",
+                    run_ref=str(run_ref),
+                    question_id=request_id,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                    mode="sandbox",
+                )
+                raise OpenCodeServerClientError(f"OpenCode sandbox question response failed: {exc}") from exc
+            ok = response.get("ok")
+            if isinstance(ok, bool):
+                _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=ok, mode="sandbox")
+                return ok
+            _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=True, mode="sandbox")
+            return True
+
+        # Host/API mode: never bounce back through sandbox controller even if a sandbox_id is present.
+        self._sandbox_run_ref_to_sandbox_id.pop(str(run_ref), None)
+
+        await self._ensure_api_mode()
+        payload = {"answers": normalized_answers}
+        try:
+            await self._request(
+                "POST",
+                f"/question/{request_id}/reply",
+                json_payload=payload,
+                retries=0,
+                expect_json=False,
+            )
+            _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=True, mode="host")
+            return True
+        except OpenCodeServerClientError:
+            # Compatibility fallback for permission-shaped API variants.
+            response = await self._request(
+                "POST",
+                f"/session/{run_ref}/permissions/{request_id}",
+                json_payload={"status": "approved", "answers": normalized_answers},
+                retries=0,
+                expect_dict=False,
+            )
+            if isinstance(response, dict):
+                ok = response.get("ok")
+                if isinstance(ok, bool):
+                    _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=ok, mode="host-fallback")
+                    return ok
+            _opencode_trace("opencode.answer.result", run_ref=str(run_ref), question_id=request_id, ok=True, mode="host-fallback")
+            return True
 
     async def _start_run_official(
         self,
@@ -332,6 +448,7 @@ class OpenCodeServerClient:
                 )
 
         initial_response: dict[str, Any] = {}
+        message_submission_task: Any | None = None
         prompt_async_payload: dict[str, Any] = {
             "messageID": message_id,
             "parts": [{"type": "text", "text": text_prompt}],
@@ -349,12 +466,43 @@ class OpenCodeServerClient:
             )
         except OpenCodeServerClientError:
             # Fallback for servers/modes where prompt_async is unavailable.
-            response = await self._request("POST", f"/session/{session_id}/message", json_payload=message_payload, retries=0)
-            embedded_error = self._extract_assistant_info_error(response)
-            if embedded_error:
-                safe_error = self._sanitize_error_message(embedded_error)
-                raise OpenCodeServerClientError(f"OpenCode assistant error: {safe_error}")
-            initial_response = response
+            import asyncio
+
+            async def _submit_message_fallback() -> dict[str, Any]:
+                response = await self._request("POST", f"/session/{session_id}/message", json_payload=message_payload, retries=0)
+                embedded_error = self._extract_assistant_info_error(response)
+                if embedded_error:
+                    safe_error = self._sanitize_error_message(embedded_error)
+                    raise OpenCodeServerClientError(f"OpenCode assistant error: {safe_error}")
+                return response
+
+            message_submission_task = asyncio.create_task(_submit_message_fallback())
+
+            # Preserve existing behavior when the server responds immediately:
+            # capture synchronous payload/errors now.
+            immediate_window_ms = float(
+                (os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_MESSAGE_IMMEDIATE_WINDOW_MS") or "50").strip()
+            )
+            immediate_window_seconds = max(0.0, immediate_window_ms) / 1000.0
+            if immediate_window_seconds > 0:
+                try:
+                    initial_response = await asyncio.wait_for(
+                        asyncio.shield(message_submission_task),
+                        timeout=immediate_window_seconds,
+                    )
+                    message_submission_task = None
+                except asyncio.TimeoutError:
+                    pass
+
+            def _consume_message_submission_result(task: Any) -> None:
+                try:
+                    task.result()
+                except Exception:
+                    # Streaming flow handles assistant/session errors from official APIs.
+                    pass
+
+            if message_submission_task is not None:
+                message_submission_task.add_done_callback(_consume_message_submission_result)
 
         assistant_message_ids: set[str] = set()
         response_info = initial_response.get("info") if isinstance(initial_response.get("info"), dict) else {}
@@ -371,9 +519,14 @@ class OpenCodeServerClient:
             "tool_status": {},
             "message_roles": {message_id: "user"},
             "part_types": {},
+            "question_pending_request_ids": set(),
+            "emitted_question_request_ids": set(),
             "completed": False,
             "last_progress_at": time.monotonic(),
             "assistant_message_ids": assistant_message_ids,
+            "message_submission_task": message_submission_task,
+            "workspace_path": workspace_path,
+            "sandbox_id": sandbox_id,
         }
         return session_id
 
@@ -384,16 +537,39 @@ class OpenCodeServerClient:
         if should_use_global:
             try:
                 async for event in self._stream_official_run_events_via_global_events(session_id=session_id):
-                    if str(event.get("event") or "").strip() in {"run.completed", "run.failed"}:
+                    if str(event.get("event") or "").strip() in {
+                        "run.completed",
+                        "run.failed",
+                        "run.cancelled",
+                        "run.paused",
+                    }:
                         terminal_emitted = True
                     yield event
                 if terminal_emitted:
+                    logger.info(
+                        "OPENCODE_STREAM_SOURCE session_id=%s source=official_global_event_stream",
+                        session_id,
+                    )
                     return
             except OpenCodeServerClientError:
                 raise
             except Exception:
                 # Fall back to snapshot polling if global stream is unavailable.
+                logger.info(
+                    "OPENCODE_STREAM_SOURCE session_id=%s source=official_snapshot_polling_fallback reason=global_stream_exception",
+                    session_id,
+                )
                 pass
+            else:
+                logger.info(
+                    "OPENCODE_STREAM_SOURCE session_id=%s source=official_snapshot_polling_fallback reason=no_terminal_event",
+                    session_id,
+                )
+        else:
+            logger.info(
+                "OPENCODE_STREAM_SOURCE session_id=%s source=official_snapshot_polling_only reason=global_stream_disabled",
+                session_id,
+            )
 
         async for event in self._stream_official_run_events_snapshot(session_id=session_id):
             yield event
@@ -410,14 +586,20 @@ class OpenCodeServerClient:
                 "tool_status": {},
                 "message_roles": {},
                 "part_types": {},
+                "question_pending_request_ids": set(),
+                "emitted_question_request_ids": set(),
                 "completed": False,
                 "last_progress_at": time.monotonic(),
                 "assistant_message_ids": set(),
+                "workspace_path": "",
+                "sandbox_id": "",
+                "saw_tool_event": False,
             },
         )
         assistant_message_ids = state.setdefault("assistant_message_ids", set())
         message_roles = state.setdefault("message_roles", {})
         part_types = state.setdefault("part_types", {})
+        pending_question_request_ids = state.setdefault("question_pending_request_ids", set())
         parent_message_id = str(state.get("parent_message_id") or "").strip()
         timeout_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_TIMEOUT_SECONDS") or "300").strip())
         deadline = time.monotonic() + max(30.0, timeout_seconds)
@@ -425,6 +607,85 @@ class OpenCodeServerClient:
         global_read_timeout = max(2.0, global_read_timeout)
         saw_assistant_text = False
         terminal_event: dict[str, Any] | None = None
+        global_event_seen = 0
+        global_event_matched_session = 0
+        assistant_delta_emitted = 0
+        delta_skipped_field_filter = 0
+        delta_skipped_empty = 0
+        event_type_counts: dict[str, int] = {}
+
+        _opencode_trace(
+            "opencode.global_stream.opened",
+            session_id=session_id,
+        )
+
+        async def _evaluate_idle_signal(source_event: str) -> tuple[list[dict[str, Any]], bool]:
+            nonlocal terminal_event
+            nonlocal saw_assistant_text
+            nonlocal assistant_delta_emitted
+            emitted_events: list[dict[str, Any]] = []
+            if any(str(item or "").strip() for item in pending_question_request_ids):
+                return emitted_events, False
+            messages_payload = await self._request(
+                "GET",
+                f"/session/{session_id}/message",
+                json_payload={},
+                retries=0,
+                expect_dict=False,
+            )
+            candidates = self._collect_official_assistant_candidates(messages_payload)
+            if parent_message_id:
+                filtered = [
+                    item
+                    for item in candidates
+                    if self._extract_candidate_parent_id(item) in {"", parent_message_id}
+                ]
+                if filtered:
+                    candidates = filtered
+            candidates = self._sort_assistant_candidates(candidates)
+            last_info_error = ""
+            for message in candidates:
+                info = message.get("info") if isinstance(message.get("info"), dict) else {}
+                message_id = str(info.get("id") or "").strip()
+                role = str(info.get("role") or "").strip().lower()
+                if message_id and role:
+                    message_roles[message_id] = role
+                if message_id:
+                    assistant_message_ids.add(message_id)
+                for event in self._extract_incremental_tool_events(message=message, state=state):
+                    state["saw_tool_event"] = True
+                    state["last_progress_at"] = time.monotonic()
+                    emitted_events.append(event)
+                for delta in self._extract_incremental_text_deltas(message=message, state=state):
+                    saw_assistant_text = True
+                    state["last_progress_at"] = time.monotonic()
+                    assistant_delta_emitted += 1
+                    emitted_events.append({"event": "assistant.delta", "payload": {"content": delta}})
+                embedded_error = self._extract_assistant_info_error(message)
+                if embedded_error:
+                    last_info_error = self._sanitize_error_message(embedded_error)
+            if last_info_error:
+                terminal_event = {
+                    "event": "run.failed",
+                    "payload": {"error": f"OpenCode assistant error: {last_info_error}"},
+                    "code": "OPENCODE_ASSISTANT_ERROR",
+                }
+                return emitted_events, True
+            if self._is_session_completion_ready(
+                state=state,
+                pending_question_request_ids=pending_question_request_ids,
+                candidates=candidates,
+            ):
+                terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
+                return emitted_events, True
+            _opencode_trace(
+                "opencode.idle_nonterminal",
+                session_id=session_id,
+                source_event=source_event,
+                candidate_count=len(candidates),
+                pending_question_count=len([item for item in pending_question_request_ids if str(item or "").strip()]),
+            )
+            return emitted_events, False
 
         initial_payload = state.get("initial_payload")
         if isinstance(initial_payload, dict):
@@ -472,12 +733,82 @@ class OpenCodeServerClient:
                     payload = self._extract_global_event_payload(event_wrapper)
                     if not isinstance(payload, dict):
                         continue
+                    global_event_seen += 1
                     event_type = str(payload.get("type") or "").strip()
                     properties = payload.get("properties") if isinstance(payload.get("properties"), dict) else {}
                     if not event_type or not properties:
                         continue
                     event_session_id = self._extract_session_id_from_global_event_properties(properties)
                     if event_session_id != session_id:
+                        continue
+                    global_event_matched_session += 1
+                    event_type_counts[event_type] = int(event_type_counts.get(event_type) or 0) + 1
+
+                    if event_type == "question.asked":
+                        mapped_question = self._map_question_asked_properties(properties)
+                        if mapped_question is None:
+                            continue
+                        request_id = str(mapped_question.get("request_id") or "").strip()
+                        if request_id:
+                            pending_question_request_ids.add(request_id)
+                        state["last_progress_at"] = time.monotonic()
+                        yield {"event": "tool.question", "payload": mapped_question}
+                        continue
+
+                    if event_type == "permission.asked":
+                        mapped_permission = self._map_permission_asked_properties(properties)
+                        if mapped_permission is None:
+                            continue
+                        request_id = str(mapped_permission.get("request_id") or "").strip()
+                        if request_id:
+                            pending_question_request_ids.add(request_id)
+                        if request_id and self._should_auto_approve_permission_request(state=state):
+                            approved = await self._approve_permission_request(
+                                session_id=session_id,
+                                request_id=request_id,
+                            )
+                            _opencode_trace(
+                                "permission.auto_approved",
+                                session_id=session_id,
+                                request_id=request_id,
+                                approved=approved,
+                                workspace_path=str(state.get("workspace_path") or ""),
+                                sandbox_id=str(state.get("sandbox_id") or ""),
+                            )
+                            state["last_progress_at"] = time.monotonic()
+                            if approved:
+                                pending_question_request_ids.discard(request_id)
+                                yield {
+                                    "event": "tool.question.answered",
+                                    "payload": {"request_id": request_id, "answers": [["Allow"]]},
+                                }
+                                continue
+                        state["last_progress_at"] = time.monotonic()
+                        yield {"event": "tool.question", "payload": mapped_permission}
+                        continue
+
+                    if event_type in {"question.replied", "question.rejected"}:
+                        mapped_reply = self._map_question_reply_properties(properties)
+                        request_id = str(mapped_reply.get("request_id") or "").strip()
+                        if request_id:
+                            pending_question_request_ids.discard(request_id)
+                        state["last_progress_at"] = time.monotonic()
+                        mapped_event = "tool.question.answered" if event_type == "question.replied" else "tool.question.rejected"
+                        yield {"event": mapped_event, "payload": mapped_reply}
+                        continue
+
+                    if event_type in {"permission.replied", "permission.rejected"}:
+                        mapped_reply = self._map_question_reply_properties(properties)
+                        request_id = str(mapped_reply.get("request_id") or "").strip()
+                        if request_id:
+                            pending_question_request_ids.discard(request_id)
+                        state["last_progress_at"] = time.monotonic()
+                        mapped_event = (
+                            "tool.question.answered"
+                            if event_type == "permission.replied"
+                            else "tool.question.rejected"
+                        )
+                        yield {"event": mapped_event, "payload": mapped_reply}
                         continue
 
                     if event_type == "message.updated":
@@ -498,23 +829,112 @@ class OpenCodeServerClient:
                                 "code": "OPENCODE_ASSISTANT_ERROR",
                             }
                             break
+                        candidates = self._collect_official_assistant_candidates(properties)
+                        if not candidates and role == "assistant":
+                            candidates = [properties]
+                        if parent_message_id:
+                            filtered = [
+                                item
+                                for item in candidates
+                                if self._extract_candidate_parent_id(item) in {"", parent_message_id}
+                            ]
+                            if filtered:
+                                candidates = filtered
+                        candidates = self._sort_assistant_candidates(candidates)
+                        for message in candidates:
+                            message_info = message.get("info") if isinstance(message.get("info"), dict) else {}
+                            candidate_role = str(message_info.get("role") or role or "").strip().lower()
+                            candidate_message_id = str(message_info.get("id") or message_id or "").strip()
+                            if candidate_message_id and candidate_role:
+                                message_roles[candidate_message_id] = candidate_role
+                            if candidate_message_id and candidate_role == "assistant":
+                                assistant_message_ids.add(candidate_message_id)
+                            if candidate_role == "user":
+                                continue
+                            if candidate_message_id and parent_message_id and candidate_message_id == parent_message_id:
+                                continue
+                            emitted_part_delta = False
+                            for event in self._extract_incremental_tool_events(message=message, state=state):
+                                state["saw_tool_event"] = True
+                                state["last_progress_at"] = time.monotonic()
+                                yield event
+                            for delta in self._extract_incremental_text_deltas(message=message, state=state):
+                                emitted_part_delta = True
+                                saw_assistant_text = True
+                                state["last_progress_at"] = time.monotonic()
+                                assistant_delta_emitted += 1
+                                yield {"event": "assistant.delta", "payload": {"content": delta}}
+                            if emitted_part_delta:
+                                continue
+                            fallback_text = self._extract_text_from_message_payload(message)
+                            if not fallback_text:
+                                continue
+                            fallback_offsets = state.setdefault("message_text_offsets", {})
+                            fallback_key = candidate_message_id
+                            if not fallback_key:
+                                fallback_hash = sha256(
+                                    json.dumps(message, sort_keys=True, default=str).encode("utf-8")
+                                ).hexdigest()[:16]
+                                fallback_key = f"message.updated:{fallback_hash}"
+                            previous = int(fallback_offsets.get(fallback_key) or 0)
+                            if len(fallback_text) <= previous:
+                                continue
+                            delta = fallback_text[previous:]
+                            fallback_offsets[fallback_key] = len(fallback_text)
+                            saw_assistant_text = True
+                            state["last_progress_at"] = time.monotonic()
+                            assistant_delta_emitted += 1
+                            yield {"event": "assistant.delta", "payload": {"content": delta}}
                         continue
 
-                    if event_type == "message.part.delta":
-                        message_id = str(properties.get("messageID") or "").strip()
+                    if event_type in {"message.part.delta", "message_part.delta", "message.part_delta", "message.delta"} or (
+                        "delta" in event_type and ("message" in event_type or "assistant" in event_type)
+                    ):
+                        message_id = str(
+                            properties.get("messageID")
+                            or properties.get("messageId")
+                            or properties.get("message_id")
+                            or ""
+                        ).strip()
+                        if message_id and parent_message_id and message_id == parent_message_id:
+                            continue
                         role = str(message_roles.get(message_id) or "").strip().lower()
-                        if role and role != "assistant":
+                        if role == "user":
                             continue
-                        if message_id and not role and message_id not in assistant_message_ids:
-                            continue
-                        if str(properties.get("field") or "").strip() != "text":
-                            continue
-                        part_id = str(properties.get("partID") or "").strip()
+                        field_name = str(properties.get("field") or "").strip().lower()
+                        if field_name:
+                            allowed_field_tokens = (
+                                "text",
+                                "content",
+                                "value",
+                                "output_text",
+                                "markdown",
+                                "final",
+                                "delta",
+                            )
+                            if not any(token in field_name for token in allowed_field_tokens):
+                                delta_skipped_field_filter += 1
+                                continue
+                        part_id = str(
+                            properties.get("partID")
+                            or properties.get("partId")
+                            or properties.get("part_id")
+                            or ""
+                        ).strip()
                         part_type = str(part_types.get(part_id) or "").strip().lower()
                         if self._should_skip_incremental_text_part_type(part_type):
                             continue
-                        delta = str(properties.get("delta") or "")
+                        delta = str(
+                            properties.get("delta")
+                            or properties.get("textDelta")
+                            or properties.get("text_delta")
+                            or properties.get("text")
+                            or properties.get("value")
+                            or properties.get("content")
+                            or ""
+                        )
                         if not delta:
+                            delta_skipped_empty += 1
                             continue
                         offsets = state.setdefault("text_offsets", {})
                         offset_key = part_id or f"{message_id}:delta"
@@ -522,26 +942,38 @@ class OpenCodeServerClient:
                         offsets[offset_key] = previous_offset + len(delta)
                         saw_assistant_text = True
                         state["last_progress_at"] = time.monotonic()
+                        assistant_delta_emitted += 1
                         yield {"event": "assistant.delta", "payload": {"content": delta}}
                         continue
 
-                    if event_type == "message.part.updated":
+                    if event_type in {
+                        "message.part.updated",
+                        "message_part.updated",
+                        "message.part_update",
+                        "message.part.created",
+                        "message.part.appended",
+                    }:
                         part = properties.get("part") if isinstance(properties.get("part"), dict) else {}
                         if not part:
                             continue
-                        message_id = str(part.get("messageID") or "").strip()
+                        message_id = str(
+                            part.get("messageID")
+                            or part.get("messageId")
+                            or part.get("message_id")
+                            or ""
+                        ).strip()
+                        if message_id and parent_message_id and message_id == parent_message_id:
+                            continue
                         role = str(message_roles.get(message_id) or "").strip().lower()
-                        if role and role != "assistant":
+                        if role == "user":
                             continue
                         part_id = str(part.get("id") or "").strip()
                         part_type = str(part.get("type") or "").strip().lower()
                         if part_id:
                             if part_type:
                                 part_types[part_id] = part_type
-                        if message_id and not role and message_id not in assistant_message_ids and part_type == "text":
-                            # Avoid echoing user prompt text before role metadata lands.
-                            continue
                         for event in self._extract_incremental_tool_events(message={"parts": [part]}, state=state):
+                            state["saw_tool_event"] = True
                             state["last_progress_at"] = time.monotonic()
                             yield event
                         for delta in self._extract_incremental_text_deltas(message={"parts": [part]}, state=state):
@@ -549,6 +981,34 @@ class OpenCodeServerClient:
                             state["last_progress_at"] = time.monotonic()
                             yield {"event": "assistant.delta", "payload": {"content": delta}}
                         continue
+
+                    if event_type in {"run.completed", "session.completed", "session.finished"}:
+                        if any(str(item or "").strip() for item in pending_question_request_ids):
+                            continue
+                        terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
+                        break
+
+                    if event_type in {"run.cancelled", "session.cancelled"}:
+                        terminal_event = {"event": "run.cancelled", "payload": {"status": "cancelled"}}
+                        break
+
+                    if event_type in {"run.paused", "session.paused"}:
+                        terminal_event = {"event": "run.paused", "payload": {"status": "paused"}}
+                        break
+
+                    if event_type in {"run.failed", "session.failed"}:
+                        failure_message = str(
+                            properties.get("error")
+                            or properties.get("message")
+                            or properties.get("reason")
+                            or "OpenCode run failed."
+                        ).strip()
+                        terminal_event = {
+                            "event": "run.failed",
+                            "payload": {"error": failure_message or "OpenCode run failed."},
+                            "code": "OPENCODE_RUN_FAILED_EVENT",
+                        }
+                        break
 
                     if event_type == "session.error":
                         details = self._compact_json_preview(properties)
@@ -559,67 +1019,53 @@ class OpenCodeServerClient:
                         }
                         break
 
+                    if event_type == "session.status":
+                        status_type = self._extract_session_status_type(properties)
+                        if status_type == "idle":
+                            emitted_events, completed = await _evaluate_idle_signal("session.status")
+                            for emitted in emitted_events:
+                                yield emitted
+                            if completed:
+                                break
+                        continue
+
                     if event_type == "session.idle":
-                        messages_payload = await self._request(
-                            "GET",
-                            f"/session/{session_id}/message",
-                            json_payload={},
-                            retries=0,
-                            expect_dict=False,
-                        )
-                        candidates = self._collect_official_assistant_candidates(messages_payload)
-                        if parent_message_id:
-                            filtered = [
-                                item
-                                for item in candidates
-                                if self._extract_candidate_parent_id(item) in {"", parent_message_id}
-                            ]
-                            if filtered:
-                                candidates = filtered
-                        candidates = self._sort_assistant_candidates(candidates)
-                        last_info_error = ""
-                        for message in candidates:
-                            info = message.get("info") if isinstance(message.get("info"), dict) else {}
-                            message_id = str(info.get("id") or "").strip()
-                            role = str(info.get("role") or "").strip().lower()
-                            if message_id and role:
-                                message_roles[message_id] = role
-                            if message_id:
-                                assistant_message_ids.add(message_id)
-                            for event in self._extract_incremental_tool_events(message=message, state=state):
-                                state["last_progress_at"] = time.monotonic()
-                                yield event
-                            for delta in self._extract_incremental_text_deltas(message=message, state=state):
-                                saw_assistant_text = True
-                                state["last_progress_at"] = time.monotonic()
-                                yield {"event": "assistant.delta", "payload": {"content": delta}}
-                            embedded_error = self._extract_assistant_info_error(message)
-                            if embedded_error:
-                                last_info_error = self._sanitize_error_message(embedded_error)
-                        if saw_assistant_text:
-                            terminal_event = {"event": "run.completed", "payload": {"status": "completed"}}
-                        elif last_info_error:
-                            terminal_event = {
-                                "event": "run.failed",
-                                "payload": {"error": f"OpenCode assistant error: {last_info_error}"},
-                                "code": "OPENCODE_ASSISTANT_ERROR",
-                            }
-                        else:
-                            detail_payload = messages_payload if isinstance(messages_payload, dict) else {"messages": messages_payload}
-                            details = self._compact_json_preview(detail_payload)
-                            terminal_event = {
-                                "event": "run.failed",
-                                "payload": {"error": f"OpenCode response did not include assistant text. response={details}"},
-                                "code": "OPENCODE_EMPTY_RESPONSE",
-                            }
-                        break
+                        emitted_events, completed = await _evaluate_idle_signal("session.idle")
+                        for emitted in emitted_events:
+                            yield emitted
+                        if completed:
+                            break
+                        continue
 
         if terminal_event is not None:
+            top_event_types = sorted(event_type_counts.items(), key=lambda item: item[1], reverse=True)[:12]
+            _opencode_trace(
+                "opencode.global_stream.closed",
+                session_id=session_id,
+                global_event_seen=global_event_seen,
+                global_event_matched_session=global_event_matched_session,
+                assistant_delta_emitted=assistant_delta_emitted,
+                delta_skipped_field_filter=delta_skipped_field_filter,
+                delta_skipped_empty=delta_skipped_empty,
+                event_type_counts=top_event_types,
+                terminal_event=str(terminal_event.get("event") or ""),
+            )
             yield terminal_event
             self._official_run_state.pop(session_id, None)
             return
 
         # No terminal event observed; let snapshot polling handle completion/failure.
+        top_event_types = sorted(event_type_counts.items(), key=lambda item: item[1], reverse=True)[:12]
+        _opencode_trace(
+            "opencode.global_stream.closed_no_terminal",
+            session_id=session_id,
+            global_event_seen=global_event_seen,
+            global_event_matched_session=global_event_matched_session,
+            assistant_delta_emitted=assistant_delta_emitted,
+            delta_skipped_field_filter=delta_skipped_field_filter,
+            delta_skipped_empty=delta_skipped_empty,
+            event_type_counts=top_event_types,
+        )
 
     async def _stream_official_run_events_snapshot(self, *, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
         state = self._official_run_state.setdefault(
@@ -633,10 +1079,17 @@ class OpenCodeServerClient:
                 "tool_status": {},
                 "message_roles": {},
                 "part_types": {},
+                "question_pending_request_ids": set(),
+                "emitted_question_request_ids": set(),
                 "completed": False,
                 "last_progress_at": time.monotonic(),
+                "workspace_path": "",
+                "sandbox_id": "",
+                "saw_tool_event": False,
             },
         )
+        pending_question_request_ids = state.setdefault("question_pending_request_ids", set())
+        emitted_question_request_ids = state.setdefault("emitted_question_request_ids", set())
         parent_message_id = str(state.get("parent_message_id") or "").strip()
         timeout_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_TIMEOUT_SECONDS") or "300").strip())
         deadline = time.monotonic() + max(30.0, timeout_seconds)
@@ -646,6 +1099,54 @@ class OpenCodeServerClient:
         last_assistant_info_error = ""
 
         while time.monotonic() < deadline:
+            pending_questions = await self._list_pending_questions_for_session(session_id=session_id)
+            observed_question_ids: set[str] = set()
+            for question in pending_questions:
+                mapped_permission = self._map_permission_asked_properties(question)
+                permission_request_id = str(mapped_permission.get("request_id") or "").strip() if mapped_permission else ""
+                if permission_request_id and self._should_auto_approve_permission_request(state=state):
+                    approved = await self._approve_permission_request(
+                        session_id=session_id,
+                        request_id=permission_request_id,
+                    )
+                    _opencode_trace(
+                        "permission.auto_approved",
+                        session_id=session_id,
+                        request_id=permission_request_id,
+                        approved=approved,
+                        workspace_path=str(state.get("workspace_path") or ""),
+                        sandbox_id=str(state.get("sandbox_id") or ""),
+                        source="snapshot_polling",
+                    )
+                    if approved:
+                        pending_question_request_ids.discard(permission_request_id)
+                        state["last_progress_at"] = time.monotonic()
+                        yield {
+                            "event": "tool.question.answered",
+                            "payload": {"request_id": permission_request_id, "answers": [["Allow"]]},
+                        }
+                        continue
+                mapped_question = self._map_question_asked_properties(question)
+                if mapped_question is None:
+                    continue
+                request_id = str(mapped_question.get("request_id") or "").strip()
+                if not request_id:
+                    continue
+                observed_question_ids.add(request_id)
+                pending_question_request_ids.add(request_id)
+                if request_id not in emitted_question_request_ids:
+                    emitted_question_request_ids.add(request_id)
+                    state["last_progress_at"] = time.monotonic()
+                    yield {"event": "tool.question", "payload": mapped_question}
+            stale_questions = [qid for qid in list(pending_question_request_ids) if qid not in observed_question_ids]
+            for request_id in stale_questions:
+                pending_question_request_ids.discard(request_id)
+                state["last_progress_at"] = time.monotonic()
+                yield {
+                    "event": "tool.question.answered",
+                    "payload": {"request_id": request_id, "answers": []},
+                }
+
             used_initial_payload = not bool(state.get("initial_emitted"))
             payload: Any
             if used_initial_payload:
@@ -672,7 +1173,14 @@ class OpenCodeServerClient:
                     candidates = filtered
             candidates = self._sort_assistant_candidates(candidates)
 
-            if used_initial_payload and isinstance(payload, dict) and payload and not candidates and not saw_assistant_text:
+            if (
+                used_initial_payload
+                and isinstance(payload, dict)
+                and payload
+                and not candidates
+                and not saw_assistant_text
+                and not any(str(item or "").strip() for item in pending_question_request_ids)
+            ):
                 details = self._compact_json_preview(payload)
                 yield {
                     "event": "run.failed",
@@ -688,6 +1196,7 @@ class OpenCodeServerClient:
                     last_assistant_info_error = self._sanitize_error_message(embedded_error)
 
                 for event in self._extract_incremental_tool_events(message=message, state=state):
+                    state["saw_tool_event"] = True
                     state["last_progress_at"] = time.monotonic()
                     yield event
                 for delta in self._extract_incremental_text_deltas(message=message, state=state):
@@ -695,22 +1204,27 @@ class OpenCodeServerClient:
                     state["last_progress_at"] = time.monotonic()
                     yield {"event": "assistant.delta", "payload": {"content": delta}}
 
-            if bool(state.get("complete_on_initial_text")) and saw_assistant_text:
+            if self._is_session_completion_ready(
+                state=state,
+                pending_question_request_ids=pending_question_request_ids,
+                candidates=candidates,
+                allow_text_fallback=True,
+            ):
                 yield {"event": "run.completed", "payload": {"status": "completed"}}
                 self._official_run_state.pop(session_id, None)
                 return
-
-            running_statuses = {"running", "pending", "in_progress", "started"}
-            tool_status = state.get("tool_status") if isinstance(state.get("tool_status"), dict) else {}
-            has_running_tools = any(str(value or "").strip().lower() in running_statuses for value in tool_status.values())
+            has_pending_questions = any(str(item or "").strip() for item in pending_question_request_ids)
+            has_running_tools = self._has_running_tool_states(state=state)
             settle_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS") or "1.0").strip())
             last_progress_at = float(state.get("last_progress_at") or 0.0)
-            if saw_assistant_text and not has_running_tools and (time.monotonic() - last_progress_at) >= max(0.2, settle_seconds):
-                yield {"event": "run.completed", "payload": {"status": "completed"}}
-                self._official_run_state.pop(session_id, None)
-                return
-            if (not saw_assistant_text) and last_assistant_info_error and not has_running_tools and (
+            if (
+                (not saw_assistant_text)
+                and last_assistant_info_error
+                and not has_running_tools
+                and not has_pending_questions
+                and (
                 (time.monotonic() - last_progress_at) >= max(0.2, settle_seconds)
+                )
             ):
                 yield {
                     "event": "run.failed",
@@ -731,11 +1245,22 @@ class OpenCodeServerClient:
             self._official_run_state.pop(session_id, None)
             return
 
-        yield {
-            "event": "run.failed",
-            "payload": {"error": "OpenCode stream timed out before completion."},
-            "code": "OPENCODE_STREAM_TIMEOUT",
-        }
+        fail_on_stream_timeout = str(
+            os.getenv("APPS_CODING_AGENT_OPENCODE_FORCE_FAIL_ON_STREAM_TIMEOUT", "0")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if fail_on_stream_timeout:
+            yield {
+                "event": "run.failed",
+                "payload": {"error": "OpenCode stream timed out before completion."},
+                "code": "OPENCODE_STREAM_TIMEOUT",
+            }
+        else:
+            _opencode_trace(
+                "opencode.snapshot_stream.timeout_nonterminal",
+                session_id=session_id,
+                saw_assistant_text=saw_assistant_text,
+                pending_question_count=len([item for item in pending_question_request_ids if str(item or "").strip()]),
+            )
         self._official_run_state.pop(session_id, None)
 
     @staticmethod
@@ -748,6 +1273,71 @@ class OpenCodeServerClient:
         if raw_payload.get("type"):
             return raw_payload
         return None
+
+    @staticmethod
+    def _extract_session_status_type(properties: dict[str, Any]) -> str:
+        status = properties.get("status")
+        if isinstance(status, dict):
+            return str(status.get("type") or status.get("status") or "").strip().lower()
+        if isinstance(status, str):
+            return str(status).strip().lower()
+        return str(properties.get("type") or properties.get("state") or "").strip().lower()
+
+    @staticmethod
+    def _assistant_finish_value(message: dict[str, Any]) -> str:
+        info = message.get("info") if isinstance(message.get("info"), dict) else {}
+        return str(info.get("finish") or "").strip().lower()
+
+    @staticmethod
+    def _assistant_message_completed_at(message: dict[str, Any]) -> int:
+        info = message.get("info") if isinstance(message.get("info"), dict) else {}
+        time_data = info.get("time") if isinstance(info.get("time"), dict) else {}
+        try:
+            return int(time_data.get("completed") or 0)
+        except Exception:
+            return 0
+
+    @classmethod
+    def _assistant_message_is_final(cls, message: dict[str, Any]) -> bool:
+        finish = cls._assistant_finish_value(message)
+        if finish:
+            return finish not in {"tool-calls", "unknown"}
+        return cls._assistant_message_completed_at(message) > 0
+
+    @classmethod
+    def _latest_assistant_candidate(cls, candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not candidates:
+            return None
+        ordered = cls._sort_assistant_candidates(candidates)
+        return ordered[-1] if ordered else None
+
+    @staticmethod
+    def _has_running_tool_states(*, state: dict[str, Any]) -> bool:
+        running_statuses = {"running", "pending", "in_progress", "started"}
+        tool_status = state.get("tool_status") if isinstance(state.get("tool_status"), dict) else {}
+        return any(str(value or "").strip().lower() in running_statuses for value in tool_status.values())
+
+    @classmethod
+    def _is_session_completion_ready(
+        cls,
+        *,
+        state: dict[str, Any],
+        pending_question_request_ids: set[Any],
+        candidates: list[dict[str, Any]],
+        allow_text_fallback: bool = False,
+    ) -> bool:
+        if any(str(item or "").strip() for item in pending_question_request_ids):
+            return False
+        if cls._has_running_tool_states(state=state):
+            return False
+        latest_assistant = cls._latest_assistant_candidate(candidates)
+        if latest_assistant is None:
+            return False
+        if cls._assistant_message_is_final(latest_assistant):
+            return True
+        if allow_text_fallback and (not bool(state.get("saw_tool_event"))):
+            return bool(cls._extract_text_from_message_payload(latest_assistant))
+        return False
 
     @staticmethod
     def _extract_session_id_from_global_event_properties(properties: dict[str, Any]) -> str:
@@ -771,6 +1361,204 @@ class OpenCodeServerClient:
             if nested:
                 return nested
         return ""
+
+    @staticmethod
+    def _map_question_asked_properties(properties: dict[str, Any]) -> dict[str, Any] | None:
+        request_id = str(
+            properties.get("id")
+            or properties.get("requestID")
+            or properties.get("requestId")
+            or properties.get("request_id")
+            or ""
+        ).strip()
+        questions_payload = properties.get("questions") if isinstance(properties.get("questions"), list) else []
+        questions: list[dict[str, Any]] = []
+        for item in questions_payload:
+            if not isinstance(item, dict):
+                continue
+            normalized: dict[str, Any] = {
+                "header": str(item.get("header") or "").strip(),
+                "question": str(item.get("question") or "").strip(),
+                "multiple": bool(item.get("multiple")) if item.get("multiple") is not None else False,
+                "options": [],
+            }
+            options_payload = item.get("options") if isinstance(item.get("options"), list) else []
+            for option in options_payload:
+                if not isinstance(option, dict):
+                    continue
+                label = str(option.get("label") or "").strip()
+                if not label:
+                    continue
+                normalized["options"].append(
+                    {
+                        "label": label,
+                        "description": str(option.get("description") or "").strip(),
+                    }
+                )
+            questions.append(normalized)
+        if not request_id and not questions:
+            return None
+        tool_payload = properties.get("tool") if isinstance(properties.get("tool"), dict) else {}
+        payload: dict[str, Any] = {
+            "request_id": request_id,
+            "questions": questions,
+        }
+        if tool_payload:
+            payload["tool"] = {
+                "call_id": str(tool_payload.get("callID") or tool_payload.get("callId") or "").strip() or None,
+                "message_id": str(tool_payload.get("messageID") or tool_payload.get("messageId") or "").strip() or None,
+            }
+        return payload
+
+    @staticmethod
+    def _map_permission_asked_properties(properties: dict[str, Any]) -> dict[str, Any] | None:
+        type_hint = str(properties.get("type") or "").strip().lower()
+        has_permission_marker = any(
+            key in properties for key in ("permission", "pattern", "target", "path", "status", "action")
+        )
+        if not has_permission_marker and "permission" not in type_hint:
+            return None
+        request_id = str(
+            properties.get("id")
+            or properties.get("requestID")
+            or properties.get("requestId")
+            or properties.get("request_id")
+            or ""
+        ).strip()
+        permission_name = str(
+            properties.get("permission")
+            or properties.get("kind")
+            or properties.get("name")
+            or "permission"
+        ).strip()
+        pattern = str(
+            properties.get("pattern")
+            or properties.get("path")
+            or properties.get("target")
+            or ""
+        ).strip()
+        prompt = str(
+            properties.get("question")
+            or properties.get("prompt")
+            or properties.get("message")
+            or ""
+        ).strip()
+        if not prompt:
+            detail = f" ({pattern})" if pattern else ""
+            prompt = f"Allow `{permission_name or 'permission'}` request{detail}?"
+        if not request_id:
+            return None
+        return {
+            "request_id": request_id,
+            "questions": [
+                {
+                    "header": "Permission",
+                    "question": prompt,
+                    "multiple": False,
+                    "options": [
+                        {"label": "Allow", "description": "Allow this request for the current run."},
+                        {"label": "Deny", "description": "Reject this request and continue safely."},
+                    ],
+                }
+            ],
+            "tool": {
+                "call_id": str(properties.get("callID") or properties.get("callId") or "").strip() or None,
+                "message_id": str(properties.get("messageID") or properties.get("messageId") or "").strip() or None,
+            },
+            "permission": permission_name or None,
+            "pattern": pattern or None,
+        }
+
+    @staticmethod
+    def _map_question_reply_properties(properties: dict[str, Any]) -> dict[str, Any]:
+        request_id = str(
+            properties.get("requestID")
+            or properties.get("requestId")
+            or properties.get("request_id")
+            or properties.get("id")
+            or ""
+        ).strip()
+        answers_payload = properties.get("answers") if isinstance(properties.get("answers"), list) else []
+        normalized_answers: list[list[str]] = []
+        for row in answers_payload:
+            if not isinstance(row, list):
+                continue
+            normalized_row = [str(item).strip() for item in row if str(item).strip()]
+            normalized_answers.append(normalized_row)
+        return {
+            "request_id": request_id,
+            "answers": normalized_answers,
+        }
+
+    @staticmethod
+    def _is_permission_auto_approve_enabled() -> bool:
+        raw = (os.getenv("APPS_CODING_AGENT_OPENCODE_AUTO_APPROVE_PERMISSION_ASK") or "1").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _is_stage_workspace_path(workspace_path: str) -> bool:
+        normalized = str(workspace_path or "").strip().replace("\\", "/")
+        if not normalized:
+            return False
+        return "/.talmudpedia/stage/" in normalized or normalized.endswith("/.talmudpedia/stage/shared/workspace")
+
+    def _should_auto_approve_permission_request(self, *, state: dict[str, Any]) -> bool:
+        if not self._is_permission_auto_approve_enabled():
+            return False
+        workspace_path = str(state.get("workspace_path") or "").strip()
+        return self._is_stage_workspace_path(workspace_path)
+
+    async def _approve_permission_request(self, *, session_id: str, request_id: str) -> bool:
+        if not request_id:
+            return False
+        try:
+            response = await self._request(
+                "POST",
+                f"/session/{session_id}/permissions/{request_id}",
+                json_payload={"status": "approved", "answers": [["Allow"]]},
+                retries=0,
+                expect_dict=False,
+            )
+            if isinstance(response, dict):
+                ok = response.get("ok")
+                if isinstance(ok, bool):
+                    return ok
+        except OpenCodeServerClientError:
+            try:
+                await self._request(
+                    "POST",
+                    f"/question/{request_id}/reply",
+                    json_payload={"answers": [["Allow"]]},
+                    retries=0,
+                    expect_json=False,
+                )
+                return True
+            except Exception:
+                return False
+        return True
+
+    async def _list_pending_questions_for_session(self, *, session_id: str) -> list[dict[str, Any]]:
+        try:
+            payload = await self._request(
+                "GET",
+                "/question",
+                json_payload={},
+                retries=0,
+                expect_dict=False,
+            )
+        except OpenCodeServerClientError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        pending: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            event_session_id = str(item.get("sessionID") or item.get("sessionId") or "").strip()
+            if event_session_id != str(session_id):
+                continue
+            pending.append(item)
+        return pending
 
     async def _official_preflight_model(
         self,
@@ -834,7 +1622,7 @@ class OpenCodeServerClient:
     def _build_official_session_permission_rules(workspace_path: str) -> list[dict[str, str]]:
         workspace = str(workspace_path or "").strip()
         if not workspace:
-            return []
+            return [{"permission": "question", "pattern": "*", "action": "allow"}]
         normalized = os.path.abspath(workspace)
         real = os.path.realpath(normalized)
         patterns: list[str] = []
@@ -847,7 +1635,9 @@ class OpenCodeServerClient:
             wildcard = value.rstrip("/") + "/*"
             if wildcard not in patterns:
                 patterns.append(wildcard)
-        return [{"permission": "external_directory", "pattern": pattern, "action": "allow"} for pattern in patterns]
+        rules = [{"permission": "external_directory", "pattern": pattern, "action": "allow"} for pattern in patterns]
+        rules.append({"permission": "question", "pattern": "*", "action": "allow"})
+        return rules
 
     async def _poll_official_assistant_message(
         self,
@@ -883,22 +1673,14 @@ class OpenCodeServerClient:
     async def _ensure_api_mode(self) -> str:
         if self._api_mode:
             return self._api_mode
-        official_error: Exception | None = None
         try:
             await self._request("GET", "/global/health", json_payload={}, retries=1, expect_json=True)
             self._api_mode = "official"
             return self._api_mode
         except Exception as exc:
-            official_error = exc
-        try:
-            await self._request("GET", "/health", json_payload={}, retries=1, expect_json=False)
-            self._api_mode = "legacy"
-            return self._api_mode
-        except Exception as legacy_error:
             raise OpenCodeServerClientError(
-                f"OpenCode health check failed for both official and legacy APIs "
-                f"(official: {official_error}; legacy: {legacy_error})"
-            ) from legacy_error
+                f"OpenCode official API health check failed: {exc}"
+            ) from exc
 
     @staticmethod
     def _to_official_model(resolved_model_id: str) -> dict[str, str] | None:
@@ -947,7 +1729,8 @@ class OpenCodeServerClient:
             f"- sandbox_id: {sandbox_id or 'unknown'}\n"
             f"- workspace_path: {workspace_path or 'unknown'}\n"
             f"- editing_rules: use coding-agent tools only for file changes; never claim success if a tool reports error/non-zero exit code.\n"
-            f"- contract_tool: use `coding_agent_get_agent_integration_contract` when you need selected app-agent tool schemas/UI hints.\n"
+            f"- contract_tool: use `read_agent_context` for selected app-agent tool schemas/UI hints.\n"
+            f"- contract_tool_mode: default output is compact summary; pass `include_full_contract=true` when full contract payload is required.\n"
             f"- contract_tool_input: call contract tools with arguments containing current `run_id`.\n"
             f"- recovery_rules: on apply_patch/context mismatch, read current file range and retry with refreshed patch.\n"
             f"- verification_rules: after edits, run recommended verification/build commands and fix failures before final response.\n"
@@ -961,15 +1744,18 @@ class OpenCodeServerClient:
         app_id: str,
         selected_agent_contract: dict[str, Any] | None,
     ) -> str:
+        _ = run_id
+        contract_payload = (
+            dict(selected_agent_contract)
+            if isinstance(selected_agent_contract, dict)
+            else {}
+        )
+        # Keep context deterministic across runs by stripping volatile metadata.
+        contract_payload.pop("generated_at", None)
         payload = {
-            "run_id": str(run_id or "").strip(),
             "app_id": str(app_id or "").strip(),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "selected_agent_contract": (
-                dict(selected_agent_contract)
-                if isinstance(selected_agent_contract, dict)
-                else {}
-            ),
+            "context_version": "1",
+            "selected_agent_contract": contract_payload,
         }
         return json.dumps(
             payload,
@@ -978,6 +1764,20 @@ class OpenCodeServerClient:
             separators=(",", ":"),
             default=str,
         )
+
+    @staticmethod
+    def _content_hash(content: str) -> str:
+        return sha256(str(content or "").encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _files_hash(files: dict[str, str]) -> str:
+        digest = sha256()
+        for path, content in sorted((files or {}).items()):
+            digest.update(str(path).encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(str(content).encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()
 
     async def _seed_custom_tools_and_context(
         self,
@@ -989,24 +1789,39 @@ class OpenCodeServerClient:
         selected_agent_contract: dict[str, Any] | None,
     ) -> None:
         try:
-            files_to_seed = build_opencode_bootstrap_files()
+            bootstrap_files = build_opencode_bootstrap_files()
         except Exception as exc:
             raise OpenCodeServerClientError(
                 f"Failed to load OpenCode custom-tool bootstrap files: {exc}"
             ) from exc
 
-        files_to_seed[OPENCODE_BOOTSTRAP_CONTEXT_PATH] = self._build_selected_agent_contract_context_content(
+        context_content = self._build_selected_agent_contract_context_content(
             run_id=run_id,
             app_id=app_id,
             selected_agent_contract=selected_agent_contract,
         )
+        bootstrap_hash = self._files_hash(bootstrap_files)
+        context_hash = self._content_hash(context_content)
+        seed_bootstrap_files = self._seed_bootstrap_files_on_run_start()
 
         if self._sandbox_controller_mode_enabled():
             if not sandbox_id:
                 raise OpenCodeServerClientError(
                     "OpenCode sandbox mode requires sandbox_id for custom-tool bootstrap."
                 )
-            for path, content in sorted(files_to_seed.items()):
+            sandbox_key = str(sandbox_id).strip()
+
+            async def _sandbox_write_if_changed(path: str, content: str) -> None:
+                read_file = getattr(self._sandbox_runtime_client, "read_file", None)
+                if callable(read_file):
+                    try:
+                        current_payload = await read_file(sandbox_id=sandbox_id, path=path)
+                        current_content = current_payload.get("content") if isinstance(current_payload, dict) else None
+                        if isinstance(current_content, str) and current_content == content:
+                            return
+                    except PublishedAppDraftDevRuntimeClientError:
+                        # Missing/unreadable file should be overwritten below.
+                        pass
                 try:
                     await self._sandbox_runtime_client.write_file(
                         sandbox_id=sandbox_id,
@@ -1017,6 +1832,40 @@ class OpenCodeServerClient:
                     raise OpenCodeServerClientError(
                         f"Failed to seed OpenCode custom tools in sandbox `{sandbox_id}` at `{path}`: {exc}"
                     ) from exc
+
+            if (
+                seed_bootstrap_files
+                and hasattr(self._sandbox_runtime_client, "delete_file")
+                and sandbox_key not in self._bootstrap_cleanup_done_targets
+            ):
+                for path in OPENCODE_DEPRECATED_TOOL_PATHS:
+                    try:
+                        await self._sandbox_runtime_client.delete_file(
+                            sandbox_id=sandbox_id,
+                            path=path,
+                        )
+                    except PublishedAppDraftDevRuntimeClientError:
+                        # Best-effort cleanup for older workspaces that still have superseded tool files.
+                        pass
+                self._bootstrap_cleanup_done_targets.add(sandbox_key)
+
+            should_seed_bootstrap = (
+                seed_bootstrap_files
+                and self._sandbox_bootstrap_hash.get(sandbox_key) != bootstrap_hash
+            )
+            should_seed_context = self._sandbox_context_hash.get(sandbox_key) != context_hash
+
+            if should_seed_bootstrap:
+                for path, content in sorted(bootstrap_files.items()):
+                    await _sandbox_write_if_changed(path, content)
+                self._sandbox_bootstrap_hash[sandbox_key] = bootstrap_hash
+            elif sandbox_key not in self._sandbox_bootstrap_hash:
+                # Bootstrap files are expected to be preinstalled with workspace templates.
+                self._sandbox_bootstrap_hash[sandbox_key] = bootstrap_hash
+
+            if should_seed_context:
+                await _sandbox_write_if_changed(OPENCODE_BOOTSTRAP_CONTEXT_PATH, context_content)
+                self._sandbox_context_hash[sandbox_key] = context_hash
             return
 
         workspace_root_raw = str(workspace_path or "").strip()
@@ -1037,7 +1886,14 @@ class OpenCodeServerClient:
                 f"Failed to initialize OpenCode workspace path `{workspace_root_raw}`: {exc}"
             ) from exc
 
-        for path, content in sorted(files_to_seed.items()):
+        workspace_key = str(workspace_root)
+        should_seed_bootstrap = (
+            seed_bootstrap_files
+            and self._host_bootstrap_hash.get(workspace_key) != bootstrap_hash
+        )
+        should_seed_context = self._host_context_hash.get(workspace_key) != context_hash
+
+        def write_workspace_file(path: str, content: str) -> None:
             normalized = str(path or "").replace("\\", "/").lstrip("/")
             if not normalized or ".." in normalized.split("/"):
                 raise OpenCodeServerClientError(f"Invalid OpenCode bootstrap path: {path}")
@@ -1055,6 +1911,35 @@ class OpenCodeServerClient:
                 raise OpenCodeServerClientError(
                     f"Failed to write OpenCode bootstrap file `{normalized}`: {exc}"
                 ) from exc
+
+        if should_seed_bootstrap:
+            for path, content in sorted(bootstrap_files.items()):
+                write_workspace_file(path, content)
+            self._host_bootstrap_hash[workspace_key] = bootstrap_hash
+        elif workspace_key not in self._host_bootstrap_hash:
+            self._host_bootstrap_hash[workspace_key] = bootstrap_hash
+
+        if should_seed_context:
+            write_workspace_file(OPENCODE_BOOTSTRAP_CONTEXT_PATH, context_content)
+            self._host_context_hash[workspace_key] = context_hash
+
+        if seed_bootstrap_files and workspace_key not in self._bootstrap_cleanup_done_targets:
+            for path in OPENCODE_DEPRECATED_TOOL_PATHS:
+                normalized = str(path or "").replace("\\", "/").lstrip("/")
+                if not normalized or ".." in normalized.split("/"):
+                    continue
+                target = (workspace_root / normalized).resolve()
+                try:
+                    target.relative_to(workspace_root)
+                except Exception:
+                    continue
+                try:
+                    if target.is_file():
+                        target.unlink()
+                except Exception:
+                    # Best-effort cleanup for older local workspaces.
+                    pass
+            self._bootstrap_cleanup_done_targets.add(workspace_key)
 
     @staticmethod
     def _extract_text_from_message_payload(payload: dict[str, Any]) -> str:
@@ -1215,6 +2100,7 @@ class OpenCodeServerClient:
     def _extract_incremental_tool_events(*, message: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
         parts = message.get("parts") if isinstance(message.get("parts"), list) else []
         tool_status = state.setdefault("tool_status", {})
+        tool_input_snapshot = state.setdefault("tool_input_snapshot", {})
         events: list[dict[str, Any]] = []
         for index, part in enumerate(parts):
             if not isinstance(part, dict) or str(part.get("type") or "").strip().lower() != "tool":
@@ -1227,9 +2113,17 @@ class OpenCodeServerClient:
             input_payload = state_payload.get("input")
             output_payload = state_payload.get("output")
             error_payload = str(state_payload.get("error") or state_payload.get("message") or "Tool failed").strip()
+            input_signature = repr(input_payload) if input_payload is not None else ""
+            previous_input_signature = str(tool_input_snapshot.get(call_id) or "")
+            should_refresh_started = (
+                previous in {"pending"}
+                and status in {"running", "in_progress", "started"}
+                and bool(input_signature)
+                and input_signature != previous_input_signature
+            )
 
             if status in {"running", "pending", "in_progress", "started"}:
-                if previous not in {"running", "pending", "in_progress", "started"}:
+                if previous not in {"running", "pending", "in_progress", "started"} or should_refresh_started:
                     events.append({"event": "tool.started", "payload": {"tool": tool_name, "span_id": call_id, "input": input_payload}})
             elif status in {"completed", "success", "done", "finished"}:
                 if previous not in {"running", "pending", "in_progress", "started", "completed", "success", "done", "finished"}:
@@ -1238,7 +2132,12 @@ class OpenCodeServerClient:
                     events.append(
                         {
                             "event": "tool.completed",
-                            "payload": {"tool": tool_name, "span_id": call_id, "output": output_payload},
+                            "payload": {
+                                "tool": tool_name,
+                                "span_id": call_id,
+                                "input": input_payload,
+                                "output": output_payload,
+                            },
                         }
                     )
             elif status in {"failed", "error", "cancelled"}:
@@ -1248,11 +2147,18 @@ class OpenCodeServerClient:
                     events.append(
                         {
                             "event": "tool.failed",
-                            "payload": {"tool": tool_name, "span_id": call_id, "error": error_payload, "output": output_payload},
+                            "payload": {
+                                "tool": tool_name,
+                                "span_id": call_id,
+                                "error": error_payload,
+                                "input": input_payload,
+                                "output": output_payload,
+                            },
                             "code": str(state_payload.get("code") or "").strip() or None,
                         }
                     )
             tool_status[call_id] = status
+            tool_input_snapshot[call_id] = input_signature
         return events
 
     @staticmethod
@@ -1308,7 +2214,12 @@ class OpenCodeServerClient:
                 events.append(
                     {
                         "event": "tool.completed",
-                        "payload": {"tool": tool_name, "span_id": call_id, "output": output_payload},
+                        "payload": {
+                            "tool": tool_name,
+                            "span_id": call_id,
+                            "input": input_payload,
+                            "output": output_payload,
+                        },
                     }
                 )
                 continue
@@ -1319,7 +2230,12 @@ class OpenCodeServerClient:
                 events.append(
                     {
                         "event": "tool.failed",
-                        "payload": {"tool": tool_name, "span_id": call_id, "output": output_payload},
+                        "payload": {
+                            "tool": tool_name,
+                            "span_id": call_id,
+                            "input": input_payload,
+                            "output": output_payload,
+                        },
                         "code": str(state.get("code") or "").strip() or None,
                         "diagnostics": [{"message": message}],
                     }

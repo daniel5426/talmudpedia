@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional, Tuple
+
+from sdk import Client
+from talmudpedia_control_sdk import ControlPlaneSDKError
+
+from .shared import control_client
+
+
+def list_capabilities(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    rag_catalog, rag_errors = get_rag_operator_catalog(
+        client,
+        payload,
+        control_client_factory=control_client_factory,
+    )
+    agent_catalog, agent_errors = list_agent_operators(
+        client,
+        control_client_factory=control_client_factory,
+    )
+    errors = rag_errors + agent_errors
+
+    result = {
+        "summary": {
+            "rag": _summarize_rag_catalog(rag_catalog),
+            "agent": _summarize_agent_catalog(agent_catalog),
+        }
+    }
+
+    if payload.get("include_raw"):
+        result["rag_catalog"] = rag_catalog
+        result["agent_catalog"] = agent_catalog
+
+    return result, errors
+
+
+def get_rag_operator_catalog(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    try:
+        tenant_slug = payload.get("tenant_slug")
+        sdk_client = control_client_factory(client)
+        response = sdk_client.catalog.get_rag_operator_catalog(tenant_slug=tenant_slug)
+        data = response.get("data")
+        if isinstance(data, dict):
+            return data, []
+        return {}, []
+    except ControlPlaneSDKError as exc:
+        return {}, [{
+            "error": "catalog_get_rag_operator_catalog_failed",
+            "detail": str(exc),
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }]
+    except Exception as exc:
+        return {}, [{"error": "catalog_get_rag_operator_catalog_failed", "detail": str(exc)}]
+
+
+def list_rag_operators(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    try:
+        tenant_slug = payload.get("tenant_slug")
+        sdk_client = control_client_factory(client)
+        response = sdk_client.catalog.list_rag_operators(tenant_slug=tenant_slug)
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{
+            "error": "catalog_list_rag_operators_failed",
+            "detail": str(exc),
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }]
+    except Exception as exc:
+        return None, [{"error": "catalog_list_rag_operators_failed", "detail": str(exc)}]
+
+
+def get_rag_operator(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    operator_id = payload.get("operator_id")
+    if not operator_id:
+        return None, [{"error": "missing_fields", "fields": ["operator_id"]}]
+
+    try:
+        tenant_slug = payload.get("tenant_slug")
+        sdk_client = control_client_factory(client)
+        response = sdk_client.catalog.get_rag_operator(str(operator_id), tenant_slug=tenant_slug)
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [{
+            "error": "catalog_get_rag_operator_failed",
+            "detail": str(exc),
+            "operator_id": operator_id,
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }]
+    except Exception as exc:
+        return None, [{"error": "catalog_get_rag_operator_failed", "detail": str(exc), "operator_id": operator_id}]
+
+
+def list_agent_operators(
+    client: Client,
+    *,
+    control_client_factory=control_client,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.catalog.list_agent_operators()
+        data = response.get("data")
+        if isinstance(data, list):
+            return data, []
+        return [], []
+    except ControlPlaneSDKError as exc:
+        return [], [{
+            "error": "catalog_list_agent_operators_failed",
+            "detail": str(exc),
+            "code": exc.code,
+            "http_status": exc.http_status,
+        }]
+    except Exception as exc:
+        return [], [{"error": "catalog_list_agent_operators_failed", "detail": str(exc)}]
+
+
+def _summarize_rag_catalog(rag_catalog: Any) -> Dict[str, Any]:
+    if not isinstance(rag_catalog, dict):
+        return {"total": 0, "categories": {}}
+
+    categories: Dict[str, int] = {}
+    total = 0
+    examples: Dict[str, List[str]] = {}
+    for category, specs in rag_catalog.items():
+        if not isinstance(specs, list):
+            continue
+        count = len(specs)
+        total += count
+        categories[category] = count
+        examples[category] = [item.get("operator_id") for item in specs[:3] if isinstance(item, dict)]
+
+    return {
+        "total": total,
+        "categories": categories,
+        "examples": examples,
+        "fields": ["operator_id", "display_name", "category", "input_type", "output_type", "version", "scope"],
+    }
+
+
+def _summarize_agent_catalog(agent_catalog: Any) -> Dict[str, Any]:
+    if not isinstance(agent_catalog, list):
+        return {"total": 0, "categories": {}}
+
+    categories: Dict[str, int] = {}
+    examples: Dict[str, List[str]] = {}
+    total = len(agent_catalog)
+
+    for spec in agent_catalog:
+        if not isinstance(spec, dict):
+            continue
+        category = spec.get("category", "general")
+        categories[category] = categories.get(category, 0) + 1
+        if category not in examples:
+            examples[category] = []
+        if len(examples[category]) < 3:
+            examples[category].append(spec.get("type"))
+
+    return {
+        "total": total,
+        "categories": categories,
+        "examples": examples,
+        "fields": ["type", "display_name", "category", "reads", "writes"],
+    }

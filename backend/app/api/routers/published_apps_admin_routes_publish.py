@@ -9,18 +9,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppDraftDevSessionStatus,
     PublishedAppPublishJob,
     PublishedAppPublishJobStatus,
     PublishedAppStatus,
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
+from app.services.published_app_draft_dev_runtime import (
+    PublishedAppDraftDevRuntimeDisabled,
+    PublishedAppDraftDevRuntimeService,
+)
+from app.services.published_app_publish_runtime import sandbox_publish_enabled
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
+    _count_active_coding_runs_for_scope,
     _create_draft_revision_snapshot,
     _ensure_current_draft_revision,
     _get_app_for_tenant,
+    _get_active_publish_job_for_app,
+    _get_draft_dev_session_for_scope,
     _get_publish_job_for_app,
     _resolve_tenant_admin_context,
     _validate_agent,
@@ -43,6 +52,8 @@ from .published_apps_admin_shared import (
     _build_published_url,
     _publish_job_to_response,
     _validate_auth_template_key,
+    _validate_allowed_origins,
+    _validate_external_auth_oidc,
     _validate_providers,
     _validate_visibility,
     router,
@@ -86,6 +97,10 @@ async def update_published_app(
         app.auth_providers = _validate_providers(payload.auth_providers)
     if payload.auth_template_key is not None:
         app.auth_template_key = _validate_auth_template_key(payload.auth_template_key)
+    if payload.allowed_origins is not None:
+        app.allowed_origins = _validate_allowed_origins(payload.allowed_origins)
+    if payload.external_auth_oidc is not None:
+        app.external_auth_oidc = _validate_external_auth_oidc(payload.external_auth_oidc)
     if payload.status is not None:
         try:
             app.status = PublishedAppStatus(payload.status)
@@ -110,80 +125,14 @@ async def publish_published_app(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _publish_full_build_enabled():
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "PUBLISH_FULL_BUILD_DISABLED",
-                "message": "Publish full-build mode is disabled (`APPS_PUBLISH_FULL_BUILD_ENABLED=0`).",
-            },
-        )
-
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    await _validate_agent(db, ctx["tenant_id"], app.agent_id)
-    actor_id = ctx["user"].id if ctx["user"] else None
-
-    payload = payload or PublishRequest()
-    current_draft = await _ensure_current_draft_revision(db, app, actor_id)
-    if payload.base_revision_id and str(payload.base_revision_id) != str(current_draft.id):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "REVISION_CONFLICT",
-                "latest_revision_id": str(current_draft.id),
-                "latest_updated_at": current_draft.created_at.isoformat(),
-                "message": "Draft revision is stale",
-            },
-        )
-
-    source_revision = current_draft
-    saved_draft_revision_id: Optional[UUID] = None
-    if payload.files is not None or payload.entry_file is not None:
-        files = _coerce_files_payload(payload.files or dict(current_draft.files or {}))
-        next_entry = _normalize_builder_path(payload.entry_file or current_draft.entry_file)
-        _assert_builder_path_allowed(next_entry, field="entry_file")
-        _validate_builder_project_or_raise(files, next_entry)
-        source_revision = await _create_draft_revision_snapshot(
-            db=db,
-            app=app,
-            current=current_draft,
-            actor_id=actor_id,
-            files=files,
-            entry_file=next_entry,
-        )
-        saved_draft_revision_id = source_revision.id
-
-    publish_job = PublishedAppPublishJob(
-        published_app_id=app.id,
-        tenant_id=app.tenant_id,
-        requested_by=actor_id,
-        source_revision_id=source_revision.id,
-        saved_draft_revision_id=saved_draft_revision_id,
-        published_revision_id=None,
-        status=PublishedAppPublishJobStatus.queued,
-        error=None,
-        diagnostics=[],
-        started_at=None,
-        finished_at=None,
+    _ = (app_id, request, payload, principal, db)
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "PUBLISH_ENDPOINT_REMOVED",
+            "message": "Current-head publish endpoint was removed. Use /admin/apps/{app_id}/versions/{version_id}/publish.",
+        },
     )
-    db.add(publish_job)
-    await db.flush()
-    await db.commit()
-    await db.refresh(publish_job)
-
-    enqueue_error = _enqueue_publish_job(job=publish_job)
-    if enqueue_error:
-        publish_job.status = PublishedAppPublishJobStatus.failed
-        publish_job.error = enqueue_error
-        publish_job.finished_at = datetime.now(timezone.utc)
-        publish_job.diagnostics = [{"message": enqueue_error}]
-        await db.commit()
-        await db.refresh(publish_job)
-
-    return _publish_job_to_response(publish_job)
 
 
 @router.get("/{app_id}/publish/jobs/{job_id}", response_model=PublishJobStatusResponse)

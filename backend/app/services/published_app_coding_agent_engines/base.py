@@ -11,7 +11,6 @@ from app.db.postgres.models.published_apps import PublishedApp
 class EngineRunContext:
     app: PublishedApp
     run: AgentRun
-    resume_payload: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -33,4 +32,7 @@ class PublishedAppCodingAgentEngine(Protocol):
         ...
 
     async def cancel(self, run: AgentRun) -> EngineCancelResult:
+        ...
+
+    async def answer_question(self, *, run: AgentRun, question_id: str, answers: list[list[str]]) -> None:
         ...

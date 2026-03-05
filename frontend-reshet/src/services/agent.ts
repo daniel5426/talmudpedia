@@ -25,7 +25,7 @@ export interface AgentGraphDefinition {
 }
 
 export type ModelStatus = 'active' | 'deprecated' | 'disabled';
-export type ModelProviderType = 'openai' | 'anthropic' | 'google' | 'cohere' | 'groq' | 'mistral' | 'together' | 'local' | 'gemini' | 'huggingface' | 'custom';
+export type ModelProviderType = 'openai' | 'azure' | 'anthropic' | 'google' | 'cohere' | 'groq' | 'mistral' | 'together' | 'local' | 'gemini' | 'huggingface' | 'custom';
 export type ModelCapabilityType = 'chat' | 'completion' | 'embedding' | 'image' | 'vision' | 'audio' | 'rerank' | 'speech_to_text' | 'text_to_speech';
 
 export interface LogicalModel {
@@ -309,7 +309,7 @@ export const agentService = {
 
   async streamAgent(
     id: string,
-    input: { text?: string; messages?: any[]; runId?: string; context?: Record<string, any> },
+    input: { text?: string; messages?: any[]; runId?: string; threadId?: string; context?: Record<string, any> },
     mode: 'debug' | 'production' = 'production'
   ) {
     // CRITICAL: Bypass Next.js dev proxy for SSE streaming.
@@ -347,7 +347,8 @@ export const agentService = {
         input: input.text, 
         messages: input.messages || [], 
         context: input.context || {},
-        run_id: input.runId 
+        run_id: input.runId,
+        thread_id: input.threadId,
       }),
     });
   }

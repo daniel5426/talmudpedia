@@ -68,12 +68,47 @@ def upgrade() -> None:
         """
     )
 
-    # Re-assert defaults to match model.
+    # Re-assert defaults while supporting both uppercase and lowercase enum label variants.
     op.execute(
         """
-        ALTER TABLE tool_registry
-            ALTER COLUMN status SET DEFAULT 'DRAFT'::toolstatus,
-            ALTER COLUMN implementation_type SET DEFAULT 'CUSTOM'::toolimplementationtype;
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_type t
+                JOIN pg_enum e ON e.enumtypid = t.oid
+                WHERE t.typname = 'toolstatus' AND e.enumlabel = 'DRAFT'
+            ) THEN
+                ALTER TABLE tool_registry
+                    ALTER COLUMN status SET DEFAULT 'DRAFT'::toolstatus;
+            ELSIF EXISTS (
+                SELECT 1
+                FROM pg_type t
+                JOIN pg_enum e ON e.enumtypid = t.oid
+                WHERE t.typname = 'toolstatus' AND e.enumlabel = 'draft'
+            ) THEN
+                ALTER TABLE tool_registry
+                    ALTER COLUMN status SET DEFAULT 'draft'::toolstatus;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1
+                FROM pg_type t
+                JOIN pg_enum e ON e.enumtypid = t.oid
+                WHERE t.typname = 'toolimplementationtype' AND e.enumlabel = 'CUSTOM'
+            ) THEN
+                ALTER TABLE tool_registry
+                    ALTER COLUMN implementation_type SET DEFAULT 'CUSTOM'::toolimplementationtype;
+            ELSIF EXISTS (
+                SELECT 1
+                FROM pg_type t
+                JOIN pg_enum e ON e.enumtypid = t.oid
+                WHERE t.typname = 'toolimplementationtype' AND e.enumlabel = 'custom'
+            ) THEN
+                ALTER TABLE tool_registry
+                    ALTER COLUMN implementation_type SET DEFAULT 'custom'::toolimplementationtype;
+            END IF;
+        END$$;
         """
     )
 

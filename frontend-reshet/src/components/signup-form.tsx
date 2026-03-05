@@ -40,7 +40,7 @@ export function SignupForm({
       useAuthStore.getState().setAuth(null as any, access_token)
       const user = await authService.getProfile()
       useAuthStore.getState().setAuth(user, access_token)
-      router.push("/chat")
+      router.push("/admin/agents/playground")
     } catch (err: any) {
       setError(err.message || "Registration failed")
     } finally {
@@ -58,7 +58,7 @@ export function SignupForm({
       useAuthStore.getState().setAuth(null as any, access_token);
       const user = await authService.getProfile();
       useAuthStore.getState().setAuth(user, access_token);
-      router.push("/chat");
+      router.push("/admin/agents/playground");
     } catch (err: any) {
       setError(err.message || "Google signup failed");
     } finally {

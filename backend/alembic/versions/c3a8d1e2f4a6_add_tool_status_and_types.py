@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
@@ -35,26 +36,42 @@ def upgrade() -> None:
         """
         UPDATE tool_registry
         SET status = CASE
-            WHEN is_active THEN 'published'
-            ELSE 'disabled'
+            WHEN is_active THEN 'published'::toolstatus
+            ELSE 'disabled'::toolstatus
         END
         """
     )
 
-    # Backfill implementation_type based on artifact_id, config_schema, or is_system
-    op.execute(
-        """
-        UPDATE tool_registry
-        SET implementation_type = CASE
-            WHEN artifact_id IS NOT NULL THEN 'artifact'
+    # Backfill implementation_type while supporting schema variants across environments.
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    column_names = {col["name"] for col in inspector.get_columns("tool_registry")}
+    has_artifact_id = "artifact_id" in column_names
+    has_config_schema = "config_schema" in column_names
+    has_is_system = "is_system" in column_names
+
+    when_clauses: list[str] = []
+    if has_artifact_id:
+        when_clauses.append("WHEN artifact_id IS NOT NULL THEN 'artifact'::toolimplementationtype")
+    if has_config_schema:
+        when_clauses.append(
+            """
             WHEN (config_schema->'implementation'->>'type') IN (
                 'internal','http','rag_retrieval','function','custom','artifact','mcp'
-            ) THEN (config_schema->'implementation'->>'type')
-            WHEN is_system THEN 'internal'
-            ELSE 'custom'
+            ) THEN ((config_schema->'implementation'->>'type')::toolimplementationtype)
+            """.strip()
+        )
+    if has_is_system:
+        when_clauses.append("WHEN is_system THEN 'internal'::toolimplementationtype")
+
+    impl_update_sql = f"""
+        UPDATE tool_registry
+        SET implementation_type = CASE
+            {' '.join(when_clauses)}
+            ELSE 'custom'::toolimplementationtype
         END
-        """
-    )
+    """
+    op.execute(impl_update_sql)
 
     # Backfill published_at for active tools
     op.execute(

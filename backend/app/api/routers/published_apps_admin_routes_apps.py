@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from hashlib import sha256
 from typing import Any, Dict, List
 from uuid import UUID
 
@@ -14,7 +13,6 @@ from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,
-    PublishedAppRevision,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
     PublishedAppSession,
@@ -26,6 +24,11 @@ from app.db.postgres.models.published_apps import (
 from app.db.postgres.session import get_db
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 from app.services.published_app_auth_templates import list_auth_templates
+from app.services.published_app_revision_build_dispatch import (
+    enqueue_revision_build,
+    mark_revision_build_enqueue_failed,
+)
+from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
@@ -51,10 +54,11 @@ from .published_apps_admin_shared import (
     _normalize_domain_host,
     _template_to_response,
     _validate_auth_template_key,
+    _validate_allowed_origins,
+    _validate_external_auth_oidc,
     _validate_providers,
     _validate_template_key,
     _validate_visibility,
-    json,
     router,
 )
 
@@ -112,6 +116,8 @@ async def create_published_app(
         slug = await _generate_unique_slug(db, payload.name)
 
     providers = _validate_providers(payload.auth_providers)
+    allowed_origins = _validate_allowed_origins(payload.allowed_origins)
+    external_auth_oidc = _validate_external_auth_oidc(payload.external_auth_oidc)
     await _validate_agent(db, ctx["tenant_id"], payload.agent_id)
 
     app = PublishedApp(
@@ -126,6 +132,8 @@ async def create_published_app(
         auth_enabled=payload.auth_enabled,
         auth_providers=providers,
         auth_template_key=auth_template_key,
+        allowed_origins=allowed_origins,
+        external_auth_oidc=external_auth_oidc,
         created_by=ctx["user"].id if ctx["user"] else None,
         status=PublishedAppStatus.draft,
     )
@@ -134,28 +142,38 @@ async def create_published_app(
         await db.flush()
 
         template = get_template(template_key)
-        files = build_template_files(template_key)
-        revision = PublishedAppRevision(
-            published_app_id=app.id,
+        files = build_template_files(
+            template_key,
+            runtime_context={
+                "app_id": str(app.id),
+                "app_slug": app.slug,
+                "agent_id": str(app.agent_id),
+            },
+        )
+        revision = await create_app_version(
+            db,
+            app=app,
             kind=PublishedAppRevisionKind.draft,
             template_key=template_key,
             entry_file=template.entry_file,
             files=files,
+            created_by=ctx["user"].id if ctx["user"] else None,
+            source_revision_id=None,
+            origin_kind="app_init",
             build_status=PublishedAppRevisionBuildStatus.queued,
             build_seq=1,
-            build_error=None,
-            build_started_at=None,
-            build_finished_at=None,
-            dist_storage_prefix=None,
-            dist_manifest=None,
             template_runtime="vite_static",
-            compiled_bundle=None,
-            bundle_hash=sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest(),
-            source_revision_id=None,
-            created_by=ctx["user"].id if ctx["user"] else None,
         )
-        db.add(revision)
-        await db.flush()
+        enqueue_error = enqueue_revision_build(
+            revision=revision,
+            app=app,
+            build_kind="app_init",
+        )
+        if enqueue_error:
+            mark_revision_build_enqueue_failed(
+                revision=revision,
+                reason=enqueue_error,
+            )
         app.current_draft_revision_id = revision.id
 
         await db.commit()

@@ -14,6 +14,7 @@ from sqlalchemy import select, func
 from pydantic import BaseModel, Field
 
 from app.db.postgres.session import get_db
+from app.api.dependencies import get_current_principal, get_tenant_context, require_scopes
 from app.db.postgres.models import (
     KnowledgeStore, 
     KnowledgeStoreStatus, 
@@ -22,9 +23,8 @@ from app.db.postgres.models import (
     IntegrationCredential,
     IntegrationCredentialCategory,
     Tenant,
-    User
 )
-from app.api.routers.auth import get_current_user
+from app.services.credentials_service import CredentialsService
 
 
 router = APIRouter()
@@ -105,9 +105,22 @@ def store_to_response(store: KnowledgeStore) -> KnowledgeStoreResponse:
     )
 
 
-async def get_tenant_from_slug(db: AsyncSession, slug: str) -> Optional[Tenant]:
-    result = await db.execute(select(Tenant).where(Tenant.slug == slug))
-    return result.scalar_one_or_none()
+async def resolve_request_tenant(
+    *,
+    db: AsyncSession,
+    tenant_ctx: Dict[str, Any],
+    tenant_slug: Optional[str],
+) -> Tenant:
+    tenant_id = tenant_ctx.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context is required")
+    result = await db.execute(select(Tenant).where(Tenant.id == UUID(str(tenant_id))))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if tenant_slug and str(tenant.slug) != str(tenant_slug):
+        raise HTTPException(status_code=403, detail="Tenant slug does not match request context")
+    return tenant
 
 
 async def validate_vector_store_credential(
@@ -117,11 +130,19 @@ async def validate_vector_store_credential(
     credentials_ref: Optional[UUID],
 ) -> Optional[UUID]:
     if not credentials_ref:
-        if backend == StorageBackend.PINECONE:
-            raise HTTPException(
-                status_code=422,
-                detail="Pinecone knowledge stores require a tenant vector_store credential.",
+        if backend in {StorageBackend.PINECONE, StorageBackend.QDRANT}:
+            has_effective_default = await CredentialsService(db, tenant_id).has_effective_provider_credentials(
+                category=IntegrationCredentialCategory.VECTOR_STORE,
+                provider_key=backend.value,
             )
+            if not has_effective_default:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"{backend.value.capitalize()} knowledge stores require a matching tenant credential "
+                        "or platform default environment key."
+                    ),
+                )
         return None
 
     cred = await db.get(IntegrationCredential, credentials_ref)
@@ -147,19 +168,15 @@ async def validate_vector_store_credential(
 @router.get("", response_model=List[KnowledgeStoreResponse])
 async def list_knowledge_stores(
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     """List all knowledge stores for the tenant."""
-    # Resolve tenant
-    if tenant_slug:
-        tenant = await get_tenant_from_slug(db, tenant_slug)
-        if not tenant:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        tenant_id = tenant.id
-    else:
-        # For now, require tenant_slug or implement default tenant logic
-        raise HTTPException(status_code=400, detail="tenant_slug query param required")
+    del principal
+    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
+    tenant_id = tenant.id
     
     stmt = (
         select(KnowledgeStore)
@@ -177,16 +194,14 @@ async def list_knowledge_stores(
 async def create_knowledge_store(
     request: CreateKnowledgeStoreRequest,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     """Create a new knowledge store."""
-    if not tenant_slug:
-        raise HTTPException(status_code=400, detail="tenant_slug query param required")
-    
-    tenant = await get_tenant_from_slug(db, tenant_slug)
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
+    created_by = UUID(str(principal["user_id"])) if principal.get("type") == "user" and principal.get("user_id") else None
 
     validated_credential_ref = await validate_vector_store_credential(
         db=db,
@@ -223,7 +238,7 @@ async def create_knowledge_store(
         backend_config=backend_config,
         credentials_ref=validated_credential_ref,
         status=KnowledgeStoreStatus.ACTIVE,
-        created_by=current_user.id
+        created_by=created_by,
     )
     
     db.add(store)
@@ -237,19 +252,20 @@ async def create_knowledge_store(
 async def get_knowledge_store(
     store_id: UUID,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     """Get a specific knowledge store by ID."""
+    del principal
+    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
     store = await db.get(KnowledgeStore, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Knowledge store not found")
     
-    # Tenant isolation check
-    if tenant_slug:
-        tenant = await get_tenant_from_slug(db, tenant_slug)
-        if tenant and store.tenant_id != tenant.id:
-            raise HTTPException(status_code=404, detail="Knowledge store not found")
+    if store.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Knowledge store not found")
     
     return store_to_response(store)
 
@@ -259,19 +275,20 @@ async def update_knowledge_store(
     store_id: UUID,
     request: UpdateKnowledgeStoreRequest,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     """Update a knowledge store. Note: embedding_model_id and backend are immutable."""
+    del principal
+    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
     store = await db.get(KnowledgeStore, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Knowledge store not found")
     
-    # Tenant isolation
-    if tenant_slug:
-        tenant = await get_tenant_from_slug(db, tenant_slug)
-        if tenant and store.tenant_id != tenant.id:
-            raise HTTPException(status_code=404, detail="Knowledge store not found")
+    if store.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Knowledge store not found")
     
     # Apply updates
     if request.name is not None:
@@ -280,7 +297,7 @@ async def update_knowledge_store(
         store.description = request.description
     if request.retrieval_policy is not None:
         store.retrieval_policy = request.retrieval_policy
-    if request.credentials_ref is not None:
+    if "credentials_ref" in request.model_fields_set:
         validated_credential_ref = await validate_vector_store_credential(
             db=db,
             tenant_id=store.tenant_id,
@@ -299,19 +316,20 @@ async def update_knowledge_store(
 async def delete_knowledge_store(
     store_id: UUID,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     """Delete (archive) a knowledge store."""
+    del principal
+    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
     store = await db.get(KnowledgeStore, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Knowledge store not found")
     
-    # Tenant isolation
-    if tenant_slug:
-        tenant = await get_tenant_from_slug(db, tenant_slug)
-        if tenant and store.tenant_id != tenant.id:
-            raise HTTPException(status_code=404, detail="Knowledge store not found")
+    if store.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Knowledge store not found")
     
     # Soft delete - mark as archived
     store.status = KnowledgeStoreStatus.ARCHIVED
@@ -324,12 +342,18 @@ async def delete_knowledge_store(
 async def get_knowledge_store_stats(
     store_id: UUID,
     tenant_slug: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     """Get detailed statistics for a knowledge store."""
+    del principal
+    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
     store = await db.get(KnowledgeStore, store_id)
     if not store:
+        raise HTTPException(status_code=404, detail="Knowledge store not found")
+    if store.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Knowledge store not found")
     
     return {

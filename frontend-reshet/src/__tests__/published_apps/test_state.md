@@ -1,165 +1,31 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-02-21
+Last Updated: 2026-03-01
 
 ## Scope
-Frontend coverage for:
-- Admin Apps management page behavior.
-- Builder workspace behavior (`Preview | Config`, template reset confirm, draft save/publish).
-- Builder draft-dev preview behavior (session ensure/sync/heartbeat + sandbox iframe URL usage).
-- Async publish-job flow from workspace publish action.
-- Published runtime redirect behavior.
-- Published login flow token persistence and auth template rendering.
-- Published runtime error handling when runtime descriptor cannot be resolved.
+Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
 
 ## Test Files
 - `frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx`
-- `frontend-reshet/src/__tests__/published_apps/apps_builder_workspace.test.tsx`
-- `frontend-reshet/src/__tests__/published_apps/published_auth_templates.test.tsx`
-- `frontend-reshet/src/__tests__/published_apps/published_runtime_gate.test.tsx`
-- `frontend-reshet/src/__tests__/published_apps/published_auth_flows.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/apps_builder_file_filter.test.ts`
+- `frontend-reshet/src/__tests__/published_apps/chat_thread_tabs.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/chat_history_timeline.test.ts`
+- `frontend-reshet/src/__tests__/published_apps/chat_model_path_parsing.test.ts`
+- `frontend-reshet/src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
+- `frontend-reshet/src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
 
 ## Key Scenarios Covered
-- Apps admin page loads existing apps and submits create payload.
-- Apps admin page supports selecting `fresh-start` template and sends `template_key: fresh-start` in create payload.
-- Apps admin create modal supports frontend template + auth template selection and builder-route redirect on create.
-- Builder workspace renders tabs, persists draft revision saves, confirms template overwrite, and applies streamed patch ops to revision save.
-- Builder workspace supports `Config` section navigation (`Overview | Users | Domains | Code`).
-- Overview section save path is covered for branding/visibility/auth template payloads.
-- Users section list/block action flow is covered.
-- Domains section list/create request flow is covered.
-- Builder workspace renders assistant chat replies from coding-agent SSE while suppressing lifecycle/status noise cards (`run.accepted`, `run.completed`, `revision.created`, `checkpoint.created`).
-- Builder workspace keeps the editor/workspace mounted during post-run state refresh (no full-page loading fallback after each reply).
-- Builder workspace renders tool calls as dedicated rows (no raw JSON payload blocks), with running shimmer state and persisted completed/failed visual states.
-- Builder workspace renders tool calls via AI Elements `Task` rows, including normalized intent labels and file-path chips extracted from tool payloads.
-- Builder workspace coding-agent panel uses Cursor-style composer placeholder contract (`Plan, @ for context, / for commands`) with run submission preserved.
-- Builder workspace coding-agent panel now uses AI elements `Conversation` scrolling model + `ConversationScrollButton`, with minimal/no-card event presentation and lightweight shimmering `Thinking...` text.
-- Builder workspace shows FIFO queued prompts via AI Elements `Queue` when user submits during active runs, with per-item remove action.
-- Builder workspace stop flow calls coding-agent cancel endpoint and preserves queue progression to the next pending prompt.
-- Builder workspace loads coding-agent capabilities once to hydrate engine/policy context for coding runs.
-- Builder workspace keeps composer outside the `Conversation` scroll container (`shrink-0` sibling) so chat scrolling does not push input below viewport.
-- Builder workspace shell now enforces viewport-bounded layout (`h-dvh` + `min-h-0` + overflow clamps) so chat scroll stays internal and the page does not grow with timeline length.
-- Builder workspace creates coding-agent runs through `/coding-agent/runs`, then streams via `/coding-agent/runs/{run_id}/stream`.
-- Builder workspace retries coding-agent run creation once after `REVISION_CONFLICT` by refreshing state and resubmitting with `latest_revision_id`.
-- Builder workspace renders `assistant.delta` incrementally while a run is active (partial text appears before stream completion).
-- Builder workspace uses server-persisted chat sessions as the conversation source of truth (`chat_session_id`), and resumes the same thread on follow-up sends.
-- Builder workspace shows per-run model selector options (`Auto` + active chat models) and sends `model_id` on run creation.
-- Builder workspace supports changing model selection between messages and uses the new selection for the next run payload.
-- Builder workspace surfaces actionable model availability errors when backend returns `CODING_AGENT_MODEL_UNAVAILABLE`.
-- Builder workspace no longer renders an execution-engine selector and sends env-resolved engine (`NEXT_PUBLIC_APPS_CODING_AGENT_ENGINE`, default `opencode`) on run creation.
-- Builder workspace surfaces actionable engine-availability errors when backend returns `CODING_AGENT_ENGINE_UNAVAILABLE` / `CODING_AGENT_ENGINE_UNSUPPORTED_RUNTIME`.
-- Builder workspace chat history dialog loads real sessions from API, hydrates persisted user/assistant turns, and reuses loaded `chat_session_id`.
-- Builder workspace per-message revert action restores attached coding-agent checkpoints via `/coding-agent/checkpoints/{checkpoint_id}/restore`.
-- Builder code tab renders a hierarchical folder/file tree (not flat paths) and supports folder expand/collapse interactions.
-- Builder code tab auto-expands ancestor folders when the selected file is nested.
-- Builder code tab maps `index.html` to Monaco `html` language and sets builder-only validation decoration suppression.
-- Builder workspace ensures draft-dev session on preview and uses sandbox `preview_url` for iframe rendering.
-- Builder workspace syncs draft files via draft-dev sync API without creating revisions per keystroke.
-- Publish action uses async publish-job contract (`publish` + `getPublishJobStatus`).
-- Publish action surfaces immediate failed publish-job responses without entering status polling.
-- Open App now falls back to published-revision preview runtime proxy for local `*.apps.localhost` domains.
-- Runtime page redirects directly to static published runtime URL via `/public/apps/{slug}/runtime`.
-- Login stores app-scoped bearer token and redirects to runtime page.
-- Runtime auth pages render branding/template variants on login/signup (`auth-split`, `auth-minimal` fallback behavior).
+- Apps admin page list/create/update behavior.
+- Builder file-filter and blocked path rules.
+- Chat timeline/thread rendering behaviors.
+- Coding-agent stream speed/coalescing expectations.
+- Preview auth token channel updates.
 
 ## Last Run
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_admin_page.test.tsx --runInBand`
-- Date: 2026-02-21
-- Result: PASS (1 suite, 2 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-14 17:29 UTC
-- Result: PASS (1 suite, 6 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
-- Date: 2026-02-14 18:12 UTC
-- Result: PASS (4 suites, 9 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-14 20:42 UTC
-- Result: PASS (1 suite, 8 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
-- Date: 2026-02-15 20:34 UTC
-- Result: PASS (5 suites, 17 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 18:56 EET
-- Result: PASS (1 suite, 13 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 19:06 EET
-- Result: PASS (1 suite, 14 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 19:26 EET
-- Result: PASS (1 suite, 14 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 20:04 UTC
-- Result: PASS (1 suite, 16 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
-- Date: 2026-02-16 20:04 UTC
-- Result: PASS (5 suites, 21 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 22:21 UTC
-- Result: PASS (1 suite, 17 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
-- Date: 2026-02-16 22:23 UTC
-- Result: PASS (5 suites, 22 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:14 UTC
-- Result: PASS (1 suite, 17 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
-- Date: 2026-02-16 23:17 UTC
-- Result: PASS (5 suites, 22 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:28 UTC
-- Result: PASS (1 suite, 18 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
-- Date: 2026-02-16 23:31 UTC
-- Result: PASS (5 suites, 23 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:43 UTC
-- Result: PASS (1 suite, 18 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:11 UTC
-- Result: PASS (1 suite, 19 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:15 UTC
-- Result: PASS (1 suite, 19 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:18 UTC
-- Result: PASS (1 suite, 19 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:22 UTC
-- Result: PASS (1 suite, 20 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:27 UTC
-- Result: PASS (1 suite, 21 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-16 23:49 UTC
-- Result: PASS (1 suite, 23 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "retries coding-agent run once after revision conflict" --runInBand`
-- Date: 2026-02-17 12:58 UTC
-- Result: FAIL (test harness currently errors with `useDirection must be used within DirectionProvider` before workspace render assertions)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx -t "model selector|selected model_id|model is unavailable" --runInBand`
-- Date: 2026-02-17 22:55 UTC
-- Result: PASS (3 passed, 24 skipped)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-17 23:35 UTC
-- Result: PASS (1 suite, 27 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-18 12:54 UTC
-- Result: PASS (1 suite, 29 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-19 18:43 UTC
-- Result: PASS (1 suite, 30 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
-- Date: 2026-02-19 18:43 UTC
-- Result: PASS (5 suites, 35 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-19 20:10 UTC
-- Result: PASS (1 suite, 33 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps --runInBand`
-- Date: 2026-02-19 20:13 UTC
-- Result: PASS (5 suites, 38 tests)
-- Command: `cd frontend-reshet && npm test -- src/__tests__/published_apps/apps_admin_page.test.tsx src/__tests__/published_apps/apps_builder_workspace.test.tsx --runInBand`
-- Date: 2026-02-21
-- Result: PASS (2 suites, 35 tests)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/chat_history_timeline.test.ts`
+- Date: 2026-03-01
+- Result: Pending
 
 ## Known Gaps / Follow-ups
-- Add tests for app detail publish/unpublish actions.
-- Add tests for Google OAuth callback page token ingestion.
+- Workspace versions-first flows moved to `frontend-reshet/src/__tests__/apps_builder_versions/`.
+- Add explicit tests for versions panel integration inside `AppsBuilderWorkspace`.

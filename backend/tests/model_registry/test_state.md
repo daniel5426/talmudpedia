@@ -1,6 +1,6 @@
 # Model Registry Tests
 
-Last Updated: 2026-02-05
+Last Updated: 2026-02-22
 
 ## Scope
 Model Registry credentials resolution, provider binding updates, and vector store credential merging.
@@ -11,15 +11,16 @@ Model Registry credentials resolution, provider binding updates, and vector stor
 - `backend/tests/model_registry/test_vector_store_credentials.py`
 
 ## Key Scenarios Covered
-- Integration credentials override legacy provider configs for LLMs.
+- Explicit credential refs resolve provider API keys for LLM bindings.
+- Default credential resolution follows tenant default then env fallback precedence.
 - Embedding resolution uses integration credentials.
 - Provider binding PATCH updates priority, enabled status, and credentials ref.
 - Vector store backend config merges credentials and rejects disabled secrets.
 
 ## Last Run
-- Command: `pytest backend/tests/model_registry`
-- Date: 2026-02-05 23:28 EET
-- Result: Pass
+- Command: `PYTHONPATH=. pytest -q tests/model_registry`
+- Date: 2026-02-22
+- Result: Pass (7 passed)
 
 ## Known Gaps / Follow-ups
 - Add UI contract tests for settings credentials list.

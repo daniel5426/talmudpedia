@@ -34,6 +34,27 @@ class WorkloadIdentityService:
         )
         return res.scalar_one_or_none()
 
+    async def get_bound_principal(
+        self,
+        *,
+        tenant_id: UUID,
+        resource_type: WorkloadResourceType,
+        resource_id: str,
+    ) -> Optional[WorkloadPrincipal]:
+        res = await self.db.execute(
+            select(WorkloadPrincipal)
+            .join(WorkloadPrincipalBinding, WorkloadPrincipalBinding.principal_id == WorkloadPrincipal.id)
+            .where(
+                WorkloadPrincipalBinding.tenant_id == tenant_id,
+                WorkloadPrincipalBinding.resource_type == resource_type,
+                WorkloadPrincipalBinding.resource_id == str(resource_id),
+                WorkloadPrincipal.tenant_id == tenant_id,
+                WorkloadPrincipal.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        return res.scalar_one_or_none()
+
     async def ensure_principal(
         self,
         *,

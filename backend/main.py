@@ -17,8 +17,10 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlparse
-# Load environment variables BEFORE importing any modules that might need them
-load_dotenv(Path(__file__).parent / ".env")
+# Load environment variables BEFORE importing any modules that might need them.
+# `override=True` avoids stale exported shell vars (e.g. old APPS_URL_PORT) from
+# silently shadowing backend/.env in local development.
+load_dotenv(Path(__file__).parent / ".env", override=True)
 
 from app.db.connection import MongoDatabase
 from vector_store import VectorStore
@@ -702,11 +704,33 @@ async def lifespan(app: FastAPI):
         seed_builtin_tool_templates,
         seed_platform_architect_agent,
     )
+    seed_timeout_seconds = float(os.getenv("STARTUP_SEED_TIMEOUT_SECONDS", "8"))
+
+    async def _safe_seed(seed_name: str, seed_coro, db_session) -> None:
+        try:
+            await asyncio.wait_for(seed_coro(db_session), timeout=seed_timeout_seconds)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Skipping %s during startup due timeout after %.1fs",
+                seed_name,
+                seed_timeout_seconds,
+            )
+            try:
+                await db_session.rollback()
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.warning("Skipping %s during startup due database error: %s", seed_name, exc)
+            try:
+                await db_session.rollback()
+            except Exception:
+                pass
+
     async with AsyncSessionLocal() as db:
-        await seed_global_models(db)
-        await seed_platform_sdk_tool(db)
-        await seed_builtin_tool_templates(db)
-        await seed_platform_architect_agent(db)
+        await _safe_seed("global model registry bootstrap", seed_global_models, db)
+        await _safe_seed("platform sdk tool bootstrap", seed_platform_sdk_tool, db)
+        await _safe_seed("builtin tool templates bootstrap", seed_builtin_tool_templates, db)
+        await _safe_seed("platform architect bootstrap", seed_platform_architect_agent, db)
     
     # Start LiveKit worker in separate process if credentials are configured
     # worker_process = None
@@ -748,6 +772,7 @@ app = FastAPI(title="Rabbinic AI API", version="0.1.0", lifespan=lifespan)
 # Add Middlewares
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from app.middleware import PublishedAppsCORSMiddleware, PublishedAppsHostRuntimeMiddleware
 
 # app.add_middleware(GZipMiddleware, minimum_size=500)
 
@@ -766,14 +791,26 @@ cors_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_origin_regex=r"^https?://([a-z0-9-]+\.)*apps\.localhost(?::\d+)?$",
+    allow_origin_regex=(
+        r"^https?://("
+        r"(localhost|127\.0\.0\.1)(:\d+)?|"
+        r"([a-z0-9-]+\.)*apps\.localhost(?::\d+)?|"
+        r"([a-z0-9-]+\.)*preview\.local(?::\d+)?"
+        r")$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Chat-ID"],
+    expose_headers=["X-Thread-ID"],
 )
+# App-level CORS allowlist for /public/apps/{slug} endpoints.
+# This middleware is registered after CORSMiddleware so it runs first.
+app.add_middleware(PublishedAppsCORSMiddleware)
+# Host-aware same-URL published runtime/auth gate for *.apps domains.
+# Registered after CORS so it runs first for app-host requests.
+app.add_middleware(PublishedAppsHostRuntimeMiddleware)
 
-from app.api.routers import auth, chat, general, search, stt, texts, library, admin, tts, rag_admin, agent
+from app.api.routers import auth, general, search, stt, texts, library, admin, tts, rag_admin
 from app.api.routers.agents import router as agents_router
 from app.api.routers import org_units as org_units_router
 from app.api.routers import rbac as rbac_router
@@ -790,11 +827,10 @@ from app.api.routers import orchestration_internal as orchestration_internal_rou
 from app.api.routers import workload_security as workload_security_router
 from app.api.routers import published_apps_admin as published_apps_admin_router
 from app.api.routers import published_apps_public as published_apps_public_router
+from app.api.routers import published_apps_host_runtime as published_apps_host_runtime_router
 from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
-from app.api.routers import agent_operators
-app.include_router(agent_operators.router)
 app.include_router(agents_router)
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
@@ -809,6 +845,7 @@ app.include_router(internal_auth_router.jwks_router)
 app.include_router(orchestration_internal_router.router)
 app.include_router(published_apps_admin_router.router)
 app.include_router(published_apps_public_router.router)
+app.include_router(published_apps_host_runtime_router.router)
 app.include_router(sandbox_controller_dev_shim_router.router)
 
 from app.api.routers import knowledge_stores as knowledge_stores_router
@@ -820,8 +857,6 @@ app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
 app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
 app.include_router(audit_router.router, prefix="/api", tags=["audit"])
 app.include_router(library.router, prefix="/api/library", tags=["library"])
-app.include_router(agent.router)
-app.include_router(chat.router, prefix="/chats", tags=["chats"])
 app.include_router(general.router, tags=["general"])
 app.include_router(search.router, tags=["search"])
 app.include_router(stt.router, prefix="/stt", tags=["stt"])

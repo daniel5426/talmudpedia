@@ -1,74 +1,82 @@
 """
 Platform SDK Tool Artifact
 
-Executes platform actions via the dynamic SDK:
-- fetch_catalog: summarize available RAG/Agent nodes
-- validate_plan: validate plan steps without mutation
-- execute_plan: create artifacts, deploy pipelines, deploy agents
-- create_artifact_draft: create draft artifacts via /admin/artifacts
-- promote_artifact: promote draft artifacts into file-based artifacts
-- create_tool: create draft tools via /tools
-- run_agent: execute an agent (non-streaming)
-- run_tests: execute multi-case tests and evaluate assertions
-- respond: echo message without mutation
+Executes platform control-plane actions via SDK method wrappers.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import asyncio
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
-import requests
-
-from sdk import Client, ArtifactBuilder
-from app.agent.graph.schema import AgentGraph, NodeType
-from app.agent.graph.compiler import AgentCompiler
-from app.rag.pipeline.compiler import PipelineCompiler
+from sdk import Client
+from talmudpedia_control_sdk import ControlPlaneClient
+from app.core.scope_registry import get_required_scopes_for_action
 from app.services.orchestration_policy_service import (
     ORCHESTRATION_SURFACE_OPTION_B,
     is_orchestration_surface_enabled,
 )
 
+from .actions import agents as agent_actions
+from .actions import artifacts as artifact_actions
+from .actions import auth as auth_actions
+from .actions import catalog as catalog_actions
+from .actions import credentials as credential_actions
+from .actions import knowledge_stores as knowledge_store_actions
+from .actions import models as model_actions
+from .actions import orchestration as orchestration_actions
+from .actions import rag as rag_actions
+from .actions import shared as shared_actions
+from .actions import tools as tool_actions
+from .actions import workload_security as workload_security_actions
 
-PRIVILEGED_ACTION_SCOPES = {
-    "fetch_catalog": ["pipelines.catalog.read"],
-    "create_artifact_draft": ["artifacts.write"],
-    "promote_artifact": ["artifacts.write"],
-    "create_tool": ["tools.write"],
-    "run_agent": ["agents.execute"],
-    "run_tests": ["agents.run_tests"],
-    "spawn_run": ["agents.execute"],
-    "spawn_group": ["agents.execute"],
-    "join": ["agents.execute"],
-    "cancel_subtree": ["agents.execute"],
-    "evaluate_and_replan": ["agents.execute"],
-    "query_tree": ["agents.execute"],
+
+ACTION_ALIASES = {
+    "fetch_catalog": "catalog.list_capabilities",
+    "create_agent": "agents.create",
+    "update_agent": "agents.update",
+    "run_agent_tests": "agents.run_tests",
+    "create_pipeline": "rag.create_visual_pipeline",
+    "update_pipeline": "rag.update_visual_pipeline",
+    "compile_pipeline": "rag.compile_visual_pipeline",
+    "register_asset": "artifacts.create_or_update_draft",
+    "create_artifact_draft": "artifacts.create_or_update_draft",
+    "promote_artifact": "artifacts.promote",
+    "create_tool": "tools.create_or_update",
+    "run_agent": "agents.execute",
+    "run_tests": "agents.run_tests",
+    "spawn_run": "orchestration.spawn_run",
+    "spawn_group": "orchestration.spawn_group",
+    "join": "orchestration.join",
+    "cancel_subtree": "orchestration.cancel_subtree",
+    "evaluate_and_replan": "orchestration.evaluate_and_replan",
+    "query_tree": "orchestration.query_tree",
 }
 
-PLAN_ACTION_SCOPES = {
-    "deploy_agent": ["agents.write"],
-    "deploy_rag_pipeline": ["pipelines.write"],
-    "create_artifact_draft": ["artifacts.write"],
-    "promote_artifact": ["artifacts.write"],
-    "create_tool": ["tools.write"],
-    "run_agent": ["agents.execute"],
-    "run_tests": ["agents.run_tests"],
-    "spawn_run": ["agents.execute"],
-    "spawn_group": ["agents.execute"],
-    "join": ["agents.execute"],
-    "cancel_subtree": ["agents.execute"],
-    "evaluate_and_replan": ["agents.execute"],
-    "query_tree": ["agents.execute"],
-}
+DEPRECATED_ACTIONS = {"validate_plan", "execute_plan"}
 
 ORCHESTRATION_PRIMITIVE_ACTIONS = {
-    "spawn_run",
-    "spawn_group",
-    "join",
-    "cancel_subtree",
-    "evaluate_and_replan",
-    "query_tree",
+    "orchestration.spawn_run",
+    "orchestration.spawn_group",
+    "orchestration.join",
+    "orchestration.cancel_subtree",
+    "orchestration.evaluate_and_replan",
+    "orchestration.query_tree",
+}
+
+DOMAIN_TOOL_ALLOWED_PREFIXES = {
+    "platform-rag": ("rag.",),
+    "platform-agents": ("agents.",),
+    "platform-assets": ("tools.", "artifacts.", "models.", "credentials.", "knowledge_stores."),
+    "platform-governance": ("auth.", "workload_security.", "orchestration."),
+}
+
+PUBLISH_ACTIONS = {
+    "agents.publish",
+    "tools.publish",
+    "artifacts.promote",
 }
 
 
@@ -76,45 +84,122 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     inputs = _resolve_inputs(state, context)
     inputs = _coerce_json_text(inputs)
 
-    payload = inputs.get("payload") if isinstance(inputs.get("payload"), dict) else {}
-    steps = inputs.get("steps") if isinstance(inputs.get("steps"), list) else []
-    if not steps and isinstance(inputs.get("actions"), list):
-        steps = inputs.get("actions") or []
-    if not steps and isinstance(payload.get("steps"), list):
-        steps = payload.get("steps") or []
-    if not steps and isinstance(payload.get("actions"), list):
-        steps = payload.get("actions") or []
-    steps = _normalize_steps(steps)
+    payload = dict(inputs.get("payload")) if isinstance(inputs.get("payload"), dict) else {}
+    if inputs.get("idempotency_key") and not payload.get("idempotency_key"):
+        payload["idempotency_key"] = inputs.get("idempotency_key")
+    if isinstance(inputs.get("request_metadata"), dict) and not isinstance(payload.get("request_metadata"), dict):
+        payload["request_metadata"] = inputs.get("request_metadata")
+    if inputs.get("tenant_id") and not payload.get("tenant_id"):
+        payload["tenant_id"] = inputs.get("tenant_id")
     tests = inputs.get("tests") if isinstance(inputs.get("tests"), list) else []
     if not tests and isinstance(payload.get("tests"), list):
         tests = payload.get("tests") or []
+
     dry_run = bool(inputs.get("dry_run") or payload.get("dry_run", False))
     explicit_action = _extract_explicit_action(inputs, payload)
-    action = _resolve_action(explicit_action, inputs, payload, steps, tests)
+    action = _resolve_action(explicit_action, inputs, payload, [], tests)
     tenant_for_flags = _resolve_effective_tenant_id(inputs, payload, state, context)
 
     if action == "noop":
         output = {
             "result": {
-                "status": "ignored",
-                "reason": "missing_or_non_action_invocation",
-                "message": "No explicit Platform SDK action was provided.",
+                "status": "validation_error",
+                "reason": "missing_required_action",
+                "message": "Platform SDK calls require an explicit action.",
             },
-            "errors": [{"error": "missing_action"}],
+            "errors": [{
+                "error": "missing_action",
+                "code": "MISSING_REQUIRED_FIELD",
+                "message": "Missing required field: action",
+                "http_status": 422,
+                "retryable": False,
+            }],
             "action": "noop",
             "dry_run": dry_run,
         }
-        return {
-            "context": output,
-            "tool_outputs": [output],
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+
+    if action in DEPRECATED_ACTIONS:
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "deprecated_action",
+                "message": f"Action '{action}' is deprecated; use domain action wrappers.",
+            },
+            "errors": [{
+                "error": "deprecated_action",
+                "code": "INVALID_ARGUMENT",
+                "action": action,
+                "message": f"Action '{action}' is no longer supported.",
+                "http_status": 422,
+                "retryable": False,
+            }],
+            "action": action,
+            "dry_run": dry_run,
         }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
 
-    gated_actions = set()
-    if action in ORCHESTRATION_PRIMITIVE_ACTIONS:
-        gated_actions.add(action)
-    elif action in {"validate_plan", "execute_plan"}:
-        gated_actions.update(_extract_orchestration_actions_from_steps(steps))
+    canonical_action = _canonicalize_action(action)
+    tool_slug = _resolve_tool_slug(inputs=inputs, payload=payload, state=state, context=context, config=config)
+    domain_error = _validate_domain_action_access(canonical_action=canonical_action, tool_slug=tool_slug)
+    if domain_error is not None:
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "tool_action_scope_mismatch",
+                "message": domain_error["message"],
+            },
+            "errors": [domain_error],
+            "action": canonical_action,
+            "dry_run": dry_run,
+        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
 
+    if _is_mutating_action(canonical_action) and not tenant_for_flags:
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "missing_tenant_context",
+                "message": f"Action '{canonical_action}' requires explicit tenant_id.",
+            },
+            "errors": [{
+                "error": "missing_tenant_context",
+                "code": "TENANT_REQUIRED",
+                "action": canonical_action,
+                "message": f"Action '{canonical_action}' requires explicit tenant_id.",
+                "http_status": 422,
+                "retryable": False,
+            }],
+            "action": canonical_action,
+            "dry_run": dry_run,
+        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+
+    if canonical_action in PUBLISH_ACTIONS and not _has_explicit_publish_intent(inputs, payload):
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "draft_first_policy",
+                "message": f"Action '{canonical_action}' blocked by draft-first policy.",
+                "next_actions": [
+                    "Continue in draft mode and validate without publish/promote.",
+                    "Set objective_flags.allow_publish=true to explicitly permit publish/promote.",
+                ],
+            },
+            "errors": [{
+                "error": "draft_first_policy_denied",
+                "code": "DRAFT_FIRST_POLICY_DENIED",
+                "action": canonical_action,
+                "message": f"Action '{canonical_action}' requires explicit publish intent.",
+                "http_status": 403,
+                "retryable": False,
+            }],
+            "action": canonical_action,
+            "dry_run": dry_run,
+        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+
+    gated_actions = {canonical_action} if canonical_action in ORCHESTRATION_PRIMITIVE_ACTIONS else set()
     if gated_actions and not is_orchestration_surface_enabled(
         surface=ORCHESTRATION_SURFACE_OPTION_B,
         tenant_id=tenant_for_flags,
@@ -135,86 +220,73 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": action,
             "dry_run": dry_run,
         }
-        return {
-            "context": output,
-            "tool_outputs": [output],
-        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
 
-    required_scopes = _resolve_required_scopes(action=action, steps=steps)
+    required_scopes = _resolve_required_scopes(action=canonical_action)
     base_url, api_key, tenant_id, extra_headers = _resolve_auth(
         inputs,
         payload,
         state=state,
         context=context,
-        action=action,
+        action=canonical_action,
         required_scopes=required_scopes,
     )
+
     client = Client(base_url=base_url, api_key=api_key, tenant_id=tenant_id, extra_headers=extra_headers)
+    if api_key and not client.headers.get("Authorization"):
+        client.headers["Authorization"] = f"Bearer {api_key}"
+    if not client.headers.get("X-SDK-Contract"):
+        client.headers["X-SDK-Contract"] = "1"
 
-    errors: List[Dict[str, Any]] = []
-
-    if action == "fetch_catalog":
-        result = _fetch_catalog(client, payload)
-    elif action == "validate_plan":
-        result, errors = _validate_plan(client, steps, tenant_id=tenant_for_flags)
-    elif action == "execute_plan":
-        validation, validation_errors = _validate_plan(client, steps, tenant_id=tenant_for_flags)
-        if validation_errors:
-            result = {
-                "status": "validation_failed",
-                "validation": validation,
-            }
-            errors = validation_errors
-        else:
-            result, errors = _execute_plan(client, steps, dry_run)
-    elif action == "create_artifact_draft":
-        result, errors = _create_artifact_draft(client, payload, dry_run)
-    elif action == "promote_artifact":
-        result, errors = _promote_artifact(client, payload, dry_run)
-    elif action == "create_tool":
-        result, errors = _create_tool(client, payload, dry_run)
-    elif action == "run_agent":
-        result, errors = _run_agent(client, payload, dry_run)
-    elif action == "run_tests":
-        result, errors = _run_tests(client, tests, dry_run)
-    elif action == "spawn_run":
-        result, errors = _orchestration_spawn_run(client, inputs, payload, dry_run)
-    elif action == "spawn_group":
-        result, errors = _orchestration_spawn_group(client, inputs, payload, dry_run)
-    elif action == "join":
-        result, errors = _orchestration_join(client, inputs, payload, dry_run)
-    elif action == "cancel_subtree":
-        result, errors = _orchestration_cancel_subtree(client, inputs, payload, dry_run)
-    elif action == "evaluate_and_replan":
-        result, errors = _orchestration_evaluate_and_replan(client, inputs, payload, dry_run)
-    elif action == "query_tree":
-        result, errors = _orchestration_query_tree(client, inputs, payload, dry_run)
-    elif action == "respond":
-        result = {"message": payload.get("message") or inputs.get("message") or ""}
+    dispatched = _dispatch_action(
+        canonical_action=canonical_action,
+        client=client,
+        inputs=inputs,
+        payload=payload,
+        tests=tests,
+        dry_run=dry_run,
+    )
+    if dispatched is None:
+        result = {"message": f"Unknown action '{action}'."}
+        errors: List[Dict[str, Any]] = [{
+            "error": "unknown_action",
+            "code": "INVALID_ARGUMENT",
+            "action": action,
+            "message": f"Unsupported action: {action}",
+            "http_status": 422,
+            "retryable": False,
+        }]
     else:
-        result = {"message": f"Unknown action '{action}'. Supported: fetch_catalog, validate_plan, execute_plan, create_artifact_draft, promote_artifact, create_tool, run_agent, run_tests, spawn_run, spawn_group, join, cancel_subtree, evaluate_and_replan, query_tree, respond."}
-        errors.append({"error": "unknown_action", "action": action})
+        result, errors = dispatched
+    if any(str(err.get("code")) == "SENSITIVE_ACTION_APPROVAL_REQUIRED" for err in errors if isinstance(err, dict)):
+        result = {
+            "status": "blocked_approval",
+            "reason": "approval_required",
+            "message": "Action blocked pending approval.",
+            "next_actions": [
+                "Request approval for the blocked action.",
+                "Retry the action after approval is granted.",
+            ],
+        }
 
     output = {
         "result": result,
         "errors": errors,
-        "action": action,
+        "action": canonical_action,
         "dry_run": dry_run,
     }
-
-    return {
-        "context": output,
-        "tool_outputs": [output],
-    }
+    return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
 
 
 def _extract_explicit_action(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
     action = inputs.get("action")
     if isinstance(action, str) and action.strip():
         return action.strip()
+
     payload_action = payload.get("action")
     if isinstance(payload_action, str) and payload_action.strip():
         return payload_action.strip()
+
     return None
 
 
@@ -227,26 +299,11 @@ def _resolve_action(
 ) -> str:
     if explicit_action:
         return explicit_action
-    if steps:
-        return "execute_plan"
-    if tests:
-        return "run_tests"
-    if payload.get("message") or inputs.get("message"):
-        return "respond"
-    if _is_non_action_invocation(inputs, payload):
-        return "noop"
     return "noop"
 
 
-def _extract_orchestration_actions_from_steps(steps: List[Dict[str, Any]]) -> set[str]:
-    actions: set[str] = set()
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        action = step.get("action") or step.get("type")
-        if action in ORCHESTRATION_PRIMITIVE_ACTIONS:
-            actions.add(action)
-    return actions
+def _canonicalize_action(action: str) -> str:
+    return ACTION_ALIASES.get(action, action)
 
 
 def _resolve_effective_tenant_id(
@@ -268,33 +325,45 @@ def _resolve_effective_tenant_id(
     return str(tenant_id)
 
 
-def _is_non_action_invocation(inputs: Dict[str, Any], payload: Dict[str, Any]) -> bool:
-    if not isinstance(inputs, dict):
-        return True
+def _resolve_tool_slug(
+    *,
+    inputs: Dict[str, Any],
+    payload: Dict[str, Any],
+    state: Optional[Dict[str, Any]],
+    context: Optional[Dict[str, Any]],
+    config: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    candidates = [
+        payload.get("tool_slug"),
+        inputs.get("tool_slug"),
+        (config or {}).get("tool_slug"),
+        (context or {}).get("tool_slug"),
+    ]
+    state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
+    candidates.append(state_ctx.get("tool_slug"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
 
-    metadata_probe_keys = {"artifact_id", "version", "config_keys"}
-    if metadata_probe_keys.issubset(set(inputs.keys())):
-        return True
 
-    auth_envelope_keys = {
-        "user_id",
-        "grant_id",
-        "tenant_id",
-        "principal_id",
-        "requested_scopes",
-        "initiator_user_id",
-        "run_id",
-        "value",
+def _validate_domain_action_access(canonical_action: str, tool_slug: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not tool_slug:
+        return None
+    prefixes = DOMAIN_TOOL_ALLOWED_PREFIXES.get(tool_slug)
+    if not prefixes:
+        return None
+    if any(canonical_action.startswith(prefix) for prefix in prefixes):
+        return None
+    return {
+        "error": "tool_action_scope_mismatch",
+        "code": "SCOPE_DENIED",
+        "tool_slug": tool_slug,
+        "action": canonical_action,
+        "message": f"Action '{canonical_action}' is not allowed by tool '{tool_slug}'.",
+        "http_status": 403,
+        "retryable": False,
     }
-    if set(inputs.keys()).issubset(auth_envelope_keys):
-        value = inputs.get("value")
-        if value in ("", None):
-            return True
-
-    if not payload and not inputs:
-        return True
-
-    return False
 
 
 def _resolve_inputs(state: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
@@ -327,18 +396,17 @@ def _coerce_json_text(inputs: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(inputs, dict):
         return {}
 
-    # If we got a single text field, try to parse JSON, handling ``` fences.
     if set(inputs.keys()) == {"text"} and isinstance(inputs.get("text"), str):
         text = inputs.get("text", "").strip()
         if text.startswith("```"):
             text = text.lstrip("`")
-            # Drop optional leading language label
             first_newline = text.find("\n")
             if first_newline != -1:
                 text = text[first_newline + 1 :]
             if text.endswith("```"):
-                text = text[: -3]
+                text = text[:-3]
             text = text.strip()
+
         if text.startswith("{") and text.endswith("}"):
             try:
                 parsed = json.loads(text)
@@ -346,143 +414,80 @@ def _coerce_json_text(inputs: Dict[str, Any]) -> Dict[str, Any]:
                     return parsed
             except json.JSONDecodeError:
                 return inputs
+
     return inputs
 
 
-def _normalize_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Accepts looser planner output such as:
-      {"create_custom_node": {...}}
-      {"deploy_agent": {"payload/graph_json": {...}}}
-    and rewrites into the expected shape:
-      {"action": "create_custom_node", ...}
-    """
-    normalized: List[Dict[str, Any]] = []
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
+def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Optional[str]) -> Dict[str, Any]:
+    request_metadata = payload.get("request_metadata") if isinstance(payload.get("request_metadata"), dict) else {}
+    if not request_metadata and isinstance(inputs.get("request_metadata"), dict):
+        request_metadata = inputs.get("request_metadata")
 
-        if "action" in step:
-            normalized.append(step)
-            continue
-
-        if "create_custom_node" in step and isinstance(step["create_custom_node"], dict):
-            data = step["create_custom_node"]
-            norm = {"action": "create_custom_node"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "deploy_agent" in step and isinstance(step["deploy_agent"], dict):
-            data = step["deploy_agent"]
-            payload = data.get("payload/graph_json") or data.get("graph_json") or data.get("payload")
-            norm = {"action": "deploy_agent"}
-            if payload:
-                norm["payload"] = payload
-            normalized.append(norm)
-            continue
-
-        if "deploy_rag_pipeline" in step and isinstance(step["deploy_rag_pipeline"], dict):
-            data = step["deploy_rag_pipeline"]
-            payload = data.get("payload/graph_json") or data.get("graph_json") or data.get("payload")
-            norm = {"action": "deploy_rag_pipeline"}
-            if payload:
-                norm["payload"] = payload
-            normalized.append(norm)
-            continue
-
-        if "create_artifact_draft" in step and isinstance(step["create_artifact_draft"], dict):
-            data = step["create_artifact_draft"]
-            norm = {"action": "create_artifact_draft"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "promote_artifact" in step and isinstance(step["promote_artifact"], dict):
-            data = step["promote_artifact"]
-            norm = {"action": "promote_artifact"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "create_tool" in step and isinstance(step["create_tool"], dict):
-            data = step["create_tool"]
-            norm = {"action": "create_tool"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "run_agent" in step and isinstance(step["run_agent"], dict):
-            data = step["run_agent"]
-            norm = {"action": "run_agent"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "run_tests" in step and isinstance(step["run_tests"], dict):
-            data = step["run_tests"]
-            norm = {"action": "run_tests"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "spawn_run" in step and isinstance(step["spawn_run"], dict):
-            data = step["spawn_run"]
-            norm = {"action": "spawn_run"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "spawn_group" in step and isinstance(step["spawn_group"], dict):
-            data = step["spawn_group"]
-            norm = {"action": "spawn_group"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "join" in step and isinstance(step["join"], dict):
-            data = step["join"]
-            norm = {"action": "join"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "cancel_subtree" in step and isinstance(step["cancel_subtree"], dict):
-            data = step["cancel_subtree"]
-            norm = {"action": "cancel_subtree"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "evaluate_and_replan" in step and isinstance(step["evaluate_and_replan"], dict):
-            data = step["evaluate_and_replan"]
-            norm = {"action": "evaluate_and_replan"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        if "query_tree" in step and isinstance(step["query_tree"], dict):
-            data = step["query_tree"]
-            norm = {"action": "query_tree"}
-            norm.update(data)
-            normalized.append(norm)
-            continue
-
-        normalized.append(step)
-
-    return normalized
+    idempotency_key = (
+        payload.get("idempotency_key")
+        or inputs.get("idempotency_key")
+    )
+    trace_id = (
+        request_metadata.get("trace_id")
+        or payload.get("trace_id")
+        or inputs.get("trace_id")
+        or f"trace-{uuid4()}"
+    )
+    request_id = (
+        request_metadata.get("request_id")
+        or payload.get("request_id")
+        or inputs.get("request_id")
+    )
+    return {
+        "trace_id": str(trace_id) if trace_id is not None else None,
+        "request_id": str(request_id) if request_id is not None else None,
+        "idempotency_key": str(idempotency_key) if idempotency_key else None,
+        "idempotency_provided": bool(idempotency_key),
+        "tool_slug": tool_slug,
+    }
 
 
-def _resolve_required_scopes(action: str, steps: Optional[List[Dict[str, Any]]] = None) -> List[str]:
-    scopes = set(PRIVILEGED_ACTION_SCOPES.get(action, []))
-    if action == "execute_plan":
-        for step in steps or []:
-            if not isinstance(step, dict):
-                continue
-            step_action = step.get("action")
-            if step_action:
-                scopes.update(PLAN_ACTION_SCOPES.get(step_action, []))
+def _finalize_output(
+    output: Dict[str, Any],
+    *,
+    inputs: Dict[str, Any],
+    payload: Dict[str, Any],
+    tool_slug: Optional[str],
+) -> Dict[str, Any]:
+    output["meta"] = _extract_meta(inputs=inputs, payload=payload, tool_slug=tool_slug)
+    return {"context": output, "tool_outputs": [output]}
+
+
+def _resolve_required_scopes(action: str) -> List[str]:
+    scopes = set(get_required_scopes_for_action(action))
     return sorted(scopes)
+
+
+def _is_mutating_action(action: str) -> bool:
+    scopes = _resolve_required_scopes(action)
+    if not scopes:
+        return False
+    return any(not scope.endswith(".read") for scope in scopes)
+
+
+def _has_explicit_publish_intent(inputs: Dict[str, Any], payload: Dict[str, Any]) -> bool:
+    candidates = [
+        payload.get("allow_publish"),
+        payload.get("publish_intent"),
+        inputs.get("allow_publish"),
+        inputs.get("publish_intent"),
+    ]
+    objective_flags = payload.get("objective_flags") if isinstance(payload.get("objective_flags"), dict) else {}
+    if not objective_flags and isinstance(inputs.get("objective_flags"), dict):
+        objective_flags = inputs.get("objective_flags")
+    candidates.append(objective_flags.get("allow_publish"))
+
+    for candidate in candidates:
+        if isinstance(candidate, bool):
+            return candidate
+        if isinstance(candidate, str) and candidate.strip().lower() in {"1", "true", "yes", "publish"}:
+            return True
+    return False
 
 
 def _resolve_auth(
@@ -528,11 +533,18 @@ def _resolve_auth(
         or tool_ctx.get("token")
     )
 
-    scoped_action = action or "fetch_catalog"
-    scope_list = required_scopes or _resolve_required_scopes(scoped_action)
+    auth_ctx = tool_ctx.get("auth") if isinstance(tool_ctx.get("auth"), dict) else {}
+    if not token and isinstance(auth_ctx.get("token"), str):
+        token = auth_ctx.get("token")
+    if not token and isinstance(auth_ctx.get("bearer_token"), str):
+        token = auth_ctx.get("bearer_token")
+
+    if not action:
+        raise ValueError("Action is required for auth scope resolution.")
+
+    scope_list = required_scopes or _resolve_required_scopes(action)
     if scope_list:
         delegated_token = None
-        auth_ctx = tool_ctx.get("auth") if isinstance(tool_ctx.get("auth"), dict) else {}
         mint_token_cb = auth_ctx.get("mint_token")
         if callable(mint_token_cb):
             try:
@@ -544,16 +556,20 @@ def _resolve_auth(
                 )
             except Exception as exc:
                 raise ValueError(
-                    f"Action '{scoped_action}' requires delegated workload token; workload token mint failed: {exc}"
+                    f"Action '{action}' requires delegated workload token; workload token mint failed: {exc}"
                 ) from exc
 
-        if not delegated_token:
-            raise ValueError(
-                f"Action '{scoped_action}' requires delegated workload token; missing grant context or caller auth context"
-            )
-        token = delegated_token
+        if delegated_token:
+            token = delegated_token
+        elif not token:
+            raise ValueError(f"Action '{action}' requires bearer token; missing caller auth context")
+    elif not token:
+        raise ValueError(f"Action '{action}' requires bearer token; missing caller auth context")
 
-    extra_headers = {}
+    if not tenant_id:
+        raise ValueError(f"Action '{action}' requires explicit tenant_id.")
+
+    extra_headers: Dict[str, str] = {}
     if isinstance(payload.get("headers"), dict):
         extra_headers.update(payload.get("headers"))
     if isinstance(inputs.get("headers"), dict):
@@ -566,1153 +582,282 @@ def _run_async(coro):
     try:
         return asyncio.run(coro)
     except RuntimeError:
-        # Avoid crashing if a loop is already running
         return None
 
 
-def _extract_step_payload(step: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(step, dict):
-        return {}
-    payload = step.get("payload")
-    if isinstance(payload, dict):
-        return payload
-    if isinstance(step.get("graph_json"), dict):
-        return step.get("graph_json") or {}
-    return {k: v for k, v in step.items() if k not in {"action", "type", "depends_on", "id"}}
+# Compatibility wrappers retained for existing tests and monkeypatch hooks.
+def _fetch_catalog(client: Client, payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    return catalog_actions.list_capabilities(client, payload, control_client_factory=_control_client)
 
 
-def _collect_step_ids(steps: List[Dict[str, Any]]) -> set:
-    step_ids = set()
-    for step in steps:
-        if isinstance(step, dict) and step.get("id"):
-            step_ids.add(str(step.get("id")))
-    return step_ids
+def _catalog_get_rag_operator_catalog(client: Client, payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    return catalog_actions.get_rag_operator_catalog(client, payload, control_client_factory=_control_client)
 
 
-def _validate_plan(
-    client: Client,
-    steps: List[Dict[str, Any]],
-    tenant_id: Optional[str] = None,
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    errors: List[Dict[str, Any]] = []
+def _catalog_list_rag_operators(client: Client, payload: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return catalog_actions.list_rag_operators(client, payload, control_client_factory=_control_client)
 
-    try:
-        client.connect()
-    except Exception:
-        pass
 
-    rag_catalog = client.nodes.catalog or {}
-    agent_catalog = client.agent_nodes.catalog or []
+def _catalog_get_rag_operator(client: Client, payload: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return catalog_actions.get_rag_operator(client, payload, control_client_factory=_control_client)
 
-    rag_operator_ids = set()
-    if isinstance(rag_catalog, dict):
-        for specs in rag_catalog.values():
-            if isinstance(specs, list):
-                for spec in specs:
-                    if isinstance(spec, dict) and spec.get("operator_id"):
-                        rag_operator_ids.add(spec["operator_id"])
 
-    agent_types = set()
-    if isinstance(agent_catalog, list):
-        for spec in agent_catalog:
-            if isinstance(spec, dict) and spec.get("type"):
-                agent_types.add(spec["type"])
+def _catalog_list_agent_operators(client: Client) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    return catalog_actions.list_agent_operators(client, control_client_factory=_control_client)
 
-    builtin_agent_types = {node.value for node in NodeType}
-    allowed_agent_types = builtin_agent_types.union(agent_types)
 
-    step_ids = _collect_step_ids(steps)
-
-    for idx, step in enumerate(steps):
-        if not isinstance(step, dict):
-            errors.append({"step": idx, "error": "invalid_step", "detail": "Step must be an object"})
-            continue
-
-        step_type = step.get("action") or step.get("type")
-        if not step_type:
-            errors.append({"step": idx, "error": "missing_action"})
-            continue
-
-        if (
-            step_type in ORCHESTRATION_PRIMITIVE_ACTIONS
-            and not is_orchestration_surface_enabled(
-                surface=ORCHESTRATION_SURFACE_OPTION_B,
-                tenant_id=tenant_id,
-            )
-        ):
-            errors.append({
-                "step": idx,
-                "error": "feature_disabled",
-                "action": step_type,
-                "surface": ORCHESTRATION_SURFACE_OPTION_B,
-            })
-            continue
-
-        depends_on = step.get("depends_on")
-        if depends_on is not None:
-            if not isinstance(depends_on, list):
-                errors.append({"step": idx, "error": "invalid_depends_on", "detail": "depends_on must be a list"})
-            else:
-                for dep in depends_on:
-                    if str(dep) not in step_ids:
-                        errors.append({"step": idx, "error": "unknown_dependency", "dependency": dep})
-
-        if step_type == "create_custom_node":
-            if not step.get("name") or not (step.get("python_code") or step.get("code")):
-                errors.append({"step": idx, "error": "missing_fields", "fields": ["name", "python_code"]})
-            continue
-
-        if step_type == "create_artifact_draft":
-            payload = _extract_step_payload(step)
-            if not payload.get("name") or not (payload.get("python_code") or payload.get("code")):
-                errors.append({"step": idx, "error": "missing_fields", "fields": ["name", "python_code"]})
-            continue
-
-        if step_type == "promote_artifact":
-            payload = _extract_step_payload(step)
-            artifact_id = payload.get("artifact_id") or payload.get("id") or step.get("artifact_id")
-            if not artifact_id:
-                errors.append({"step": idx, "error": "missing_fields", "fields": ["artifact_id"]})
-            continue
-
-        if step_type == "create_tool":
-            payload = _extract_step_payload(step)
-            missing = []
-            if not payload.get("name"):
-                missing.append("name")
-            if not payload.get("slug"):
-                missing.append("slug")
-            if not payload.get("input_schema"):
-                missing.append("input_schema")
-            if not payload.get("output_schema"):
-                missing.append("output_schema")
-            if missing:
-                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
-            continue
-
-        if step_type == "run_agent":
-            payload = _extract_step_payload(step)
-            agent_id = payload.get("agent_id") or payload.get("id")
-            agent_slug = payload.get("agent_slug") or payload.get("slug")
-            if not agent_id and not agent_slug:
-                errors.append({"step": idx, "error": "missing_fields", "fields": ["agent_id or agent_slug"]})
-            continue
-
-        if step_type == "run_tests":
-            payload = _extract_step_payload(step)
-            tests = payload.get("tests") if isinstance(payload.get("tests"), list) else None
-            if not tests:
-                errors.append({"step": idx, "error": "missing_fields", "fields": ["tests"]})
-            continue
-
-        if step_type == "spawn_run":
-            payload = _extract_step_payload(step)
-            missing = []
-            if not payload.get("caller_run_id"):
-                missing.append("caller_run_id")
-            if not payload.get("idempotency_key"):
-                missing.append("idempotency_key")
-            if not payload.get("target_agent_id") and not payload.get("target_agent_slug"):
-                missing.append("target_agent_id or target_agent_slug")
-            if missing:
-                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
-            continue
-
-        if step_type == "spawn_group":
-            payload = _extract_step_payload(step)
-            missing = []
-            if not payload.get("caller_run_id"):
-                missing.append("caller_run_id")
-            if not payload.get("idempotency_key_prefix"):
-                missing.append("idempotency_key_prefix")
-            targets = payload.get("targets")
-            if not isinstance(targets, list) or not targets:
-                missing.append("targets")
-            if missing:
-                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
-            continue
-
-        if step_type == "join":
-            payload = _extract_step_payload(step)
-            missing = []
-            if not payload.get("caller_run_id"):
-                missing.append("caller_run_id")
-            if not payload.get("orchestration_group_id"):
-                missing.append("orchestration_group_id")
-            if missing:
-                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
-            continue
-
-        if step_type == "cancel_subtree":
-            payload = _extract_step_payload(step)
-            missing = []
-            if not payload.get("caller_run_id"):
-                missing.append("caller_run_id")
-            if not payload.get("run_id"):
-                missing.append("run_id")
-            if missing:
-                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
-            continue
-
-        if step_type == "evaluate_and_replan":
-            payload = _extract_step_payload(step)
-            missing = []
-            if not payload.get("caller_run_id"):
-                missing.append("caller_run_id")
-            if not payload.get("run_id"):
-                missing.append("run_id")
-            if missing:
-                errors.append({"step": idx, "error": "missing_fields", "fields": missing})
-            continue
-
-        if step_type == "query_tree":
-            payload = _extract_step_payload(step)
-            if not payload.get("run_id"):
-                errors.append({"step": idx, "error": "missing_fields", "fields": ["run_id"]})
-            continue
-
-        if step_type == "deploy_rag_pipeline":
-            payload = step.get("graph_json") or step.get("payload")
-            if not isinstance(payload, dict):
-                errors.append({"step": idx, "error": "missing_payload", "action": step_type})
-                continue
-
-            # Validate operators against catalog
-            for node in payload.get("nodes", []) or []:
-                operator_id = None
-                if isinstance(node, dict):
-                    data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
-                    operator_id = data.get("operator") or node.get("operator")
-                if operator_id and rag_operator_ids and operator_id not in rag_operator_ids:
-                    errors.append({"step": idx, "error": "unknown_operator", "operator": operator_id})
-
-            compiler = PipelineCompiler()
-            result = compiler.compile(payload)
-            if not result.success:
-                for err in result.errors:
-                    errors.append({
-                        "step": idx,
-                        "error": "pipeline_validation_error",
-                        "code": err.code,
-                        "message": err.message,
-                        "node_id": err.node_id,
-                    })
-            continue
-
-        if step_type == "deploy_agent":
-            payload = step.get("graph_json") or step.get("payload")
-            if not isinstance(payload, dict):
-                errors.append({"step": idx, "error": "missing_payload", "action": step_type})
-                continue
-
-            graph_payload = payload.get("graph_definition") if isinstance(payload.get("graph_definition"), dict) else payload
-            try:
-                graph = AgentGraph.model_validate(graph_payload)
-            except Exception as exc:
-                errors.append({"step": idx, "error": "agent_graph_invalid", "detail": str(exc)})
-                continue
-
-            for node in graph.nodes:
-                if node.type and allowed_agent_types and node.type not in allowed_agent_types:
-                    errors.append({"step": idx, "error": "unknown_agent_node", "node_type": node.type})
-
-            compiler = AgentCompiler()
-            validation_result = _run_async(compiler.validate(graph))
-            if validation_result is None:
-                errors.append({"step": idx, "error": "validation_unavailable", "detail": "Async validation unavailable"})
-            else:
-                for err in validation_result:
-                    errors.append({
-                        "step": idx,
-                        "error": "agent_validation_error",
-                        "node_id": err.node_id,
-                        "edge_id": err.edge_id,
-                        "message": err.message,
-                        "severity": err.severity,
-                    })
-            continue
-
-        errors.append({"step": idx, "error": "unsupported_action", "action": step_type})
-
-    return {"valid": len(errors) == 0, "issues": errors}, errors
-
-
-def _fetch_catalog(client: Client, payload: Dict[str, Any]) -> Dict[str, Any]:
-    client.connect()
-    rag_catalog = client.nodes.catalog or {}
-    agent_catalog = client.agent_nodes.catalog or []
-
-    rag_summary = _summarize_rag_catalog(rag_catalog)
-    agent_summary = _summarize_agent_catalog(agent_catalog)
-
-    result = {
-        "summary": {
-            "rag": rag_summary,
-            "agent": agent_summary,
-        }
-    }
-
-    if payload.get("include_raw"):
-        result["rag_catalog"] = rag_catalog
-        result["agent_catalog"] = agent_catalog
-
-    return result
-
-
-def _summarize_rag_catalog(rag_catalog: Any) -> Dict[str, Any]:
-    if not isinstance(rag_catalog, dict):
-        return {"total": 0, "categories": {}}
-
-    categories = {}
-    total = 0
-    examples = {}
-    for cat, specs in rag_catalog.items():
-        if not isinstance(specs, list):
-            continue
-        count = len(specs)
-        total += count
-        categories[cat] = count
-        examples[cat] = [s.get("operator_id") for s in specs[:3] if isinstance(s, dict)]
-
-    return {
-        "total": total,
-        "categories": categories,
-        "examples": examples,
-        "fields": ["operator_id", "display_name", "category", "input_type", "output_type", "version", "scope"],
-    }
-
-
-def _summarize_agent_catalog(agent_catalog: Any) -> Dict[str, Any]:
-    if not isinstance(agent_catalog, list):
-        return {"total": 0, "categories": {}}
-
-    categories = {}
-    total = len(agent_catalog)
-    examples = {}
-    for spec in agent_catalog:
-        if not isinstance(spec, dict):
-            continue
-        cat = spec.get("category", "general")
-        categories[cat] = categories.get(cat, 0) + 1
-        if cat not in examples:
-            examples[cat] = []
-        if len(examples[cat]) < 3:
-            examples[cat].append(spec.get("type"))
-
-    return {
-        "total": total,
-        "categories": categories,
-        "examples": examples,
-        "fields": ["type", "display_name", "category", "reads", "writes"],
-    }
-
-
-def _execute_plan(client: Client, steps: List[Dict[str, Any]], dry_run: bool) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    results: List[Dict[str, Any]] = []
-    errors: List[Dict[str, Any]] = []
-
-    for idx, step in enumerate(steps):
-        if not isinstance(step, dict):
-            errors.append({"step": idx, "error": "invalid_step", "detail": "Step must be an object"})
-            continue
-
-        step_type = step.get("action") or step.get("type")
-        if not step_type:
-            errors.append({"step": idx, "error": "missing_action"})
-            continue
-
-        if step_type == "create_custom_node":
-            result, err = _step_create_custom_node(client, step, dry_run)
-        elif step_type == "create_artifact_draft":
-            result, err = _step_create_artifact_draft(client, step, dry_run)
-        elif step_type == "promote_artifact":
-            result, err = _step_promote_artifact(client, step, dry_run)
-        elif step_type == "create_tool":
-            result, err = _step_create_tool(client, step, dry_run)
-        elif step_type == "run_agent":
-            result, err = _step_run_agent(client, step, dry_run)
-        elif step_type == "run_tests":
-            result, err = _step_run_tests(client, step, dry_run)
-        elif step_type == "spawn_run":
-            result, err = _step_spawn_run(client, step, dry_run)
-        elif step_type == "spawn_group":
-            result, err = _step_spawn_group(client, step, dry_run)
-        elif step_type == "join":
-            result, err = _step_join(client, step, dry_run)
-        elif step_type == "cancel_subtree":
-            result, err = _step_cancel_subtree(client, step, dry_run)
-        elif step_type == "evaluate_and_replan":
-            result, err = _step_evaluate_and_replan(client, step, dry_run)
-        elif step_type == "query_tree":
-            result, err = _step_query_tree(client, step, dry_run)
-        elif step_type == "deploy_rag_pipeline":
-            result, err = _step_deploy_rag_pipeline(client, step, dry_run)
-        elif step_type == "deploy_agent":
-            result, err = _step_deploy_agent(client, step, dry_run)
-        else:
-            result, err = None, {"step": idx, "error": "unsupported_action", "action": step_type}
-
-        if err:
-            errors.append(err)
-        results.append({"action": step_type, "result": result})
-
-    return {"steps": results}, errors
-
-
-def _step_create_custom_node(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    name = step.get("name")
-    python_code = step.get("python_code") or step.get("code")
-
-    if not name or not python_code:
-        return None, {"error": "missing_fields", "fields": ["name", "python_code"]}
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "name": name}, None
-
-    try:
-        created = ArtifactBuilder.create(
-            client,
-            name=name,
-            python_code=python_code,
-            category=step.get("category", "custom"),
-            input_type=step.get("input_type", "raw_documents"),
-            output_type=step.get("output_type", "normalized_documents"),
-            display_name=step.get("display_name"),
-            description=step.get("description"),
-            config_schema=step.get("config_schema"),
-        )
-        return created, None
-    except Exception as exc:
-        return None, {"error": "create_custom_node_failed", "detail": str(exc), "name": name}
-
-
-def _step_deploy_rag_pipeline(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = step.get("graph_json") or step.get("payload")
-    if not isinstance(payload, dict):
-        return None, {"error": "missing_payload", "action": "deploy_rag_pipeline"}
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True}, None
-
-    try:
-        resp = requests.post(
-            f"{client.base_url}/admin/pipelines/visual-pipelines",
-            json=payload,
-            headers=client.headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json(), None
-    except Exception as exc:
-        return None, {"error": "deploy_rag_pipeline_failed", "detail": str(exc)}
-
-
-def _step_deploy_agent(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = step.get("graph_json") or step.get("payload")
-    if not isinstance(payload, dict):
-        return None, {"error": "missing_payload", "action": "deploy_agent"}
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True}, None
-
-    try:
-        primary_url = f"{client.base_url}/agents"
-        fallback_url = f"{client.base_url}/api/agents"
-        resp = requests.post(primary_url, json=payload, headers=client.headers, timeout=30)
-        if resp.status_code == 404:
-            resp = requests.post(fallback_url, json=payload, headers=client.headers, timeout=30)
-        resp.raise_for_status()
-        return resp.json(), None
-    except Exception as exc:
-        return None, {"error": "deploy_agent_failed", "detail": str(exc)}
-
-
-def _step_create_artifact_draft(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _create_artifact_draft(client, payload, dry_run)
-    if errors:
-        return result, {"error": "create_artifact_draft_failed", "details": errors}
-    return result, None
-
-
-def _step_promote_artifact(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _promote_artifact(client, payload, dry_run)
-    if errors:
-        return result, {"error": "promote_artifact_failed", "details": errors}
-    return result, None
-
-
-def _step_create_tool(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _create_tool(client, payload, dry_run)
-    if errors:
-        return result, {"error": "create_tool_failed", "details": errors}
-    return result, None
-
-
-def _step_run_agent(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _run_agent(client, payload, dry_run)
-    if errors:
-        return result, {"error": "run_agent_failed", "details": errors}
-    return result, None
-
-
-def _step_run_tests(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    tests = payload.get("tests") if isinstance(payload.get("tests"), list) else []
-    result, errors = _run_tests(client, tests, dry_run)
-    if errors:
-        return result, {"error": "run_tests_failed", "details": errors}
-    return result, None
-
-
-def _step_spawn_run(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _orchestration_spawn_run(client, payload, payload, dry_run)
-    if errors:
-        return result, {"error": "spawn_run_failed", "details": errors}
-    return result, None
-
-
-def _step_spawn_group(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _orchestration_spawn_group(client, payload, payload, dry_run)
-    if errors:
-        return result, {"error": "spawn_group_failed", "details": errors}
-    return result, None
-
-
-def _step_join(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _orchestration_join(client, payload, payload, dry_run)
-    if errors:
-        return result, {"error": "join_failed", "details": errors}
-    return result, None
-
-
-def _step_cancel_subtree(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _orchestration_cancel_subtree(client, payload, payload, dry_run)
-    if errors:
-        return result, {"error": "cancel_subtree_failed", "details": errors}
-    return result, None
-
-
-def _step_evaluate_and_replan(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _orchestration_evaluate_and_replan(client, payload, payload, dry_run)
-    if errors:
-        return result, {"error": "evaluate_and_replan_failed", "details": errors}
-    return result, None
-
-
-def _step_query_tree(client: Client, step: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    payload = _extract_step_payload(step)
-    result, errors = _orchestration_query_tree(client, payload, payload, dry_run)
-    if errors:
-        return result, {"error": "query_tree_failed", "details": errors}
-    return result, None
-
-
-def _resolve_caller_run_id(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
-    caller_run_id = payload.get("caller_run_id") or inputs.get("caller_run_id")
-    if caller_run_id:
-        return str(caller_run_id)
-    context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
-    if not context and isinstance(inputs.get("context"), dict):
-        context = inputs.get("context")
-    run_id = context.get("run_id")
-    if run_id:
-        return str(run_id)
-    return None
-
-
-def _orchestration_spawn_run(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-    errors: List[Dict[str, Any]] = []
-    caller_run_id = _resolve_caller_run_id(inputs, payload)
-    target_agent_id = payload.get("target_agent_id") or inputs.get("target_agent_id")
-    target_agent_slug = payload.get("target_agent_slug") or payload.get("target_slug") or inputs.get("target_agent_slug")
-    scope_subset = payload.get("scope_subset") or inputs.get("scope_subset") or payload.get("requested_scopes") or inputs.get("requested_scopes") or []
-    if not isinstance(scope_subset, list):
-        scope_subset = []
-    idempotency_key = payload.get("idempotency_key") or inputs.get("idempotency_key")
-    mapped_input_payload = payload.get("mapped_input_payload") if isinstance(payload.get("mapped_input_payload"), dict) else {}
-    if not mapped_input_payload and isinstance(payload.get("input"), dict):
-        mapped_input_payload = payload.get("input")
-
-    missing = []
-    if not caller_run_id:
-        missing.append("caller_run_id")
-    if not idempotency_key:
-        missing.append("idempotency_key")
-    if not target_agent_id and not target_agent_slug:
-        missing.append("target_agent_id or target_agent_slug")
-    if not scope_subset:
-        missing.append("scope_subset")
-    if missing:
-        return None, [{"error": "missing_fields", "fields": missing}]
-
-    request_payload = {
-        "caller_run_id": caller_run_id,
-        "parent_node_id": payload.get("parent_node_id") or inputs.get("parent_node_id"),
-        "target_agent_id": target_agent_id,
-        "target_agent_slug": target_agent_slug,
-        "mapped_input_payload": mapped_input_payload,
-        "failure_policy": payload.get("failure_policy"),
-        "timeout_s": payload.get("timeout_s"),
-        "scope_subset": scope_subset,
-        "idempotency_key": idempotency_key,
-        "start_background": payload.get("start_background", True),
-    }
-
-    if dry_run:
-        request_payload["dry_run"] = True
-        return {"status": "skipped", "dry_run": True, "request": request_payload}, errors
-
-    try:
-        data = _orchestration_post(client, "/internal/orchestration/spawn-run", request_payload)
-        return data, errors
-    except Exception as exc:
-        return None, [{"error": "spawn_run_failed", "detail": str(exc)}]
-
-
-def _orchestration_spawn_group(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-    errors: List[Dict[str, Any]] = []
-    caller_run_id = _resolve_caller_run_id(inputs, payload)
-    targets = payload.get("targets") if isinstance(payload.get("targets"), list) else []
-    scope_subset = payload.get("scope_subset") or inputs.get("scope_subset") or payload.get("requested_scopes") or inputs.get("requested_scopes") or []
-    if not isinstance(scope_subset, list):
-        scope_subset = []
-    idempotency_key_prefix = payload.get("idempotency_key_prefix") or inputs.get("idempotency_key_prefix")
-
-    missing = []
-    if not caller_run_id:
-        missing.append("caller_run_id")
-    if not idempotency_key_prefix:
-        missing.append("idempotency_key_prefix")
-    if not targets:
-        missing.append("targets")
-    if not scope_subset:
-        missing.append("scope_subset")
-    if missing:
-        return None, [{"error": "missing_fields", "fields": missing}]
-
-    request_payload = {
-        "caller_run_id": caller_run_id,
-        "parent_node_id": payload.get("parent_node_id") or inputs.get("parent_node_id"),
-        "targets": targets,
-        "failure_policy": payload.get("failure_policy"),
-        "join_mode": payload.get("join_mode", "all"),
-        "quorum_threshold": payload.get("quorum_threshold"),
-        "timeout_s": payload.get("timeout_s"),
-        "scope_subset": scope_subset,
-        "idempotency_key_prefix": idempotency_key_prefix,
-        "start_background": payload.get("start_background", True),
-    }
-
-    if dry_run:
-        request_payload["dry_run"] = True
-        return {"status": "skipped", "dry_run": True, "request": request_payload}, errors
-
-    try:
-        data = _orchestration_post(client, "/internal/orchestration/spawn-group", request_payload)
-        return data, errors
-    except Exception as exc:
-        return None, [{"error": "spawn_group_failed", "detail": str(exc)}]
-
-
-def _orchestration_join(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-    caller_run_id = _resolve_caller_run_id(inputs, payload)
-    group_id = payload.get("orchestration_group_id") or inputs.get("orchestration_group_id") or payload.get("group_id")
-    missing = []
-    if not caller_run_id:
-        missing.append("caller_run_id")
-    if not group_id:
-        missing.append("orchestration_group_id")
-    if missing:
-        return None, [{"error": "missing_fields", "fields": missing}]
-
-    request_payload = {
-        "caller_run_id": caller_run_id,
-        "orchestration_group_id": group_id,
-        "mode": payload.get("mode"),
-        "quorum_threshold": payload.get("quorum_threshold"),
-        "timeout_s": payload.get("timeout_s"),
-    }
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "request": request_payload}, []
-
-    try:
-        data = _orchestration_post(client, "/internal/orchestration/join", request_payload)
-        return data, []
-    except Exception as exc:
-        return None, [{"error": "join_failed", "detail": str(exc)}]
-
-
-def _orchestration_cancel_subtree(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-    caller_run_id = _resolve_caller_run_id(inputs, payload)
-    run_id = payload.get("run_id") or inputs.get("run_id")
-    missing = []
-    if not caller_run_id:
-        missing.append("caller_run_id")
-    if not run_id:
-        missing.append("run_id")
-    if missing:
-        return None, [{"error": "missing_fields", "fields": missing}]
-
-    request_payload = {
-        "caller_run_id": caller_run_id,
-        "run_id": run_id,
-        "include_root": bool(payload.get("include_root", True)),
-        "reason": payload.get("reason"),
-    }
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "request": request_payload}, []
-
-    try:
-        data = _orchestration_post(client, "/internal/orchestration/cancel-subtree", request_payload)
-        return data, []
-    except Exception as exc:
-        return None, [{"error": "cancel_subtree_failed", "detail": str(exc)}]
-
-
-def _orchestration_evaluate_and_replan(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-    caller_run_id = _resolve_caller_run_id(inputs, payload)
-    run_id = payload.get("run_id") or inputs.get("run_id")
-    missing = []
-    if not caller_run_id:
-        missing.append("caller_run_id")
-    if not run_id:
-        missing.append("run_id")
-    if missing:
-        return None, [{"error": "missing_fields", "fields": missing}]
-
-    request_payload = {
-        "caller_run_id": caller_run_id,
-        "run_id": run_id,
-    }
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "request": request_payload}, []
-
-    try:
-        data = _orchestration_post(client, "/internal/orchestration/evaluate-and-replan", request_payload)
-        return data, []
-    except Exception as exc:
-        return None, [{"error": "evaluate_and_replan_failed", "detail": str(exc)}]
-
-
-def _orchestration_query_tree(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-    run_id = payload.get("run_id") or inputs.get("run_id") or _resolve_caller_run_id(inputs, payload)
-    if not run_id:
-        return None, [{"error": "missing_fields", "fields": ["run_id"]}]
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "request": {"run_id": run_id}}, []
-
-    try:
-        data = _orchestration_get(client, f"/internal/orchestration/runs/{run_id}/tree")
-        return data, []
-    except Exception as exc:
-        return None, [{"error": "query_tree_failed", "detail": str(exc)}]
-
-
-def _orchestration_post(client: Client, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    resp = requests.post(
-        f"{client.base_url}{path}",
-        json=payload,
-        headers=client.headers,
-        timeout=60,
+def _create_artifact_draft(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return artifact_actions.create_or_update_draft(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
     )
-    resp.raise_for_status()
-    return resp.json()
 
 
-def _orchestration_get(client: Client, path: str) -> Dict[str, Any]:
-    resp = requests.get(
-        f"{client.base_url}{path}",
-        headers=client.headers,
-        timeout=60,
+def _promote_artifact(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return artifact_actions.promote(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
     )
-    resp.raise_for_status()
-    return resp.json()
 
 
-def _create_artifact_draft(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    name = payload.get("name")
-    python_code = payload.get("python_code") or payload.get("code")
-    if not name or not python_code:
-        return None, [{"error": "missing_fields", "fields": ["name", "python_code"]}]
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "name": name}, []
-
-    request_payload = dict(payload)
-    request_payload["python_code"] = python_code
-    request_payload.pop("code", None)
-    request_payload.setdefault("display_name", payload.get("display_name") or name)
-
-    try:
-        resp = requests.post(
-            f"{client.base_url}/admin/artifacts",
-            json=request_payload,
-            headers=client.headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json(), []
-    except Exception as exc:
-        return None, [{"error": "create_artifact_draft_failed", "detail": str(exc), "name": name}]
+def _create_tool(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return tool_actions.create_or_update(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
+    )
 
 
-def _promote_artifact(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    artifact_id = payload.get("artifact_id") or payload.get("id")
-    if not artifact_id:
-        return None, [{"error": "missing_fields", "fields": ["artifact_id"]}]
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "artifact_id": artifact_id}, []
-
-    promote_payload = {}
-    if payload.get("namespace"):
-        promote_payload["namespace"] = payload.get("namespace")
-    if payload.get("version"):
-        promote_payload["version"] = payload.get("version")
-
-    try:
-        resp = requests.post(
-            f"{client.base_url}/admin/artifacts/{artifact_id}/promote",
-            json=promote_payload,
-            headers=client.headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json(), []
-    except Exception as exc:
-        return None, [{"error": "promote_artifact_failed", "detail": str(exc), "artifact_id": artifact_id}]
-
-
-def _create_tool(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    missing = []
-    if not payload.get("name"):
-        missing.append("name")
-    if not payload.get("slug"):
-        missing.append("slug")
-    if not payload.get("input_schema"):
-        missing.append("input_schema")
-    if not payload.get("output_schema"):
-        missing.append("output_schema")
-    if missing:
-        return None, [{"error": "missing_fields", "fields": missing}]
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "slug": payload.get("slug")}, []
-
-    try:
-        resp = requests.post(
-            f"{client.base_url}/tools",
-            json=payload,
-            headers=client.headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json(), []
-    except Exception as exc:
-        return None, [{"error": "create_tool_failed", "detail": str(exc), "slug": payload.get("slug")}]
-
-
-def _run_agent(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    agent_id = payload.get("agent_id") or payload.get("id")
-    agent_slug = payload.get("agent_slug") or payload.get("slug")
-    if not agent_id and agent_slug:
-        agent_id = _resolve_agent_id_by_slug(client, agent_slug)
-    if not agent_id:
-        return None, [{"error": "missing_fields", "fields": ["agent_id or agent_slug"]}]
-
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "agent_id": agent_id}, []
-
-    input_text, messages, context = _resolve_agent_input(payload)
-    request_payload = {
-        "input": input_text,
-        "messages": messages or [],
-        "context": context or {},
-    }
-    try:
-        response = _call_agent_execute(client, agent_id, request_payload)
-        return response, []
-    except Exception as exc:
-        return None, [{"error": "run_agent_failed", "detail": str(exc), "agent_id": agent_id}]
+def _run_agent(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return agent_actions.execute(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        resolve_agent_id_by_slug_fn=_resolve_agent_id_by_slug,
+    )
 
 
 def _run_tests(client: Client, tests: List[Dict[str, Any]], dry_run: bool) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    errors: List[Dict[str, Any]] = []
-    if dry_run:
-        return {"status": "skipped", "dry_run": True, "tests": [], "summary": {"passed": 0, "failed": 0}}, errors
-
-    if not isinstance(tests, list) or not tests:
-        errors.append({"error": "missing_tests"})
-        return {"tests": [], "summary": {"passed": 0, "failed": 0}}, errors
-
-    results = []
-    passed = 0
-    failed = 0
-
-    for idx, test in enumerate(tests):
-        if not isinstance(test, dict):
-            errors.append({"test": idx, "error": "invalid_test"})
-            failed += 1
-            continue
-
-        name = test.get("name") or f"test_{idx + 1}"
-        target = test.get("agent_target") if isinstance(test.get("agent_target"), dict) else {}
-        agent_id = target.get("agent_id") or test.get("agent_id") or target.get("id")
-        agent_slug = target.get("agent_slug") or test.get("agent_slug") or target.get("slug")
-        if not agent_id and agent_slug:
-            agent_id = _resolve_agent_id_by_slug(client, agent_slug)
-
-        if not agent_id:
-            errors.append({"test": name, "error": "missing_agent_target"})
-            results.append({"name": name, "status": "failed", "details": "Missing agent target", "run_id": None})
-            failed += 1
-            continue
-
-        input_block = test.get("input") if isinstance(test.get("input"), dict) else {}
-        input_text = input_block.get("text") or test.get("text") or test.get("input_text")
-        context = input_block.get("context") or test.get("context") or {}
-        messages = input_block.get("messages") or test.get("messages") or []
-        if not isinstance(messages, list):
-            messages = []
-        if not isinstance(context, dict):
-            context = {}
-
-        try:
-            response = _call_agent_execute(client, agent_id, {"input": input_text, "messages": messages, "context": context})
-            response = _augment_agent_response(response)
-        except Exception as exc:
-            results.append({"name": name, "status": "failed", "details": str(exc), "run_id": None})
-            failed += 1
-            continue
-
-        assertions = test.get("assertions") if isinstance(test.get("assertions"), list) else []
-        passed_assertions, details = _evaluate_assertions(response, assertions)
-
-        if passed_assertions:
-            results.append({"name": name, "status": "passed", "details": details, "run_id": response.get("run_id")})
-            passed += 1
-        else:
-            results.append({"name": name, "status": "failed", "details": details, "run_id": response.get("run_id")})
-            failed += 1
-
-    summary = {"passed": passed, "failed": failed}
-    return {"tests": results, "summary": summary}, errors
+    return agent_actions.run_tests(
+        client,
+        tests,
+        dry_run,
+        resolve_agent_id_by_slug_fn=_resolve_agent_id_by_slug,
+        call_agent_execute_fn=_call_agent_execute,
+        augment_agent_response_fn=_augment_agent_response,
+        evaluate_assertions_fn=_evaluate_assertions,
+    )
 
 
-def _resolve_agent_input(payload: Dict[str, Any]) -> Tuple[Optional[str], List[Dict[str, Any]], Dict[str, Any]]:
-    input_text = None
-    messages = []
-    context = {}
+def _resolve_caller_run_id(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
+    return orchestration_actions.resolve_caller_run_id(inputs, payload)
 
-    input_block = payload.get("input")
-    if isinstance(input_block, dict):
-        input_text = input_block.get("text") or input_block.get("input") or input_block.get("input_text")
-        messages = input_block.get("messages") or []
-        context = input_block.get("context") or {}
-    elif isinstance(input_block, str):
-        input_text = input_block
 
-    if input_text is None:
-        input_text = payload.get("text") or payload.get("input_text")
-    if not messages:
-        messages = payload.get("messages") or []
-    if not context:
-        context = payload.get("context") or {}
+def _orchestration_spawn_run(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return orchestration_actions.spawn_run(
+        client,
+        inputs,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
+    )
 
-    if not isinstance(messages, list):
-        messages = []
-    if not isinstance(context, dict):
-        context = {}
 
-    return input_text, messages, context
+def _orchestration_spawn_group(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return orchestration_actions.spawn_group(
+        client,
+        inputs,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
+    )
+
+
+def _orchestration_join(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return orchestration_actions.join(
+        client,
+        inputs,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
+    )
+
+
+def _orchestration_cancel_subtree(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return orchestration_actions.cancel_subtree(
+        client,
+        inputs,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
+    )
+
+
+def _orchestration_evaluate_and_replan(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return orchestration_actions.evaluate_and_replan(
+        client,
+        inputs,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
+    )
+
+
+def _orchestration_query_tree(client: Client, inputs: Dict[str, Any], payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return orchestration_actions.query_tree(
+        client,
+        inputs,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+    )
+
+
+def _request_options(
+    *,
+    step: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    dry_run: bool,
+) -> Dict[str, Any]:
+    return shared_actions.request_options(step=step, payload=payload, dry_run=dry_run)
+
+
+def _control_client(client: Client) -> ControlPlaneClient:
+    return shared_actions.control_client(client)
 
 
 def _resolve_agent_id_by_slug(client: Client, agent_slug: str) -> Optional[str]:
-    if not agent_slug:
-        return None
-    page_size = 200
-    for page in range(0, 10):
-        try:
-            resp = requests.get(
-                f"{client.base_url}/agents",
-                params={"skip": page * page_size, "limit": page_size},
-                headers=client.headers,
-                timeout=30,
-            )
-            resp.raise_for_status()
-            payload = resp.json() or {}
-            agents = payload.get("agents") if isinstance(payload, dict) else []
-            if not isinstance(agents, list):
-                return None
-            for agent in agents:
-                if isinstance(agent, dict) and agent.get("slug") == agent_slug:
-                    return agent.get("id")
-            if len(agents) < page_size:
-                return None
-        except Exception:
-            return None
-    return None
+    return shared_actions.resolve_agent_id_by_slug(client, agent_slug, control_client_factory=_control_client)
 
 
 def _call_agent_execute(client: Client, agent_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    resp = requests.post(
-        f"{client.base_url}/agents/{agent_id}/execute",
-        json=payload,
-        headers=client.headers,
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return shared_actions.call_agent_execute(client, agent_id, payload, control_client_factory=_control_client)
 
 
 def _augment_agent_response(response: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(response, dict):
-        return {"output": {"text": str(response)}}
-    output = response.get("output")
-    if isinstance(output, dict):
-        text = output.get("text")
-        if isinstance(text, str):
-            try:
-                output["json"] = json.loads(text)
-            except Exception:
-                pass
-    return response
+    return shared_actions.augment_agent_response(response)
 
 
 def _evaluate_assertions(response: Dict[str, Any], assertions: List[Dict[str, Any]]) -> Tuple[bool, List[Dict[str, Any]]]:
-    if not assertions:
-        return True, []
-    results = []
-    passed = True
-    for assertion in assertions:
-        res = _evaluate_assertion(response, assertion)
-        results.append(res)
-        if not res.get("passed"):
-            passed = False
-    return passed, results
+    return shared_actions.evaluate_assertions(response, assertions)
 
 
 def _evaluate_assertion(response: Dict[str, Any], assertion: Dict[str, Any]) -> Dict[str, Any]:
-    atype = (assertion or {}).get("type") or "exact"
-    path = (assertion or {}).get("path")
-    expected = (assertion or {}).get("expected")
-    actual = _resolve_json_path(response, path) if path else response
-
-    if atype == "contains":
-        ok = _assert_contains(actual, expected)
-    elif atype in {"exact", "jsonpath"}:
-        ok = _assert_exact(actual, expected)
-    else:
-        return {
-            "type": atype,
-            "path": path,
-            "expected": expected,
-            "actual": actual,
-            "passed": False,
-            "error": "unsupported_assertion_type",
-        }
-
-    return {
-        "type": atype,
-        "path": path,
-        "expected": expected,
-        "actual": actual,
-        "passed": ok,
-    }
+    return shared_actions.evaluate_assertion(response, assertion)
 
 
 def _assert_contains(actual: Any, expected: Any) -> bool:
-    if actual is None:
-        return False
-    if isinstance(actual, (list, tuple, set)):
-        return expected in actual
-    if isinstance(actual, dict):
-        if expected in actual.keys():
-            return True
-        if expected in actual.values():
-            return True
-    try:
-        return str(expected) in json.dumps(actual, ensure_ascii=False)
-    except Exception:
-        return str(expected) in str(actual)
+    return shared_actions.assert_contains(actual, expected)
 
 
 def _assert_exact(actual: Any, expected: Any) -> bool:
-    if isinstance(actual, (dict, list)) or isinstance(expected, (dict, list)):
-        return actual == expected
-    return str(actual) == str(expected)
+    return shared_actions.assert_exact(actual, expected)
 
 
 def _resolve_json_path(data: Any, path: Optional[str]) -> Any:
-    if path is None:
-        return data
-    tokens = _parse_json_path(str(path))
-    current = data
-    for token in tokens:
-        if isinstance(token, int):
-            if isinstance(current, list) and 0 <= token < len(current):
-                current = current[token]
-            else:
-                return None
-        else:
-            if isinstance(current, dict) and token in current:
-                current = current[token]
-            else:
-                return None
-    return current
+    return shared_actions.resolve_json_path(data, path)
 
 
 def _parse_json_path(path: str) -> List[Any]:
-    cleaned = path.strip()
-    if cleaned.startswith("$."):
-        cleaned = cleaned[2:]
-    elif cleaned.startswith("$"):
-        cleaned = cleaned[1:]
+    return shared_actions.parse_json_path(path)
 
-    tokens: List[Any] = []
-    buffer = ""
-    i = 0
-    while i < len(cleaned):
-        char = cleaned[i]
-        if char == ".":
-            if buffer:
-                tokens.append(buffer)
-                buffer = ""
-            i += 1
-            continue
-        if char == "[":
-            if buffer:
-                tokens.append(buffer)
-                buffer = ""
-            i += 1
-            end = cleaned.find("]", i)
-            if end == -1:
-                token = cleaned[i:]
-                i = len(cleaned)
-            else:
-                token = cleaned[i:end]
-                i = end + 1
-            token = token.strip().strip('"').strip("'")
-            if token.isdigit():
-                tokens.append(int(token))
-            elif token:
-                tokens.append(token)
-            continue
-        buffer += char
-        i += 1
-    if buffer:
-        tokens.append(buffer)
-    return tokens
+
+def _dispatch_action(
+    *,
+    canonical_action: str,
+    client: Client,
+    inputs: Dict[str, Any],
+    payload: Dict[str, Any],
+    tests: List[Dict[str, Any]],
+    dry_run: bool,
+) -> Optional[Tuple[Any, List[Dict[str, Any]]]]:
+    handlers = {
+        "catalog.list_capabilities": lambda: _fetch_catalog(client, payload),
+        "catalog.get_rag_operator_catalog": lambda: _catalog_get_rag_operator_catalog(client, payload),
+        "catalog.list_rag_operators": lambda: _catalog_list_rag_operators(client, payload),
+        "catalog.get_rag_operator": lambda: _catalog_get_rag_operator(client, payload),
+        "catalog.list_agent_operators": lambda: _catalog_list_agent_operators(client),
+        "rag.list_pipelines": lambda: rag_actions.list_pipelines(client, payload, control_client_factory=_control_client),
+        "rag.list_visual_pipelines": lambda: rag_actions.list_pipelines(client, payload, control_client_factory=_control_client),
+        "rag.create_or_update_pipeline": lambda: rag_actions.create_or_update_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.create_visual_pipeline": lambda: rag_actions.create_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.update_visual_pipeline": lambda: rag_actions.update_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.compile_pipeline": lambda: rag_actions.compile_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.compile_visual_pipeline": lambda: rag_actions.compile_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.create_job": lambda: rag_actions.create_job(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.get_job": lambda: rag_actions.get_job(client, payload, control_client_factory=_control_client),
+        "rag.get_executable_pipeline": lambda: rag_actions.get_executable_pipeline(client, payload, control_client_factory=_control_client),
+        "rag.get_executable_input_schema": lambda: rag_actions.get_executable_input_schema(client, payload, control_client_factory=_control_client),
+        "rag.get_step_data": lambda: rag_actions.get_step_data(client, payload, control_client_factory=_control_client),
+        "artifacts.list": lambda: artifact_actions.list_artifacts(client, payload, control_client_factory=_control_client),
+        "artifacts.get": lambda: artifact_actions.get_artifact(client, payload, control_client_factory=_control_client),
+        "artifacts.create_or_update_draft": lambda: _create_artifact_draft(client, payload, dry_run),
+        "artifacts.promote": lambda: _promote_artifact(client, payload, dry_run),
+        "artifacts.delete": lambda: artifact_actions.delete(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "artifacts.test": lambda: artifact_actions.test_artifact(client, payload, control_client_factory=_control_client),
+        "tools.list": lambda: tool_actions.list_tools(client, payload, control_client_factory=_control_client),
+        "tools.get": lambda: tool_actions.get_tool(client, payload, control_client_factory=_control_client),
+        "tools.create_or_update": lambda: _create_tool(client, payload, dry_run),
+        "tools.publish": lambda: tool_actions.publish(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "tools.create_version": lambda: tool_actions.create_version(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "tools.delete": lambda: tool_actions.delete(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.list": lambda: agent_actions.list_agents(client, payload, control_client_factory=_control_client),
+        "agents.get": lambda: agent_actions.get_agent(client, payload, control_client_factory=_control_client),
+        "agents.create": lambda: agent_actions.create(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.update": lambda: agent_actions.update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.create_or_update": lambda: agent_actions.create_or_update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.publish": lambda: agent_actions.publish(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.validate": lambda: agent_actions.validate(client, payload, control_client_factory=_control_client),
+        "agents.execute": lambda: _run_agent(client, payload, dry_run),
+        "agents.start_run": lambda: agent_actions.start_run(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.resume_run": lambda: agent_actions.resume_run(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.get_run": lambda: agent_actions.get_run(client, payload, control_client_factory=_control_client),
+        "agents.get_run_tree": lambda: agent_actions.get_run_tree(client, payload, control_client_factory=_control_client),
+        "agents.run_tests": lambda: _run_tests(client, tests, dry_run),
+        "models.list": lambda: model_actions.list_models(client, payload, control_client_factory=_control_client),
+        "models.create_or_update": lambda: model_actions.create_or_update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "models.add_provider": lambda: model_actions.add_provider(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "models.update_provider": lambda: model_actions.update_provider(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "models.delete_provider": lambda: model_actions.delete_provider(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "credentials.list": lambda: credential_actions.list_credentials(client, payload, control_client_factory=_control_client),
+        "credentials.create_or_update": lambda: credential_actions.create_or_update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "credentials.delete": lambda: credential_actions.delete(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "credentials.usage": lambda: credential_actions.usage(client, payload, control_client_factory=_control_client),
+        "credentials.status": lambda: credential_actions.status(client, payload, control_client_factory=_control_client),
+        "knowledge_stores.list": lambda: knowledge_store_actions.list_knowledge_stores(client, payload, control_client_factory=_control_client),
+        "knowledge_stores.create_or_update": lambda: knowledge_store_actions.create_or_update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "knowledge_stores.delete": lambda: knowledge_store_actions.delete(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "knowledge_stores.stats": lambda: knowledge_store_actions.stats(client, payload, control_client_factory=_control_client),
+        "auth.create_delegation_grant": lambda: auth_actions.create_delegation_grant(client, payload, control_client_factory=_control_client),
+        "auth.mint_workload_token": lambda: auth_actions.mint_workload_token(client, payload, control_client_factory=_control_client),
+        "workload_security.list_pending": lambda: workload_security_actions.list_pending(client, payload, control_client_factory=_control_client),
+        "workload_security.approve_policy": lambda: workload_security_actions.approve_policy(client, payload, control_client_factory=_control_client),
+        "workload_security.reject_policy": lambda: workload_security_actions.reject_policy(client, payload, control_client_factory=_control_client),
+        "workload_security.list_approvals": lambda: workload_security_actions.list_approvals(client, payload, control_client_factory=_control_client),
+        "workload_security.decide_approval": lambda: workload_security_actions.decide_approval(client, payload, control_client_factory=_control_client),
+        "orchestration.spawn_run": lambda: _orchestration_spawn_run(client, inputs, payload, dry_run),
+        "orchestration.spawn_group": lambda: _orchestration_spawn_group(client, inputs, payload, dry_run),
+        "orchestration.join": lambda: _orchestration_join(client, inputs, payload, dry_run),
+        "orchestration.cancel_subtree": lambda: _orchestration_cancel_subtree(client, inputs, payload, dry_run),
+        "orchestration.evaluate_and_replan": lambda: _orchestration_evaluate_and_replan(client, inputs, payload, dry_run),
+        "orchestration.query_tree": lambda: _orchestration_query_tree(client, inputs, payload, dry_run),
+        "respond": lambda: ({ "message": payload.get("message") or inputs.get("message") or "" }, []),
+    }
+    handler_fn = handlers.get(canonical_action)
+    if handler_fn is None:
+        return None
+    return handler_fn()

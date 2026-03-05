@@ -15,6 +15,13 @@ from .registry import (
 )
 from .rag import RAGPipeline, VisualPipeline, ExecutablePipeline, PipelineJob, OperatorCategory, PipelineJobStatus, PipelineStepExecution, PipelineStepStatus, KnowledgeStore, KnowledgeStoreStatus, StorageBackend, RetrievalPolicy
 from .agents import Agent, AgentVersion, AgentRun, AgentTrace, RunStatus, AgentStatus
+from .agent_threads import (
+    AgentThread,
+    AgentThreadTurn,
+    AgentThreadStatus,
+    AgentThreadSurface,
+    AgentThreadTurnStatus,
+)
 from .security import (
     WorkloadPrincipal,
     WorkloadPrincipalBinding,
@@ -34,6 +41,14 @@ from .orchestration import (
     OrchestrationGroup,
     OrchestrationGroupMember,
 )
+from .usage_quota import (
+    UsageQuotaPolicy,
+    UsageQuotaCounter,
+    UsageQuotaReservation,
+    UsageQuotaScopeType,
+    UsageQuotaPeriodType,
+    UsageQuotaReservationStatus,
+)
 from .published_apps import (
     BuilderCheckpointType,
     BuilderConversationTurnStatus,
@@ -42,8 +57,6 @@ from .published_apps import (
     PublishedAppCodingChatMessage,
     PublishedAppCodingChatMessageRole,
     PublishedAppCodingChatSession,
-    PublishedAppCodingRunSandboxSession,
-    PublishedAppCodingRunSandboxStatus,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,
     PublishedAppDraftDevSession,
@@ -51,6 +64,7 @@ from .published_apps import (
     PublishedAppPublishJob,
     PublishedAppPublishJobStatus,
     PublishedAppRevision,
+    PublishedAppRevisionBlob,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
     PublishedAppSession,

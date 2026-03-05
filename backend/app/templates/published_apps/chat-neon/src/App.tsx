@@ -19,7 +19,7 @@ export function App() {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [chatId, setChatId] = useState<string | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const runtime = useMemo(() => createRuntimeClient(), []);
@@ -56,11 +56,11 @@ export function App() {
 
     try {
       const result = await runtime.stream(
-        { input: text, chat_id: chatId || undefined },
+        { input: text, thread_id: threadId || undefined },
         applyEvent,
       );
-      if (result.chatId) {
-        setChatId(result.chatId);
+      if (result.threadId) {
+        setThreadId(result.threadId);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to stream runtime response";

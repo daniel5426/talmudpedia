@@ -144,6 +144,7 @@ class RunCommandRequest(BaseModel):
     command: list[str]
     timeout_seconds: int = 180
     max_output_bytes: int = 12000
+    workspace_path: str | None = None
 
 
 class OpenCodeStartRequest(BaseModel):
@@ -157,6 +158,42 @@ class OpenCodeStartRequest(BaseModel):
 
 class OpenCodeCancelRequest(BaseModel):
     run_ref: str
+
+
+class OpenCodeQuestionAnswerRequest(BaseModel):
+    run_ref: str
+    question_id: str
+    answers: list[list[str]] = Field(default_factory=list)
+
+
+class StagePrepareRequest(BaseModel):
+    reset: bool = False
+
+
+class StageSnapshotRequest(BaseModel):
+    workspace: str = "live"
+
+
+class StagePromoteRequest(BaseModel):
+    pass
+
+
+class PublishPrepareRequest(BaseModel):
+    pass
+
+
+class PublishDependenciesPrepareRequest(BaseModel):
+    workspace_path: str
+
+
+class WorkspaceArchiveRequest(BaseModel):
+    workspace_path: str
+    format: str = "tar.gz"
+
+
+class WorkspaceSyncRequest(BaseModel):
+    workspace_path: str
+    files: dict[str, str] = Field(default_factory=dict)
 
 
 def _build_host_opencode_client() -> OpenCodeServerClient:
@@ -391,11 +428,47 @@ def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, default=str)}\n\n"
 
 
+def _resolve_requested_workspace_path(
+    *,
+    project_workspace_resolved: str,
+    requested_workspace: str,
+) -> str:
+    requested = str(requested_workspace or "").strip()
+    if not requested:
+        return project_workspace_resolved
+
+    candidates: list[str] = []
+    if os.path.isabs(requested):
+        candidates.append(os.path.realpath(os.path.abspath(requested)))
+        virtual_root = "/workspace"
+        if requested == virtual_root or requested.startswith(f"{virtual_root}/"):
+            suffix = requested[len(virtual_root):].lstrip("/")
+            mapped = os.path.join(project_workspace_resolved, suffix) if suffix else project_workspace_resolved
+            candidates.append(os.path.realpath(os.path.abspath(mapped)))
+    else:
+        candidates.append(os.path.realpath(os.path.abspath(os.path.join(project_workspace_resolved, requested))))
+
+    for candidate in candidates:
+        try:
+            in_project_scope = os.path.commonpath([project_workspace_resolved, candidate]) == project_workspace_resolved
+        except Exception:
+            in_project_scope = False
+        if in_project_scope and os.path.isdir(candidate):
+            return candidate
+    raise HTTPException(
+        status_code=400,
+        detail="Requested workspace path is invalid or outside sandbox project scope",
+    )
+
+
 async def _pump_opencode_events(state: _OpenCodeRunState) -> None:
     try:
         async for event in state.host_client.stream_run_events(run_ref=state.host_run_ref):
             if isinstance(event, dict):
                 await state.queue.put(event)
+                event_name = str(event.get("event") or event.get("type") or "").strip().lower()
+                if event_name in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
+                    break
     except Exception as exc:
         await state.queue.put(
             {
@@ -609,6 +682,65 @@ async def snapshot_files(sandbox_id: str) -> dict[str, Any]:
         raise _translate_runtime_error(exc) from exc
 
 
+@router.post("/sessions/{sandbox_id}/stage/prepare")
+async def prepare_stage_workspace(sandbox_id: str, payload: StagePrepareRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        return await manager.prepare_stage_workspace(
+            sandbox_id=sandbox_id,
+            reset=bool(payload.reset),
+        )
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/stage/snapshot")
+async def snapshot_workspace(sandbox_id: str, payload: StageSnapshotRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        return await manager.snapshot_workspace(
+            sandbox_id=sandbox_id,
+            workspace=payload.workspace,
+        )
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/stage/promote")
+async def promote_stage_workspace(sandbox_id: str, payload: StagePromoteRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        _ = payload
+        return await manager.promote_stage_workspace(sandbox_id=sandbox_id)
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/publish/prepare")
+async def prepare_publish_workspace(sandbox_id: str, payload: PublishPrepareRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        _ = payload
+        return await manager.prepare_publish_workspace(sandbox_id=sandbox_id)
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/publish/dependencies/prepare")
+async def prepare_publish_dependencies(
+    sandbox_id: str,
+    payload: PublishDependenciesPrepareRequest,
+) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        return await manager.prepare_publish_dependencies(
+            sandbox_id=sandbox_id,
+            workspace_path=payload.workspace_path,
+        )
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
 @router.post("/sessions/{sandbox_id}/commands/run")
 async def run_command(sandbox_id: str, payload: RunCommandRequest) -> dict[str, Any]:
     manager = get_local_draft_dev_runtime_manager()
@@ -618,6 +750,33 @@ async def run_command(sandbox_id: str, payload: RunCommandRequest) -> dict[str, 
             command=payload.command,
             timeout_seconds=payload.timeout_seconds,
             max_output_bytes=payload.max_output_bytes,
+            workspace_path=payload.workspace_path,
+        )
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/workspace/archive")
+async def export_workspace_archive(sandbox_id: str, payload: WorkspaceArchiveRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        return await manager.export_workspace_archive(
+            sandbox_id=sandbox_id,
+            workspace_path=payload.workspace_path,
+            format=payload.format,
+        )
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/workspace/sync")
+async def sync_workspace_files(sandbox_id: str, payload: WorkspaceSyncRequest) -> dict[str, Any]:
+    manager = get_local_draft_dev_runtime_manager()
+    try:
+        return await manager.sync_workspace_files(
+            sandbox_id=sandbox_id,
+            workspace_path=payload.workspace_path,
+            files=payload.files,
         )
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc
@@ -627,9 +786,14 @@ async def run_command(sandbox_id: str, payload: RunCommandRequest) -> dict[str, 
 async def opencode_start(sandbox_id: str, payload: OpenCodeStartRequest) -> dict[str, Any]:
     manager = get_local_draft_dev_runtime_manager()
     workspace_path = await manager.resolve_project_dir(sandbox_id=sandbox_id)
-    effective_workspace = str(workspace_path or "").strip()
-    if not effective_workspace:
+    project_workspace = str(workspace_path or "").strip()
+    if not project_workspace:
         raise HTTPException(status_code=400, detail="Draft dev sandbox is not running")
+    project_workspace_resolved = os.path.realpath(os.path.abspath(project_workspace))
+    effective_workspace = _resolve_requested_workspace_path(
+        project_workspace_resolved=project_workspace_resolved,
+        requested_workspace=str(payload.workspace_path or "").strip(),
+    )
 
     try:
         if _opencode_per_sandbox_enabled():
@@ -683,6 +847,7 @@ async def opencode_events(
             if item is None:
                 break
             yield _sse(item)
+            await asyncio.sleep(0)
         await _opencode_store.pop(run_ref)
 
     return StreamingResponse(
@@ -702,7 +867,38 @@ async def opencode_cancel(sandbox_id: str, payload: OpenCodeCancelRequest) -> di
     if state is None or str(state.sandbox_id) != str(sandbox_id):
         return {"cancelled": False, "reason": "run not found"}
     try:
-        cancelled = await state.host_client.cancel_run(run_ref=state.host_run_ref)
+        cancelled = await state.host_client.cancel_run(
+            run_ref=state.host_run_ref,
+            sandbox_id=str(sandbox_id),
+        )
+        if cancelled:
+            if state.task and not state.task.done():
+                state.task.cancel()
+            await state.queue.put(
+                {
+                    "event": "run.cancelled",
+                    "payload": {"status": "cancelled"},
+                    "diagnostics": [{"message": "run cancelled"}],
+                }
+            )
+            await state.queue.put(None)
         return {"cancelled": bool(cancelled)}
+    except Exception as exc:
+        raise _translate_runtime_error(exc) from exc
+
+
+@router.post("/sessions/{sandbox_id}/opencode/question-answer")
+async def opencode_question_answer(sandbox_id: str, payload: OpenCodeQuestionAnswerRequest) -> dict[str, Any]:
+    state = await _opencode_store.get(payload.run_ref)
+    if state is None or str(state.sandbox_id) != str(sandbox_id):
+        return {"ok": False, "reason": "run not found"}
+    try:
+        ok = await state.host_client.answer_question(
+            run_ref=state.host_run_ref,
+            question_id=str(payload.question_id or "").strip(),
+            answers=payload.answers,
+            sandbox_id=str(sandbox_id),
+        )
+        return {"ok": bool(ok)}
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc

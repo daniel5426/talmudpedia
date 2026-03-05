@@ -1,35 +1,13 @@
-# SDK Specification & Architecture (v1.1)
+# SDK Specification (Archived Legacy Doc)
 
-Last Updated: 2026-02-08
+Last Updated: 2026-03-01
 
-This document summarizes the dynamic Python SDK behavior and auth expectations for internal secure flows.
+Status: Archived and non-canonical.
 
-## Architecture: Schema-Driven Discovery
-`Client.connect()` loads catalogs from:
-- `/admin/pipelines/catalog`
-- `/agents/operators`
+This document is intentionally retained only as legacy historical context for the old lightweight SDK era.
 
-Node classes are generated dynamically via `NodeFactory`.
+Canonical source of truth for control-plane SDK contracts and migration status:
+- `backend/documentations/platform_control_plane_sdk_spec_v1.md`
+- `backend/documentations/platform_control_plane_sdk_hard_cut_legacy_removal_plan.md`
 
-## Auth for Internal Secure Calls
-For internal privileged actions, SDK clients should use short-lived delegated workload tokens.
-
-### Token Handling
-`Client` now supports a `token_provider` callback so Authorization can be refreshed per request instead of relying on a long-lived static token.
-
-### Why
-Long-running agentic workloads (workers/retries/async) require rotating short-lived credentials and scope-bound access.
-
-## Platform SDK Artifact Behavior
-`builtin/platform_sdk` now requires delegated token minting for privileged actions.
-Supported sources are:
-1. Runtime grant-bound mint callback from executor context (`context.auth.mint_token`).
-2. Internal auth broker calls (`/internal/auth/delegation-grants` + `/internal/auth/workload-token`) when caller user token + tenant context are provided.
-
-Removed behavior:
-- No pseudo-user token mint fallback.
-- No env-based privileged API key/token fallback for internal secure actions.
-
-## Roadmap Notes
-- Expand async-first client APIs for high-throughput workflows.
-- Add first-class helpers for delegation grant + token mint lifecycle.
+Do not use this file for new implementation decisions.

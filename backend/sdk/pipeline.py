@@ -72,8 +72,7 @@ class Agent(Pipeline):
     """
     def to_payload(self) -> Dict[str, Any]:
         # Agent API expects "graph_definition": { nodes, edges } wrapped in request
-        # Agents API is weird: 
-        # POST /api/agents expects `name`, `slug`, `graph_definition`...
+        # POST /agents expects `name`, `slug`, `graph_definition`...
         return {
             "nodes": [n.to_dict() for n in self.nodes],
             "edges": self.edges
@@ -91,7 +90,7 @@ class Agent(Pipeline):
         }
         
         resp = requests.post(
-            f"{client.base_url}/api/agents",
+            f"{client.base_url}/agents",
             json=payload,
             headers=client.headers
         )

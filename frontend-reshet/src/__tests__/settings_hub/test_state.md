@@ -1,10 +1,10 @@
 # Settings Hub Frontend Tests
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-22
 
 ## Scope
 Settings Hub UI behavior for:
-- Tabbed information architecture
+- Settings navigation information architecture
 - Tenant profile save/read-only behavior
 - Defaults save payload wiring
 
@@ -14,14 +14,14 @@ Settings Hub UI behavior for:
 - `frontend-reshet/src/__tests__/settings_hub/defaults_tab.test.tsx`
 
 ## Key Scenarios Covered
-- Settings hub renders the four primary tabs.
+- Settings hub renders the four primary sections.
 - Tenant profile save calls update API with edited fields.
 - Non-admin/member role renders profile controls as read-only.
 - Defaults tab submits the expected payload shape.
 
 ## Last Run
 - Command: `npm test -- --runInBand src/__tests__/settings_hub`
-- Date: 2026-02-09 18:08 EET
+- Date: 2026-02-22
 - Result: Pass (3 suites, 4 tests)
 
 ## Known Gaps / Follow-ups

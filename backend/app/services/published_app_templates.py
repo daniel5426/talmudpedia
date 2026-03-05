@@ -4,22 +4,33 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 TEMPLATE_MANIFEST_NAME = "template.manifest.json"
 VITE_BASE_PATTERN = re.compile(r"base\s*:\s*['\"]\./['\"]")
 TEMPLATE_PACKS_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_apps"
 OPENCODE_BOOTSTRAP_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_app_bootstrap" / "opencode"
+COMMON_BOOTSTRAP_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_app_bootstrap" / "common"
+RUNTIME_SDK_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "packages" / "runtime-sdk"
 OPENCODE_BOOTSTRAP_CONTEXT_PATH = ".cache/opencode/selected_agent_contract.json"
 OPENCODE_BOOTSTRAP_REQUIRED_FILES = (
     ".opencode/package.json",
-    ".opencode/tools/coding_agent_get_agent_integration_contract.ts",
-    ".opencode/tools/coding_agent_describe_selected_agent_contract.ts",
+    ".opencode/tools/read_agent_context.ts",
+)
+COMMON_BOOTSTRAP_REQUIRED_FILES = (
+    "src/runtime-sdk.ts",
+    "src/runtime-config.json",
+)
+RUNTIME_SDK_REQUIRED_FILES = (
+    "package.json",
+    "src/index.ts",
 )
 IGNORED_TEMPLATE_DIRS = {"node_modules", "dist", "build", "__pycache__"}
 IGNORED_TEMPLATE_FILE_NAMES = {"vite.config.js", "vite.config.d.ts"}
 IGNORED_TEMPLATE_FILE_SUFFIXES = {".tsbuildinfo"}
+RUNTIME_SDK_DEPENDENCY_VERSION = "file:runtime-sdk"
+RUNTIME_CONFIG_PATH = "src/runtime-config.json"
 
 
 @dataclass(frozen=True)
@@ -37,6 +48,14 @@ class PublishedAppTemplate:
 class _TemplatePack:
     template: PublishedAppTemplate
     files: Dict[str, str]
+
+
+@dataclass(frozen=True)
+class TemplateRuntimeContext:
+    app_id: str = ""
+    app_slug: str = ""
+    agent_id: str = ""
+    api_base_url: str = "/api/py"
 
 
 def _load_manifest(pack_dir: Path) -> PublishedAppTemplate:
@@ -128,6 +147,109 @@ def _load_opencode_bootstrap_files(pack_dir: Path) -> Dict[str, str]:
     return files
 
 
+def _load_common_bootstrap_files(pack_dir: Path) -> Dict[str, str]:
+    if not pack_dir.exists() or not pack_dir.is_dir():
+        raise ValueError(f"Common bootstrap root not found: {pack_dir}")
+
+    files: Dict[str, str] = {}
+    for path in sorted(pack_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_path = _normalize_file_path(pack_dir, path)
+        if not rel_path.startswith("src/"):
+            continue
+        files[rel_path] = path.read_text(encoding="utf-8")
+
+    for required in COMMON_BOOTSTRAP_REQUIRED_FILES:
+        if required not in files:
+            raise ValueError(
+                f"Common bootstrap is missing required file `{required}` under: {pack_dir}"
+            )
+    return files
+
+
+def _load_runtime_sdk_package_files(pack_dir: Path) -> Dict[str, str]:
+    if not pack_dir.exists() or not pack_dir.is_dir():
+        raise ValueError(f"Runtime SDK package root not found: {pack_dir}")
+
+    files: Dict[str, str] = {}
+    for path in sorted(pack_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_path = _normalize_file_path(pack_dir, path)
+        rel_parts = Path(rel_path).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        if any(part in IGNORED_TEMPLATE_DIRS for part in rel_parts):
+            continue
+        if rel_path == "package-lock.json":
+            continue
+        files[f"runtime-sdk/{rel_path}"] = path.read_text(encoding="utf-8")
+
+    for required in RUNTIME_SDK_REQUIRED_FILES:
+        expected = f"runtime-sdk/{required}"
+        if expected not in files:
+            raise ValueError(
+                f"Runtime SDK package is missing required file `{required}` under: {pack_dir}"
+            )
+    return files
+
+
+def _coerce_runtime_context(runtime_context: Optional[TemplateRuntimeContext | Dict[str, Any]]) -> TemplateRuntimeContext:
+    if runtime_context is None:
+        return TemplateRuntimeContext()
+    if isinstance(runtime_context, TemplateRuntimeContext):
+        return runtime_context
+    if isinstance(runtime_context, dict):
+        app_id = str(runtime_context.get("app_id") or "").strip()
+        app_slug = str(runtime_context.get("app_slug") or "").strip()
+        agent_id = str(runtime_context.get("agent_id") or "").strip()
+        api_base_url = str(runtime_context.get("api_base_url") or "/api/py").strip() or "/api/py"
+        return TemplateRuntimeContext(
+            app_id=app_id,
+            app_slug=app_slug,
+            agent_id=agent_id,
+            api_base_url=api_base_url,
+        )
+    raise ValueError("Unsupported runtime context type")
+
+
+def _build_runtime_overlay_files(runtime_context: TemplateRuntimeContext) -> Dict[str, str]:
+    bootstrap_path = ""
+    if runtime_context.app_slug:
+        bootstrap_path = f"/public/apps/{runtime_context.app_slug}/runtime/bootstrap"
+    payload = {
+        "app_id": runtime_context.app_id,
+        "app_slug": runtime_context.app_slug,
+        "agent_id": runtime_context.agent_id,
+        "api_base_url": runtime_context.api_base_url,
+        "bootstrap_path": bootstrap_path,
+    }
+    return {RUNTIME_CONFIG_PATH: json.dumps(payload, ensure_ascii=True, indent=2) + "\n"}
+
+
+def _inject_runtime_sdk_dependency(files: Dict[str, str]) -> Dict[str, str]:
+    package_path = "package.json"
+    source = files.get(package_path)
+    if source is None:
+        return files
+
+    try:
+        payload = json.loads(source)
+    except json.JSONDecodeError:
+        return files
+    if not isinstance(payload, dict):
+        return files
+
+    dependencies = payload.get("dependencies")
+    if not isinstance(dependencies, dict):
+        dependencies = {}
+    dependencies["@talmudpedia/runtime-sdk"] = RUNTIME_SDK_DEPENDENCY_VERSION
+    payload["dependencies"] = dependencies
+    files[package_path] = json.dumps(payload, ensure_ascii=True, indent=2) + "\n"
+    return files
+
+
 def _validate_vite_base(pack_dir: Path, files: Dict[str, str]) -> None:
     vite_config_path = "vite.config.ts"
     if vite_config_path not in files:
@@ -182,14 +304,42 @@ def get_template(template_key: str) -> PublishedAppTemplate:
     raise KeyError(template_key)
 
 
-def build_template_files(template_key: str) -> Dict[str, str]:
+def build_template_files(
+    template_key: str,
+    runtime_context: Optional[TemplateRuntimeContext | Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    resolved_runtime_context = _coerce_runtime_context(runtime_context)
     for pack in _load_all_packs():
         if pack.template.key == template_key:
             merged = dict(pack.files)
+            merged.update(build_common_bootstrap_files())
             merged.update(build_opencode_bootstrap_files())
+            merged.update(build_runtime_sdk_package_files())
+            merged.update(_build_runtime_overlay_files(resolved_runtime_context))
+            merged = _inject_runtime_sdk_dependency(merged)
             return merged
     raise KeyError(template_key)
 
 
+def apply_runtime_bootstrap_overlay(
+    files: Dict[str, str],
+    runtime_context: Optional[TemplateRuntimeContext | Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    resolved_runtime_context = _coerce_runtime_context(runtime_context)
+    merged = dict(files or {})
+    merged.update(build_common_bootstrap_files())
+    merged.update(build_runtime_sdk_package_files())
+    merged.update(_build_runtime_overlay_files(resolved_runtime_context))
+    return _inject_runtime_sdk_dependency(merged)
+
+
 def build_opencode_bootstrap_files() -> Dict[str, str]:
     return _load_opencode_bootstrap_files(OPENCODE_BOOTSTRAP_ROOT)
+
+
+def build_common_bootstrap_files() -> Dict[str, str]:
+    return _load_common_bootstrap_files(COMMON_BOOTSTRAP_ROOT)
+
+
+def build_runtime_sdk_package_files() -> Dict[str, str]:
+    return _load_runtime_sdk_package_files(RUNTIME_SDK_PACKAGE_ROOT)

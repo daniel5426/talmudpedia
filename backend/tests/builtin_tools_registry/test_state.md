@@ -1,6 +1,6 @@
 # Built-in Tools Registry Tests
 
-Last Updated: 2026-02-15
+Last Updated: 2026-03-05
 
 ## Scope
 Covers built-in catalog behavior (no runtime template/instance semantics) and retrieval validation guardrails in the tools control-plane.
@@ -17,7 +17,7 @@ Covers built-in catalog behavior (no runtime template/instance semantics) and re
 
 ## Last run command + result
 - Command: `pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py`
-- Date/Time: 2026-02-15 (local)
+- Date/Time: 2026-03-05 (local)
 - Result: pass (`7 passed`)
 
 ## Known gaps or follow-ups

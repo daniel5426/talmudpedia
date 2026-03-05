@@ -6,14 +6,16 @@ All business logic lives in AgentService.
 """
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import logging
+import os
 
 from app.db.postgres.session import get_db
 from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
-from app.db.postgres.models.identity import User, OrgMembership, OrgRole
+from app.db.postgres.models.identity import OrgMembership
+from app.core.scope_registry import is_platform_admin_role
 from typing import Dict, Any
 from fastapi import Request
 
@@ -28,6 +30,11 @@ from app.services.agent_service import (
     AgentPublishedError,
     AgentNotPublishedError,
 )
+from app.services.usage_quota_service import QuotaExceededError
+from app.agent.execution.stream_contract_v2 import (
+    build_stream_v2_event,
+    normalize_filtered_event_to_v2,
+)
 from app.api.schemas.agents import (
     CreateAgentRequest,
     UpdateAgentRequest,
@@ -37,11 +44,17 @@ from app.api.schemas.agents import (
     ExecuteAgentRequest,
     ExecuteAgentResponse,
 )
+from app.db.postgres.models.agents import AgentRun
 from sqlalchemy import select
 from typing import Optional
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+def _stream_v2_enforced() -> bool:
+    raw = (os.getenv("STREAM_V2_ENFORCED") or "1").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 # =============================================================================
@@ -79,63 +92,46 @@ async def get_agent_context(
 
     # Prefer explicit tenant header so multi-tenant users can target the selected tenant.
     header_tenant = request.headers.get("X-Tenant-ID")
+    resolved_tenant: UUID | None = None
     if header_tenant:
         try:
             header_tenant_uuid = UUID(str(header_tenant))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header")
+        resolved_tenant = header_tenant_uuid
+    else:
+        tenant_id = context.get("tenant_id")
+        if tenant_id is None:
+            raise HTTPException(status_code=403, detail="Tenant context required")
+        try:
+            resolved_tenant = UUID(str(tenant_id))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid tenant context")
 
-        membership_res = await db.execute(
-            select(OrgMembership).where(
-                OrgMembership.user_id == current_user.id,
-                OrgMembership.tenant_id == header_tenant_uuid,
-            ).limit(1)
-        )
-        membership = membership_res.scalar_one_or_none()
-        if membership is None and current_user.role != "admin":
-            raise HTTPException(status_code=403, detail="Not a member of the requested tenant")
-        return {
-            "user": current_user,
-            "tenant_id": header_tenant_uuid,
-            "auth_token": token,
-            "is_service": False,
-            "scopes": context.get("scopes", []),
-        }
-
-    # Fallback: first membership tenant for users that do not pass X-Tenant-ID.
-    result = await db.execute(
-        select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
+    membership_res = await db.execute(
+        select(OrgMembership).where(
+            OrgMembership.user_id == current_user.id,
+            OrgMembership.tenant_id == resolved_tenant,
+        ).limit(1)
     )
-    membership = result.scalar_one_or_none()
-    if membership:
-        return {
-            "user": current_user,
-            "tenant_id": membership.tenant_id,
-            "auth_token": token,
-            "is_service": False,
-            "scopes": context.get("scopes", []),
-        }
+    membership = membership_res.scalar_one_or_none()
+    if membership is None and not is_platform_admin_role(getattr(current_user, "role", None)):
+        raise HTTPException(status_code=403, detail="Not a member of the requested tenant")
 
-    # System admin fallback without membership.
-    tenant_id = context.get("tenant_id")
-    if tenant_id is None:
-        raise HTTPException(status_code=403, detail="Tenant context required")
     return {
         "user": current_user,
-        "tenant_id": tenant_id,
+        "tenant_id": resolved_tenant,
         "auth_token": token,
         "is_service": False,
         "scopes": context.get("scopes", []),
     }
-        
-    raise HTTPException(status_code=403, detail="Not authorized to manage agents")
 
 
 def agent_to_response(agent, compact: bool = False) -> AgentResponse:
     """Convert Agent model to response."""
     return AgentResponse(
-        id=str(agent.id),
-        tenant_id=str(agent.tenant_id),
+        id=agent.id,
+        tenant_id=agent.tenant_id,
         name=agent.name,
         slug=agent.slug,
         description=agent.description,
@@ -147,6 +143,8 @@ def agent_to_response(agent, compact: bool = False) -> AgentResponse:
 
         is_active=agent.is_active,
         is_public=agent.is_public,
+        workload_scope_profile=getattr(agent, "workload_scope_profile", "default_agent_run") or "default_agent_run",
+        workload_scope_overrides=list(getattr(agent, "workload_scope_overrides", []) or []),
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         published_at=agent.published_at,
@@ -234,6 +232,8 @@ async def create_agent(
                 graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
                 memory_config=request.memory_config,
                 execution_constraints=request.execution_constraints,
+                workload_scope_profile=request.workload_scope_profile,
+                workload_scope_overrides=request.workload_scope_overrides,
             ),
             user_id=context["user"].id if context.get("user") else None
         )
@@ -279,7 +279,9 @@ async def update_agent(
             graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
             memory_config=request.memory_config,
             execution_constraints=request.execution_constraints,
-        ))
+            workload_scope_profile=request.workload_scope_profile,
+            workload_scope_overrides=request.workload_scope_overrides,
+        ), user_id=context["user"].id if context.get("user") else None)
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
@@ -373,7 +375,7 @@ async def publish_agent(
     )
 
     try:
-        agent = await service.publish_agent(agent_id)
+        agent = await service.publish_agent(agent_id, user_id=context["user"].id if context.get("user") else None)
         return agent_to_response(agent)
     except AgentServiceError as e:
         handle_service_error(e)
@@ -469,6 +471,8 @@ async def execute_agent(
             messages=serialized_messages,
             usage=result.usage,
         )
+    except QuotaExceededError as exc:
+        return JSONResponse(status_code=429, content=exc.to_payload())
     except AgentServiceError as e:
         handle_service_error(e)
 
@@ -529,18 +533,19 @@ async def stream_agent(
             current_messages.append({"role": "user", "content": request.input})
             
         tenant_id = context.get("tenant_id")
+        request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
+        request_context.setdefault("token", context.get("auth_token"))
+        request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
+        request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
+        request_context.setdefault("requested_scopes", context.get("scopes", []))
+        request_context.setdefault("grant_id", context.get("grant_id"))
+        request_context.setdefault("principal_id", context.get("principal_id"))
+        request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
         input_params = {
             "messages": current_messages,
             "input": request.input,
-            "context": {
-                "token": context.get("auth_token"),
-                "tenant_id": str(tenant_id) if tenant_id is not None else None,
-                "user_id": str(context["user"].id) if context.get("user") else context.get("initiator_user_id"),
-                "requested_scopes": context.get("scopes", []),
-                "grant_id": context.get("grant_id"),
-                "principal_id": context.get("principal_id"),
-                "initiator_user_id": context.get("initiator_user_id"),
-            },
+            "thread_id": str(request.thread_id) if request.thread_id else None,
+            "context": request_context,
         }
         # Start run with explicit mode metadata
         requested_scopes = None
@@ -549,36 +554,78 @@ async def stream_agent(
             if isinstance(maybe_scopes, list):
                 requested_scopes = maybe_scopes
         initiating_user_id = context["user"].id if context.get("user") else None
-        run_id = await executor.start_run(
-            agent_id,
-            input_params,
-            user_id=initiating_user_id,
-            background=False,
-            mode=execution_mode,
-            requested_scopes=requested_scopes,
-        )
+        try:
+            run_id = await executor.start_run(
+                agent_id,
+                input_params,
+                user_id=initiating_user_id,
+                background=False,
+                mode=execution_mode,
+                requested_scopes=requested_scopes,
+                thread_id=request.thread_id,
+            )
+        except QuotaExceededError as exc:
+            return JSONResponse(status_code=429, content=exc.to_payload())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    run_row = await db.get(AgentRun, run_id)
+    thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
 
     async def event_generator():
-        import time
         # raw stream from engine (full firehose)
         raw_stream = executor.run_and_stream(run_id, db, resume_payload, mode=execution_mode)
         
         # filtered stream via adapter
         filtered_stream = StreamAdapter.filter_stream(raw_stream, execution_mode)
-        
-        # Initial Event: Run ID + Padding to force proxy flush (4KB of comments)
+
+        # Initial Event + padding to force proxy flush.
+        seq = 1
         yield ": " + (" " * 4096) + "\n\n"
-        yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
-        
+        if _stream_v2_enforced():
+            accepted = build_stream_v2_event(
+                seq=seq,
+                run_id=str(run_id),
+                event="run.accepted",
+                stage="run",
+                payload={"status": "running", "thread_id": thread_id_value},
+            )
+            seq += 1
+            yield f"data: {json.dumps(accepted, default=str)}\n\n"
+        else:
+            yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
+
         try:
             async for event_dict in filtered_stream:
-                yield f"data: {json.dumps(event_dict, default=str)}\n\n"
-            
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                if _stream_v2_enforced():
+                    mapped_event, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
+                    envelope = build_stream_v2_event(
+                        seq=seq,
+                        run_id=str(run_id),
+                        event=mapped_event,
+                        stage=stage,
+                        payload=payload,
+                        diagnostics=diagnostics,
+                    )
+                    seq += 1
+                    yield f"data: {json.dumps(envelope, default=str)}\n\n"
+                else:
+                    yield f"data: {json.dumps(event_dict, default=str)}\n\n"
         except Exception as e:
             logger = logging.getLogger(__name__)
             logger.error(f"[STREAM] Error during stream: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            if _stream_v2_enforced():
+                envelope = build_stream_v2_event(
+                    seq=seq,
+                    run_id=str(run_id),
+                    event="run.failed",
+                    stage="run",
+                    payload={"error": str(e)},
+                    diagnostics=[{"message": str(e)}],
+                )
+                yield f"data: {json.dumps(envelope, default=str)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
         event_generator(), 
@@ -588,6 +635,7 @@ async def stream_agent(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
             "Content-Encoding": "identity", # Disable compression
+            "X-Thread-ID": thread_id_value or "",
         }
     )
     
@@ -624,18 +672,19 @@ async def start_run_v2(
         current_messages.append({"role": "user", "content": request.input})
         
     tenant_id = context.get("tenant_id")
+    request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
+    request_context.setdefault("token", context.get("auth_token"))
+    request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
+    request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
+    request_context.setdefault("requested_scopes", context.get("scopes", []))
+    request_context.setdefault("grant_id", context.get("grant_id"))
+    request_context.setdefault("principal_id", context.get("principal_id"))
+    request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
     input_params = {
         "messages": current_messages,
         "input": request.input,
-        "context": {
-            "token": context.get("auth_token"),
-            "tenant_id": str(tenant_id) if tenant_id is not None else None,
-            "user_id": str(context["user"].id) if context.get("user") else context.get("initiator_user_id"),
-            "requested_scopes": context.get("scopes", []),
-            "grant_id": context.get("grant_id"),
-            "principal_id": context.get("principal_id"),
-            "initiator_user_id": context.get("initiator_user_id"),
-        },
+        "thread_id": str(request.thread_id) if request.thread_id else None,
+        "context": request_context,
     }
     
     try:
@@ -650,8 +699,17 @@ async def start_run_v2(
             input_params,
             user_id=initiating_user_id,
             requested_scopes=requested_scopes,
+            thread_id=request.thread_id,
         )
-        return {"run_id": str(run_id)}
+        run_row = await db.get(AgentRun, run_id)
+        return {
+            "run_id": str(run_id),
+            "thread_id": str(run_row.thread_id) if run_row and run_row.thread_id else None,
+        }
+    except QuotaExceededError as exc:
+        return JSONResponse(status_code=429, content=exc.to_payload())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -683,7 +741,7 @@ async def resume_run_v2(
     # User principals can only resume their own runs (unless system admin).
     if not context.get("is_service"):
         user = context.get("user")
-        if user is not None and str(getattr(user, "role", "")).lower() != "admin":
+        if user is not None and not is_platform_admin_role(getattr(user, "role", None)):
             allowed_user_ids = {
                 str(uid)
                 for uid in (run.user_id, run.initiator_user_id)

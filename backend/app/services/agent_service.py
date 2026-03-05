@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrace, AgentStatus, RunStatus
+from app.services.usage_quota_service import QuotaExceededError
+from app.services.workload_provisioning_service import WorkloadProvisioningService
 # from ..agent.graph.compiler import AgentCompiler # Mocking compiler for now if not ready, or use it
 # from ..agent.graph.schema import AgentGraph
 
@@ -23,6 +25,8 @@ class CreateAgentData:
     graph_definition: Optional[dict] = None
     memory_config: Optional[dict] = None
     execution_constraints: Optional[dict] = None
+    workload_scope_profile: Optional[str] = "default_agent_run"
+    workload_scope_overrides: Optional[List[str]] = None
 
 @dataclass
 class UpdateAgentData:
@@ -31,6 +35,8 @@ class UpdateAgentData:
     graph_definition: Optional[dict] = None
     memory_config: Optional[dict] = None
     execution_constraints: Optional[dict] = None
+    workload_scope_profile: Optional[str] = None
+    workload_scope_overrides: Optional[List[str]] = None
 
 @dataclass
 class ExecuteAgentData:
@@ -149,14 +155,21 @@ class AgentService:
             graph_definition=data.graph_definition or {"nodes": [], "edges": []},
             memory_config=data.memory_config or {},
             execution_constraints=data.execution_constraints or {},
+            workload_scope_profile=(data.workload_scope_profile or "default_agent_run"),
+            workload_scope_overrides=list(data.workload_scope_overrides or []),
             created_by=user_id,
         )
         self.db.add(agent)
+        await self.db.flush()
+        await WorkloadProvisioningService(self.db).provision_agent_policy(
+            agent=agent,
+            actor_user_id=user_id,
+        )
         await self.db.commit()
         await self.db.refresh(agent)
         return agent
 
-    async def update_agent(self, agent_id: UUID, data: UpdateAgentData) -> Agent:
+    async def update_agent(self, agent_id: UUID, data: UpdateAgentData, user_id: Optional[UUID] = None) -> Agent:
         """Update an existing agent."""
         agent = await self.get_agent(agent_id)
         
@@ -174,6 +187,15 @@ class AgentService:
             agent.memory_config = data.memory_config
         if data.execution_constraints is not None:
             agent.execution_constraints = data.execution_constraints
+        if data.workload_scope_profile is not None:
+            agent.workload_scope_profile = data.workload_scope_profile
+        if data.workload_scope_overrides is not None:
+            agent.workload_scope_overrides = list(data.workload_scope_overrides)
+
+        await WorkloadProvisioningService(self.db).provision_agent_policy(
+            agent=agent,
+            actor_user_id=user_id,
+        )
         
         await self.db.commit()
         await self.db.refresh(agent)
@@ -215,7 +237,7 @@ class AgentService:
                 self.errors = errors
         return ValidationResult(True, [])
 
-    async def publish_agent(self, agent_id: UUID) -> Agent:
+    async def publish_agent(self, agent_id: UUID, user_id: Optional[UUID] = None) -> Agent:
         """Publishes the current draft of an agent, creating a version snapshot."""
         agent = await self.get_agent(agent_id)
         
@@ -232,6 +254,10 @@ class AgentService:
         agent.status = AgentStatus.published
         agent.version += 1
         agent.published_at = datetime.now(timezone.utc)
+        await WorkloadProvisioningService(self.db).provision_agent_policy(
+            agent=agent,
+            actor_user_id=user_id,
+        )
         
         await self.db.commit()
         await self.db.refresh(agent)
@@ -304,6 +330,8 @@ class AgentService:
                 usage={"tokens": run.usage_tokens if run else 0},
             )
 
+        except QuotaExceededError:
+            raise
         except Exception as e:
             logger.error(f"Agent execution failed: {e}")
             raise AgentServiceError(f"Execution failed: {e}")

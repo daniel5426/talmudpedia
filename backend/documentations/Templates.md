@@ -1,16 +1,20 @@
 # Templates
 
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 
 ## Current State Summary
 - Template packs root: `backend/app/templates/published_apps/`
 - Active templates: `chat-classic`, `chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`, `fresh-start`
 - Loader behavior: templates are loaded from disk on each call (no in-memory `lru_cache`), so file edits are picked up without restarting just for template file reads.
-- Template bootstrap overlay now injects canonical OpenCode custom tools into every template output:
+- Template bootstrap overlay now injects both a common runtime bootstrap and OpenCode custom tools into every template output:
+  - `src/runtime-sdk.ts` (thin wrapper, imports `@talmudpedia/runtime-sdk`)
+  - `src/runtime-config.json` (app-specific runtime config payload)
+  - `runtime-sdk/*` (local distributable SDK package payload)
   - `.opencode/package.json`
-  - `.opencode/tools/coding_agent_get_agent_integration_contract.ts`
-  - `.opencode/tools/coding_agent_describe_selected_agent_contract.ts`
+  - `.opencode/tools/read_agent_context.ts`
+- OpenCode run startup also self-heals `.opencode/*` bootstrap for legacy drafts before run start (fail-closed if seed fails).
 - Strategy currently implemented: clean implementation only (no legacy fallback paths kept).
+- Template outputs do not persist provider secrets; model/tool/vector credentials resolve at runtime via Integration Credentials (explicit ref -> tenant default -> platform env default).
 
 ## Fast-Create Direction (Current Planning Scope)
 - Active planning scope: `chat-classic` only.
@@ -59,11 +63,12 @@ Last Updated: 2026-02-21
   - `preview_token` query param
   - `published_app_preview_token` cookie
 - Result: built template previews can load `index.html` + JS assets when opened from builder preview flow.
-- Template `runtime-sdk.ts` now allows live streaming in preview mode (the builder-preview hard-stop is removed).
-- Template runtime SDK now auto-derives runtime base path from the current preview/published asset URL when explicit runtime context is absent.
-- Template runtime SDK forwards `preview_token` to preview chat stream calls to keep preview auth intact.
-- Planned addition for `chat-classic` pilot:
-  - runtime config endpoint consumption at template startup so app-specific values are injected at runtime, not build time.
+- Template `runtime-sdk.ts` resolves runtime bootstrap by explicit contract (inline runtime context, runtime bootstrap endpoint, or injected config), not URL-path inference.
+- Runtime bootstrap endpoints are canonicalized:
+  - `GET /public/apps/{slug}/runtime/bootstrap`
+  - `GET /public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
+- Runtime HTML payloads inject `window.__APP_RUNTIME_CONTEXT` using the same bootstrap schema used by the endpoints.
+- Preview chat stream calls continue to support preview token bridging.
 
 ## Operational Notes
 - For local testing through the builder, backend + worker must be running and using latest code.
@@ -112,6 +117,9 @@ Last Updated: 2026-02-21
 - Template loader: `backend/app/services/published_app_templates.py`
 - Dependency policy: `backend/app/services/apps_builder_dependency_policy.py`
 - Template packs: `backend/app/templates/published_apps/*`
+- Common runtime bootstrap source: `backend/app/templates/published_app_bootstrap/common/*`
 - OpenCode bootstrap source: `backend/app/templates/published_app_bootstrap/opencode/.opencode/*`
-- Plan tracking: `backend/documentations/Plans/Base44_Vite_Static_Apps_ImplementationPlan.md`
+- Runtime SDK package source: `packages/runtime-sdk/*`
+- Current implementation overview: `backend/documentations/Plans/AppsBuilder_Current_Implementation_Overview.md`
+- Runtime SDK architecture doc: `backend/documentations/runtime_sdk_v1_host_anywhere.md`
 - Fast-create pilot scope: `chat-classic` only until rollout criteria are met.

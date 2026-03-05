@@ -1,5 +1,7 @@
 # Platform Overview – Enterprise AI Operating System
 
+Last Updated: 2026-02-22
+
 TalmudPedia is a foundational **AI Development and Execution OS** designed for organizations to build, govern, and operate sophisticated AI systems at scale. It provides a unified control plane for models, data, tools, and reasoning workflows while remaining fully agnostic to vendors and infrastructure.
 
 The platform is built on the philosophy of **"Separation of Concerns"**, where data ingestion (RAG) and reasoning (Agents) are decoupled through a central bridge: the **Knowledge Store**.
@@ -86,8 +88,22 @@ The platform supports three levels of functional extension:
 - **Vendor Agnostic**: Seamlessly swap between OpenAI, Anthropic, or Self-hosted models.
 - **Hybrid Search**: Out-of-the-box support for Vector (Semantic), Keyword, and Reranked search flows.
 - **Traceability**: Every reasoning step and data transformation is recorded and inspectable.
-- **Safe Execution**: User-code is executed in restricted environments with curated standard libraries.
+- **Safe Execution**: User-code is executed in restricted environments with curated standard libraries and fail-closed runtime behavior.
 - **Dynamic Frontend**: Modern, responsive UI built with Next.js, Radix UI, and React Flow.
+
+---
+
+## 🧩 Current Builder & Coding-Agent Implementation (2026-02)
+
+The current platform implementation includes a mature Apps Builder runtime model and an OpenCode-first coding-agent execution path:
+
+- **Draft/Publish split**: Builder draft mode is optimized for fast iteration in a persistent sandbox; publish mode is asynchronous and deterministic with static artifact delivery (`vite_static`).
+- **Single-sandbox staged coding runs**: Coding-agent runs reuse the active draft sandbox and execute in stage workspaces (`.talmudpedia/stage/<run_id>/workspace`) before stage-to-live promotion.
+- **OpenCode-first engine policy**: OpenCode is the default coding engine; native execution is env-gated and can return deterministic unavailable errors when disabled.
+- **Durable chat continuity**: Coding-agent chat history is persisted per app/user session and reused across runs for multi-turn implementation context.
+- **Run safety and reliability**: Active-run locking prevents conflicting builder writes, run creation supports idempotent `client_message_id`, and terminal stream handling is hardened to avoid hanging runs.
+- **Revision persistence evolution**: App revisions are persisted as snapshot manifests plus content-addressed blobs for direct restore without replay chains.
+- **Selected-agent integration contract tooling**: Coding-agent runs can resolve selected-agent contract metadata/tool schemas through dedicated runtime tools and injected context.
 
 ---
 
@@ -107,3 +123,10 @@ TalmudPedia serves as a **long-lived AI operating system**. It allows organizati
 1.  **Iterate Fast**: Build and test agents in minutes using the Playground.
 2.  **Govern Everything**: Enforce consistent security and cost policies across all AI apps.
 3.  **Future Proof**: Switch models or vector stores as the ecosystem evolves without rewriting a single agent.
+
+---
+
+## 📚 Related Current-State Documents
+
+- `backend/documentations/summary/CustomCodingAgent.md`
+- `backend/documentations/Plans/AppsBuilder_Current_Implementation_Overview.md`

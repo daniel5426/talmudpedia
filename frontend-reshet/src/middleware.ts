@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const APPS_BASE_DOMAIN = (process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost").toLowerCase();
-const APPS_HOST_RUNTIME_MODE = (
-  process.env.NEXT_PUBLIC_APPS_HOST_RUNTIME_MODE ||
-  (process.env.NODE_ENV === "development" ? "static_proxy" : "shell")
-).toLowerCase();
-
-function usesStaticProxyRuntimeMode(): boolean {
-  return APPS_HOST_RUNTIME_MODE === "static_proxy" || APPS_HOST_RUNTIME_MODE === "static";
-}
 
 function shouldSkipPath(pathname: string): boolean {
   return (
@@ -40,14 +32,6 @@ export function middleware(request: NextRequest) {
   }
 
   const rewriteUrl = request.nextUrl.clone();
-  if (usesStaticProxyRuntimeMode()) {
-    rewriteUrl.pathname =
-      pathname === "/"
-        ? `/api/py/public/apps/${appSlug}/assets/index.html`
-        : `/api/py/public/apps/${appSlug}/assets${pathname}`;
-    return NextResponse.rewrite(rewriteUrl);
-  }
-
   rewriteUrl.pathname = pathname === "/" ? `/published/${appSlug}` : `/published/${appSlug}${pathname}`;
   return NextResponse.rewrite(rewriteUrl);
 }

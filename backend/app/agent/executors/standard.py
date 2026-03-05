@@ -16,6 +16,26 @@ from app.agent.cel_engine import evaluate_template
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_quota_max_output_tokens(state: Dict[str, Any]) -> Optional[int]:
+    if not isinstance(state, dict):
+        return None
+    context = state.get("context")
+    if not isinstance(context, dict):
+        nested_state = state.get("state")
+        if isinstance(nested_state, dict):
+            context = nested_state.get("context")
+    if not isinstance(context, dict):
+        return None
+    raw = context.get("quota_max_output_tokens")
+    try:
+        parsed = int(raw)
+        if parsed > 0:
+            return parsed
+    except Exception:
+        return None
+    return None
+
 # =============================================================================
 # Control Flow Executors
 # =============================================================================
@@ -131,6 +151,16 @@ class LLMNodeExecutor(BaseNodeExecutor):
         
         system_prompt = config.get("system_prompt", None)
         model_id = config.get("model_id")
+        quota_max_tokens = _resolve_quota_max_output_tokens(state)
+        configured_max_tokens = config.get("max_tokens")
+        if quota_max_tokens is not None:
+            if configured_max_tokens is None:
+                configured_max_tokens = quota_max_tokens
+            else:
+                try:
+                    configured_max_tokens = min(int(configured_max_tokens), quota_max_tokens)
+                except Exception:
+                    configured_max_tokens = quota_max_tokens
         
         # Extract emitter from ContextVar (global implicit context)
         from app.agent.execution.emitter import active_emitter
@@ -167,7 +197,11 @@ class LLMNodeExecutor(BaseNodeExecutor):
             # Stream tokens explicitly
             try:
                 reasoning_buffer = ""
-                async for chunk in adapter._astream(formatted_messages, system_prompt=system_prompt):
+                async for chunk in adapter._astream(
+                    formatted_messages,
+                    system_prompt=system_prompt,
+                    max_tokens=configured_max_tokens,
+                ):
                     token_content = chunk.message.content if hasattr(chunk, 'message') else ""
                     
                     # Handle reasoning content if supported
@@ -184,13 +218,21 @@ class LLMNodeExecutor(BaseNodeExecutor):
                             emitter.emit_token(token_content, node_id)
             except NotImplementedError:
                 logger.warning(f"Streaming not supported for model {model_id}, using non-streaming fallback")
-                response = await adapter.ainvoke(formatted_messages, system_prompt=system_prompt)
+                response = await adapter.ainvoke(
+                    formatted_messages,
+                    system_prompt=system_prompt,
+                    max_tokens=configured_max_tokens,
+                )
                 full_content = response.content
                 if emitter:
                     emitter.emit_token(full_content, node_id)
             except Exception as stream_error:
                 logger.warning(f"Streaming failed: {stream_error}, using non-streaming fallback")
-                response = await adapter.ainvoke(formatted_messages, system_prompt=system_prompt)
+                response = await adapter.ainvoke(
+                    formatted_messages,
+                    system_prompt=system_prompt,
+                    max_tokens=configured_max_tokens,
+                )
                 full_content = response.content
                 if emitter:
                     emitter.emit_token(full_content, node_id)
@@ -584,16 +626,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 "entryPath",
             ),
         )
-        _coerce_string_alias(
-            "checkpoint_revision_id",
-            (
-                "checkpoint_revision_id",
-                "checkpointRevisionId",
-                "checkpoint_id",
-                "checkpointId",
-            ),
-        )
-
         input_schema = self._parse_tool_input_schema(tool)
         properties = input_schema.get("properties", {}) if isinstance(input_schema, dict) else {}
         required = input_schema.get("required", []) if isinstance(input_schema, dict) else []
@@ -1121,6 +1153,12 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         effort_settings = self.REASONING_EFFORT_MAP.get(reasoning_effort, {})
         temperature = config.get("temperature", effort_settings.get("temperature", 0.7))
         max_tokens = config.get("max_tokens", effort_settings.get("max_tokens", 2000))
+        quota_max_tokens = _resolve_quota_max_output_tokens(state)
+        if quota_max_tokens is not None:
+            try:
+                max_tokens = min(int(max_tokens), int(quota_max_tokens))
+            except Exception:
+                max_tokens = int(quota_max_tokens)
         
         # Interpolate instructions with state
         if instructions:
@@ -1144,7 +1182,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             tool_records = await self._load_tool_records(tools)
             tool_records_by_id = {str(t.id): t for t in tool_records if getattr(t, "id", None)}
             langchain_tools = [self._build_langchain_tool(t) for t in tool_records] if tools else []
-            platform_sdk_defaulted_once = False
 
             conversation_messages = list(formatted_messages)
             emitted_messages: List[BaseMessage] = []
@@ -1319,26 +1356,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     tool_record = tool_records_by_id.get(resolved_tool_id)
                     if tool_record is not None:
                         tool_input = self._coerce_tool_input(tool_input, tool_record)
-                    if (not tool_input) and tool_record is not None:
-                        tool_slug = str(getattr(tool_record, "slug", "") or "").lower()
-                        tool_name_lower = str(getattr(tool_record, "name", "") or "").lower()
-                        artifact_id = str(getattr(tool_record, "artifact_id", "") or "")
-                        is_platform_sdk = (
-                            tool_slug == "platform-sdk"
-                            or tool_name_lower == "platform sdk"
-                            or artifact_id == "builtin/platform_sdk"
-                        )
-                        if is_platform_sdk:
-                            if not platform_sdk_defaulted_once:
-                                tool_input = {"action": "fetch_catalog"}
-                                platform_sdk_defaulted_once = True
-                                logger.info("Defaulted empty Platform SDK tool call to fetch_catalog")
-                            else:
-                                tool_input = {
-                                    "action": "respond",
-                                    "message": "Missing explicit Platform SDK action in tool call.",
-                                }
-                                logger.warning("Repeated empty Platform SDK tool call; forcing respond action")
                     policy = self._get_tool_execution_policy(tool_record, tool_timeout_s)
 
                     resolved_calls.append({

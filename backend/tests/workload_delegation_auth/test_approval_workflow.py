@@ -5,7 +5,7 @@ import pytest
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.security import WorkloadPrincipalType
 from app.services.workload_identity_service import WorkloadIdentityService
-from app.services.delegation_service import DelegationService
+from app.services.delegation_service import DelegationPolicyError, DelegationService
 from app.services.token_broker_service import TokenBrokerService
 
 
@@ -28,19 +28,19 @@ async def test_pending_policy_blocks_token_issuance(db_session):
     )
 
     delegation = DelegationService(db_session)
-    grant, approval_required = await delegation.create_delegation_grant(
-        tenant_id=tenant.id,
-        principal_id=principal.id,
-        initiator_user_id=user.id,
-        requested_scopes=["tools.write"],
-    )
-    assert approval_required is True
-    assert grant.effective_scopes == []
+    with pytest.raises(DelegationPolicyError) as exc:
+        await delegation.create_delegation_grant(
+            tenant_id=tenant.id,
+            principal_id=principal.id,
+            initiator_user_id=user.id,
+            requested_scopes=["tools.write"],
+        )
+    assert exc.value.code == "WORKLOAD_POLICY_PENDING"
 
     broker = TokenBrokerService(db_session)
-    with pytest.raises(PermissionError):
+    with pytest.raises(ValueError):
         await broker.mint_workload_token(
-            grant_id=grant.id,
+            grant_id=uuid4(),
             audience="talmudpedia-internal-api",
             scope_subset=["tools.write"],
         )

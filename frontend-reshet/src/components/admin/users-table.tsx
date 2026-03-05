@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { adminService, User } from "@/services"
+import { useTenant } from "@/contexts/TenantContext"
+import { rbacService, Role, RoleAssignment } from "@/services/rbac"
 import { DataTable } from "@/components/ui/data-table"
 import { ColumnDef } from "@tanstack/react-table"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -47,12 +49,17 @@ interface UsersTableProps {
 export function UsersTable({
   data: externalData,
 }: UsersTableProps) {
+  const { currentTenant } = useTenant()
   const [internalUsers, setInternalUsers] = useState<User[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
+  const [assignments, setAssignments] = useState<RoleAssignment[]>([])
   const [loading, setLoading] = useState(true)
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [editName, setEditName] = useState("")
-  const [editRole, setEditRole] = useState("")
+  const [managingUser, setManagingUser] = useState<User | null>(null)
+  const [selectedRoleId, setSelectedRoleId] = useState("")
   const [isEditOpen, setIsEditOpen] = useState(false)
+  const [isRolesOpen, setIsRolesOpen] = useState(false)
 
   const users = externalData || internalUsers
 
@@ -76,6 +83,24 @@ export function UsersTable({
     fetchUsers()
   }, [externalData])
 
+  const fetchSecurityData = async () => {
+    if (!currentTenant) return
+    try {
+      const [rolesData, assignmentsData] = await Promise.all([
+        rbacService.listRoles(currentTenant.slug),
+        rbacService.listRoleAssignments(currentTenant.slug),
+      ])
+      setRoles(rolesData)
+      setAssignments(assignmentsData)
+    } catch (error) {
+      console.error("Failed to fetch RBAC data", error)
+    }
+  }
+
+  useEffect(() => {
+    fetchSecurityData()
+  }, [currentTenant])
+
   const handleBulkDelete = async (ids: string[]) => {
     try {
       await adminService.bulkDeleteUsers(ids)
@@ -93,14 +118,19 @@ export function UsersTable({
   const handleEditClick = (user: User) => {
     setEditingUser(user)
     setEditName(user.full_name || "")
-    setEditRole(user.role || "user")
     setIsEditOpen(true)
+  }
+
+  const handleManageRolesClick = (user: User) => {
+    setManagingUser(user)
+    setSelectedRoleId("")
+    setIsRolesOpen(true)
   }
 
   const handleSaveEdit = async () => {
     if (!editingUser) return
     try {
-      await adminService.updateUser(editingUser.id, { full_name: editName, role: editRole })
+      await adminService.updateUser(editingUser.id, { full_name: editName })
       setIsEditOpen(false)
       setEditingUser(null)
       if (!externalData) fetchUsers()
@@ -108,6 +138,38 @@ export function UsersTable({
     } catch (error) {
       console.error("Failed to update user", error)
       alert("Failed to update user")
+    }
+  }
+
+  const userAssignments = (userId: string) =>
+    assignments.filter((assignment) => assignment.user_id === userId)
+
+  const handleAssignRole = async () => {
+    if (!currentTenant || !managingUser || !selectedRoleId) return
+    try {
+      await rbacService.createRoleAssignment(currentTenant.slug, {
+        user_id: managingUser.id,
+        role_id: selectedRoleId,
+        scope_id: currentTenant.id,
+        scope_type: "tenant",
+        actor_type: "user",
+      })
+      setSelectedRoleId("")
+      await fetchSecurityData()
+    } catch (error) {
+      console.error("Failed to assign role", error)
+      alert("Failed to assign role")
+    }
+  }
+
+  const handleRevokeRole = async (assignmentId: string) => {
+    if (!currentTenant) return
+    try {
+      await rbacService.deleteRoleAssignment(currentTenant.slug, assignmentId)
+      await fetchSecurityData()
+    } catch (error) {
+      console.error("Failed to revoke role", error)
+      alert("Failed to revoke role")
     }
   }
 
@@ -157,7 +219,12 @@ export function UsersTable({
     },
     {
       accessorKey: "role",
-      header: "Role",
+      header: "Roles",
+      cell: ({ row }) => {
+        const user = row.original
+        const names = userAssignments(user.id).map((a) => a.role_name)
+        return names.length > 0 ? names.join(", ") : user.role
+      },
     },
     {
       accessorKey: "created_at",
@@ -190,6 +257,9 @@ export function UsersTable({
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => handleEditClick(user)}>
                 <Edit className="mr-2 h-4 w-4" /> Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleManageRolesClick(user)}>
+                <Edit className="mr-2 h-4 w-4" /> Manage Roles
               </DropdownMenuItem>
               <DropdownMenuItem 
                 className="text-red-600"
@@ -240,24 +310,61 @@ export function UsersTable({
                 className="col-span-3"
               />
             </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="role" className="text-right">
-                Role
-              </Label>
-              <Select value={editRole} onValueChange={setEditRole}>
-                <SelectTrigger className="col-span-3">
-                  <SelectValue placeholder="Select a role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="user">User</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </div>
           <DialogFooter>
             <Button onClick={handleSaveEdit}>Save changes</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isRolesOpen} onOpenChange={setIsRolesOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Manage User Roles</DialogTitle>
+            <DialogDescription>
+              Assign or revoke tenant RBAC roles for this user.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label className="text-right">Assign</Label>
+              <div className="col-span-3 flex gap-2">
+                <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roles.map((role) => (
+                      <SelectItem key={role.id} value={role.id}>
+                        {role.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button onClick={handleAssignRole} disabled={!selectedRoleId}>
+                  Assign
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {managingUser && userAssignments(managingUser.id).length > 0 ? (
+                userAssignments(managingUser.id).map((assignment) => (
+                  <div key={assignment.id} className="flex items-center justify-between rounded border px-3 py-2">
+                    <span className="text-sm">{assignment.role_name}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-600 hover:text-red-700"
+                      onClick={() => handleRevokeRole(assignment.id)}
+                    >
+                      Revoke
+                    </Button>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground">No RBAC role assignments for this user.</p>
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </>

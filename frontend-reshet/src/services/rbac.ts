@@ -1,16 +1,11 @@
 import { httpClient } from "./http"
 
-export interface Permission {
-  resource_type: string
-  action: string
-}
-
 export interface Role {
   id: string
   tenant_id: string
   name: string
   description: string | null
-  permissions: Permission[]
+  permissions: string[]
   is_system: boolean
   created_at: string
 }
@@ -29,13 +24,20 @@ export interface RoleAssignment {
 }
 
 export interface UserPermissions {
-  permissions: Permission[]
+  permissions: string[]
   scopes: {
     scope_id: string
     scope_type: string
     role_name: string
-    permissions: Permission[]
+    permissions: string[]
   }[]
+}
+
+export interface ScopeCatalog {
+  groups: Record<string, string[]>
+  all_scopes: string[]
+  default_roles: Record<string, string[]>
+  workload_profiles: Record<string, string[]>
 }
 
 class RBACService {
@@ -48,7 +50,7 @@ class RBACService {
     data: {
       name: string
       description?: string
-      permissions: Permission[]
+      permissions: string[]
     }
   ): Promise<Role> {
     return httpClient.post(`/api/tenants/${tenantSlug}/roles`, data)
@@ -64,10 +66,14 @@ class RBACService {
     data: {
       name?: string
       description?: string
-      permissions?: Permission[]
+      permissions?: string[]
     }
   ): Promise<Role> {
     return httpClient.put(`/api/tenants/${tenantSlug}/roles/${roleId}`, data)
+  }
+
+  async getScopeCatalog(tenantSlug: string): Promise<ScopeCatalog> {
+    return httpClient.get(`/api/tenants/${tenantSlug}/scope-catalog`)
   }
 
   async deleteRole(

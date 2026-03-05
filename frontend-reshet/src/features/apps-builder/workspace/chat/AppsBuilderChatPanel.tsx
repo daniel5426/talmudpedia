@@ -1,11 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
-  PanelRightClose,
+  GitBranch,
   Plus,
-  Sparkles,
   Square,
-  Undo2,
   X,
 } from "lucide-react";
 
@@ -33,160 +31,469 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
-import {
-  Queue,
-  QueueItem,
-  QueueItemAction,
-  QueueItemActions,
-  QueueItemContent,
-  QueueItemIndicator,
-  QueueList,
-  QueueSection,
-  QueueSectionContent,
-  QueueSectionLabel,
-  QueueSectionTrigger,
-} from "@/components/ai-elements/queue";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { Task, TaskItem, TaskItemFile } from "@/components/ai-elements/task";
+import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "@/components/ai-elements/task";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { CodingAgentCapabilities, CodingAgentChatSession, LogicalModel } from "@/services";
+import type { AppVersionListItem, CodingAgentChatSession, OpenCodeCodingModelOption, PublishedAppRevision } from "@/services";
 
 import {
   TimelineItem,
   formatToolPathLabel,
+  formatToolReadPath,
+  isEditToolName,
+  isExplorationToolName,
   isAssistantTimelineItem,
+  isReadToolName,
+  isSearchToolName,
   isToolTimelineItem,
   isUserTimelineItem,
 } from "./chat-model";
+import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import type { QueuedPrompt } from "./useAppsBuilderChat";
+import { AppsBuilderVersionHistoryPanel } from "./AppsBuilderVersionHistoryPanel";
+import { useAppsBuilderChatThreadTabs } from "./useAppsBuilderChat.thread-tabs";
 
 type AppsBuilderChatPanelProps = {
   isOpen: boolean;
-  onOpenChange: (next: boolean) => void;
   isSending: boolean;
-  isUndoing: boolean;
+  isStopping: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
   chatSessions: CodingAgentChatSession[];
+  activeChatSessionId: string | null;
+  onActivateDraftChat: () => void;
   onStartNewChat: () => void;
+  onOpenHistory: () => void;
   onLoadChatSession: (sessionId: string) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
   onStopRun: () => void;
-  onRevertToCheckpoint: (userItemId: string, checkpointId: string) => Promise<void>;
-  chatModels: LogicalModel[];
+  chatModels: OpenCodeCodingModelOption[];
   selectedRunModelLabel: string;
   isModelSelectorOpen: boolean;
   onModelSelectorOpenChange: (next: boolean) => void;
   onSelectModelId: (modelId: string | null) => void;
   queuedPrompts: QueuedPrompt[];
+  pendingQuestion: CodingAgentPendingQuestion | null;
+  isAnsweringQuestion: boolean;
+  isSendBlockedBySandbox: boolean;
+  sendBlockedReason: string | null;
+  runningSessionIds: string[];
+  sendingSessionIds: string[];
+  sessionTitleHintsBySessionId: Record<string, string>;
+  hasOlderHistory: boolean;
+  isLoadingOlderHistory: boolean;
+  onLoadOlderHistory: () => Promise<void>;
   onRemoveQueuedPrompt: (promptId: string) => void;
-  capabilities: CodingAgentCapabilities | null;
+  onAnswerQuestion: (answers: string[][]) => Promise<void>;
+  versions: AppVersionListItem[];
+  selectedVersionId: string | null;
+  selectedVersion: PublishedAppRevision | null;
+  isLoadingVersions: boolean;
+  isRestoringVersion: boolean;
+  isPublishingVersion: boolean;
+  publishStatus: string | null;
+  onRefreshVersions: () => void;
+  onSelectVersion: (versionId: string) => void;
+  onRestoreVersion: (versionId?: string) => void;
+  onPublishVersion: (versionId?: string) => void;
+  onViewCodeVersion: (versionId: string) => void;
 };
 
 export function AppsBuilderChatPanel({
   isOpen,
-  onOpenChange,
   isSending,
-  isUndoing,
+  isStopping,
   timeline,
   activeThinkingSummary,
   chatSessions,
+  activeChatSessionId,
+  onActivateDraftChat,
   onStartNewChat,
+  onOpenHistory,
   onLoadChatSession,
   onSendMessage,
   onStopRun,
-  onRevertToCheckpoint,
   chatModels,
   selectedRunModelLabel,
   isModelSelectorOpen,
   onModelSelectorOpenChange,
   onSelectModelId,
   queuedPrompts,
+  pendingQuestion,
+  isAnsweringQuestion,
+  isSendBlockedBySandbox,
+  sendBlockedReason,
+  runningSessionIds,
+  sendingSessionIds,
+  sessionTitleHintsBySessionId,
+  hasOlderHistory,
+  isLoadingOlderHistory,
+  onLoadOlderHistory,
   onRemoveQueuedPrompt,
-  capabilities,
+  onAnswerQuestion,
+  versions,
+  selectedVersionId,
+  selectedVersion,
+  isLoadingVersions,
+  isRestoringVersion,
+  isPublishingVersion,
+  publishStatus,
+  onRefreshVersions,
+  onSelectVersion,
+  onRestoreVersion,
+  onPublishVersion,
+  onViewCodeVersion,
 }: AppsBuilderChatPanelProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isVersionsOpen, setIsVersionsOpen] = useState(false);
+  const [questionStepIndex, setQuestionStepIndex] = useState(0);
+  const [questionSelections, setQuestionSelections] = useState<Record<number, string[]>>({});
+  const [questionCustomInput, setQuestionCustomInput] = useState<Record<number, string>>({});
+  const [isScrolled, setIsScrolled] = useState(false);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const isLoadingOlderRef = useRef(false);
+
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    if (!sentinel) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) {
+          return;
+        }
+        if (!hasOlderHistory || isLoadingOlderHistory || isLoadingOlderRef.current) {
+          return;
+        }
+        const scrollNode = sentinel.parentElement?.parentElement as HTMLElement | null;
+        const previousHeight = scrollNode?.scrollHeight || 0;
+        const previousTop = scrollNode?.scrollTop || 0;
+        isLoadingOlderRef.current = true;
+        void onLoadOlderHistory().finally(() => {
+          if (scrollNode) {
+            const nextHeight = scrollNode.scrollHeight;
+            scrollNode.scrollTop = nextHeight - previousHeight + previousTop;
+          }
+          isLoadingOlderRef.current = false;
+        });
+      },
+      { threshold: 0 }
+    );
+    observer.observe(sentinel);
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasOlderHistory, isLoadingOlderHistory, onLoadOlderHistory]);
+
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    if (!sentinel) return;
+    const scrollNode = sentinel.parentElement?.parentElement as HTMLElement | null;
+    if (!scrollNode) return;
+
+    const handleScroll = () => {
+      setIsScrolled(scrollNode.scrollTop > 5);
+    };
+
+    scrollNode.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => scrollNode.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const hasRunningTool = useMemo(
+    () => timeline.some((item) => isToolTimelineItem(item) && item.toolStatus === "running"),
+    [timeline],
+  );
+  const lastUserIndex = useMemo(() => {
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+      if (isUserTimelineItem(timeline[index])) {
+        return index;
+      }
+    }
+    return -1;
+  }, [timeline]);
+  const hasCurrentRunAssistantStream = useMemo(() => {
+    if (lastUserIndex < 0) {
+      return false;
+    }
+    for (let index = lastUserIndex + 1; index < timeline.length; index += 1) {
+      const item = timeline[index];
+      if (isAssistantTimelineItem(item) && item.assistantStreamId) {
+        return true;
+      }
+    }
+    return false;
+  }, [lastUserIndex, timeline]);
+  const lastToolAfterCurrentUser = useMemo(() => {
+    if (lastUserIndex < 0) return null;
+    for (let index = timeline.length - 1; index > lastUserIndex; index -= 1) {
+      const item = timeline[index];
+      if (isToolTimelineItem(item)) {
+        return item;
+      }
+    }
+    return null;
+  }, [lastUserIndex, timeline]);
+  const lastToolAfterCurrentUserIsExploration = useMemo(
+    () => Boolean(lastToolAfterCurrentUser && isExplorationToolName(String(lastToolAfterCurrentUser.toolName || ""))),
+    [lastToolAfterCurrentUser],
+  );
+  const {
+    threadTabs,
+    handleOpenThreadTab,
+    handleStartNewThreadTab,
+    handleActivateDraftThreadTab,
+    handleCloseThreadTab,
+    handleTabsWheel,
+  } = useAppsBuilderChatThreadTabs({
+    chatSessions,
+    activeChatSessionId,
+    runningSessionIds: Array.from(new Set([...runningSessionIds, ...sendingSessionIds])),
+    timeline,
+    sessionTitleHintsBySessionId,
+    onActivateDraftChat,
+    onLoadChatSession,
+    onStartNewChat,
+  });
+  const runningSessionIdSet = useMemo(
+    () => new Set([...runningSessionIds, ...sendingSessionIds]),
+    [runningSessionIds, sendingSessionIds],
+  );
+
+  useEffect(() => {
+    setQuestionStepIndex(0);
+    setQuestionSelections({});
+    setQuestionCustomInput({});
+  }, [pendingQuestion?.requestId]);
+
+  const activeQuestion = useMemo(() => {
+    if (!pendingQuestion) return null;
+    const index = Math.max(0, Math.min(questionStepIndex, pendingQuestion.questions.length - 1));
+    return pendingQuestion.questions[index] || null;
+  }, [pendingQuestion, questionStepIndex]);
+
+  const canSubmitQuestion = useMemo(() => {
+    if (!pendingQuestion) return false;
+    return pendingQuestion.questions.some((question, index) => {
+      const selections = questionSelections[index] || [];
+      const custom = String(questionCustomInput[index] || "").trim();
+      return selections.length > 0 || !!custom;
+    });
+  }, [pendingQuestion, questionCustomInput, questionSelections]);
+  const sendBlocked = !isSending && (isAnsweringQuestion || isSendBlockedBySandbox);
+  const sendBlockedHint = isAnsweringQuestion
+    ? "Answer the pending question before sending a new prompt."
+    : sendBlockedReason;
+
+  const handleQuestionOptionToggle = (label: string) => {
+    if (!pendingQuestion || !activeQuestion) return;
+    const normalizedLabel = String(label || "").trim();
+    if (!normalizedLabel) return;
+    const questionCount = pendingQuestion.questions.length;
+    setQuestionSelections((prev) => {
+      const current = prev[questionStepIndex] || [];
+      if (activeQuestion.multiple) {
+        const next = current.includes(normalizedLabel)
+          ? current.filter((item) => item !== normalizedLabel)
+          : [...current, normalizedLabel];
+        return { ...prev, [questionStepIndex]: next };
+      }
+      return { ...prev, [questionStepIndex]: [normalizedLabel] };
+    });
+    if (!activeQuestion.multiple && questionCount > 1 && questionStepIndex < questionCount - 1) {
+      setQuestionStepIndex((prev) => Math.min(questionCount - 1, prev + 1));
+    }
+  };
+
+  const handleSubmitQuestion = async () => {
+    if (!pendingQuestion) return;
+    const answers = pendingQuestion.questions.map((question, index) => {
+      const fromOptions = (questionSelections[index] || []).map((item) => String(item || "").trim()).filter(Boolean);
+      const custom = String(questionCustomInput[index] || "").trim();
+      if (custom) {
+        if (fromOptions.includes(custom)) {
+          return fromOptions;
+        }
+        return [...fromOptions, custom];
+      }
+      return fromOptions;
+    });
+    await onAnswerQuestion(answers);
+  };
 
   const renderedTimeline = useMemo(() => {
-    if (timeline.length === 0) {
+    const renderUserDeliveryLabel = (status?: TimelineItem["userDeliveryStatus"]) => {
+      if (!status || status === "sent") return null;
+      if (status === "pending") return "Sending...";
+      return "Failed";
+    };
+
+    const renderStandardToolRow = (item: TimelineItem) => {
+      const status = item.toolStatus || "completed";
+      const showPathBadge = item.toolPath && !isEditToolName(String(item.toolName || ""));
       return (
-        <Message from="assistant" className="max-w-full">
-          <MessageContent className="bg-transparent px-0 py-0 text-sm text-muted-foreground">
-            <MessageResponse>
-              Ask for a code change to start a live run. You will see tool calls and assistant responses here.
-            </MessageResponse>
+        <Message key={item.id} from="assistant" className="max-w-full">
+          <MessageContent className="bg-transparent px-0 py-0 text-sm">
+            <Task defaultOpen className="w-full">
+              <TaskItem
+                className={cn(
+                  "flex items-center gap-2 text-sm",
+                  status === "failed" ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {status === "running" ? (
+                  <Shimmer className="flex items-center gap-2 text-sm">
+                    <span>{item.title}</span>
+                    {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(item.toolPath || ""))}</TaskItemFile> : null}
+                    {item.toolDetail ? <TaskItemFile>{item.toolDetail}</TaskItemFile> : null}
+                  </Shimmer>
+                ) : (
+                  <>
+                    <span>{item.title}</span>
+                    {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(item.toolPath || ""))}</TaskItemFile> : null}
+                    {item.toolDetail ? <TaskItemFile>{item.toolDetail}</TaskItemFile> : null}
+                  </>
+                )}
+              </TaskItem>
+            </Task>
           </MessageContent>
         </Message>
       );
-    }
+    };
 
-    return timeline.map((item) => {
+    const renderedItems: JSX.Element[] = [];
+    let index = 0;
+
+    while (index < timeline.length) {
+      const item = timeline[index];
       if (isUserTimelineItem(item)) {
-        return (
+        if (item.userDeliveryStatus === "queued") {
+          index += 1;
+          continue;
+        }
+        renderedItems.push(
           <Message key={item.id} from="user" className="group/usermsg max-w-full">
             <MessageContent className="relative">
               <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
-              {item.checkpointId && (
-                <button
-                  type="button"
-                  className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-md bg-muted text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/usermsg:opacity-100"
-                  onClick={() => {
-                    void onRevertToCheckpoint(item.id, item.checkpointId!);
-                  }}
-                  disabled={isUndoing}
-                  aria-label="Revert to this point"
-                >
-                  <Undo2 className="h-3 w-3" />
-                </button>
-              )}
+              {renderUserDeliveryLabel(item.userDeliveryStatus) ? (
+                <div className="mt-1 text-[9px] text-muted-foreground">
+                  {renderUserDeliveryLabel(item.userDeliveryStatus)}
+                </div>
+              ) : null}
             </MessageContent>
           </Message>
         );
+        index += 1;
+        continue;
       }
 
       if (isAssistantTimelineItem(item)) {
-        return (
+        renderedItems.push(
           <Message key={item.id} from="assistant" className="max-w-full">
             <MessageContent className="bg-transparent px-0 py-0">
               <MessageResponse>
-                {item.description ||
-                  "I can help with code changes in this app workspace. Tell me what you want to change."}
+                {item.description}
               </MessageResponse>
             </MessageContent>
           </Message>
         );
+        index += 1;
+        continue;
       }
 
       if (isToolTimelineItem(item)) {
-        const status = item.toolStatus || "completed";
-        const titleNode = status === "running" ? (
-          <Shimmer className="text-sm">{item.title}</Shimmer>
-        ) : (
-          <span>{item.title}</span>
-        );
+        if (isExplorationToolName(String(item.toolName || ""))) {
+          const explorationStreak: TimelineItem[] = [];
+          while (index < timeline.length) {
+            const candidate = timeline[index];
+            if (!isToolTimelineItem(candidate) || !isExplorationToolName(String(candidate.toolName || ""))) {
+              break;
+            }
+            explorationStreak.push(candidate);
+            index += 1;
+          }
 
-        return (
-          <Message key={item.id} from="assistant" className="max-w-full">
-            <MessageContent className="bg-transparent px-0 py-0 text-sm">
-              <Task defaultOpen className="w-full">
-                <TaskItem
-                  className={cn(
-                    "flex items-center gap-2 text-sm",
-                    status === "failed" ? "text-destructive" : "text-muted-foreground",
-                  )}
-                >
-                  {titleNode}
-                  {item.toolPath ? <TaskItemFile>{formatToolPathLabel(item.toolPath)}</TaskItemFile> : null}
-                </TaskItem>
-              </Task>
-            </MessageContent>
-          </Message>
-        );
+          const readItems = explorationStreak.filter((entry) => isReadToolName(String(entry.toolName || "")));
+          const searchItems = explorationStreak.filter((entry) => isSearchToolName(String(entry.toolName || "")));
+          const readCount = readItems.length;
+          const searchCount = searchItems.length;
+          const hasRunningExplore = explorationStreak.some((entry) => (entry.toolStatus || "completed") === "running");
+          const keepExploreHeaderShimmer =
+            hasRunningExplore
+            || (
+              isSending
+              && lastToolAfterCurrentUserIsExploration
+              && explorationStreak.some((entry) => entry.id === lastToolAfterCurrentUser?.id)
+            );
+          const headerParts: string[] = [];
+          if (readCount > 0) {
+            headerParts.push(`${readCount} ${readCount === 1 ? "file" : "files"}`);
+          }
+          if (searchCount > 0) {
+            headerParts.push(`${searchCount} ${searchCount === 1 ? "search" : "searches"}`);
+          }
+          const headerText = `Exploring ${headerParts.join(", ") || "workspace"}`;
+
+          renderedItems.push(
+            <Message key={`explore-group-${explorationStreak[0].id}`} from="assistant" className="max-w-full">
+              <MessageContent className="bg-transparent px-0 py-0 text-sm">
+                <Task defaultOpen={false} className="w-full">
+                  <TaskTrigger asChild title={headerText}>
+                    <button
+                      type="button"
+                      className="group flex w-full items-center justify-between gap-2 rounded-md px-0 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      {keepExploreHeaderShimmer ? (
+                        <Shimmer className="text-sm">{headerText}</Shimmer>
+                      ) : (
+                        <span className="text-sm">{headerText}</span>
+                      )}
+                    </button>
+                  </TaskTrigger>
+                  <TaskContent className="mt-1">
+                    {explorationStreak.map((entry) => {
+                      const toolStatus = entry.toolStatus || "completed";
+                      const isRead = isReadToolName(String(entry.toolName || ""));
+                      const readPath = isRead ? formatToolReadPath(String(entry.toolPath || "")) : "";
+                      const searchDetail = String(entry.toolDetail || "").trim();
+                      const searchPath = String(entry.toolPath || "").trim();
+                      const rowTitle = isRead
+                        ? (readPath ? `Reading file ${readPath}` : "Reading file")
+                        : (searchDetail
+                          ? `Searching code ${searchDetail}`
+                          : searchPath
+                            ? `Searching code ${formatToolPathLabel(searchPath)}`
+                            : "Searching code");
+                      return (
+                        <TaskItem
+                          key={entry.id}
+                          className={cn("flex items-center gap-2 text-sm", toolStatus === "failed" ? "text-destructive" : "text-muted-foreground")}
+                        >
+                          {toolStatus === "running" ? (
+                            <Shimmer className="text-sm">{rowTitle}</Shimmer>
+                          ) : (
+                            <span>{rowTitle}</span>
+                          )}
+                        </TaskItem>
+                      );
+                    })}
+                  </TaskContent>
+                </Task>
+              </MessageContent>
+            </Message>,
+          );
+          continue;
+        }
+
+        renderedItems.push(renderStandardToolRow(item));
+        index += 1;
+        continue;
       }
 
-      return (
+      renderedItems.push(
         <Message key={item.id} from="assistant" className="max-w-full">
           <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
             <div>
@@ -196,34 +503,92 @@ export function AppsBuilderChatPanel({
           </MessageContent>
         </Message>
       );
-    });
-  }, [isUndoing, onRevertToCheckpoint, timeline]);
+      index += 1;
+    }
+
+    return renderedItems;
+  }, [timeline]);
 
   if (!isOpen) {
-    return (
-      <div className="flex h-full w-10 shrink-0 flex-col items-center border-l border-border/60 bg-muted/20 pt-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => onOpenChange(true)}
-          aria-label="Open agent panel"
-        >
-          <Sparkles className="h-4 w-4" />
-        </Button>
-      </div>
-    );
+    return null;
   }
 
   return (
     <aside className="flex h-full min-h-0 w-[430px] shrink-0 flex-col overflow-hidden border-l border-border/60 bg-background">
-      <div className="flex items-center justify-end gap-0.5 px-2 py-1.5">
+      <div className="relative z-10 flex h-7 pt-2 shrink-0 items-center gap-1 px-2 bg-background">
+        <div
+          className={cn(
+            "absolute inset-x-0 -bottom-6 h-6 bg-gradient-to-b from-background via-background/90 to-transparent pointer-events-none transition-opacity duration-300",
+            isScrolled ? "opacity-100" : "opacity-0"
+          )}
+        />
+        <div
+          className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          onWheel={handleTabsWheel}
+        >
+          <div className="flex w-max items-center gap-1 pr-2">
+            {threadTabs.map((session) => {
+              const isSessionTab = session.kind === "session" || session.kind === "provisional";
+              const sessionId = session.kind === "session"
+                ? session.session.id
+                : session.kind === "provisional"
+                  ? session.sessionId
+                  : "__draft__";
+              const sessionTitle = session.title;
+              const isActive = isSessionTab
+                ? activeChatSessionId === sessionId
+                : !activeChatSessionId;
+              return (
+                <div key={session.id} className="h-7.5 group/thread relative shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "h-7 max-w-[150px] shrink-0 gap-1 rounded-md px-2 text-[12px]",
+                      isActive
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground group-hover/thread:bg-muted group-hover/thread:text-foreground",
+                    )}
+                    onClick={() => {
+                      if (session.kind === "draft") {
+                        handleActivateDraftThreadTab();
+                        return;
+                      }
+                      if (isSessionTab) {
+                        handleOpenThreadTab(sessionId);
+                        return;
+                      }
+                      handleStartNewThreadTab();
+                    }}
+                    aria-label={`Open chat ${sessionTitle}`}
+                  >
+                    <span className="truncate">{sessionTitle}</span>
+                    {isSessionTab && runningSessionIdSet.has(sessionId) ? (
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+                    ) : null}
+                  </Button>
+                  <button
+                    type="button"
+                    aria-label={`Close tab ${sessionTitle}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCloseThreadTab(sessionId);
+                    }}
+                    className="absolute inset-y-0 bg-muted hover:bg-muted right-0.5 my-auto flex h-fit w-fit items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/thread:opacity-100"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
         <Button
           variant="ghost"
           size="icon"
           className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={onStartNewChat}
-          aria-label="New chat"
+          onClick={handleStartNewThreadTab}
+          aria-label="Create new chat"
         >
           <Plus className="h-3.5 w-3.5" />
         </Button>
@@ -231,7 +596,10 @@ export function AppsBuilderChatPanel({
           variant="ghost"
           size="icon"
           className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={() => setIsHistoryOpen(true)}
+          onClick={() => {
+            onOpenHistory();
+            setIsHistoryOpen(true);
+          }}
           aria-label="Chat history"
         >
           <Clock className="h-3.5 w-3.5" />
@@ -239,22 +607,52 @@ export function AppsBuilderChatPanel({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={() => onOpenChange(false)}
-          aria-label="Close agent panel"
+          className={cn(
+            "h-6 w-6 text-muted-foreground hover:text-foreground",
+            isVersionsOpen ? "bg-muted text-foreground" : "",
+          )}
+          onClick={() => setIsVersionsOpen((prev) => !prev)}
+          aria-label="Version history"
         >
-          <PanelRightClose className="h-3.5 w-3.5" />
+          <GitBranch className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
-        <Conversation className="flex min-h-0 flex-1 flex-col">
+      {isVersionsOpen ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <AppsBuilderVersionHistoryPanel
+            versions={versions}
+            selectedVersionId={selectedVersionId}
+            selectedVersion={selectedVersion}
+            isLoadingVersions={isLoadingVersions}
+            isRestoringVersion={isRestoringVersion}
+            isPublishingVersion={isPublishingVersion}
+            publishStatus={publishStatus}
+            onClose={() => setIsVersionsOpen(false)}
+            onRefreshVersions={onRefreshVersions}
+            onSelectVersion={onSelectVersion}
+            onRestoreVersion={onRestoreVersion}
+            onPublishVersion={onPublishVersion}
+            onViewCodeVersion={onViewCodeVersion}
+            onOpenHistory={() => {
+              onOpenHistory();
+              setIsHistoryOpen(true);
+            }}
+          />
+        </div>
+      ) : (
+        <div className="flex min-h-0 pt-1 flex-1 flex-col px-3 pb-3">
+        <Conversation className="flex min-h-0 pb-[-200px] flex-1 flex-col transition-all">
           <ConversationContent className="gap-2 px-0 py-0 pb-3">
+            <div ref={topSentinelRef} className="h-1 w-full shrink-0" />
+            {isLoadingOlderHistory ? (
+              <div className="py-1 text-center text-[11px] text-muted-foreground">Loading older messages...</div>
+            ) : null}
             {renderedTimeline}
-            {isSending && !timeline.some((item) => item.kind === "assistant" && item.assistantStreamId) ? (
+            {isSending && !hasRunningTool && !hasCurrentRunAssistantStream && !lastToolAfterCurrentUserIsExploration ? (
               <Message from="assistant" className="max-w-full">
-                <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
-                  <Shimmer>
-                    {`Thinking...${activeThinkingSummary && activeThinkingSummary !== "Thinking..." ? ` ${activeThinkingSummary}` : ""}`}
+                <MessageContent className="bg-transparent px-0 py-0 text-sm text-muted-foreground">
+                  <Shimmer className="text-sm">
+                    {`Reasoning...${activeThinkingSummary && activeThinkingSummary !== "Thinking..." ? ` ${activeThinkingSummary}` : ""}`}
                   </Shimmer>
                 </MessageContent>
               </Message>
@@ -264,47 +662,142 @@ export function AppsBuilderChatPanel({
         </Conversation>
 
         {queuedPrompts.length > 0 ? (
-          <Queue className="mb-2">
-            <QueueSection defaultOpen>
-              <QueueSectionTrigger>
-                <QueueSectionLabel count={queuedPrompts.length} label="queued prompts" />
-              </QueueSectionTrigger>
-              <QueueSectionContent>
-                <QueueList>
-                  {queuedPrompts.map((prompt) => (
-                    <QueueItem key={prompt.id}>
-                      <div className="flex items-start gap-2">
-                        <QueueItemIndicator />
-                        <QueueItemContent>{prompt.text}</QueueItemContent>
-                        <QueueItemActions>
-                          <QueueItemAction
-                            aria-label="Remove queued prompt"
-                            onClick={() => onRemoveQueuedPrompt(prompt.id)}
-                            title="Remove"
-                          >
-                            <X className="h-3 w-3" />
-                          </QueueItemAction>
-                        </QueueItemActions>
-                      </div>
-                    </QueueItem>
-                  ))}
-                </QueueList>
-              </QueueSectionContent>
-            </QueueSection>
-          </Queue>
+          <section
+            aria-label="Queued prompts"
+            data-testid="queued-prompts-panel"
+            className="mb-2 overflow-hidden rounded-lg border border-border/50 bg-muted/20"
+          >
+            <header className="flex items-center justify-between border-b border-border/50 px-3 py-1.5">
+              <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Queue</p>
+              <span className="text-[11px] text-muted-foreground">{queuedPrompts.length}</span>
+            </header>
+            <ul className="max-h-28 space-y-0.5 overflow-y-auto p-1.5" role="list">
+              {queuedPrompts.map((prompt, index) => (
+                <li
+                  key={prompt.id}
+                  className="group flex items-start gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-background/80"
+                >
+                  <span className="mt-0.5 text-[10px] text-muted-foreground">{index + 1}.</span>
+                  <p className="min-w-0 flex-1 line-clamp-2 text-xs leading-5 text-foreground/90">{prompt.text}</p>
+                  <button
+                    type="button"
+                    aria-label="Remove queued prompt"
+                    onClick={() => onRemoveQueuedPrompt(prompt.id)}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-sm bg-muted text-muted-foreground opacity-70 transition-colors hover:bg-accent hover:text-foreground"
+                    title="Remove"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
 
-        <div className="shrink-0 pt-1">
+        {pendingQuestion && activeQuestion ? (
+          <section
+            aria-label="Question prompt"
+            data-testid="question-prompt-panel"
+            className="mb-2 overflow-hidden rounded-lg border border-border/60 bg-background"
+          >
+            <header className="flex items-center justify-between border-b border-border/50 px-3 py-2">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  {activeQuestion.header || "Need your input"}
+                </p>
+                <p className="mt-0.5 text-xs text-foreground">{activeQuestion.question}</p>
+              </div>
+              {pendingQuestion.questions.length > 1 ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {questionStepIndex + 1}/{pendingQuestion.questions.length}
+                </span>
+              ) : null}
+            </header>
+            <div className="space-y-2 p-2.5">
+              <div className="grid gap-1.5">
+                {activeQuestion.options.map((option) => {
+                  const selected = (questionSelections[questionStepIndex] || []).includes(option.label);
+                  return (
+                    <button
+                      key={`${pendingQuestion.requestId}-${questionStepIndex}-${option.label}`}
+                      type="button"
+                      onClick={() => handleQuestionOptionToggle(option.label)}
+                      className={cn(
+                        "rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
+                        selected
+                          ? "border-foreground/30 bg-muted text-foreground"
+                          : "border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      )}
+                    >
+                      <div className="font-medium">{option.label}</div>
+                      {option.description ? <div className="mt-0.5 text-[11px]">{option.description}</div> : null}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                type="text"
+                value={questionCustomInput[questionStepIndex] || ""}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setQuestionCustomInput((prev) => ({ ...prev, [questionStepIndex]: value }));
+                }}
+                placeholder="Or type your own answer"
+                className="h-8 w-full rounded-md border border-border/70 bg-background px-2.5 text-xs outline-none ring-0 placeholder:text-muted-foreground/80 focus:border-foreground/30"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => setQuestionStepIndex((prev) => Math.max(0, prev - 1))}
+                    disabled={questionStepIndex <= 0}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() =>
+                      setQuestionStepIndex((prev) => Math.min((pendingQuestion.questions.length || 1) - 1, prev + 1))
+                    }
+                    disabled={questionStepIndex >= pendingQuestion.questions.length - 1}
+                  >
+                    Next
+                  </Button>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={() => {
+                    void handleSubmitQuestion();
+                  }}
+                  disabled={isAnsweringQuestion || !canSubmitQuestion}
+                >
+                  {isAnsweringQuestion ? "Submitting..." : "Submit answer"}
+                </Button>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        <div className="shrink-0 bg-transparent">
           <PromptInput
             onSubmit={async (message) => {
               await onSendMessage(message.text);
             }}
-            className="rounded-xl border border-border/40 bg-muted/30 shadow-none"
+            className="rounded-xl border border-border bg-transparent shadow-none"
           >
-            <PromptInputBody>
+            <PromptInputBody className="bg-transparent">
               <PromptInputTextarea
                 placeholder="Plan, @ for context, / for commands"
-                className="min-h-10 max-h-40 bg-transparent px-3 pt-2.5 text-sm"
+                className="min-h-15 max-h-40 bg-transparent px-3 pt-2.5 text-sm"
+                disabled={isAnsweringQuestion}
               />
             </PromptInputBody>
             <PromptInputFooter className="justify-between px-2 pb-1.5 pt-0">
@@ -323,7 +816,7 @@ export function AppsBuilderChatPanel({
                 <ModelSelectorContent className="max-w-xs">
                   <ModelSelectorInput placeholder="Search models..." />
                   <ModelSelectorList>
-                    <ModelSelectorEmpty>No active chat models</ModelSelectorEmpty>
+                    <ModelSelectorEmpty>No OpenCode models</ModelSelectorEmpty>
                     <ModelSelectorGroup heading="Run model">
                       <ModelSelectorItem
                         value="auto"
@@ -337,7 +830,7 @@ export function AppsBuilderChatPanel({
                       {chatModels.map((model) => (
                         <ModelSelectorItem
                           key={model.id}
-                          value={`${model.name} ${model.slug}`}
+                          value={`${model.name} ${model.id}`}
                           onSelect={() => {
                             onSelectModelId(model.id);
                             onModelSelectorOpenChange(false);
@@ -357,49 +850,80 @@ export function AppsBuilderChatPanel({
                   variant="ghost"
                   className="h-6 w-6 text-muted-foreground hover:text-foreground"
                   onClick={onStopRun}
-                  aria-label="Stop"
+                  aria-label={isStopping ? "Stopping" : "Stop"}
                 >
                   <Square className="h-3 w-3 fill-current" />
                 </Button>
               ) : (
-                <PromptInputSubmit
-                  size="icon-sm"
-                  variant="ghost"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  aria-label="Send"
-                />
+                sendBlocked && sendBlockedHint ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">
+                        <PromptInputSubmit
+                          size="icon-sm"
+                          variant="ghost"
+                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                          aria-label="Send"
+                          disabled
+                        />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">{sendBlockedHint}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <PromptInputSubmit
+                    size="icon-sm"
+                    variant="ghost"
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    aria-label="Send"
+                    disabled={sendBlocked}
+                  />
+                )
               )}
             </PromptInputFooter>
           </PromptInput>
         </div>
-      </div>
+        </div>
+      )}
 
       <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Chat History</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-1 py-2">
-            {chatSessions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No previous chats yet.</p>
-            ) : (
-              chatSessions.map((session) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  className="rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-                  onClick={() => {
-                    void onLoadChatSession(session.id);
-                    setIsHistoryOpen(false);
-                  }}
-                >
-                  <div className="truncate">{session.title}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {new Date(session.last_message_at).toLocaleDateString()}
-                  </div>
-                </button>
-              ))
-            )}
+        <DialogContent className="w-[min(44rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-2xl">
+          <div className="flex max-h-[75vh] min-h-0 flex-col p-6">
+            <DialogHeader className="shrink-0 pr-8">
+              <DialogTitle>Chat History</DialogTitle>
+            </DialogHeader>
+            <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+              <div className="flex flex-col gap-1 pb-1">
+                {chatSessions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No previous chats yet.</p>
+                ) : (
+                  chatSessions.map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      className="w-full overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                      onClick={() => {
+                        handleOpenThreadTab(session.id);
+                        setIsHistoryOpen(false);
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="whitespace-normal text-sm leading-snug [overflow-wrap:anywhere]">{session.title}</div>
+                        {runningSessionIdSet.has(session.id) ? (
+                          <span
+                            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500"
+                            aria-label="Session has an active run"
+                          />
+                        ) : null}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {new Date(session.last_message_at).toLocaleDateString()}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

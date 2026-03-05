@@ -896,10 +896,19 @@ export default function ToolsPage() {
                                     const bucketMeta = TOOL_BUCKETS.find(b => b.id === getToolBucket(tool))
 
                                     return (
-                                        <button
+                                        <div
                                             key={tool.id}
+                                            role="button"
+                                            tabIndex={0}
                                             onClick={() => setSelectedTool(tool)}
-                                            className="group flex items-center gap-4 px-4 py-3.5 w-full text-left transition-colors hover:bg-muted/40"
+                                            onKeyDown={(e) => {
+                                                if (e.target !== e.currentTarget) return
+                                                if (e.key === "Enter" || e.key === " ") {
+                                                    e.preventDefault()
+                                                    setSelectedTool(tool)
+                                                }
+                                            }}
+                                            className="group flex items-center gap-4 px-4 py-3.5 w-full text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                         >
                                             {/* Tool icon */}
                                             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground/70 group-hover:border-border group-hover:bg-muted/50 transition-colors">
@@ -983,7 +992,7 @@ export default function ToolsPage() {
                                                     </DropdownMenuContent>
                                                 </DropdownMenu>
                                             </div>
-                                        </button>
+                                        </div>
                                     )
                                 })}
                             </div>

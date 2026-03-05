@@ -119,15 +119,15 @@ describe("Defaults Tab", () => {
     render(<SettingsPage />)
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Defaults" })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Defaults" }).length).toBeGreaterThan(0))
 
-    const defaultsTab = screen.getByRole("tab", { name: "Defaults" })
+    const defaultsTab = screen.getAllByRole("button", { name: "Defaults" })[0]
     fireEvent.click(defaultsTab)
-    await waitFor(() => expect(screen.getByText("Save Defaults")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("Save")).toBeInTheDocument())
 
     fireEvent.click(screen.getAllByTestId("mock-select")[0])
 
-    fireEvent.click(screen.getByText("Save Defaults"))
+    fireEvent.click(screen.getByText("Save"))
 
     await waitFor(() => {
       expect(orgUnitsService.updateTenantSettings).toHaveBeenCalledWith("tenant-1", {

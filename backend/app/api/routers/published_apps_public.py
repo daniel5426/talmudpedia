@@ -1,27 +1,30 @@
 import json
 import os
-import re
-from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.adapter import StreamAdapter
 from app.agent.execution.service import AgentExecutorService
+from app.agent.execution.stream_contract_v2 import (
+    build_stream_v2_event,
+    normalize_filtered_event_to_v2,
+)
 from app.agent.execution.types import ExecutionMode
 from app.api.dependencies import (
     get_current_published_app_preview_principal,
     get_current_published_app_principal,
     get_optional_published_app_principal,
 )
-from app.db.postgres.models.chat import Chat, Message, MessageRole
+from app.db.postgres.models.agents import AgentRun
+from app.db.postgres.models.agent_threads import AgentThreadTurn
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppRevision,
@@ -29,6 +32,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
+from app.services.thread_service import ThreadService
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -36,12 +40,11 @@ from app.services.published_app_bundle_storage import (
     PublishedAppBundleStorageNotConfigured,
 )
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
+from app.services.usage_quota_service import QuotaExceededError
 
 
 router = APIRouter(prefix="/public/apps", tags=["published-apps-public"])
-PREVIEW_TOKEN_QUERY_PARAM = "preview_token"
 PREVIEW_TOKEN_COOKIE_NAME = "published_app_preview_token"
-HTML_ASSET_REF_RE = re.compile(r'(?P<prefix>\b(?:src|href)=["\'])(?P<url>[^"\']+)(?P<suffix>["\'])')
 
 
 class PublicAppConfigResponse(BaseModel):
@@ -83,25 +86,84 @@ class PreviewAppRuntimeResponse(BaseModel):
     api_base_path: str = "/api/py"
 
 
+class RuntimeBootstrapAuthResponse(BaseModel):
+    enabled: bool
+    providers: List[str]
+    exchange_enabled: bool = False
+
+
+class RuntimeBootstrapResponse(BaseModel):
+    version: str = "runtime-bootstrap.v1"
+    stream_contract_version: str = "run-stream.v2"
+    request_contract_version: str = "thread.v1"
+    app_id: str
+    slug: str
+    revision_id: Optional[str] = None
+    mode: str
+    api_base_path: str
+    api_base_url: str
+    chat_stream_path: str
+    chat_stream_url: str
+    auth: RuntimeBootstrapAuthResponse
+
+
 class PublicAuthRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: Optional[str] = None
 
 
+class PublicAuthExchangeRequest(BaseModel):
+    token: str
+
+
 class PublicChatStreamRequest(BaseModel):
     input: Optional[str] = None
     messages: List[dict[str, Any]] = []
-    chat_id: Optional[UUID] = None
+    thread_id: Optional[UUID] = None
+    run_id: Optional[UUID] = None
     context: Optional[dict[str, Any]] = None
+    client: Optional[dict[str, Any]] = None
+
+
+def _published_host_runtime_only_error() -> HTTPException:
+    return HTTPException(
+        status_code=410,
+        detail={
+            "code": "PUBLISHED_RUNTIME_PATH_MODE_REMOVED",
+            "message": "Published app runtime/auth/chat path endpoints are removed; use the published app host with /_talmudpedia/* endpoints",
+        },
+    )
 
 
 def _is_enabled(flag_name: str, default: str = "1") -> bool:
     return os.getenv(flag_name, default).strip().lower() not in {"0", "false", "off", "no"}
 
 
+def _stream_v2_enforced() -> bool:
+    return _is_enabled("STREAM_V2_ENFORCED", "1")
+
+
 def _apps_base_domain() -> str:
     return os.getenv("APPS_BASE_DOMAIN", "apps.localhost")
+
+
+def _apps_url_scheme() -> str:
+    configured = (os.getenv("APPS_URL_SCHEME") or "").strip().lower()
+    if configured in {"http", "https"}:
+        return configured
+    return "https"
+
+
+def _apps_url_port() -> str:
+    configured = (os.getenv("APPS_URL_PORT") or "").strip()
+    if configured:
+        return configured if configured.startswith(":") else f":{configured}"
+    return ""
+
+
+def _build_published_url(slug: str) -> str:
+    return f"{_apps_url_scheme()}://{slug}.{_apps_base_domain()}{_apps_url_port()}"
 
 
 def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
@@ -118,7 +180,7 @@ def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
         auth_enabled=bool(app.auth_enabled),
         auth_providers=list(app.auth_providers or []),
         auth_template_key=(app.auth_template_key or "auth-classic"),
-        published_url=app.published_url,
+        published_url=_build_published_url(app.slug) if app.status == PublishedAppStatus.published else None,
         has_custom_ui=bool(app.current_published_revision_id),
         published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
         ui_runtime_mode="custom_bundle" if app.current_published_revision_id else "legacy_template",
@@ -218,36 +280,117 @@ def _append_query(url: str, params: dict[str, str]) -> str:
     return urlunparse(updated)
 
 
-def _inject_preview_token_into_html_assets(html: str, token: str) -> str:
-    if not html or not token:
+def _resolve_runtime_api_base_url(request: Request) -> str:
+    explicit = (os.getenv("APPS_DRAFT_DEV_RUNTIME_API_BASE_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    parsed = urlparse(str(request.base_url))
+    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    prefix_env = os.getenv("APPS_DRAFT_DEV_RUNTIME_API_PREFIX")
+    if prefix_env is not None:
+        api_prefix = (prefix_env or "").strip()
+    else:
+        api_prefix = str(request.scope.get("root_path") or "").strip()
+        if not api_prefix:
+            api_prefix = (request.headers.get("x-forwarded-prefix") or "").strip()
+        if not api_prefix and str(request.url.path).startswith("/api/py/"):
+            api_prefix = "/api/py"
+    if not api_prefix:
+        return origin
+    if not api_prefix.startswith("/"):
+        api_prefix = f"/{api_prefix}"
+    return f"{origin}{api_prefix.rstrip('/')}"
+
+
+def _build_published_bootstrap(
+    *,
+    request: Request,
+    app: PublishedApp,
+    revision: PublishedAppRevision,
+) -> RuntimeBootstrapResponse:
+    runtime_api_base = _resolve_runtime_api_base_url(request)
+    runtime_api_parsed = urlparse(runtime_api_base)
+    api_base_path = runtime_api_parsed.path or ""
+    stream_suffix = f"/public/apps/{app.slug}/chat/stream"
+    stream_path = f"{api_base_path}{stream_suffix}" if api_base_path else stream_suffix
+    stream_url = f"{runtime_api_base}{stream_suffix}"
+    return RuntimeBootstrapResponse(
+        app_id=str(app.id),
+        slug=app.slug,
+        revision_id=str(revision.id),
+        mode="published-runtime",
+        api_base_path=api_base_path or "/",
+        api_base_url=runtime_api_base,
+        chat_stream_path=stream_path,
+        chat_stream_url=stream_url,
+        auth=RuntimeBootstrapAuthResponse(
+            enabled=bool(app.auth_enabled),
+            providers=list(app.auth_providers or []),
+            exchange_enabled=bool(app.external_auth_oidc),
+        ),
+    )
+
+
+def _build_preview_bootstrap(
+    *,
+    request: Request,
+    app: PublishedApp,
+    revision: PublishedAppRevision,
+) -> RuntimeBootstrapResponse:
+    runtime_api_base = _resolve_runtime_api_base_url(request)
+    runtime_api_parsed = urlparse(runtime_api_base)
+    api_base_path = runtime_api_parsed.path or ""
+    stream_suffix = f"/public/apps/preview/revisions/{revision.id}/chat/stream"
+    stream_path = f"{api_base_path}{stream_suffix}" if api_base_path else stream_suffix
+    stream_url = f"{runtime_api_base}{stream_suffix}"
+    return RuntimeBootstrapResponse(
+        app_id=str(app.id),
+        slug=app.slug,
+        revision_id=str(revision.id),
+        mode="builder-preview",
+        api_base_path=api_base_path or "/",
+        api_base_url=runtime_api_base,
+        chat_stream_path=stream_path,
+        chat_stream_url=stream_url,
+        auth=RuntimeBootstrapAuthResponse(
+            enabled=bool(app.auth_enabled),
+            providers=list(app.auth_providers or []),
+            exchange_enabled=False,
+        ),
+    )
+
+
+def _inject_runtime_context_into_html(html: str, context: RuntimeBootstrapResponse) -> str:
+    if not html:
         return html
 
-    def _replace(match: re.Match[str]) -> str:
-        prefix = match.group("prefix")
-        url = match.group("url")
-        suffix = match.group("suffix")
-        stripped = (url or "").strip()
-        if not stripped:
-            return match.group(0)
-        lowered = stripped.lower()
-        if lowered.startswith(("http://", "https://", "data:", "javascript:", "mailto:", "#")):
-            return match.group(0)
-        if f"{PREVIEW_TOKEN_QUERY_PARAM}=" in stripped:
-            return match.group(0)
-        with_token = _append_query(stripped, {PREVIEW_TOKEN_QUERY_PARAM: token})
-        return f"{prefix}{with_token}{suffix}"
-
-    return HTML_ASSET_REF_RE.sub(_replace, html)
+    context_json = context.model_dump_json(exclude_none=True)
+    script = f'<script>window.__APP_RUNTIME_CONTEXT={context_json};</script>'
+    lowered = html.lower()
+    head_idx = lowered.find("</head>")
+    if head_idx >= 0:
+        return f"{html[:head_idx]}{script}{html[head_idx:]}"
+    return f"{script}{html}"
 
 
-def _chat_message_to_payload(message: Message) -> dict[str, Any]:
-    return {
-        "role": message.role.value if hasattr(message.role, "value") else str(message.role),
-        "content": message.content,
-        "created_at": message.created_at,
-        "tool_calls": message.tool_calls,
-        "token_count": message.token_count,
-    }
+def _set_preview_auth_cookie(
+    *,
+    response: Response,
+    request: Request,
+    revision_id: UUID,
+    auth_token: Optional[str],
+) -> None:
+    token = (auth_token or "").strip()
+    if not token:
+        return
+    response.set_cookie(
+        key=PREVIEW_TOKEN_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        path=f"/public/apps/preview/revisions/{revision_id}",
+    )
 
 
 def _normalize_optional_user_id(raw_value: Any) -> Optional[str]:
@@ -257,6 +400,16 @@ def _normalize_optional_user_id(raw_value: Any) -> Optional[str]:
     if not text or text.lower() in {"none", "null"}:
         return None
     return text
+
+
+def _turns_to_messages(turns: list[AgentThreadTurn]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    for turn in sorted(turns, key=lambda item: int(item.turn_index or 0)):
+        if turn.user_input_text:
+            messages.append({"role": "user", "content": turn.user_input_text})
+        if turn.assistant_output_text:
+            messages.append({"role": "assistant", "content": turn.assistant_output_text})
+    return messages
 
 
 async def _stream_chat_for_app(
@@ -269,7 +422,7 @@ async def _stream_chat_for_app(
     allow_chat_persistence: bool,
     request_user_id: Optional[str] = None,
     extra_context: Optional[Dict[str, Any]] = None,
-) -> StreamingResponse:
+) -> Response:
     if enforce_app_auth:
         if app.auth_enabled and principal is None:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -277,67 +430,31 @@ async def _stream_chat_for_app(
             raise HTTPException(status_code=403, detail="Token does not belong to this app")
 
     user_uuid: Optional[UUID] = None
-    chat: Optional[Chat] = None
-    existing_count = 0
     run_messages: List[dict[str, Any]] = []
-    can_persist_chat = (
+    can_persist_thread = (
         allow_chat_persistence
         and app.auth_enabled
         and principal is not None
         and bool(principal.get("user_id"))
     )
-
-    if can_persist_chat:
+    if can_persist_thread:
         user_uuid = UUID(str(principal["user_id"]))
-        if payload.chat_id:
-            chat_result = await db.execute(
-                select(Chat).where(
-                    and_(
-                        Chat.id == payload.chat_id,
-                        Chat.published_app_id == app.id,
-                        Chat.user_id == user_uuid,
-                    )
-                ).limit(1)
-            )
-            chat = chat_result.scalar_one_or_none()
-            if chat is None:
-                raise HTTPException(status_code=404, detail="Chat not found")
-            message_result = await db.execute(
-                select(Message).where(Message.chat_id == chat.id).order_by(Message.index.asc())
-            )
-            existing_messages = message_result.scalars().all()
-            existing_count = len(existing_messages)
-            run_messages.extend(
-                [{"role": m.role.value if hasattr(m.role, "value") else str(m.role), "content": m.content} for m in existing_messages]
-            )
-        else:
-            title_source = payload.input or (payload.messages[0].get("content") if payload.messages else "New chat")
-            chat = Chat(
-                tenant_id=app.tenant_id,
-                user_id=user_uuid,
-                published_app_id=app.id,
-                title=(title_source or "New chat")[:60],
-            )
-            db.add(chat)
-            await db.flush()
 
-        if payload.messages:
-            run_messages.extend(payload.messages)
-        if payload.input:
-            run_messages.append({"role": "user", "content": payload.input})
-            user_message = Message(
-                chat_id=chat.id,  # type: ignore[arg-type]
-                role=MessageRole.USER,
-                content=payload.input,
-                index=existing_count,
-            )
-            db.add(user_message)
-            chat.updated_at = datetime.now(timezone.utc)  # type: ignore[union-attr]
-            await db.commit()
-    else:
-        run_messages.extend(payload.messages or [])
-        if payload.input:
-            run_messages.append({"role": "user", "content": payload.input})
+    if payload.thread_id:
+        thread_service = ThreadService(db)
+        existing_thread = await thread_service.get_thread_with_turns(
+            tenant_id=app.tenant_id,
+            thread_id=payload.thread_id,
+            user_id=user_uuid,
+            published_app_id=app.id,
+        )
+        if existing_thread is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        run_messages.extend(_turns_to_messages(list(existing_thread.turns or [])))
+
+    run_messages.extend(payload.messages or [])
+    if payload.input:
+        run_messages.append({"role": "user", "content": payload.input})
 
     executor = AgentExecutorService(db=db)
     request_context = dict(payload.context or {})
@@ -345,64 +462,95 @@ async def _stream_chat_for_app(
     request_context.setdefault("user_id", str(user_uuid) if user_uuid else _normalize_optional_user_id(request_user_id))
     request_context.setdefault("published_app_id", str(app.id))
     request_context.setdefault("published_app_slug", app.slug)
+    request_context.setdefault("thread_id", str(payload.thread_id) if payload.thread_id else None)
     if extra_context:
         for key, value in extra_context.items():
             request_context.setdefault(key, value)
 
-    run_id = await executor.start_run(
-        app.agent_id,
-        {
-            "messages": run_messages,
-            "input": payload.input,
-            "context": request_context,
-        },
-        user_id=user_uuid,
-        background=False,
-        mode=ExecutionMode.PRODUCTION,
-    )
+    run_id = payload.run_id
+    resume_payload: Optional[dict[str, Any]] = None
+    if run_id:
+        resume_payload = dict(payload.context or {})
+        if payload.input and "input" not in resume_payload:
+            resume_payload["input"] = payload.input
+        try:
+            await executor.resume_run(run_id, resume_payload, background=False)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {exc}")
+    else:
+        try:
+            run_id = await executor.start_run(
+                app.agent_id,
+                {
+                    "messages": run_messages,
+                    "input": payload.input,
+                    "thread_id": str(payload.thread_id) if payload.thread_id else None,
+                    "context": request_context,
+                },
+                user_id=user_uuid,
+                background=False,
+                mode=ExecutionMode.PRODUCTION,
+                thread_id=payload.thread_id,
+            )
+        except QuotaExceededError as exc:
+            return JSONResponse(status_code=429, content=exc.to_payload())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    run_row = await db.get(AgentRun, run_id)
+    thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
 
     async def event_generator():
-        assistant_text_parts: List[str] = []
-        raw_stream = executor.run_and_stream(run_id, db, mode=ExecutionMode.PRODUCTION)
+        raw_stream = executor.run_and_stream(run_id, db, resume_payload=resume_payload, mode=ExecutionMode.PRODUCTION)
         filtered_stream = StreamAdapter.filter_stream(raw_stream, ExecutionMode.PRODUCTION)
+        seq = 1
         yield ": " + (" " * 2048) + "\n\n"
-        yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
+        if _stream_v2_enforced():
+            accepted = build_stream_v2_event(
+                seq=seq,
+                run_id=str(run_id),
+                event="run.accepted",
+                stage="run",
+                payload={"status": "running", "thread_id": thread_id_value},
+            )
+            seq += 1
+            yield f"data: {json.dumps(accepted, default=str)}\n\n"
+        else:
+            yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
 
         try:
             async for event_dict in filtered_stream:
-                if (
-                    event_dict.get("event") == "token"
-                    and isinstance(event_dict.get("data"), dict)
-                    and event_dict["data"].get("content")
-                ):
-                    assistant_text_parts.append(str(event_dict["data"]["content"]))
-                elif event_dict.get("type") == "token" and event_dict.get("content"):
-                    assistant_text_parts.append(str(event_dict["content"]))
-                yield f"data: {json.dumps(event_dict, default=str)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        finally:
-            if can_persist_chat and chat is not None:
-                assistant_text = "".join(assistant_text_parts).strip()
-                if assistant_text:
-                    count_result = await db.execute(
-                        select(Message).where(Message.chat_id == chat.id).order_by(Message.index.desc()).limit(1)
+                if _stream_v2_enforced():
+                    mapped_event, stage, payload_v2, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
+                    envelope = build_stream_v2_event(
+                        seq=seq,
+                        run_id=str(run_id),
+                        event=mapped_event,
+                        stage=stage,
+                        payload=payload_v2,
+                        diagnostics=diagnostics,
                     )
-                    last = count_result.scalar_one_or_none()
-                    next_index = (last.index + 1) if last is not None else 0
-                    db.add(
-                        Message(
-                            chat_id=chat.id,
-                            role=MessageRole.ASSISTANT,
-                            content=assistant_text,
-                            index=next_index,
-                        )
-                    )
-                    chat.updated_at = datetime.now(timezone.utc)
-                    await db.commit()
+                    seq += 1
+                    yield f"data: {json.dumps(envelope, default=str)}\n\n"
+                else:
+                    yield f"data: {json.dumps(event_dict, default=str)}\n\n"
+        except Exception as exc:
+            if _stream_v2_enforced():
+                envelope = build_stream_v2_event(
+                    seq=seq,
+                    run_id=str(run_id),
+                    event="run.failed",
+                    stage="run",
+                    payload={"error": str(exc)},
+                    diagnostics=[{"message": str(exc)}],
+                )
+                yield f"data: {json.dumps(envelope, default=str)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
 
     headers = {"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
-    if chat is not None:
-        headers["X-Chat-ID"] = str(chat.id)
+    if thread_id_value:
+        headers["X-Thread-ID"] = thread_id_value
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
 
@@ -444,81 +592,29 @@ async def get_published_runtime(
     app_slug: str,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    revision = await _get_published_ui_revision(db, app)
-    published_url = app.published_url
-    return PublicAppRuntimeResponse(
-        app_id=str(app.id),
-        slug=app.slug,
-        revision_id=str(revision.id),
-        runtime_mode=revision.template_runtime or "vite_static",
-        published_url=published_url,
-        asset_base_url=published_url,
-        api_base_path="/api/py",
-    )
+    _ = (app_slug, db)
+    raise _published_host_runtime_only_error()
+
+
+@router.get("/{app_slug}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
+async def get_published_runtime_bootstrap(
+    app_slug: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    _ = (app_slug, request, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/assets/{asset_path:path}")
 async def get_published_asset(
+    request: Request,
     app_slug: str,
     asset_path: str,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    revision = await _get_published_ui_revision(db, app)
-
-    dist_prefix = (revision.dist_storage_prefix or "").strip()
-    if not dist_prefix:
-        raise HTTPException(status_code=404, detail="Published assets are unavailable for this app")
-
-    entry_html = "index.html"
-    manifest = revision.dist_manifest or {}
-    if isinstance(manifest, dict):
-        manifest_entry = manifest.get("entry_html")
-        if isinstance(manifest_entry, str) and manifest_entry.strip():
-            entry_html = manifest_entry.lstrip("/")
-
-    normalized_asset_path = (asset_path or "").strip().lstrip("/") or "index.html"
-    if normalized_asset_path == "index.html":
-        normalized_asset_path = entry_html
-
-    try:
-        storage = PublishedAppBundleStorage.from_env()
-        payload, content_type = storage.read_asset_bytes(
-            dist_storage_prefix=dist_prefix,
-            asset_path=normalized_asset_path,
-        )
-    except PublishedAppBundleAssetNotFound:
-        # Client-side app routes should resolve to index.html when the requested
-        # path is not a concrete static asset.
-        if _is_probable_asset_path(normalized_asset_path):
-            raise HTTPException(status_code=404, detail="Published asset not found")
-        try:
-            storage = PublishedAppBundleStorage.from_env()
-            payload, content_type = storage.read_asset_bytes(
-                dist_storage_prefix=dist_prefix,
-                asset_path=entry_html,
-            )
-        except PublishedAppBundleAssetNotFound:
-            raise HTTPException(status_code=404, detail="Published runtime entry is missing")
-        except PublishedAppBundleStorageNotConfigured as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-        except PublishedAppBundleStorageError as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to load published runtime entry: {exc}")
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-    except PublishedAppBundleStorageNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    except PublishedAppBundleStorageError as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to load published asset: {exc}")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    return Response(
-        content=payload,
-        media_type=content_type,
-        headers={"Cache-Control": "public, max-age=60"},
-    )
+    _ = (request, app_slug, asset_path, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/ui")
@@ -558,7 +654,7 @@ async def get_preview_asset(
     principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    _, revision = await _get_preview_revision_for_principal(
+    app, revision = await _get_preview_revision_for_principal(
         db=db,
         revision_id=revision_id,
         principal=principal,
@@ -566,8 +662,6 @@ async def get_preview_asset(
     dist_prefix = (revision.dist_storage_prefix or "").strip()
     if not dist_prefix:
         raise HTTPException(status_code=404, detail="Preview assets are unavailable for this revision")
-
-    query_token = (request.query_params.get(PREVIEW_TOKEN_QUERY_PARAM) or "").strip()
 
     try:
         storage = PublishedAppBundleStorage.from_env()
@@ -584,13 +678,17 @@ async def get_preview_asset(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if query_token and content_type.startswith("text/html"):
+    if content_type.startswith("text/html"):
         try:
             html = payload.decode("utf-8")
-            html = _inject_preview_token_into_html_assets(html, query_token)
+            bootstrap = _build_preview_bootstrap(
+                request=request,
+                app=app,
+                revision=revision,
+            )
+            html = _inject_runtime_context_into_html(html, bootstrap)
             payload = html.encode("utf-8")
         except Exception:
-            # If rewriting fails, return original payload.
             pass
 
     response = Response(
@@ -598,21 +696,19 @@ async def get_preview_asset(
         media_type=content_type,
         headers={"Cache-Control": "no-store"},
     )
-    if query_token:
-        response.set_cookie(
-            key=PREVIEW_TOKEN_COOKIE_NAME,
-            value=query_token,
-            httponly=True,
-            secure=request.url.scheme == "https",
-            samesite="lax",
-            path=f"/public/apps/preview/revisions/{revision_id}",
-        )
+    _set_preview_auth_cookie(
+        response=response,
+        request=request,
+        revision_id=revision_id,
+        auth_token=principal.get("auth_token"),
+    )
     return response
 
 
 @router.get("/preview/revisions/{revision_id}/runtime", response_model=PreviewAppRuntimeResponse)
 async def get_preview_runtime(
     request: Request,
+    response: Response,
     revision_id: UUID,
     principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
     db: AsyncSession = Depends(get_db),
@@ -638,9 +734,12 @@ async def get_preview_runtime(
         if isinstance(manifest_entry, str) and manifest_entry.strip():
             entry_html = manifest_entry.lstrip("/")
     preview_url = f"{asset_base_url}{entry_html}"
-    token = (principal.get("auth_token") or "").strip()
-    if token:
-        preview_url = _append_query(preview_url, {PREVIEW_TOKEN_QUERY_PARAM: token})
+    _set_preview_auth_cookie(
+        response=response,
+        request=request,
+        revision_id=revision_id,
+        auth_token=principal.get("auth_token"),
+    )
     return PreviewAppRuntimeResponse(
         app_id=str(app.id),
         slug=app.slug,
@@ -649,6 +748,32 @@ async def get_preview_runtime(
         preview_url=preview_url,
         asset_base_url=asset_base_url,
         api_base_path="/api/py",
+    )
+
+
+@router.get("/preview/revisions/{revision_id}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
+async def get_preview_runtime_bootstrap(
+    request: Request,
+    response: Response,
+    revision_id: UUID,
+    principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    app, revision = await _get_preview_revision_for_principal(
+        db=db,
+        revision_id=revision_id,
+        principal=principal,
+    )
+    _set_preview_auth_cookie(
+        response=response,
+        request=request,
+        revision_id=revision_id,
+        auth_token=principal.get("auth_token"),
+    )
+    return _build_preview_bootstrap(
+        request=request,
+        app=app,
+        revision=revision,
     )
 
 
@@ -688,33 +813,8 @@ async def signup(
     payload: PublicAuthRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if not app.auth_enabled:
-        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
-    providers = set(app.auth_providers or [])
-    if "password" not in providers:
-        raise HTTPException(status_code=400, detail="Password auth is disabled for this app")
-
-    auth_service = PublishedAppAuthService(db)
-    try:
-        result = await auth_service.signup_with_password(
-            app=app,
-            email=payload.email.lower(),
-            password=payload.password,
-            full_name=payload.full_name,
-        )
-    except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {
-        "token": result.token,
-        "token_type": "bearer",
-        "user": {
-            "id": str(result.user.id),
-            "email": result.user.email,
-            "full_name": result.user.full_name,
-            "avatar": result.user.avatar,
-        },
-    }
+    _ = (app_slug, payload, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.post("/{app_slug}/auth/login")
@@ -723,32 +823,18 @@ async def login(
     payload: PublicAuthRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if not app.auth_enabled:
-        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
-    providers = set(app.auth_providers or [])
-    if "password" not in providers:
-        raise HTTPException(status_code=400, detail="Password auth is disabled for this app")
+    _ = (app_slug, payload, db)
+    raise _published_host_runtime_only_error()
 
-    auth_service = PublishedAppAuthService(db)
-    try:
-        result = await auth_service.login_with_password(
-            app=app,
-            email=payload.email.lower(),
-            password=payload.password,
-        )
-    except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {
-        "token": result.token,
-        "token_type": "bearer",
-        "user": {
-            "id": str(result.user.id),
-            "email": result.user.email,
-            "full_name": result.user.full_name,
-            "avatar": result.user.avatar,
-        },
-    }
+
+@router.post("/{app_slug}/auth/exchange")
+async def exchange_auth_token(
+    app_slug: str,
+    payload: PublicAuthExchangeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    _ = (app_slug, payload, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/auth/google/start")
@@ -758,35 +844,8 @@ async def google_start(
     return_to: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _is_enabled("PUBLISHED_APPS_GOOGLE_AUTH_ENABLED", "1"):
-        raise HTTPException(status_code=404, detail="Google auth is disabled")
-
-    app = await _assert_published(db, app_slug)
-    if not app.auth_enabled:
-        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
-    providers = set(app.auth_providers or [])
-    if "google" not in providers:
-        raise HTTPException(status_code=400, detail="Google auth is disabled for this app")
-
-    auth_service = PublishedAppAuthService(db)
-    credential = await auth_service.get_google_credential(app.tenant_id)
-    if credential is None:
-        raise HTTPException(status_code=400, detail="Tenant Google OAuth credentials are missing")
-
-    creds = credential.credentials or {}
-    client_id = creds.get("client_id")
-    redirect_uri = creds.get("redirect_uri")
-    if not client_id or not redirect_uri:
-        raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
-
-    target = _normalize_return_to(request, return_to, app_slug)
-    auth_url = auth_service.build_google_auth_url(
-        client_id=client_id,
-        redirect_uri=redirect_uri,
-        app_slug=app_slug,
-        return_to=target,
-    )
-    return RedirectResponse(url=auth_url, status_code=302)
+    _ = (app_slug, request, return_to, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/auth/google/callback")
@@ -796,54 +855,8 @@ async def google_callback(
     state: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    auth_service = PublishedAppAuthService(db)
-
-    credential = await auth_service.get_google_credential(app.tenant_id)
-    if credential is None:
-        raise HTTPException(status_code=400, detail="Tenant Google OAuth credentials are missing")
-
-    creds = credential.credentials or {}
-    client_id = creds.get("client_id")
-    client_secret = creds.get("client_secret")
-    redirect_uri = creds.get("redirect_uri")
-    if not client_id or not client_secret or not redirect_uri:
-        raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
-
-    try:
-        state_payload = auth_service.parse_google_state(state)
-        if state_payload.get("app_slug") != app_slug:
-            raise PublishedAppAuthError("OAuth state app slug mismatch")
-        token_response = auth_service.exchange_google_code(
-            code=code,
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-        )
-        profile = auth_service.verify_google_id_token(
-            token_value=token_response["id_token"],
-            client_id=client_id,
-        )
-        user = await auth_service.get_or_create_google_user(
-            email=str(profile.get("email", "")).lower(),
-            google_id=str(profile.get("sub")),
-            full_name=profile.get("name"),
-            avatar=profile.get("picture"),
-        )
-        result = await auth_service.issue_auth_result(
-            app=app,
-            user=user,
-            provider="google",
-            metadata={"google_sub": str(profile.get("sub"))},
-        )
-    except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    callback_url = _append_query(
-        state_payload["return_to"],
-        {"token": result.token, "appSlug": app.slug},
-    )
-    return RedirectResponse(url=callback_url, status_code=302)
+    _ = (app_slug, code, state, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/auth/me")
@@ -851,17 +864,8 @@ async def auth_me(
     app_slug: str,
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
-    if principal["app_slug"] != app_slug:
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    user = principal["user"]
-    return {
-        "id": str(user.id),
-        "email": user.email,
-        "full_name": user.full_name,
-        "avatar": user.avatar,
-        "app_id": principal["app_id"],
-        "app_slug": principal["app_slug"],
-    }
+    _ = (app_slug, principal)
+    raise _published_host_runtime_only_error()
 
 
 @router.post("/{app_slug}/auth/logout")
@@ -870,15 +874,8 @@ async def auth_logout(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    if principal["app_slug"] != app_slug:
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    service = PublishedAppAuthService(db)
-    await service.revoke_session(
-        session_id=UUID(principal["session_id"]),
-        user_id=UUID(principal["user_id"]),
-        app_id=UUID(principal["app_id"]),
-    )
-    return {"status": "logged_out"}
+    _ = (app_slug, principal, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/chats")
@@ -887,34 +884,8 @@ async def list_chats(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if principal["app_id"] != str(app.id):
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    user_id = UUID(principal["user_id"])
-    result = await db.execute(
-        select(Chat)
-        .where(
-            and_(
-                Chat.published_app_id == app.id,
-                Chat.user_id == user_id,
-            )
-        )
-        .order_by(Chat.updated_at.desc())
-        .limit(50)
-    )
-    chats = result.scalars().all()
-    return {
-        "items": [
-            {
-                "id": str(chat.id),
-                "title": chat.title,
-                "created_at": chat.created_at,
-                "updated_at": chat.updated_at,
-                "is_archived": chat.is_archived,
-            }
-            for chat in chats
-        ]
-    }
+    _ = (app_slug, principal, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.get("/{app_slug}/chats/{chat_id}")
@@ -924,33 +895,8 @@ async def get_chat(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
-    if principal["app_id"] != str(app.id):
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    user_id = UUID(principal["user_id"])
-    result = await db.execute(
-        select(Chat).where(
-            and_(
-                Chat.id == chat_id,
-                Chat.published_app_id == app.id,
-                Chat.user_id == user_id,
-            )
-        ).limit(1)
-    )
-    chat = result.scalar_one_or_none()
-    if chat is None:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    msg_result = await db.execute(
-        select(Message).where(Message.chat_id == chat.id).order_by(Message.index.asc())
-    )
-    messages = msg_result.scalars().all()
-    return {
-        "id": str(chat.id),
-        "title": chat.title,
-        "messages": [_chat_message_to_payload(message) for message in messages],
-        "created_at": chat.created_at,
-        "updated_at": chat.updated_at,
-    }
+    _ = (app_slug, chat_id, principal, db)
+    raise _published_host_runtime_only_error()
 
 
 @router.post("/{app_slug}/chat/stream")
@@ -960,16 +906,5 @@ async def chat_stream(
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _is_enabled("PUBLISHED_APPS_ENABLED", "1"):
-        raise HTTPException(status_code=404, detail="Published apps are disabled")
-
-    app = await _assert_published(db, app_slug)
-    return await _stream_chat_for_app(
-        app=app,
-        payload=payload,
-        db=db,
-        principal=principal,
-        enforce_app_auth=True,
-        allow_chat_persistence=True,
-        request_user_id=_normalize_optional_user_id(principal.get("user_id")) if principal else None,
-    )
+    _ = (app_slug, payload, principal, db)
+    raise _published_host_runtime_only_error()
