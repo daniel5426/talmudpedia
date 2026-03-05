@@ -1,7 +1,7 @@
 from typing import Any, Optional
 from uuid import UUID
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from app.db.postgres.models.agents import AgentStatus, RunStatus
 from .common import PaginationParams
 
@@ -16,7 +16,10 @@ class CreateAgentRequest(BaseModel):
     name: str
     slug: str
     description: Optional[str] = None
-    graph_definition: Optional[GraphDefinitionSchema] = None
+    graph_definition: Optional[GraphDefinitionSchema] = Field(
+        default=None,
+        description="Required for create; must contain a valid start/end graph.",
+    )
     memory_config: Optional[dict[str, Any]] = None
     execution_constraints: Optional[dict[str, Any]] = None
     workload_scope_profile: Optional[str] = "default_agent_run"

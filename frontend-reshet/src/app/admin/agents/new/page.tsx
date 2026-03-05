@@ -23,6 +23,32 @@ import {
 } from "@/components/ui/card"
 import { agentService } from "@/services"
 
+const STARTER_GRAPH = {
+    spec_version: "1.0",
+    nodes: [
+        {
+            id: "start",
+            type: "start",
+            position: { x: 0, y: 0 },
+            config: {},
+        },
+        {
+            id: "end",
+            type: "end",
+            position: { x: 240, y: 0 },
+            config: { output_message: "done" },
+        },
+    ],
+    edges: [
+        {
+            id: "e1",
+            source: "start",
+            target: "end",
+            type: "control",
+        },
+    ],
+}
+
 export default function NewAgentPage() {
     const router = useRouter()
     const [isLoading, setIsLoading] = useState(false)
@@ -42,7 +68,8 @@ export default function NewAgentPage() {
                 name,
                 slug,
                 description,
-                status: 'draft'
+                status: 'draft',
+                graph_definition: STARTER_GRAPH,
             })
             router.push(`/admin/agents/${newAgent.id}/builder`)
         } catch (err: any) {

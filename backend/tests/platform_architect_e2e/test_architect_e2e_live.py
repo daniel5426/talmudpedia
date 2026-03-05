@@ -166,7 +166,8 @@ def _scenario_prompt(
         "1) Execute exactly one canonical action call matching target action.\\n"
         "2) Use tenant_id exactly as provided.\\n"
         "3) Use names/slugs starting with provided test prefix.\\n"
-        "4) For create actions produce a minimal valid payload; never use empty agent graph.\\n"
+        "4) For create actions produce a minimal valid payload. For agents.create include exactly one start node, "
+        "at least one end node, and a control edge from start to end; never use empty agent graph.\\n"
         "5) Return final response as one JSON object only with keys: status, action, resources, errors.\\n"
         f"Inputs: tenant_id={tenant_id}, tenant_slug={slug_hint}, prefix={unique_prefix}, model_slug={model_hint}."
     )

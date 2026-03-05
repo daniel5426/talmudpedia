@@ -27,6 +27,7 @@ from app.services.agent_service import (
     AgentServiceError,
     AgentNotFoundError,
     AgentSlugExistsError,
+    AgentGraphValidationError,
     AgentPublishedError,
     AgentNotPublishedError,
 )
@@ -155,6 +156,15 @@ def handle_service_error(e: AgentServiceError):
     """Map service errors to HTTP responses."""
     if isinstance(e, AgentNotFoundError):
         raise HTTPException(status_code=404, detail=e.message)
+    if isinstance(e, AgentGraphValidationError):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_ERROR",
+                "message": "Graph validation failed",
+                "errors": e.errors,
+            },
+        )
     if isinstance(e, AgentSlugExistsError):
         raise HTTPException(status_code=400, detail=e.message)
     if isinstance(e, AgentPublishedError):
@@ -229,7 +239,7 @@ async def create_agent(
                 name=request.name,
                 slug=request.slug,
                 description=request.description,
-                graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
+                graph_definition=request.graph_definition.model_dump() if request.graph_definition else {},
                 memory_config=request.memory_config,
                 execution_constraints=request.execution_constraints,
                 workload_scope_profile=request.workload_scope_profile,

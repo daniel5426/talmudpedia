@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-05
 
 ## Scope
 - Platform Architect v1.1 direct domain-tool loop runtime (no `architect.run` path).
@@ -19,9 +19,9 @@ Last Updated: 2026-03-02
 - Replay path reuses existing resources rather than duplicating them.
 
 ## Last run command + date/time + result
-- Command: `cd backend && pytest -q tests/platform_architect_runtime/test_platform_architect_runtime.py tests/platform_architect_runtime/test_architect_seeding.py tests/platform_sdk_tool/test_platform_sdk_actions.py tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
-- Date/Time: 2026-03-02 01:07:59 EET
-- Result: pass (`62 passed, 1 warning`)
+- Command: `cd backend && pytest -q tests/platform_architect_runtime/test_platform_architect_runtime.py -q`
+- Date/Time: 2026-03-05 (local run during this change set)
+- Result: pass (`5 passed, 1 warning`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.

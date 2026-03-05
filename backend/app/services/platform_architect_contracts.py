@@ -228,7 +228,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     additional_properties=True,
                 ),
                 "contract": {
-                    "summary": "Create a draft agent.",
+                    "summary": "Create a draft agent with a valid non-empty graph_definition.",
                     "required_fields": ["name", "slug", "graph_definition"],
                     "example_payload": {
                         "name": "FAQ Agent",
@@ -530,6 +530,8 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "validate after each mutation, and repair/replan with a hard max of 2 repair loops. "
         "For rag.create_visual_pipeline, pass nodes/edges at payload top-level (graph_definition is backward-compatible only). "
         "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
+        "For agents.create specifically, graph_definition must include exactly one start node, at least one end node, "
+        "and at least one control edge from start to a downstream node. "
         "Draft-first is mandatory: do not call publish/promote actions unless objective_flags.allow_publish=true "
         "in user-provided input. "
         "Always include tenant_id, idempotency_key, and request_metadata on mutating calls. "

@@ -163,7 +163,16 @@ def test_direct_tool_loop_happy_path(monkeypatch):
             "tenant_id": "tenant-1",
             "name": "FAQ Agent",
             "slug": "faq-agent",
-            "graph_definition": {"nodes": [], "edges": []},
+            "graph_definition": {
+                "spec_version": "1.0",
+                "nodes": [
+                    {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+                    {"id": "end", "type": "end", "position": {"x": 200, "y": 0}, "config": {"output_message": "done"}},
+                ],
+                "edges": [
+                    {"id": "e1", "source": "start", "target": "end", "type": "control"},
+                ],
+            },
             "idempotency_key": "idem-agent-1",
             "request_metadata": {"trace_id": "trace-1", "request_id": "req-3"},
         },

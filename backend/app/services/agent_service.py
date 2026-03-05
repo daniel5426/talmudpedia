@@ -8,10 +8,13 @@ from dataclasses import dataclass, field
 from sqlalchemy import select, func, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
+from pydantic import ValidationError as PydanticValidationError
 
 from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrace, AgentStatus, RunStatus
 from app.services.usage_quota_service import QuotaExceededError
 from app.services.workload_provisioning_service import WorkloadProvisioningService
+from app.agent.graph.compiler import AgentCompiler
+from app.agent.graph.schema import AgentGraph
 # from ..agent.graph.compiler import AgentCompiler # Mocking compiler for now if not ready, or use it
 # from ..agent.graph.schema import AgentGraph
 
@@ -22,7 +25,7 @@ class CreateAgentData:
     name: str
     slug: str
     description: Optional[str] = None
-    graph_definition: Optional[dict] = None
+    graph_definition: dict = field(default_factory=dict)
     memory_config: Optional[dict] = None
     execution_constraints: Optional[dict] = None
     workload_scope_profile: Optional[str] = "default_agent_run"
@@ -66,6 +69,15 @@ class AgentNotPublishedError(AgentServiceError):
     """Raised when operation is forbidden on a non-published agent."""
     pass
 
+
+class AgentGraphValidationError(AgentServiceError):
+    """Raised when graph_definition fails compile-time validation."""
+
+    def __init__(self, errors: List[Dict[str, Any]]):
+        super().__init__("Graph validation failed")
+        self.errors = errors
+
+
 class AgentService:
     """
     Service layer for agent management.
@@ -76,6 +88,66 @@ class AgentService:
     def __init__(self, db: AsyncSession, tenant_id: UUID):
         self.db = db
         self.tenant_id = tenant_id
+
+    @staticmethod
+    def _normalize_graph_errors(raw_errors: List[Any]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        for err in raw_errors:
+            if hasattr(err, "model_dump"):
+                payload = err.model_dump()
+            elif isinstance(err, dict):
+                payload = dict(err)
+            else:
+                payload = {"message": str(err)}
+            normalized.append(
+                {
+                    "node_id": payload.get("node_id"),
+                    "edge_id": payload.get("edge_id"),
+                    "message": str(payload.get("message") or "Graph validation failed"),
+                    "severity": str(payload.get("severity") or "error"),
+                }
+            )
+        return normalized
+
+    async def _validate_graph_for_write(
+        self,
+        graph_definition: Any,
+        *,
+        agent_id: Optional[UUID] = None,
+    ) -> Dict[str, Any]:
+        if not isinstance(graph_definition, dict):
+            raise AgentGraphValidationError(
+                [
+                    {
+                        "node_id": None,
+                        "edge_id": None,
+                        "message": "graph_definition must be an object",
+                        "severity": "error",
+                    }
+                ]
+            )
+
+        try:
+            graph = AgentGraph(**graph_definition)
+        except PydanticValidationError as exc:
+            raise AgentGraphValidationError(
+                [
+                    {
+                        "node_id": None,
+                        "edge_id": None,
+                        "message": f"Invalid graph schema: {exc}",
+                        "severity": "error",
+                    }
+                ]
+            ) from exc
+
+        compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
+        errors = await compiler.validate(graph, agent_id=agent_id)
+        normalized_errors = self._normalize_graph_errors(errors)
+        critical_errors = [item for item in normalized_errors if item.get("severity") == "error"]
+        if critical_errors:
+            raise AgentGraphValidationError(critical_errors)
+        return graph.model_dump()
 
     async def list_agents(
         self, 
@@ -146,13 +218,26 @@ class AgentService:
         )
         if existing.scalar_one_or_none():
             raise AgentSlugExistsError(f"Agent with slug '{data.slug}' already exists in this account")
+        if not data.graph_definition:
+            raise AgentGraphValidationError(
+                [
+                    {
+                        "node_id": None,
+                        "edge_id": None,
+                        "message": "graph_definition is required",
+                        "severity": "error",
+                    }
+                ]
+            )
+
+        validated_graph = await self._validate_graph_for_write(data.graph_definition)
 
         agent = Agent(
             tenant_id=self.tenant_id,
             name=data.name,
             slug=data.slug,
             description=data.description,
-            graph_definition=data.graph_definition or {"nodes": [], "edges": []},
+            graph_definition=validated_graph,
             memory_config=data.memory_config or {},
             execution_constraints=data.execution_constraints or {},
             workload_scope_profile=(data.workload_scope_profile or "default_agent_run"),
@@ -182,7 +267,10 @@ class AgentService:
         if data.description is not None:
             agent.description = data.description
         if data.graph_definition is not None:
-            agent.graph_definition = data.graph_definition
+            agent.graph_definition = await self._validate_graph_for_write(
+                data.graph_definition,
+                agent_id=agent.id,
+            )
         if data.memory_config is not None:
             agent.memory_config = data.memory_config
         if data.execution_constraints is not None:
@@ -203,7 +291,10 @@ class AgentService:
     async def update_graph(self, agent_id: UUID, graph_definition: Dict[str, Any]) -> Agent:
         """Update only the agent graph."""
         agent = await self.get_agent(agent_id)
-        agent.graph_definition = graph_definition
+        agent.graph_definition = await self._validate_graph_for_write(
+            graph_definition,
+            agent_id=agent.id,
+        )
         await self.db.commit()
         await self.db.refresh(agent)
         return agent

@@ -19,9 +19,9 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Session report persisted as JSON for run review.
 
 ## Last run command + date/time + result
-- Command: `cd backend && TEST_USE_REAL_DB=1 pytest -q tests/platform_architect_e2e/test_architect_e2e_live.py -m real_db`
+- Command: `cd backend && TEST_USE_REAL_DB=1 pytest -q tests/platform_architect_e2e/test_architect_e2e_live.py -k agents_create -m real_db`
 - Date/Time: 2026-03-05 (local run during this change set)
-- Result: partial pass (`31 passed, 13 failed`) after DB verification was patched to use SQLAlchemy fallback.
+- Result: fail (`1 failed, 43 deselected`) with side-effect assertion `No created agent with expected prefix`.
 
 ## Known gaps or follow-ups
 - `agents.validate` endpoint currently returns placeholder-valid in service layer; this limits strict graph correctness assertions.
