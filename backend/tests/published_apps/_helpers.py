@@ -12,6 +12,8 @@ from app.db.postgres.models.identity import (
     User,
 )
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppStatus, PublishedAppVisibility
+from app.services.security_bootstrap_service import SecurityBootstrapService
+from app.services.workload_provisioning_service import WorkloadProvisioningService
 
 
 async def seed_admin_tenant_and_agent(db_session):
@@ -19,7 +21,7 @@ async def seed_admin_tenant_and_agent(db_session):
     user = User(
         email=f"owner-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
-        role="user",
+        role="admin",
     )
     db_session.add_all([tenant, user])
     await db_session.flush()
@@ -41,6 +43,9 @@ async def seed_admin_tenant_and_agent(db_session):
         status=MembershipStatus.active,
     )
     db_session.add(membership)
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
 
     agent = Agent(
         tenant_id=tenant.id,
@@ -51,6 +56,11 @@ async def seed_admin_tenant_and_agent(db_session):
         created_by=user.id,
     )
     db_session.add(agent)
+    await db_session.flush()
+    await WorkloadProvisioningService(db_session).provision_agent_policy(
+        agent=agent,
+        actor_user_id=user.id,
+    )
     await db_session.commit()
     return tenant, user, org_unit, agent
 

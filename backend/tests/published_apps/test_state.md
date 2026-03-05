@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-05
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -27,7 +27,7 @@ Last Updated: 2026-03-02
 
 ## Last run command + date/time + result
 - Command: `pytest -q backend/tests/published_apps`
-- Date: 2026-03-02
+- Date: 2026-03-05
 - Result: PASS (17 passed)
 
 ## Known gaps or follow-ups

@@ -2,7 +2,9 @@ import pytest
 from sqlalchemy import func, select
 
 from app.db.postgres.models.agent_threads import AgentThread
+from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import PublishedAppRevision, PublishedAppRevisionKind
+from app.services.security_bootstrap_service import SecurityBootstrapService
 from tests.published_apps._helpers import seed_admin_tenant_and_agent, seed_published_app
 
 
@@ -103,6 +105,19 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
         json={"email": "chat-cookie-user@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 200
+    signup_user = (
+        await db_session.execute(
+            select(User).where(User.email == "chat-cookie-user@example.com")
+        )
+    ).scalar_one()
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_member_assignment(
+        tenant_id=tenant.id,
+        user_id=signup_user.id,
+        assigned_by=owner.id,
+    )
+    await db_session.commit()
 
     async def fake_run_and_stream(self, *args, **kwargs):
         yield {
@@ -118,7 +133,7 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
         headers=_host_headers(app.slug),
         json={"input": "Hi there"},
     )
-    assert stream_resp.status_code == 200
+    assert stream_resp.status_code == 200, stream_resp.text
     assert "Hello from host runtime" in stream_resp.text
     assert stream_resp.headers.get("X-Thread-ID")
 

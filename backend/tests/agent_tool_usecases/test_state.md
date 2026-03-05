@@ -1,6 +1,6 @@
 # Agent Tool Usecases Tests
 
-Last Updated: 2026-02-14
+Last Updated: 2026-03-05
 
 ## Scope
 Covers end-to-end agent tool-call execution flows for built-in tools through the real agent runtime path (`AgentExecutorService` -> `ReasoningNodeExecutor` -> `ToolNodeExecutor`).
@@ -23,11 +23,14 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 - API-level execution-panel parity tests (`/agents/{id}/stream?mode=debug`) cover the simplest user path (`gpt-5.2` + web search tool + user message), including:
   - successful call path with emitted tool lifecycle/reasoning events
   - failure path where model emits empty tool args and runtime raises `web_search requires query ...`
+- Workload-delegation strict mode compatibility for test fixtures:
+  - seed users use privileged actor role to auto-approve provisioning-time policy
+  - stream API tests pass explicit `context.requested_scopes=["agents.execute"]` to avoid wildcard scope overflow against approved agent policy
 
 ## Last run command + date/time + result
-- Command: `pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_runtime_guardrails.py backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py`
-- Date/Time: 2026-02-14 20:47 EET
-- Result: pass (`16 passed`)
+- Command: `pytest -q backend/tests/agent_tool_usecases`
+- Date/Time: 2026-03-05 (local)
+- Result: pass (`12 passed`)
 
 ## Manual Real-Provider Validation (No Mocks)
 - Date/Time: 2026-02-12 01:18 EET

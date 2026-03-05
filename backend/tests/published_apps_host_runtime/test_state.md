@@ -1,4 +1,4 @@
-Last Updated: 2026-03-02
+Last Updated: 2026-03-05
 
 # Test State: Published Apps Host Runtime (Same-URL Auth Gate)
 
@@ -18,13 +18,14 @@ Backend same-URL published app host runtime flow for `*.apps` domains:
 - `/_talmudpedia/auth/state` reflects authenticated user from cookie
 - `/_talmudpedia/chat/stream` requires auth when `auth_enabled=true`
 - Authenticated `/_talmudpedia/chat/stream` streams and returns `X-Thread-ID`
+  - Signed-up host users are granted tenant member RBAC assignment in test setup so delegated run scopes intersect correctly under strict runtime delegation
 - Host runtime history endpoints: `GET /_talmudpedia/threads`, `GET /_talmudpedia/threads/{thread_id}`
 - Legacy `/public/apps/{slug}` published runtime/auth/chat endpoints return `410`
 
 ## Last Run
-- Command: `pytest -q backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py backend/tests/published_apps/test_public_chat_scope_and_persistence.py backend/tests/published_apps/test_public_app_resolve_and_config.py::test_preview_runtime_bootstrap_contract`
-- Date/Time: 2026-03-02 (local run)
-- Result: pass (9 tests)
+- Command: `pytest -q backend/tests/published_apps_host_runtime`
+- Date/Time: 2026-03-05 (local run)
+- Result: pass (`6 passed`)
 
 ## Known Gaps / Follow-ups
 - No host asset/document authenticated bundle-serving tests yet (requires revision + bundle storage mocking)

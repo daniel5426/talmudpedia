@@ -134,7 +134,7 @@ def _parse_sse_events(payload: str) -> list[dict]:
 async def _seed_execution_panel_user(db_session):
     suffix = uuid4().hex[:8]
     tenant = Tenant(name=f"Panel Tenant {suffix}", slug=f"panel-tenant-{suffix}")
-    user = User(email=f"panel-user-{suffix}@example.com", hashed_password="x", role="user")
+    user = User(email=f"panel-user-{suffix}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
@@ -292,10 +292,10 @@ async def test_execution_panel_stream_user_path_web_search_success(client, db_se
 
     response = await client.post(
         f"/agents/{agent.id}/stream?mode=debug",
-        json={"input": "find me weather", "messages": []},
+        json={"input": "find me weather", "messages": [], "context": {"requested_scopes": ["agents.execute"]}},
         headers=headers,
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
 
     events = _parse_sse_events(response.text)
     assert any(item.get("event") == "run_id" for item in events)
@@ -346,10 +346,10 @@ async def test_execution_panel_stream_user_path_web_search_can_fail_when_model_o
 
     response = await client.post(
         f"/agents/{agent.id}/stream?mode=debug",
-        json={"input": "find me weather", "messages": []},
+        json={"input": "find me weather", "messages": [], "context": {"requested_scopes": ["agents.execute"]}},
         headers=headers,
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
 
     events = _parse_sse_events(response.text)
     assert any(item.get("event") == "on_tool_start" and item.get("name") == "Web Search" for item in events)

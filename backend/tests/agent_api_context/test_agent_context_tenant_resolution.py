@@ -1,5 +1,6 @@
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from starlette.requests import Request
 from uuid import uuid4
 
@@ -82,7 +83,7 @@ async def test_get_agent_context_uses_x_tenant_id_when_user_has_multiple_members
 
 
 @pytest.mark.asyncio
-async def test_get_agent_context_without_header_falls_back_to_membership(db_session, tenant_fixture):
+async def test_get_agent_context_without_header_requires_explicit_tenant_context(db_session, tenant_fixture):
     request = _request_with_headers({})
     context = {
         "type": "user",
@@ -91,6 +92,7 @@ async def test_get_agent_context_without_header_falls_back_to_membership(db_sess
         "scopes": ["agents.write"],
     }
 
-    resolved = await get_agent_context(request=request, context=context, db=db_session)
-
-    assert resolved["tenant_id"] is not None
+    with pytest.raises(HTTPException) as exc:
+        await get_agent_context(request=request, context=context, db=db_session)
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Tenant context required"
