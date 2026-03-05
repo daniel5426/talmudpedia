@@ -1,16 +1,30 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import os
 import time
 import uuid
 from dataclasses import asdict
 from typing import Any, Dict
+from uuid import UUID
 
 import pytest
 import requests
+from sqlalchemy import select
 from talmudpedia_control_sdk import ControlPlaneClient
 
+from app.core.scope_registry import get_required_scopes_for_action
+from app.db.postgres.engine import sessionmaker as async_sessionmaker
+from app.db.postgres.models.agents import Agent
+from app.db.postgres.models.security import (
+    WorkloadPolicyStatus,
+    WorkloadPrincipalBinding,
+    WorkloadResourceType,
+    WorkloadScopePolicy,
+)
+from app.services.delegation_service import DelegationService
 from tests.platform_architect_e2e.db_checks import check_agent_run_exists, resolve_tenant_slug
 from tests.platform_architect_e2e.reporting import E2EReport
 from tests.platform_architect_e2e.scenario_matrix import SCENARIOS, ScenarioDefinition
@@ -34,6 +48,130 @@ DEFAULT_TEST_API_KEY = (
 DEFAULT_TEST_TENANT_ID = "f7538eb5-7ff7-4857-a8e1-7b21cc58f10a"
 DEFAULT_TEST_TENANT_EMAIL = "danielbenassaya2626@gmail.com"
 DEFAULT_TEST_CHAT_MODEL_SLUG = "gpt-5-mini-2025-08-07"
+
+
+def _run_async(coro: Any) -> Any:
+    try:
+        return asyncio.run(coro)
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+
+def _decode_jwt_sub(token: str | None) -> str | None:
+    if not token or "." not in token:
+        return None
+    parts = token.split(".")
+    if len(parts) < 2:
+        return None
+    payload_part = parts[1]
+    payload_part += "=" * (-len(payload_part) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(payload_part.encode("utf-8")).decode("utf-8")
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    subject = payload.get("sub")
+    if subject is None:
+        return None
+    return str(subject)
+
+
+def _build_scope_requirements() -> tuple[set[str], dict[str, list[str]]]:
+    required_scopes: set[str] = set()
+    scope_to_actions: dict[str, list[str]] = {}
+    for scenario in SCENARIOS:
+        action_scopes = get_required_scopes_for_action(scenario.target_action)
+        for scope in action_scopes:
+            required_scopes.add(scope)
+            scope_to_actions.setdefault(scope, []).append(scenario.target_action)
+    return required_scopes, scope_to_actions
+
+
+async def _compute_scope_preflight(
+    *,
+    tenant_id: str,
+    architect_agent_id: str,
+    initiator_user_id: str | None,
+    required_scopes: set[str],
+) -> dict[str, Any]:
+    async with async_sessionmaker() as db:
+        agent = await db.get(Agent, UUID(str(architect_agent_id)))
+        if agent is None:
+            return {"ok": False, "reason": "platform-architect agent not found by id"}
+
+        binding_res = await db.execute(
+            select(WorkloadPrincipalBinding).where(
+                WorkloadPrincipalBinding.tenant_id == UUID(str(tenant_id)),
+                WorkloadPrincipalBinding.resource_type == WorkloadResourceType.AGENT,
+                WorkloadPrincipalBinding.resource_id == str(agent.id),
+            )
+        )
+        binding = binding_res.scalars().first()
+        if binding is None:
+            return {
+                "ok": False,
+                "reason": "No workload principal binding found for platform-architect agent",
+            }
+
+        policy_res = await db.execute(
+            select(WorkloadScopePolicy)
+            .where(WorkloadScopePolicy.principal_id == binding.principal_id)
+            .order_by(WorkloadScopePolicy.version.desc())
+            .limit(1)
+        )
+        policy = policy_res.scalars().first()
+        if policy is None:
+            return {
+                "ok": False,
+                "reason": "No workload scope policy found for platform-architect principal",
+            }
+
+        approved_scopes = set(policy.approved_scopes or [])
+        if policy.status != WorkloadPolicyStatus.APPROVED:
+            return {
+                "ok": False,
+                "reason": f"Workload policy is not approved (status={policy.status.value})",
+                "approved_scopes": sorted(approved_scopes),
+                "required_scopes": sorted(required_scopes),
+            }
+
+        delegation = DelegationService(db)
+        user_scopes: set[str] = set()
+        user_scope_mode = "unresolved"
+        parsed_initiator: UUID | None = None
+        if initiator_user_id:
+            try:
+                parsed_initiator = UUID(str(initiator_user_id))
+            except ValueError:
+                parsed_initiator = None
+        if parsed_initiator is not None:
+            user_scopes = await delegation._resolve_user_scopes(UUID(str(tenant_id)), parsed_initiator)
+            user_scope_mode = "wildcard" if "*" in user_scopes else "explicit"
+        else:
+            user_scopes = {"*"}
+
+        effective_scopes = DelegationService._intersect_scopes(user_scopes, approved_scopes, required_scopes)
+        missing_effective_scopes = sorted(required_scopes - set(effective_scopes))
+        missing_policy_scopes = sorted(required_scopes - approved_scopes)
+
+        missing_user_scopes: list[str] = []
+        if "*" not in user_scopes:
+            missing_user_scopes = sorted(required_scopes - user_scopes)
+
+        return {
+            "ok": len(missing_effective_scopes) == 0,
+            "required_scopes": sorted(required_scopes),
+            "approved_scopes": sorted(approved_scopes),
+            "user_scopes": sorted(user_scopes),
+            "user_scope_mode": user_scope_mode,
+            "missing_effective_scopes": missing_effective_scopes,
+            "missing_policy_scopes": missing_policy_scopes,
+            "missing_user_scopes": missing_user_scopes,
+        }
 
 
 def _unwrap_data(payload: Any) -> Dict[str, Any]:
@@ -100,11 +238,18 @@ def _resolve_architect_agent_id(client: ControlPlaneClient) -> str:
     raise RuntimeError("platform-architect agent not found in tenant.")
 
 
-def _start_run(base_url: str, headers: dict[str, str], architect_id: str, prompt: str) -> str:
+def _start_run(
+    base_url: str,
+    headers: dict[str, str],
+    architect_id: str,
+    prompt: str,
+    runtime_context: dict[str, Any] | None = None,
+) -> str:
+    context_payload = dict(runtime_context or {})
     response = requests.post(
         f"{base_url}/agents/{architect_id}/run",
         headers=headers,
-        json={"input": prompt, "messages": [], "context": {}},
+        json={"input": prompt, "messages": [], "context": context_payload},
         timeout=30,
     )
     response.raise_for_status()
@@ -252,6 +397,35 @@ def e2e_runtime() -> dict[str, Any]:
     tenant_slug = resolve_tenant_slug(env["tenant_id"])
     sdk = ControlPlaneClient(base_url=env["base_url"], token=env["api_key"], tenant_id=env["tenant_id"])
     architect_agent_id = _resolve_architect_agent_id(sdk)
+    required_scopes, scope_to_actions = _build_scope_requirements()
+    initiator_user_id = _decode_jwt_sub(env["api_key"])
+    preflight = _run_async(
+        _compute_scope_preflight(
+            tenant_id=env["tenant_id"],
+            architect_agent_id=architect_agent_id,
+            initiator_user_id=initiator_user_id,
+            required_scopes=required_scopes,
+        )
+    )
+    if not preflight.get("ok"):
+        missing_effective = preflight.get("missing_effective_scopes") or []
+        impacted_actions: list[str] = []
+        for scope in missing_effective:
+            impacted_actions.extend(scope_to_actions.get(str(scope), []))
+        impacted_actions = sorted(set(impacted_actions))
+        lines = [
+            "Architect E2E scope preflight failed before scenario execution.",
+            f"tenant_id={env['tenant_id']}",
+            f"architect_agent_id={architect_agent_id}",
+            f"initiator_user_id={initiator_user_id or 'unresolved'}",
+            f"reason={preflight.get('reason') or 'missing effective scopes'}",
+            f"missing_effective_scopes={sorted(missing_effective)}",
+            f"missing_policy_scopes={sorted(preflight.get('missing_policy_scopes') or [])}",
+            f"missing_user_scopes={sorted(preflight.get('missing_user_scopes') or [])}",
+            f"user_scope_mode={preflight.get('user_scope_mode')}",
+            f"impacted_actions={impacted_actions}",
+        ]
+        pytest.exit("\n".join(lines), returncode=1)
 
     report = E2EReport(tenant_id=env["tenant_id"], path=env["report_path"])
 
@@ -262,6 +436,7 @@ def e2e_runtime() -> dict[str, Any]:
         "architect_agent_id": architect_agent_id,
         "report": report,
         "headers": _headers(env["api_key"], env["tenant_id"]),
+        "requested_scopes": sorted(required_scopes),
     }
 
 
@@ -291,6 +466,7 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
         e2e_runtime["headers"],
         e2e_runtime["architect_agent_id"],
         prompt,
+        {"requested_scopes": e2e_runtime.get("requested_scopes", [])},
     )
     run_status = _poll_run(
         e2e_runtime["base_url"],

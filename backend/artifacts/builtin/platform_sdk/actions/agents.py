@@ -15,6 +15,46 @@ from .shared import (
 )
 
 
+def _extract_validation_errors(details: Any) -> List[Dict[str, Any]]:
+    if not isinstance(details, dict):
+        return []
+
+    candidates = []
+    if isinstance(details.get("errors"), list):
+        candidates.append(details.get("errors"))
+
+    detail_payload = details.get("detail")
+    if isinstance(detail_payload, dict) and isinstance(detail_payload.get("errors"), list):
+        candidates.append(detail_payload.get("errors"))
+    elif isinstance(detail_payload, list):
+        candidates.append(detail_payload)
+
+    for candidate in candidates:
+        normalized = [item for item in candidate if isinstance(item, dict)]
+        if normalized:
+            return normalized
+    return []
+
+
+def _sdk_error_payload(error_name: str, exc: ControlPlaneSDKError, **extra: Any) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "error": error_name,
+        "detail": str(exc),
+        "code": exc.code,
+        "http_status": exc.http_status,
+    }
+    if exc.details is not None:
+        payload["details"] = exc.details
+        validation_errors = _extract_validation_errors(exc.details)
+        if validation_errors:
+            payload["validation_errors"] = validation_errors
+
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
 def list_agents(
     client: Client,
     payload: Dict[str, Any],
@@ -32,12 +72,7 @@ def list_agents(
         response = sdk_client.agents.list(**kwargs)
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "list_agents_failed",
-            "detail": str(exc),
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("list_agents_failed", exc)]
     except Exception as exc:
         return None, [{"error": "list_agents_failed", "detail": str(exc)}]
 
@@ -57,13 +92,7 @@ def get_agent(
         response = sdk_client.agents.get(str(agent_id))
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "get_agent_failed",
-            "detail": str(exc),
-            "agent_id": agent_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("get_agent_failed", exc, agent_id=agent_id)]
     except Exception as exc:
         return None, [{"error": "get_agent_failed", "detail": str(exc), "agent_id": agent_id}]
 
@@ -106,13 +135,7 @@ def create_or_update(
             )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "create_or_update_agent_failed",
-            "detail": str(exc),
-            "agent_id": agent_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("create_or_update_agent_failed", exc, agent_id=agent_id)]
     except Exception as exc:
         return None, [{"error": "create_or_update_agent_failed", "detail": str(exc), "agent_id": agent_id}]
 
@@ -176,13 +199,7 @@ def publish(
         )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "publish_agent_failed",
-            "detail": str(exc),
-            "agent_id": agent_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("publish_agent_failed", exc, agent_id=agent_id)]
     except Exception as exc:
         return None, [{"error": "publish_agent_failed", "detail": str(exc), "agent_id": agent_id}]
 
@@ -206,13 +223,7 @@ def validate(
         response = sdk_client.agents.validate(str(agent_id), validation_payload)
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "validate_agent_failed",
-            "detail": str(exc),
-            "agent_id": agent_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("validate_agent_failed", exc, agent_id=agent_id)]
     except Exception as exc:
         return None, [{"error": "validate_agent_failed", "detail": str(exc), "agent_id": agent_id}]
 
@@ -251,13 +262,7 @@ def execute(
         response = sdk_client.agents.execute(str(agent_id), request_payload)
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "run_agent_failed",
-            "detail": str(exc),
-            "agent_id": agent_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("run_agent_failed", exc, agent_id=agent_id)]
     except Exception as exc:
         return None, [{"error": "run_agent_failed", "detail": str(exc), "agent_id": agent_id}]
 
@@ -291,13 +296,7 @@ def start_run(
         response = sdk_client.agents.start_run(str(agent_id), run_payload)
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "start_run_failed",
-            "detail": str(exc),
-            "agent_id": agent_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("start_run_failed", exc, agent_id=agent_id)]
     except Exception as exc:
         return None, [{"error": "start_run_failed", "detail": str(exc), "agent_id": agent_id}]
 
@@ -331,13 +330,7 @@ def resume_run(
         response = sdk_client.agents.resume_run(str(run_id), run_payload)
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "resume_run_failed",
-            "detail": str(exc),
-            "run_id": run_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("resume_run_failed", exc, run_id=run_id)]
     except Exception as exc:
         return None, [{"error": "resume_run_failed", "detail": str(exc), "run_id": run_id}]
 
@@ -360,13 +353,7 @@ def get_run(
         )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "get_run_failed",
-            "detail": str(exc),
-            "run_id": run_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("get_run_failed", exc, run_id=run_id)]
     except Exception as exc:
         return None, [{"error": "get_run_failed", "detail": str(exc), "run_id": run_id}]
 
@@ -386,13 +373,7 @@ def get_run_tree(
         response = sdk_client.agents.get_run_tree(str(run_id))
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{
-            "error": "get_run_tree_failed",
-            "detail": str(exc),
-            "run_id": run_id,
-            "code": exc.code,
-            "http_status": exc.http_status,
-        }]
+        return None, [_sdk_error_payload("get_run_tree_failed", exc, run_id=run_id)]
     except Exception as exc:
         return None, [{"error": "get_run_tree_failed", "detail": str(exc), "run_id": run_id}]
 

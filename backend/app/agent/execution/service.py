@@ -187,22 +187,6 @@ class AgentExecutorService:
         resolved_principal_id = parsed_principal_id
         resolved_grant_id = parsed_grant_id
         maybe_context = input_params.get("context") if isinstance(input_params, dict) else {}
-        if effective_initiator_id is not None and resolved_grant_id is None:
-            from app.services.delegation_service import DelegationService, DelegationPolicyError
-
-            delegation = DelegationService(self.db)
-            try:
-                principal, grant, _approval_required = await delegation.create_agent_run_grant(
-                    agent=agent,
-                    initiator_user_id=effective_initiator_id,
-                    run_id=run_id,
-                    requested_scopes=requested_scopes or ((maybe_context or {}).get("requested_scopes") if isinstance(maybe_context, dict) else None),
-                )
-            except DelegationPolicyError as exc:
-                raise ValueError(f"{exc.code}: {exc.message}") from exc
-
-            resolved_principal_id = principal.id
-            resolved_grant_id = grant.id
 
         # Resolve/create thread before creating the run record.
         input_params = dict(input_params or {})
@@ -283,6 +267,25 @@ class AgentExecutorService:
             completed_at=None
         )
         self.db.add(run)
+        await self.db.flush()
+
+        if effective_initiator_id is not None and resolved_grant_id is None:
+            from app.services.delegation_service import DelegationService, DelegationPolicyError
+
+            delegation = DelegationService(self.db)
+            try:
+                principal, grant, _approval_required = await delegation.create_agent_run_grant(
+                    agent=agent,
+                    initiator_user_id=effective_initiator_id,
+                    run_id=run_id,
+                    requested_scopes=requested_scopes or ((maybe_context or {}).get("requested_scopes") if isinstance(maybe_context, dict) else None),
+                )
+            except DelegationPolicyError as exc:
+                raise ValueError(f"{exc.code}: {exc.message}") from exc
+
+            run.workload_principal_id = principal.id
+            run.delegation_grant_id = grant.id
+
         await self.db.commit()
         await self.db.refresh(run)
 

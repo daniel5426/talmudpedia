@@ -130,6 +130,9 @@ async def get_agent_context(
 
 def agent_to_response(agent, compact: bool = False) -> AgentResponse:
     """Convert Agent model to response."""
+    workload_scope_profile = "default_agent_run" if compact else (getattr(agent, "workload_scope_profile", "default_agent_run") or "default_agent_run")
+    workload_scope_overrides = [] if compact else list(getattr(agent, "workload_scope_overrides", []) or [])
+
     return AgentResponse(
         id=agent.id,
         tenant_id=agent.tenant_id,
@@ -144,8 +147,8 @@ def agent_to_response(agent, compact: bool = False) -> AgentResponse:
 
         is_active=agent.is_active,
         is_public=agent.is_public,
-        workload_scope_profile=getattr(agent, "workload_scope_profile", "default_agent_run") or "default_agent_run",
-        workload_scope_overrides=list(getattr(agent, "workload_scope_overrides", []) or []),
+        workload_scope_profile=workload_scope_profile,
+        workload_scope_overrides=workload_scope_overrides,
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         published_at=agent.published_at,
@@ -547,7 +550,18 @@ async def stream_agent(
         request_context.setdefault("token", context.get("auth_token"))
         request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
         request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
-        request_context.setdefault("requested_scopes", context.get("scopes", []))
+        # Do not inject caller scope inventory by default.
+        # Delegation grants should request either explicit caller-provided scopes
+        # or workload-context scopes in delegated chains.
+        explicit_requested_scopes = None
+        if isinstance(request.context, dict):
+            maybe_explicit_scopes = request.context.get("requested_scopes")
+            if isinstance(maybe_explicit_scopes, list):
+                explicit_requested_scopes = maybe_explicit_scopes
+        if explicit_requested_scopes is not None:
+            request_context["requested_scopes"] = explicit_requested_scopes
+        elif context.get("grant_id"):
+            request_context["requested_scopes"] = context.get("scopes", [])
         request_context.setdefault("grant_id", context.get("grant_id"))
         request_context.setdefault("principal_id", context.get("principal_id"))
         request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
@@ -558,11 +572,7 @@ async def stream_agent(
             "context": request_context,
         }
         # Start run with explicit mode metadata
-        requested_scopes = None
-        if isinstance(request.context, dict):
-            maybe_scopes = request.context.get("requested_scopes")
-            if isinstance(maybe_scopes, list):
-                requested_scopes = maybe_scopes
+        requested_scopes = request_context.get("requested_scopes") if isinstance(request_context.get("requested_scopes"), list) else None
         initiating_user_id = context["user"].id if context.get("user") else None
         try:
             run_id = await executor.start_run(
@@ -686,7 +696,15 @@ async def start_run_v2(
     request_context.setdefault("token", context.get("auth_token"))
     request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
     request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
-    request_context.setdefault("requested_scopes", context.get("scopes", []))
+    explicit_requested_scopes = None
+    if isinstance(request.context, dict):
+        maybe_explicit_scopes = request.context.get("requested_scopes")
+        if isinstance(maybe_explicit_scopes, list):
+            explicit_requested_scopes = maybe_explicit_scopes
+    if explicit_requested_scopes is not None:
+        request_context["requested_scopes"] = explicit_requested_scopes
+    elif context.get("grant_id"):
+        request_context["requested_scopes"] = context.get("scopes", [])
     request_context.setdefault("grant_id", context.get("grant_id"))
     request_context.setdefault("principal_id", context.get("principal_id"))
     request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
@@ -698,11 +716,7 @@ async def start_run_v2(
     }
     
     try:
-        requested_scopes = None
-        if isinstance(request.context, dict):
-            maybe_scopes = request.context.get("requested_scopes")
-            if isinstance(maybe_scopes, list):
-                requested_scopes = maybe_scopes
+        requested_scopes = request_context.get("requested_scopes") if isinstance(request_context.get("requested_scopes"), list) else None
         initiating_user_id = context["user"].id if context.get("user") else None
         run_id = await executor.start_run(
             agent_id,

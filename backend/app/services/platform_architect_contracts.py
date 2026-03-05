@@ -393,7 +393,24 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "payload_schema": _payload_schema(properties={"artifact_id": {"type": "string"}, "id": {"type": "string"}, "namespace": {"type": "string"}}),
                 "contract": {"summary": "Promote artifact draft (explicit publish intent required).", "required_fields": ["artifact_id|id"], "example_payload": {"artifact_id": "artifact-123", "namespace": "custom"}, "failure_codes": ["DRAFT_FIRST_POLICY_DENIED", "SENSITIVE_ACTION_APPROVAL_REQUIRED"]},
             },
-            "models.list": {"mutation": False, "payload_schema": _payload_schema(properties={}), "contract": {"summary": "List models.", "required_fields": [], "example_payload": {}, "failure_codes": []}},
+            "models.list": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "capability_type": {"type": "string"},
+                        "is_active": {"type": "boolean"},
+                        "skip": {"type": "integer", "minimum": 0},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    },
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "List models.",
+                    "required_fields": [],
+                    "example_payload": {"capability_type": "chat", "is_active": True, "limit": 50},
+                    "failure_codes": [],
+                },
+            },
             "models.create_or_update": {
                 "mutation": True,
                 "payload_schema": _payload_schema(properties={"model_id": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}, "slug": {"type": "string"}}, additional_properties=True),
@@ -532,6 +549,10 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
         "For agents.create specifically, graph_definition must include exactly one start node, at least one end node, "
         "and at least one control edge from start to a downstream node. "
+        "If a node you are creating/updating requires model_id (for example agent/llm/classify) and model_id is "
+        "missing or rejected, call platform-assets with action models.list first, select a valid active chat-capable "
+        "model id from the response, and retry the mutation. Do not ask the user for model_id unless models.list "
+        "returns no usable models. "
         "Draft-first is mandatory: do not call publish/promote actions unless objective_flags.allow_publish=true "
         "in user-provided input. "
         "Always include tenant_id, idempotency_key, and request_metadata on mutating calls. "

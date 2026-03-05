@@ -69,9 +69,18 @@ class _FakeRagAPI:
 class _FakeAgentsAPI:
     calls: List[Dict[str, Any]] = field(default_factory=list)
     agents: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    create_error: Dict[str, Any] | None = None
 
     def create(self, spec, options=None):
         self.calls.append({"method": "create", "spec": spec, "options": options})
+        if isinstance(self.create_error, dict):
+            raise ControlPlaneSDKError(
+                code=str(self.create_error.get("code") or "VALIDATION_ERROR"),
+                message=str(self.create_error.get("message") or "create failed"),
+                http_status=int(self.create_error.get("http_status") or 422),
+                retryable=False,
+                details=self.create_error.get("details"),
+            )
         agent_id = f"agent-{len(self.agents) + 1}"
         rec = {"id": agent_id, **spec}
         self.agents[agent_id] = rec
@@ -347,3 +356,42 @@ def test_replay_idempotency_reuses_pipeline(monkeypatch):
     assert second["errors"] == []
     assert first["result"]["id"] == second["result"]["id"]
     assert len(fake.rag.pipelines_by_slug) == 1
+
+
+def test_agent_create_surfaces_structured_validation_errors(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _FakeControlClient()
+    fake.agents.create_error = {
+        "code": "VALIDATION_ERROR",
+        "message": "Graph validation failed",
+        "http_status": 422,
+        "details": {
+            "detail": {
+                "error": "validation_error",
+                "errors": [
+                    {
+                        "code": "GRAPH_START_NODE_COUNT_INVALID",
+                        "message": "Graph must include exactly one Start node.",
+                    }
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    response = _call(
+        "agents.create",
+        {
+            "tenant_id": "tenant-1",
+            "name": "Bad Graph Agent",
+            "slug": "bad-graph-agent",
+            "graph_definition": {"spec_version": "1.0", "nodes": [], "edges": []},
+        },
+        tool_slug="platform-agents",
+    )
+
+    err = response["errors"][0]
+    assert err["code"] == "VALIDATION_ERROR"
+    assert err["http_status"] == 422
+    assert err["details"]["detail"]["error"] == "validation_error"
+    assert err["validation_errors"][0]["code"] == "GRAPH_START_NODE_COUNT_INVALID"

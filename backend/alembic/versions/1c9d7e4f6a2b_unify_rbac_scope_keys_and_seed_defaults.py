@@ -144,8 +144,31 @@ def _drop_constraint_if_exists(bind, table_name: str, constraint_name: str) -> N
         op.drop_constraint(constraint_name, table_name, type_="unique")
 
 
+def _resolve_actor_type_user_label(bind) -> str:
+    labels = [
+        row[0]
+        for row in bind.execute(
+            sa.text(
+                """
+                SELECT e.enumlabel
+                FROM pg_type t
+                JOIN pg_enum e ON e.enumtypid = t.oid
+                WHERE t.typname = 'actortype'
+                ORDER BY e.enumsortorder
+                """
+            )
+        ).fetchall()
+    ]
+    if "user" in labels:
+        return "user"
+    if "USER" in labels:
+        return "USER"
+    return "user"
+
+
 def upgrade() -> None:
     bind = op.get_bind()
+    actor_type_user_label = _resolve_actor_type_user_label(bind)
 
     op.add_column(
         "agents",
@@ -233,7 +256,7 @@ def upgrade() -> None:
                     id, tenant_id, role_id, user_id, actor_type, scope_id, scope_type, assigned_by, assigned_at
                 )
                 VALUES (
-                    :id, :tenant_id, :role_id, :user_id, 'user', :scope_id, 'tenant', :assigned_by, NOW()
+                    :id, :tenant_id, :role_id, :user_id, :actor_type_value, :scope_id, 'tenant', :assigned_by, NOW()
                 )
                 """
             ),
@@ -242,6 +265,7 @@ def upgrade() -> None:
                 "tenant_id": tenant_id,
                 "role_id": role_id,
                 "user_id": user_id,
+                "actor_type_value": actor_type_user_label,
                 "scope_id": tenant_id,
                 "assigned_by": user_id,
             },

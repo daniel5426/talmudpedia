@@ -190,6 +190,8 @@ class AgentService:
                     Agent.published_at,
                     Agent.is_active,
                     Agent.is_public,
+                    Agent.workload_scope_profile,
+                    Agent.workload_scope_overrides,
                 )
             )
         result = await self.db.execute(query)

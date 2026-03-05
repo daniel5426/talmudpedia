@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-03-05
+Last Updated: 2026-03-06
 
 ## Scope
 - Platform Architect v1.1 direct domain-tool loop runtime (no `architect.run` path).
@@ -17,11 +17,12 @@ Last Updated: 2026-03-05
 - Domain tool boundaries deny cross-domain action usage with `SCOPE_DENIED`.
 - Missing tenant context for mutations fails with deterministic `TENANT_REQUIRED`.
 - Replay path reuses existing resources rather than duplicating them.
+- `agents.create` propagates structured SDK validation details (including normalized `validation_errors`) for deterministic repair.
 
 ## Last run command + date/time + result
-- Command: `cd backend && pytest -q tests/platform_architect_runtime/test_platform_architect_runtime.py -q`
-- Date/Time: 2026-03-05 (local run during this change set)
-- Result: pass (`5 passed, 1 warning`)
+- Command: `cd backend && pytest -q tests/platform_architect_runtime/test_platform_architect_runtime.py`
+- Date/Time: 2026-03-06 (local run during this change set)
+- Result: pass (`6 passed, 1 warning`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.

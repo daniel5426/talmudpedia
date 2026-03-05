@@ -18,7 +18,9 @@ class HttpClient {
   }
 
   buildHeaders(headers?: HeadersInit, body?: BodyInit | null): HeadersInit {
-    const token = useAuthStore.getState().token;
+    const authState = useAuthStore.getState();
+    const token = authState.token;
+    const tenantId = authState.user?.tenant_id;
     const nextHeaders: Record<string, string> = {};
 
     if (headers) {
@@ -34,6 +36,9 @@ class HttpClient {
 
     if (token) {
       nextHeaders["Authorization"] = `Bearer ${token}`;
+    }
+    if (tenantId && !nextHeaders["X-Tenant-ID"]) {
+      nextHeaders["X-Tenant-ID"] = tenantId;
     }
 
     return nextHeaders;

@@ -1,6 +1,6 @@
 # Workload Delegation Auth Tests
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-05
 
 Scope of the feature:
 - Delegated workload identity and token broker behavior for internal SaaS agent flows.
@@ -24,15 +24,16 @@ Key scenarios covered:
 - Group B/C endpoints reject legacy tokens and enforce scope checks.
 - Sensitive mutation routes require explicit approval decisions for workload principals.
 - Agent run records preserve delegated context from workload-initiated execution.
+- Agent executor mints new delegation grants only after persisting `agent_runs`, preventing FK violations on `delegation_grants.run_id`.
 - Tool executor blocks workload-token mode without delegation grant.
 - Platform SDK auth flow supports delegated mint callback contract (`context.auth.mint_token`) and enforces scope subset request.
 - Pending policy blocks workload token minting.
 - Grant revocation invalidates token jti.
 
 Last run command + date/time + result:
-- `pytest -q backend/tests/workload_delegation_auth/test_platform_sdk_delegated_auth_flow.py`
-- 2026-03-01 17:20:59 EET
-- PASS (1 passed)
+- `pytest -q backend/tests/workload_delegation_auth/test_phase2_runtime_propagation.py`
+- 2026-03-05 22:54:17 EET
+- PASS (3 passed)
 
 Known gaps / follow-ups:
 - Add direct integration coverage for `/internal/auth/*` and `/admin/security/workloads/*` API routes.

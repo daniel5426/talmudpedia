@@ -17,14 +17,17 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Per-scenario architect run, action-evidence checks, expected block-code validation, and side-effect spot checks.
 - DB linkage check for generated `agent_runs` rows.
 - Session report persisted as JSON for run review.
+- Session preflight validates delegated scope coverage (required action scopes vs architect workload policy and initiator effective scopes) before running matrix scenarios.
+- Architect run start now sends explicit `context.requested_scopes` derived from scenario matrix required scopes to stabilize delegated grant minting.
 
 ## Last run command + date/time + result
-- Command: `cd backend && TEST_USE_REAL_DB=1 pytest -q tests/platform_architect_e2e/test_architect_e2e_live.py -k agents_create -m real_db`
+- Command: `cd backend && TEST_USE_REAL_DB=1 pytest -q tests/platform_architect_e2e/test_architect_e2e_live.py -m real_db`
 - Date/Time: 2026-03-05 (local run during this change set)
-- Result: fail (`1 failed, 43 deselected`) with side-effect assertion `No created agent with expected prefix`.
+- Result: partial pass baseline after scope remediation (`9 passed, 35 failed, 1 warning`, ~5m03s). Scope/delegation run-start blocker is cleared; remaining failures are action-level (missing required payload fields, unsupported action/schema mismatches, and side-effect assertions).
 
 ## Known gaps or follow-ups
 - `agents.validate` endpoint currently returns placeholder-valid in service layer; this limits strict graph correctness assertions.
 - Action attempt detection relies on run payload/tree textual evidence; schema-specific trace extraction can be tightened after observing live payloads.
 - Some governance outcomes depend on caller role/policy state and are asserted primarily via expected block-code presence.
-- Remaining failing scenarios are concentrated in strict side-effect and expected-block-code assumptions (create-prefix assertions and orchestration/publish block code expectations).
+- Remaining failing scenarios are concentrated in strict side-effect checks plus schema/action mismatches (especially governance/workload actions) and missing action-specific prerequisites for read/query scenarios.
+- Preflight depends on decoding JWT `sub` for initiator scope intersection details; opaque tokens without JWT claims degrade to policy-only scope diagnostics.

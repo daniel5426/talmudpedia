@@ -1,17 +1,17 @@
 {
-  "run_id": "arch-e2e-1772715946",
+  "run_id": "arch-e2e-1772746128",
   "tenant_id": "f7538eb5-7ff7-4857-a8e1-7b21cc58f10a",
-  "started_at": "2026-03-05T13:05:46.365227+00:00",
-  "ended_at": "2026-03-05T13:10:29.781468+00:00",
+  "started_at": "2026-03-05T21:28:48.977299+00:00",
+  "ended_at": "2026-03-05T21:33:52.698382+00:00",
   "scenarios_total": 44,
-  "scenarios_passed": 31,
-  "scenarios_failed": 13,
+  "scenarios_passed": 9,
+  "scenarios_failed": 35,
   "results": [
     {
       "scenario_id": "rag_compile_visual_pipeline",
       "action": "rag.compile_visual_pipeline",
       "status": "passed",
-      "agent_run_id": "881dc68a-2a65-4364-9d04-bf37fb0989ad",
+      "agent_run_id": "2435bfc7-b618-472d-901d-9ff80144bdb3",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -21,15 +21,8 @@
       },
       "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-rag_compile_visual_pipeline-ee1d51",
-        "assistant_report": {
-          "status": "created",
-          "action": "rag.create_visual_pipeline",
-          "resources": {
-            "id": "68d7cac4-98f3-453f-8f07-6fc0e7af0b1c"
-          },
-          "errors": []
-        }
+        "prefix": "arch-e2e-rag_compile_visual_pipeline-0bf37b",
+        "assistant_report": null
       },
       "scenario": {
         "id": "rag_compile_visual_pipeline",
@@ -43,8 +36,8 @@
     {
       "scenario_id": "rag_create_job",
       "action": "rag.create_job",
-      "status": "passed",
-      "agent_run_id": "612eaf46-b03c-45d3-a512-3bba5d64fbca",
+      "status": "failed",
+      "agent_run_id": "a9472693-77e1-4203-a7db-a6ed99e42fbd",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -52,19 +45,23 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['executable_pipeline_id', 'tenant_slug']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-rag_create_job-3b00db",
+        "prefix": "arch-e2e-rag_create_job-2dea1f",
         "assistant_report": {
           "status": "failure",
           "action": "rag.create_job",
           "resources": null,
           "errors": [
             {
-              "error": "create_job_failed",
-              "detail": "INVALID_ARGUMENT: Could not validate credentials (http=401)",
-              "code": "INVALID_ARGUMENT",
-              "http_status": 401
+              "error": "missing_fields",
+              "fields": [
+                "executable_pipeline_id",
+                "tenant_slug"
+              ]
             }
           ]
         }
@@ -82,7 +79,7 @@
       "scenario_id": "rag_create_visual_pipeline",
       "action": "rag.create_visual_pipeline",
       "status": "failed",
-      "agent_run_id": "7dedabb7-015f-4eb0-ab3a-b5b10305e323",
+      "agent_run_id": "9e073b35-03f6-4e1e-b2d5-c21d34318934",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -91,16 +88,15 @@
         "expected_error_code": null
       },
       "errors": [
-        "No created pipeline with expected prefix"
+        "No created pipeline found by id or name prefix"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-rag_create_visual_pipeline-b9dd7c",
+        "prefix": "arch-e2e-rag_create_visual_pipeline-47594f",
         "assistant_report": {
           "status": "success",
           "action": "rag.create_visual_pipeline",
           "resources": {
-            "id": "18b49022-8fd7-46e2-9f92-8d1d6ab2fb0d",
-            "status": "created"
+            "pipeline_id": "21498439-310d-4270-a8f0-a50171570d80"
           },
           "errors": []
         }
@@ -117,8 +113,8 @@
     {
       "scenario_id": "rag_get_executable_input_schema",
       "action": "rag.get_executable_input_schema",
-      "status": "passed",
-      "agent_run_id": "5c788c7c-2a1f-4a60-90e0-90b90c78438e",
+      "status": "failed",
+      "agent_run_id": "34cbf9bf-492e-459e-80e5-6583743a5e74",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -126,16 +122,22 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['exec_id']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-rag_get_executable_input_schema-8fd8b5",
+        "prefix": "arch-e2e-rag_get_executable_input_schema-396638",
         "assistant_report": {
-          "status": "failure",
+          "status": "error",
           "action": "rag.get_executable_input_schema",
           "resources": null,
           "errors": [
             {
-              "message": "Action 'rag.get_executable_input_schema' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+              "error": "missing_fields",
+              "fields": [
+                "exec_id"
+              ]
             }
           ]
         }
@@ -152,8 +154,8 @@
     {
       "scenario_id": "rag_get_executable_pipeline",
       "action": "rag.get_executable_pipeline",
-      "status": "passed",
-      "agent_run_id": "52b6d741-e165-4d54-9092-c92c62165ff4",
+      "status": "failed",
+      "agent_run_id": "5337e666-2819-41ef-be8e-dd1a79c0e250",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -161,10 +163,25 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['exec_id']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-rag_get_executable_pipeline-5ca257",
-        "assistant_report": null
+        "prefix": "arch-e2e-rag_get_executable_pipeline-f1d13f",
+        "assistant_report": {
+          "status": "error",
+          "action": "rag.get_executable_pipeline",
+          "resources": null,
+          "errors": [
+            {
+              "error": "missing_fields",
+              "fields": [
+                "exec_id"
+              ]
+            }
+          ]
+        }
       },
       "scenario": {
         "id": "rag_get_executable_pipeline",
@@ -178,27 +195,25 @@
     {
       "scenario_id": "rag_get_job",
       "action": "rag.get_job",
-      "status": "passed",
-      "agent_run_id": "5bbce6f1-3e55-4fcc-8ce0-b7e582fc8d4c",
+      "status": "failed",
+      "agent_run_id": "2e49af70-7857-4cf4-9243-197ba103c072",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-rag_get_job-d09eab",
+        "prefix": "arch-e2e-rag_get_job-374a9a",
         "assistant_report": {
-          "status": "failed",
+          "status": "success",
           "action": "rag.get_job",
           "resources": null,
-          "errors": [
-            {
-              "message": "Action 'rag.get_job' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
-            }
-          ]
+          "errors": null
         }
       },
       "scenario": {
@@ -213,8 +228,8 @@
     {
       "scenario_id": "rag_list_visual_pipelines",
       "action": "rag.list_visual_pipelines",
-      "status": "passed",
-      "agent_run_id": "dbdef4d5-1899-44db-b8c9-d9b885e67367",
+      "status": "failed",
+      "agent_run_id": "03c96f44-936f-496b-9028-4ac1d194d81e",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -222,15 +237,24 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'missing_action', 'code': 'MISSING_REQUIRED_FIELD', 'message': 'Missing required field: action', 'http_status': 422, 'retryable': False}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-rag_list_visual_pipelines-e49c06",
+        "prefix": "arch-e2e-rag_list_visual_pipelines-b915d0",
         "assistant_report": {
-          "status": "failure",
+          "status": "error",
           "action": "rag.list_visual_pipelines",
           "resources": null,
           "errors": [
-            "Action 'rag.list_visual_pipelines' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+            {
+              "error": "missing_action",
+              "code": "MISSING_REQUIRED_FIELD",
+              "message": "Missing required field: action",
+              "http_status": 422,
+              "retryable": false
+            }
           ]
         }
       },
@@ -246,8 +270,8 @@
     {
       "scenario_id": "rag_update_visual_pipeline",
       "action": "rag.update_visual_pipeline",
-      "status": "passed",
-      "agent_run_id": "c823d6be-5985-4705-9c44-9a7bf00bc241",
+      "status": "failed",
+      "agent_run_id": "6f3af242-a084-4f1e-a9b0-cf998dffa035",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -255,11 +279,14 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['pipeline_id']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-rag_update_visual_pipeline-d56906",
+        "prefix": "arch-e2e-rag_update_visual_pipeline-e37016",
         "assistant_report": {
-          "status": "error",
+          "status": "failure",
           "action": "rag.update_visual_pipeline",
           "resources": null,
           "errors": [
@@ -285,7 +312,7 @@
       "scenario_id": "agents_create",
       "action": "agents.create",
       "status": "failed",
-      "agent_run_id": "535fac4b-7b89-4201-a5bb-81c7f20bea41",
+      "agent_run_id": "b33ef774-fbf0-4527-86f9-7c07bcb3c236",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -294,24 +321,25 @@
         "expected_error_code": null
       },
       "errors": [
-        "Created agent graph lacks start/end"
+        "Assistant reported non-success status: failed",
+        "Assistant reported errors: [{'error': 'create_or_update_agent_failed', 'detail': 'VALIDATION_ERROR: Graph validation failed (http=422)', 'agent_id': None, 'code': 'VALIDATION_ERROR', 'http_status': 422}]",
+        "No created agent with expected prefix"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_create-f27b6d",
+        "prefix": "arch-e2e-agents_create-df5f29",
         "assistant_report": {
-          "status": "success",
+          "status": "failed",
           "action": "agents.create",
-          "resources": {
-            "id": "5676c8b4-dbab-4328-9acd-fc70a3cdfe31",
-            "tenant_id": "f7538eb5-7ff7-4857-a8e1-7b21cc58f10a",
-            "name": "arch-e2e-agents_create-f27b6d-agent",
-            "slug": "arch-e2e-agents_create-f27b6d-agent",
-            "status": "draft",
-            "version": 1,
-            "created_at": "2026-03-05T15:07:07.036423+02:00",
-            "updated_at": "2026-03-05T15:07:07.036423+02:00"
-          },
-          "errors": []
+          "resources": null,
+          "errors": [
+            {
+              "error": "create_or_update_agent_failed",
+              "detail": "VALIDATION_ERROR: Graph validation failed (http=422)",
+              "agent_id": null,
+              "code": "VALIDATION_ERROR",
+              "http_status": 422
+            }
+          ]
         }
       },
       "scenario": {
@@ -326,32 +354,21 @@
     {
       "scenario_id": "agents_execute",
       "action": "agents.execute",
-      "status": "passed",
-      "agent_run_id": "feadf562-9fa4-46af-8f57-ee1307815800",
+      "status": "failed",
+      "agent_run_id": "5057ee5d-96ea-4b35-aed7-17b13be53e31",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_execute-a2a776",
-        "assistant_report": {
-          "status": "error",
-          "action": "agents.execute",
-          "resources": null,
-          "errors": [
-            {
-              "error": "run_agent_failed",
-              "detail": "UPSTREAM_ERROR: Execution failed: Graph validation failed: Graph must have exactly one Start node (found 0); Graph must have at least one End node",
-              "agent_id": "e4de26b6-9228-4096-90d0-0636da574d97",
-              "code": "UPSTREAM_ERROR",
-              "http_status": 500
-            }
-          ]
-        }
+        "prefix": "arch-e2e-agents_execute-0384c6",
+        "assistant_report": null
       },
       "scenario": {
         "id": "agents_execute",
@@ -365,8 +382,8 @@
     {
       "scenario_id": "agents_get",
       "action": "agents.get",
-      "status": "passed",
-      "agent_run_id": "e6fe220b-eee6-4136-affd-59870c28e08e",
+      "status": "failed",
+      "agent_run_id": "af096dee-55b0-4500-8bfd-6459e981075f",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -374,15 +391,23 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['agent_id']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_get-729bf6",
+        "prefix": "arch-e2e-agents_get-be635b",
         "assistant_report": {
-          "status": "failed",
+          "status": "error",
           "action": "agents.get",
           "resources": null,
           "errors": [
-            "Action 'agents.get' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+            {
+              "error": "missing_fields",
+              "fields": [
+                "agent_id"
+              ]
+            }
           ]
         }
       },
@@ -398,8 +423,8 @@
     {
       "scenario_id": "agents_get_run",
       "action": "agents.get_run",
-      "status": "passed",
-      "agent_run_id": "77f0f0bc-6a3c-44f7-9ed7-38b1284a5130",
+      "status": "failed",
+      "agent_run_id": "c1130599-5995-41ef-a6d6-99f09a7048cd",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -407,19 +432,23 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: failed",
+        "Assistant reported errors: [{'error': 'get_run_failed', 'detail': \"INVALID_ARGUMENT: [{'type': 'uuid_parsing', 'loc': ['path', 'run_id'], 'msg': 'Input should be a valid UUID, invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `r` at 2', 'input': 'arch-e2e-agents_get_run-1d4cc9-run', 'ctx': {'error': 'invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `r` at 2'}}] (http=422)\", 'run_id': 'arch-e2e-agents_get_run-1d4cc9-run', 'code': 'INVALID_ARGUMENT', 'http_status': 422}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_get_run-496249",
+        "prefix": "arch-e2e-agents_get_run-1d4cc9",
         "assistant_report": {
           "status": "failed",
           "action": "agents.get_run",
           "resources": null,
           "errors": [
             {
-              "error": "missing_fields",
-              "fields": [
-                "run_id"
-              ]
+              "error": "get_run_failed",
+              "detail": "INVALID_ARGUMENT: [{'type': 'uuid_parsing', 'loc': ['path', 'run_id'], 'msg': 'Input should be a valid UUID, invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `r` at 2', 'input': 'arch-e2e-agents_get_run-1d4cc9-run', 'ctx': {'error': 'invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `r` at 2'}}] (http=422)",
+              "run_id": "arch-e2e-agents_get_run-1d4cc9-run",
+              "code": "INVALID_ARGUMENT",
+              "http_status": 422
             }
           ]
         }
@@ -437,7 +466,7 @@
       "scenario_id": "agents_list",
       "action": "agents.list",
       "status": "passed",
-      "agent_run_id": "7109fe55-c75b-43b6-9451-be415beb6d30",
+      "agent_run_id": "2199e4ab-fda4-4794-bad8-2131d583ad7b",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -447,16 +476,75 @@
       },
       "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_list-0a6dbc",
+        "prefix": "arch-e2e-agents_list-14491d",
         "assistant_report": {
-          "status": "failed",
+          "status": "success",
           "action": "agents.list",
-          "resources": null,
-          "errors": [
-            {
-              "message": "Action 'agents.list' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
-            }
-          ]
+          "resources": {
+            "agents": [
+              {
+                "id": "26a1110a-687c-4afd-8f73-bb7da0723a7a",
+                "name": "Published App Coding Agent",
+                "slug": "published-app-coding-agent",
+                "status": "published"
+              },
+              {
+                "id": "6acc9593-2c35-4724-b003-a9dfe6a37dad",
+                "name": "Platform Architect",
+                "slug": "platform-architect",
+                "status": "published"
+              },
+              {
+                "id": "9f0f447a-ce53-4666-9757-c4b73414664b",
+                "name": "arch-e2e-agents_publish-40bb9e-agent",
+                "slug": "arch-e2e-agents_publish-40bb9e-agent-slug",
+                "status": "draft"
+              },
+              {
+                "id": "e4de26b6-9228-4096-90d0-0636da574d97",
+                "name": "arch-e2e-agents_execute-a2a776-agent",
+                "slug": "arch-e2e-agents_execute-a2a776-agent-slug",
+                "status": "draft"
+              },
+              {
+                "id": "5676c8b4-dbab-4328-9acd-fc70a3cdfe31",
+                "name": "arch-e2e-agents_create-f27b6d-agent",
+                "slug": "arch-e2e-agents_create-f27b6d-agent",
+                "status": "draft"
+              },
+              {
+                "id": "80110c85-7f18-410e-bf50-eea12a6c9c67",
+                "name": "arch-e2e-agents_validate-9492cf-agent",
+                "slug": "arch-e2e-agents-validate-9492cf",
+                "status": "draft"
+              },
+              {
+                "id": "dde091bf-862a-406c-b424-b9b34ec8eca3",
+                "name": "arch-e2e-agents_start_run-eb6714-agent",
+                "slug": "arch-e2e-agent-eb6714",
+                "status": "draft"
+              },
+              {
+                "id": "50bc0856-381f-4466-b834-c46453f75e16",
+                "name": "arch-e2e-agents_publish-fea2ce-agent",
+                "slug": "arch-e2e-agents_publish-fea2ce-agent",
+                "status": "draft"
+              },
+              {
+                "id": "b13221f3-5806-45d7-81f7-b9db92e17e98",
+                "name": "arch-e2e-agents_execute-02adbe Agent",
+                "slug": "arch-e2e-agents_execute-02adbe-agent",
+                "status": "draft"
+              },
+              {
+                "id": "d122b1ad-78f0-4250-83a7-c8d861975a70",
+                "name": "arch-e2e-agents_create-82a5c3-agent",
+                "slug": "arch-e2e-agents_create-82a5c3-agent",
+                "status": "draft"
+              }
+            ]
+          },
+          "errors": []
         }
       },
       "scenario": {
@@ -471,33 +559,23 @@
     {
       "scenario_id": "agents_publish",
       "action": "agents.publish",
-      "status": "passed",
-      "agent_run_id": "c5f85598-ee49-412a-9aca-87f524318ee8",
+      "status": "failed",
+      "agent_run_id": "10a39ba2-ff56-474b-8c1f-5efc9cc1b125",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
         "expected_error_code": "DRAFT_FIRST_POLICY_DENIED"
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant status is not a blocked/error status: missing",
+        "Expected block code not found: DRAFT_FIRST_POLICY_DENIED"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_publish-40bb9e",
-        "assistant_report": {
-          "status": "validation_error",
-          "action": "agents.publish",
-          "resources": null,
-          "errors": [
-            {
-              "error": "draft_first_policy_denied",
-              "code": "DRAFT_FIRST_POLICY_DENIED",
-              "action": "agents.publish",
-              "message": "Action 'agents.publish' requires explicit publish intent.",
-              "http_status": 403,
-              "retryable": false
-            }
-          ]
-        }
+        "prefix": "arch-e2e-agents_publish-5d7bb6",
+        "assistant_report": null
       },
       "scenario": {
         "id": "agents_publish",
@@ -511,28 +589,33 @@
     {
       "scenario_id": "agents_start_run",
       "action": "agents.start_run",
-      "status": "passed",
-      "agent_run_id": "3f0460c1-4202-42a3-8256-a4d224149e0e",
+      "status": "failed",
+      "agent_run_id": "d95bb984-ed1c-4aff-b68e-27235776ad86",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: [{'error': 'create_or_update_agent_failed', 'detail': 'VALIDATION_ERROR: Graph validation failed (http=422)', 'agent_id': None, 'code': 'VALIDATION_ERROR', 'http_status': 422}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_start_run-69255e",
+        "prefix": "arch-e2e-agents_start_run-d60165",
         "assistant_report": {
           "status": "failure",
-          "action": "agents.start_run",
+          "action": "agents.create",
           "resources": null,
           "errors": [
             {
-              "error": "missing_fields",
-              "fields": [
-                "agent_id"
-              ]
+              "error": "create_or_update_agent_failed",
+              "detail": "VALIDATION_ERROR: Graph validation failed (http=422)",
+              "agent_id": null,
+              "code": "VALIDATION_ERROR",
+              "http_status": 422
             }
           ]
         }
@@ -549,8 +632,8 @@
     {
       "scenario_id": "agents_update",
       "action": "agents.update",
-      "status": "passed",
-      "agent_run_id": "b6d62022-5b24-45fa-bf74-92f78a530bac",
+      "status": "failed",
+      "agent_run_id": "24e61766-a3ca-4b01-9a3a-ba415cc16285",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -558,10 +641,25 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['agent_id']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_update-6de440",
-        "assistant_report": null
+        "prefix": "arch-e2e-agents_update-8c04f0",
+        "assistant_report": {
+          "status": "failure",
+          "action": "agents.update",
+          "resources": null,
+          "errors": [
+            {
+              "error": "missing_fields",
+              "fields": [
+                "agent_id"
+              ]
+            }
+          ]
+        }
       },
       "scenario": {
         "id": "agents_update",
@@ -575,8 +673,8 @@
     {
       "scenario_id": "agents_validate",
       "action": "agents.validate",
-      "status": "passed",
-      "agent_run_id": "4ada663d-2ab3-4f5c-a7a0-4fc5c40506e7",
+      "status": "failed",
+      "agent_run_id": "c814226a-d2c9-4091-af28-fe63cc55ed2a",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -584,11 +682,14 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: failed",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['agent_id']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-agents_validate-abde5c",
+        "prefix": "arch-e2e-agents_validate-c8b626",
         "assistant_report": {
-          "status": "error",
+          "status": "failed",
           "action": "agents.validate",
           "resources": null,
           "errors": [
@@ -614,7 +715,7 @@
       "scenario_id": "artifacts_create_or_update_draft",
       "action": "artifacts.create_or_update_draft",
       "status": "failed",
-      "agent_run_id": "9b1711cf-850a-4b6a-bffd-5e9e9aa54c1a",
+      "agent_run_id": "93ef0962-5c9b-473c-82b9-002966f62a3a",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -623,21 +724,23 @@
         "expected_error_code": null
       },
       "errors": [
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['name', 'python_code']}]",
         "No created artifact with expected prefix"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-artifacts_create_or_update_draft-08896b",
+        "prefix": "arch-e2e-artifacts_create_or_update_draft-1ca3a6",
         "assistant_report": {
-          "status": "failure",
+          "status": "error",
           "action": "artifacts.create_or_update_draft",
           "resources": null,
           "errors": [
             {
-              "error": "create_artifact_draft_failed",
-              "detail": "UPSTREAM_ERROR: Internal Server Error (http=500)",
-              "name": "arch-e2e-artifacts_create_or_update_draft-08896b-artifact",
-              "code": "UPSTREAM_ERROR",
-              "http_status": 500
+              "error": "missing_fields",
+              "fields": [
+                "name",
+                "python_code"
+              ]
             }
           ]
         }
@@ -654,25 +757,25 @@
     {
       "scenario_id": "artifacts_get",
       "action": "artifacts.get",
-      "status": "passed",
-      "agent_run_id": "9ed943c2-ac5a-42eb-a92d-dca286a69245",
+      "status": "failed",
+      "agent_run_id": "086010e6-0b3b-4aee-8d24-619d6f114d11",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-artifacts_get-8a75bd",
+        "prefix": "arch-e2e-artifacts_get-c87dea",
         "assistant_report": {
-          "status": "error",
+          "status": "success",
           "action": "artifacts.get",
-          "resources": null,
-          "errors": [
-            "Invalid action: artifacts.get is not a valid action for platform-assets tool."
-          ]
+          "resources": [],
+          "errors": null
         }
       },
       "scenario": {
@@ -688,7 +791,7 @@
       "scenario_id": "artifacts_list",
       "action": "artifacts.list",
       "status": "passed",
-      "agent_run_id": "b0f8cd5e-6a70-4522-acd1-2ccc2e4809a7",
+      "agent_run_id": "917228a5-6547-4ee6-96dc-dfbb9f461c4a",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -698,17 +801,8 @@
       },
       "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-artifacts_list-57edb4",
-        "assistant_report": {
-          "status": "failure",
-          "action": "artifacts.list",
-          "resources": null,
-          "errors": [
-            {
-              "message": "Action 'artifacts.list' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
-            }
-          ]
-        }
+        "prefix": "arch-e2e-artifacts_list-bd7d79",
+        "assistant_report": null
       },
       "scenario": {
         "id": "artifacts_list",
@@ -723,25 +817,26 @@
       "scenario_id": "artifacts_promote",
       "action": "artifacts.promote",
       "status": "failed",
-      "agent_run_id": "ac39225b-4935-4fa6-af1c-ec455a9800d4",
+      "agent_run_id": "1dc4ec9f-51db-412e-b24a-4530b3e22881",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
         "expected_error_code": "DRAFT_FIRST_POLICY_DENIED"
       },
       "errors": [
+        "Target action not observed in structured run evidence",
         "Expected block code not found: DRAFT_FIRST_POLICY_DENIED"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-artifacts_promote-5f5d57",
+        "prefix": "arch-e2e-artifacts_promote-b14629",
         "assistant_report": {
           "status": "error",
           "action": "artifacts.promote",
           "resources": null,
           "errors": [
-            "The action artifacts.promote does not exist in the provided tool schema."
+            "The action artifacts.promote is not allowed as it violates the rule: 'Execute exactly one canonical action call matching target action.'"
           ]
         }
       },
@@ -757,8 +852,8 @@
     {
       "scenario_id": "credentials_create_or_update",
       "action": "credentials.create_or_update",
-      "status": "passed",
-      "agent_run_id": "63c0869d-bdcb-42f6-bc6d-1bcf54f359f3",
+      "status": "failed",
+      "agent_run_id": "c3cd183d-a2b6-48c1-bef8-1fd5a865d0f2",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -766,16 +861,22 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: [{'error': 'create_or_update_credential_failed', 'detail': 'INVALID_ARGUMENT: Could not validate credentials (http=401)', 'code': 'INVALID_ARGUMENT', 'http_status': 401}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-credentials_create_or_update-12f205",
+        "prefix": "arch-e2e-credentials_create_or_update-7bf425",
         "assistant_report": {
-          "status": "failed",
+          "status": "failure",
           "action": "credentials.create_or_update",
           "resources": null,
           "errors": [
             {
-              "message": "Action 'credentials.create_or_update' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+              "error": "create_or_update_credential_failed",
+              "detail": "INVALID_ARGUMENT: Could not validate credentials (http=401)",
+              "code": "INVALID_ARGUMENT",
+              "http_status": 401
             }
           ]
         }
@@ -792,8 +893,8 @@
     {
       "scenario_id": "credentials_list",
       "action": "credentials.list",
-      "status": "passed",
-      "agent_run_id": "2357735c-f0ae-4957-bc5d-1144d34957cc",
+      "status": "failed",
+      "agent_run_id": "326fae3a-7b57-4032-a3bc-a0272517bb5c",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -801,15 +902,22 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: [{'error': 'missing_required_action', 'message': 'Platform SDK calls require an explicit action.', 'code': 'MISSING_REQUIRED_FIELD'}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-credentials_list-934a5c",
+        "prefix": "arch-e2e-credentials_list-b9afea",
         "assistant_report": {
           "status": "failure",
           "action": "credentials.list",
-          "resources": null,
+          "resources": [],
           "errors": [
-            "Action 'credentials.list' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+            {
+              "error": "missing_required_action",
+              "message": "Platform SDK calls require an explicit action.",
+              "code": "MISSING_REQUIRED_FIELD"
+            }
           ]
         }
       },
@@ -825,27 +933,43 @@
     {
       "scenario_id": "knowledge_stores_create_or_update",
       "action": "knowledge_stores.create_or_update",
-      "status": "failed",
-      "agent_run_id": "100543b8-a307-471a-8100-fd192f3ac6ca",
+      "status": "passed",
+      "agent_run_id": "e5de346e-8a4f-4727-977f-720ae0322aaf",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
-        "api_side_effect_ok": false,
+        "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [
-        "No created knowledge store with expected prefix"
-      ],
+      "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-knowledge_stores_create_or_update-d271ed",
+        "prefix": "arch-e2e-knowledge_stores_create_or_update-c49e97",
         "assistant_report": {
-          "status": "failure",
+          "status": "success",
           "action": "knowledge_stores.create_or_update",
-          "resources": null,
-          "errors": [
-            "Action 'knowledge_stores.create_or_update' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
-          ]
+          "resources": {
+            "id": "c281b6d6-5fd6-4c58-a2d0-1fce04c1b24a",
+            "tenant_id": "f7538eb5-7ff7-4857-a8e1-7b21cc58f10a",
+            "name": "arch-e2e-knowledge_stores_create_or_update-c49e97-KnowledgeStore",
+            "description": "A test knowledge store for capability verification",
+            "embedding_model_id": "gpt-5-mini-2025-08-07",
+            "chunking_strategy": {
+              "strategy": "recursive",
+              "chunk_size": 512,
+              "chunk_overlap": 50
+            },
+            "retrieval_policy": "semantic_only",
+            "backend": "pgvector",
+            "credentials_ref": null,
+            "status": "active",
+            "document_count": 0,
+            "chunk_count": 0,
+            "created_at": "2026-03-05T23:32:29.264164+02:00",
+            "updated_at": "2026-03-05T23:32:29.264164+02:00",
+            "created_by": null
+          },
+          "errors": []
         }
       },
       "scenario": {
@@ -860,8 +984,8 @@
     {
       "scenario_id": "knowledge_stores_list",
       "action": "knowledge_stores.list",
-      "status": "passed",
-      "agent_run_id": "69c79f99-7384-4512-b27d-c4a95ed3f942",
+      "status": "failed",
+      "agent_run_id": "f4efc4ac-707f-4664-9338-92f6404f90cd",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -869,20 +993,22 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['tenant_slug']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-knowledge_stores_list-6e7802",
+        "prefix": "arch-e2e-knowledge_stores_list-7b3e3e",
         "assistant_report": {
-          "status": "failed",
+          "status": "error",
           "action": "knowledge_stores.list",
           "resources": null,
           "errors": [
             {
-              "error": "missing_action",
-              "code": "MISSING_REQUIRED_FIELD",
-              "message": "Missing required field: action",
-              "http_status": 422,
-              "retryable": false
+              "error": "missing_fields",
+              "fields": [
+                "tenant_slug"
+              ]
             }
           ]
         }
@@ -900,25 +1026,28 @@
       "scenario_id": "models_create_or_update",
       "action": "models.create_or_update",
       "status": "failed",
-      "agent_run_id": "8f38a6ed-69f3-40fb-af8c-d36841d96e81",
+      "agent_run_id": "7e3716de-020f-4eb6-8b98-986f2690effd",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": false,
         "expected_outcome": "success",
         "expected_error_code": null
       },
       "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [\"The action 'models.create_or_update' does not match any available canonical action in the platform-assets tool.\"]",
         "No created model with expected prefix"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-models_create_or_update-cb762f",
+        "prefix": "arch-e2e-models_create_or_update-d1dc7f",
         "assistant_report": {
-          "status": "failed",
+          "status": "error",
           "action": "models.create_or_update",
           "resources": null,
           "errors": [
-            "Action 'models.create_or_update' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+            "The action 'models.create_or_update' does not match any available canonical action in the platform-assets tool."
           ]
         }
       },
@@ -935,7 +1064,7 @@
       "scenario_id": "models_list",
       "action": "models.list",
       "status": "passed",
-      "agent_run_id": "35fd129d-b639-485a-b327-1e26e52031c0",
+      "agent_run_id": "4397e539-4c59-492b-a557-55a391e937b0",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -945,14 +1074,43 @@
       },
       "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-models_list-4b9367",
+        "prefix": "arch-e2e-models_list-65b3ad",
         "assistant_report": {
-          "status": "failure",
+          "status": "success",
           "action": "models.list",
-          "resources": null,
-          "errors": [
-            "Action 'models.list' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
-          ]
+          "resources": {
+            "models": [
+              {
+                "id": "b33a2314-132b-411d-b471-8a76f0054c8f",
+                "tenant_id": "f7538eb5-7ff7-4857-a8e1-7b21cc58f10a",
+                "name": "gpt-5-mini-2025-08-07",
+                "slug": "gpt-5-mini-2025-08-07",
+                "description": "gpt-5-mini-2025-08-07",
+                "capability_type": "chat",
+                "status": "active",
+                "version": 1,
+                "metadata": {},
+                "default_resolution_policy": {},
+                "is_active": true,
+                "is_default": false,
+                "providers": [
+                  {
+                    "id": "72c6eed1-a66b-46a3-8291-8ec3718f8caf",
+                    "provider": "openai",
+                    "provider_model_id": "gpt-5-mini-2025-08-07",
+                    "priority": 0,
+                    "is_enabled": true,
+                    "config": {},
+                    "credentials_ref": null
+                  }
+                ],
+                "created_at": "2026-02-25T22:13:47.219500+02:00",
+                "updated_at": "2026-02-25T22:13:47.219500+02:00"
+              }
+            ],
+            "total": 1
+          },
+          "errors": []
         }
       },
       "scenario": {
@@ -967,32 +1125,36 @@
     {
       "scenario_id": "tools_create_or_update",
       "action": "tools.create_or_update",
-      "status": "passed",
-      "agent_run_id": "196a115a-a3c6-431f-b8f8-2d43747a17ad",
+      "status": "failed",
+      "agent_run_id": "6f6b69cf-8e60-40bc-94f7-32e0e1f2cc49",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
-        "api_side_effect_ok": true,
+        "api_side_effect_ok": false,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'create_artifact_draft_failed', 'detail': 'UPSTREAM_ERROR: Internal Server Error (http=500)', 'name': 'arch-e2e-tools_create_or_update-858c29-asset', 'code': 'UPSTREAM_ERROR', 'http_status': 500}]",
+        "No created tool with expected prefix"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-tools_create_or_update-60d6ec",
+        "prefix": "arch-e2e-tools_create_or_update-858c29",
         "assistant_report": {
-          "status": "success",
-          "action": "tools.create_or_update",
-          "resources": [
+          "status": "error",
+          "action": "artifacts.create_or_update_draft",
+          "resources": null,
+          "errors": [
             {
-              "id": "dd4bbb88-04a3-4e02-98c8-6958813e45c4",
-              "tenant_id": "f7538eb5-7ff7-4857-a8e1-7b21cc58f10a",
-              "name": "arch-e2e-tools_create_or_update-60d6ec-tool",
-              "slug": "arch-e2e-tools_create_or_update-60d6ec-tool",
-              "status": "DRAFT",
-              "version": "1.0.0"
+              "error": "create_artifact_draft_failed",
+              "detail": "UPSTREAM_ERROR: Internal Server Error (http=500)",
+              "name": "arch-e2e-tools_create_or_update-858c29-asset",
+              "code": "UPSTREAM_ERROR",
+              "http_status": 500
             }
-          ],
-          "errors": []
+          ]
         }
       },
       "scenario": {
@@ -1007,8 +1169,8 @@
     {
       "scenario_id": "tools_get",
       "action": "tools.get",
-      "status": "passed",
-      "agent_run_id": "3a0ee668-8f2f-44c1-8658-45ea467d9f41",
+      "status": "failed",
+      "agent_run_id": "b108aa65-400f-412c-8453-91b8e2642b8d",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -1016,15 +1178,23 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'missing_fields', 'fields': ['tool_id']}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-tools_get-0a8b13",
+        "prefix": "arch-e2e-tools_get-cf6b7d",
         "assistant_report": {
           "status": "error",
           "action": "tools.get",
           "resources": null,
           "errors": [
-            "Action 'tools.get' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+            {
+              "error": "missing_fields",
+              "fields": [
+                "tool_id"
+              ]
+            }
           ]
         }
       },
@@ -1041,7 +1211,7 @@
       "scenario_id": "tools_list",
       "action": "tools.list",
       "status": "passed",
-      "agent_run_id": "8d30a4a8-5483-4ace-b2a4-33a9bf36880c",
+      "agent_run_id": "c1e36c7d-9423-4001-87bb-9fa49fd434fe",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -1051,14 +1221,62 @@
       },
       "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-tools_list-9f10c0",
+        "prefix": "arch-e2e-tools_list-ccbd1c",
         "assistant_report": {
-          "status": "error",
+          "status": "success",
           "action": "tools.list",
-          "resources": null,
-          "errors": [
-            "Action 'tools.list' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
-          ]
+          "resources": {
+            "tools": [
+              {
+                "id": "dd4bbb88-04a3-4e02-98c8-6958813e45c4",
+                "tenant_id": "f7538eb5-7ff7-4857-a8e1-7b21cc58f10a",
+                "name": "arch-e2e-tools_create_or_update-60d6ec-tool",
+                "slug": "arch-e2e-tools_create_or_update-60d6ec-tool",
+                "description": null,
+                "scope": "tenant",
+                "input_schema": {
+                  "type": "object",
+                  "required": [
+                    "input"
+                  ],
+                  "properties": {
+                    "input": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "output_schema": {
+                  "type": "object",
+                  "required": [
+                    "output"
+                  ],
+                  "properties": {
+                    "output": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "config_schema": {},
+                "status": "DRAFT",
+                "version": "1.0.0",
+                "implementation_type": "CUSTOM",
+                "published_at": null,
+                "tool_type": "custom",
+                "artifact_id": null,
+                "artifact_version": null,
+                "builtin_key": null,
+                "builtin_template_id": null,
+                "is_builtin_template": false,
+                "is_builtin_instance": false,
+                "is_active": true,
+                "is_system": false,
+                "created_at": "2026-03-05T15:09:17.518036+02:00",
+                "updated_at": "2026-03-05T15:09:17.518036+02:00"
+              }
+            ],
+            "total": 1
+          },
+          "errors": []
         }
       },
       "scenario": {
@@ -1074,25 +1292,26 @@
       "scenario_id": "tools_publish",
       "action": "tools.publish",
       "status": "failed",
-      "agent_run_id": "58987645-cc0a-4ef8-89ed-9cb7555bd007",
+      "agent_run_id": "2d46712d-3dd2-4c27-8d3d-3aa27ea2043c",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
         "expected_error_code": "DRAFT_FIRST_POLICY_DENIED"
       },
       "errors": [
+        "Target action not observed in structured run evidence",
         "Expected block code not found: DRAFT_FIRST_POLICY_DENIED"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-tools_publish-984fce",
+        "prefix": "arch-e2e-tools_publish-f70280",
         "assistant_report": {
-          "status": "failed",
+          "status": "error",
           "action": "tools.publish",
           "resources": null,
           "errors": [
-            "The action tools.publish does not exist for the tool platform-assets."
+            "The tools.publish action is not a valid action for the platform-assets tool."
           ]
         }
       },
@@ -1108,19 +1327,30 @@
     {
       "scenario_id": "auth_create_delegation_grant",
       "action": "auth.create_delegation_grant",
-      "status": "passed",
-      "agent_run_id": "bef4e169-e220-4f0e-8225-607951415b5c",
+      "status": "failed",
+      "agent_run_id": "5b9c0b59-514f-4b8d-9bcf-c1b04074ee6b",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: ['The target action auth.create_delegation_grant is not supported by the available tools.']"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-auth_create_delegation_grant-2c64e1",
-        "assistant_report": null
+        "prefix": "arch-e2e-auth_create_delegation_grant-d0e457",
+        "assistant_report": {
+          "status": "failure",
+          "action": "auth.create_delegation_grant",
+          "resources": null,
+          "errors": [
+            "The target action auth.create_delegation_grant is not supported by the available tools."
+          ]
+        }
       },
       "scenario": {
         "id": "auth_create_delegation_grant",
@@ -1134,8 +1364,8 @@
     {
       "scenario_id": "auth_mint_workload_token",
       "action": "auth.mint_workload_token",
-      "status": "passed",
-      "agent_run_id": "18172110-fa4a-40d5-a67c-f245322a7ed9",
+      "status": "failed",
+      "agent_run_id": "007a41a7-8dee-457c-9ea8-13b299f6030d",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
@@ -1143,15 +1373,23 @@
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: [{'error': 'mint_workload_token_failed', 'detail': \"INVALID_ARGUMENT: [{'type': 'missing', 'loc': ['body', 'grant_id'], 'msg': 'Field required', 'input': {'name': 'arch-e2e-auth_mint_workload_token-35c2f8'}}, {'type': 'missing', 'loc': ['body', 'audience'], 'msg': 'Field required', 'input': {'name': 'arch-e2e-auth_mint_workload_token-35c2f8'}}] (http=422)\", 'code': 'INVALID_ARGUMENT', 'http_status': 422}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-auth_mint_workload_token-ed4fac",
+        "prefix": "arch-e2e-auth_mint_workload_token-35c2f8",
         "assistant_report": {
-          "status": "failed",
+          "status": "error",
           "action": "auth.mint_workload_token",
           "resources": null,
           "errors": [
-            "Action 'auth.mint_workload_token' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+            {
+              "error": "mint_workload_token_failed",
+              "detail": "INVALID_ARGUMENT: [{'type': 'missing', 'loc': ['body', 'grant_id'], 'msg': 'Field required', 'input': {'name': 'arch-e2e-auth_mint_workload_token-35c2f8'}}, {'type': 'missing', 'loc': ['body', 'audience'], 'msg': 'Field required', 'input': {'name': 'arch-e2e-auth_mint_workload_token-35c2f8'}}] (http=422)",
+              "code": "INVALID_ARGUMENT",
+              "http_status": 422
+            }
           ]
         }
       },
@@ -1167,26 +1405,30 @@
     {
       "scenario_id": "orchestration_cancel_subtree",
       "action": "orchestration.cancel_subtree",
-      "status": "failed",
-      "agent_run_id": "97b7d166-83e2-4690-9567-e3a4edb4b6b8",
+      "status": "passed",
+      "agent_run_id": "d8cfb692-a65a-4fde-b822-c05a88261ca0",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled"
+        "expected_error_code": "missing_fields"
       },
-      "errors": [
-        "Expected block code not found: feature_disabled"
-      ],
+      "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-orchestration_cancel_subtree-b64a9b",
+        "prefix": "arch-e2e-orchestration_cancel_subtree-fe72d3",
         "assistant_report": {
-          "status": "error",
+          "status": "failed",
           "action": "orchestration.cancel_subtree",
-          "resources": [],
+          "resources": null,
           "errors": [
-            "The orchestration.cancel_subtree action requires additional context or parameters not provided in the test input."
+            {
+              "error": "missing_fields",
+              "fields": [
+                "caller_run_id",
+                "run_id"
+              ]
+            }
           ]
         }
       },
@@ -1195,29 +1437,27 @@
         "tool_slug": "platform-governance",
         "target_action": "orchestration.cancel_subtree",
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled",
+        "expected_error_code": "missing_fields",
         "requires_model": false
       }
     },
     {
       "scenario_id": "orchestration_evaluate_and_replan",
       "action": "orchestration.evaluate_and_replan",
-      "status": "failed",
-      "agent_run_id": "d789f674-21b4-4567-adb4-d24d4f43a442",
+      "status": "passed",
+      "agent_run_id": "56d22d47-b78a-4d92-9e3a-b4ff9f2845d2",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled"
+        "expected_error_code": "missing_fields"
       },
-      "errors": [
-        "Expected block code not found: feature_disabled"
-      ],
+      "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-orchestration_evaluate_and_replan-0c5081",
+        "prefix": "arch-e2e-orchestration_evaluate_and_replan-120683",
         "assistant_report": {
-          "status": "failure",
+          "status": "error",
           "action": "orchestration.evaluate_and_replan",
           "resources": null,
           "errors": [
@@ -1236,35 +1476,46 @@
         "tool_slug": "platform-governance",
         "target_action": "orchestration.evaluate_and_replan",
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled",
+        "expected_error_code": "missing_fields",
         "requires_model": false
       }
     },
     {
       "scenario_id": "orchestration_join",
       "action": "orchestration.join",
-      "status": "failed",
-      "agent_run_id": "15023b8c-ade6-4b37-8832-bbcb16ec60a0",
+      "status": "passed",
+      "agent_run_id": "5619becb-9741-4aea-8b19-e8b84f9879ac",
       "assertions": {
         "action_seen": true,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled"
+        "expected_error_code": "missing_fields"
       },
-      "errors": [
-        "Expected block code not found: feature_disabled"
-      ],
+      "errors": [],
       "resource_refs": {
-        "prefix": "arch-e2e-orchestration_join-99779d",
-        "assistant_report": null
+        "prefix": "arch-e2e-orchestration_join-4c5d72",
+        "assistant_report": {
+          "status": "failed",
+          "action": "orchestration.join",
+          "resources": null,
+          "errors": [
+            {
+              "error": "missing_fields",
+              "fields": [
+                "caller_run_id",
+                "orchestration_group_id"
+              ]
+            }
+          ]
+        }
       },
       "scenario": {
         "id": "orchestration_join",
         "tool_slug": "platform-governance",
         "target_action": "orchestration.join",
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled",
+        "expected_error_code": "missing_fields",
         "requires_model": false
       }
     },
@@ -1272,25 +1523,27 @@
       "scenario_id": "orchestration_query_tree",
       "action": "orchestration.query_tree",
       "status": "failed",
-      "agent_run_id": "8e0df683-0938-4c01-b916-2cf5da6a373d",
+      "agent_run_id": "0bfa2c92-6b46-472f-ac70-e497a2d14192",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled"
+        "expected_error_code": "missing_fields"
       },
       "errors": [
-        "Expected block code not found: feature_disabled"
+        "Target action not observed in structured run evidence",
+        "Assistant status is not a blocked/error status: failure",
+        "Expected block code not found: missing_fields"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-orchestration_query_tree-ad3057",
+        "prefix": "arch-e2e-orchestration_query_tree-5fcbf4",
         "assistant_report": {
-          "status": "error",
+          "status": "failure",
           "action": "orchestration.query_tree",
           "resources": null,
           "errors": [
-            "Action orchestration.query_tree is not implemented in the current environment."
+            "The requested action orchestration.query_tree is not available for direct execution."
           ]
         }
       },
@@ -1299,7 +1552,7 @@
         "tool_slug": "platform-governance",
         "target_action": "orchestration.query_tree",
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled",
+        "expected_error_code": "missing_fields",
         "requires_model": false
       }
     },
@@ -1307,25 +1560,27 @@
       "scenario_id": "orchestration_spawn_group",
       "action": "orchestration.spawn_group",
       "status": "failed",
-      "agent_run_id": "c81bdd75-b40d-4fd2-9d50-74cdc6878c53",
+      "agent_run_id": "4c5a2a22-0ab3-43a4-91b4-69dc2afe94e0",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled"
+        "expected_error_code": "missing_fields"
       },
       "errors": [
-        "Expected block code not found: feature_disabled"
+        "Target action not observed in structured run evidence",
+        "Assistant status is not a blocked/error status: failure",
+        "Expected block code not found: missing_fields"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-orchestration_spawn_group-3e96dd",
+        "prefix": "arch-e2e-orchestration_spawn_group-20fa81",
         "assistant_report": {
           "status": "failure",
           "action": "orchestration.spawn_group",
           "resources": null,
           "errors": [
-            "Action orchestration.spawn_group is not supported by the available tools."
+            "Unsupported action: orchestration.spawn_group"
           ]
         }
       },
@@ -1334,7 +1589,7 @@
         "tool_slug": "platform-governance",
         "target_action": "orchestration.spawn_group",
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled",
+        "expected_error_code": "missing_fields",
         "requires_model": false
       }
     },
@@ -1342,51 +1597,64 @@
       "scenario_id": "orchestration_spawn_run",
       "action": "orchestration.spawn_run",
       "status": "failed",
-      "agent_run_id": "9a1d869a-fcec-4ae8-b8b0-b7d1cfe5b1df",
+      "agent_run_id": "fc16fc49-f0ef-4e02-a949-0e7adc9c2e15",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled"
+        "expected_error_code": "missing_fields"
       },
       "errors": [
-        "Expected block code not found: feature_disabled"
+        "Target action not observed in structured run evidence",
+        "Assistant status is not a blocked/error status: failure",
+        "Expected block code not found: missing_fields"
       ],
       "resource_refs": {
-        "prefix": "arch-e2e-orchestration_spawn_run-2e1cda",
-        "assistant_report": null
+        "prefix": "arch-e2e-orchestration_spawn_run-939843",
+        "assistant_report": {
+          "status": "failure",
+          "action": "orchestration.spawn_run",
+          "resources": null,
+          "errors": [
+            "The target action orchestration.spawn_run does not match any of the available canonical actions."
+          ]
+        }
       },
       "scenario": {
         "id": "orchestration_spawn_run",
         "tool_slug": "platform-governance",
         "target_action": "orchestration.spawn_run",
         "expected_outcome": "expected_block",
-        "expected_error_code": "feature_disabled",
+        "expected_error_code": "missing_fields",
         "requires_model": false
       }
     },
     {
       "scenario_id": "workload_security_approve_policy",
       "action": "workload_security.approve_policy",
-      "status": "passed",
-      "agent_run_id": "12b1a134-1b0b-4c6b-947e-2629271dc77b",
+      "status": "failed",
+      "agent_run_id": "b9964ba0-6c4d-4193-a151-38889beaca4a",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant reported non-success status: error",
+        "Assistant reported errors: ['The target action workload_security.approve_policy is not available in the current tool set.']"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-workload_security_approve_policy-53fab4",
+        "prefix": "arch-e2e-workload_security_approve_policy-9fea98",
         "assistant_report": {
           "status": "error",
           "action": "workload_security.approve_policy",
           "resources": null,
           "errors": [
-            "The action 'workload_security.approve_policy' is not supported by the current toolset or is incorrectly specified."
+            "The target action workload_security.approve_policy is not available in the current tool set."
           ]
         }
       },
@@ -1402,24 +1670,31 @@
     {
       "scenario_id": "workload_security_decide_approval",
       "action": "workload_security.decide_approval",
-      "status": "passed",
-      "agent_run_id": "80e75b0e-4523-4759-9976-7f565aa1f171",
+      "status": "failed",
+      "agent_run_id": "62364f2a-fed8-4b51-bb03-7ee543cbef5a",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: [{'code': 'unsupported_action', 'message': \"The action 'workload_security.decide_approval' is not supported by any available tools.\"}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-workload_security_decide_approval-bc2d8f",
+        "prefix": "arch-e2e-workload_security_decide_approval-ad7fe4",
         "assistant_report": {
-          "status": "failed",
+          "status": "failure",
           "action": "workload_security.decide_approval",
           "resources": null,
           "errors": [
-            "Action 'workload_security.decide_approval' requires delegated workload token; workload token mint failed: Requested scope subset is not allowed"
+            {
+              "code": "unsupported_action",
+              "message": "The action 'workload_security.decide_approval' is not supported by any available tools."
+            }
           ]
         }
       },
@@ -1435,25 +1710,25 @@
     {
       "scenario_id": "workload_security_list_approvals",
       "action": "workload_security.list_approvals",
-      "status": "passed",
-      "agent_run_id": "8a197390-8391-4cec-86ba-4f3058f5eb5a",
+      "status": "failed",
+      "agent_run_id": "85560299-96f6-4f39-b726-ed185b262ee7",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-workload_security_list_approvals-140873",
+        "prefix": "arch-e2e-workload_security_list_approvals-ebbd29",
         "assistant_report": {
-          "status": "error",
+          "status": "success",
           "action": "workload_security.list_approvals",
-          "resources": null,
-          "errors": [
-            "The action workload_security.list_approvals is not available in the current toolset."
-          ]
+          "resources": [],
+          "errors": null
         }
       },
       "scenario": {
@@ -1468,24 +1743,31 @@
     {
       "scenario_id": "workload_security_list_pending",
       "action": "workload_security.list_pending",
-      "status": "passed",
-      "agent_run_id": "ea4411f8-afd5-4a32-8655-c55a880ef250",
+      "status": "failed",
+      "agent_run_id": "4968ee99-0d4f-4240-ba18-d0ef71138cbd",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant reported non-success status: failure",
+        "Assistant reported errors: [{'code': 'ACTION_NOT_FOUND', 'message': 'The action workload_security.list_pending is not available in the platform-governance tool.'}]"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-workload_security_list_pending-44cc80",
+        "prefix": "arch-e2e-workload_security_list_pending-e70053",
         "assistant_report": {
-          "status": "error",
+          "status": "failure",
           "action": "workload_security.list_pending",
           "resources": null,
           "errors": [
-            "Action workload_security.list_pending not found in tool platform-governance."
+            {
+              "code": "ACTION_NOT_FOUND",
+              "message": "The action workload_security.list_pending is not available in the platform-governance tool."
+            }
           ]
         }
       },
@@ -1501,24 +1783,28 @@
     {
       "scenario_id": "workload_security_reject_policy",
       "action": "workload_security.reject_policy",
-      "status": "passed",
-      "agent_run_id": "aaf1d526-c746-4513-9600-581db90d17d9",
+      "status": "failed",
+      "agent_run_id": "c5bc1a39-e9fb-4c72-8269-8e336d9d2e6c",
       "assertions": {
-        "action_seen": true,
+        "action_seen": false,
         "db_run_linked": true,
         "api_side_effect_ok": true,
         "expected_outcome": "success",
         "expected_error_code": null
       },
-      "errors": [],
+      "errors": [
+        "Target action not observed in structured run evidence",
+        "Assistant reported non-success status: failed",
+        "Assistant reported errors: ['The requested action workload_security.reject_policy does not match the available tools and actions.']"
+      ],
       "resource_refs": {
-        "prefix": "arch-e2e-workload_security_reject_policy-247209",
+        "prefix": "arch-e2e-workload_security_reject_policy-ccc266",
         "assistant_report": {
           "status": "failed",
           "action": "workload_security.reject_policy",
           "resources": null,
           "errors": [
-            "The action 'workload_security.reject_policy' does not exist in the current tool set."
+            "The requested action workload_security.reject_policy does not match the available tools and actions."
           ]
         }
       },
