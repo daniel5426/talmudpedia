@@ -64,6 +64,27 @@ def _graph_with_missing_runtime_refs() -> dict:
     }
 
 
+def _graph_with_agent_model_only_in_data_config() -> dict:
+    return {
+        "spec_version": "1.0",
+        "nodes": [
+            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+            {
+                "id": "assistant",
+                "type": "agent",
+                "position": {"x": 150, "y": 0},
+                "config": {},
+                "data": {"config": {"model_id": "legacy-only-model", "instructions": "help"}},
+            },
+            {"id": "end", "type": "end", "position": {"x": 300, "y": 0}, "config": {"output_message": "done"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "assistant", "type": "control"},
+            {"id": "e2", "source": "assistant", "target": "end", "type": "control"},
+        ],
+    }
+
+
 async def _seed_tenant_admin(db_session):
     suffix = uuid4().hex[:8]
     tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
@@ -179,6 +200,24 @@ async def test_service_update_graph_rejects_invalid_graph(db_session):
     updated = await service.update_graph(agent.id, _valid_graph())
     assert isinstance(updated.graph_definition, dict)
     assert len(updated.graph_definition.get("nodes") or []) == 2
+
+
+@pytest.mark.asyncio
+async def test_service_create_does_not_accept_runtime_config_inside_data_payload(db_session):
+    tenant, user = await _seed_tenant_admin(db_session)
+    service = AgentService(db=db_session, tenant_id=tenant.id)
+
+    with pytest.raises(AgentGraphValidationError) as exc_info:
+        await service.create_agent(
+            CreateAgentData(
+                name="Legacy Data Config",
+                slug=f"legacy-data-config-{uuid4().hex[:8]}",
+                graph_definition=_graph_with_agent_model_only_in_data_config(),
+            ),
+            user_id=user.id,
+        )
+
+    assert any("model_id" in entry["message"] for entry in exc_info.value.errors)
 
 
 @pytest.mark.asyncio

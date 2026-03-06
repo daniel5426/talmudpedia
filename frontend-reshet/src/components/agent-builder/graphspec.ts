@@ -31,7 +31,7 @@ function stableHash(value: string): string {
 }
 
 function normalizeOrchestrationConfig(node: Node<AgentNodeData>): Record<string, unknown> {
-    const existing = (node.data?.config || {}) as Record<string, unknown>
+    const existing = (((node as unknown as { config?: Record<string, unknown> }).config) || {}) as Record<string, unknown>
     const config: Record<string, unknown> = { ...existing }
     const nodeType = (node.type || node.data?.nodeType) as AgentNodeType | undefined
     if (!nodeType) {
@@ -91,8 +91,7 @@ export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
     const nodeType = (raw.type || raw.nodeType || existing.nodeType || "transform") as AgentNodeType
     const spec = getNodeSpec(nodeType)
     const rawConfig = raw.config ?? {}
-    const existingConfig = existing.config ?? {}
-    const config = { ...rawConfig, ...existingConfig }
+    const config = { ...rawConfig }
     const resolvedInputMappings = existing.inputMappings ?? raw.input_mappings
     if (resolvedInputMappings && !("input_mappings" in config)) {
         config["input_mappings"] = resolvedInputMappings
@@ -112,6 +111,7 @@ export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
     return {
         ...node,
         type: nodeType,
+        config,
         data: {
             ...existing,
             nodeType,
@@ -132,19 +132,23 @@ export function normalizeGraphSpecForSave(
     edges: Edge[],
     options: GraphSpecNormalizeOptions = {}
 ) {
-    const normalizedNodes = nodes.map((node) => ({
-        ...node,
-        data: node.data
-            ? {
-                ...node.data,
-                config: normalizeOrchestrationConfig(node),
-            }
-            : node.data,
-        input_mappings:
-            (node as any).input_mappings ||
-            node.data?.config?.input_mappings ||
-            (node.data as any)?.inputMappings,
-    }))
+    const normalizedNodes = nodes.map((node) => {
+        const normalizedConfig = normalizeOrchestrationConfig(node)
+        const rawData = node.data ? { ...node.data } : undefined
+        if (rawData) {
+            delete (rawData as Record<string, unknown>).config
+            delete (rawData as Record<string, unknown>).inputMappings
+        }
+        return {
+            ...node,
+            config: normalizedConfig,
+            data: rawData,
+            input_mappings:
+                (node as any).input_mappings ||
+                normalizedConfig.input_mappings ||
+                (node.data as any)?.inputMappings,
+        }
+    })
     const normalizedEdges = edges.map((edge) => ({
         ...edge,
         source_handle: (edge as any).source_handle || (edge as any).sourceHandle,

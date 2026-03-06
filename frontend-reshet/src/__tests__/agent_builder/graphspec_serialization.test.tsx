@@ -10,6 +10,7 @@ describe("graphspec serialization", () => {
         id: "n1",
         type: "artifact:custom/tool",
         position: { x: 0, y: 0 },
+        config: { input_mappings: { query: "{{ state.q }}" } },
         data: {
           nodeType: "artifact:custom/tool",
           category: "action",
@@ -20,7 +21,7 @@ describe("graphspec serialization", () => {
           isConfigured: false,
           hasErrors: false,
         },
-      },
+      } as Node<AgentNodeData>,
     ]
 
     const edges: Edge[] = [
@@ -37,6 +38,8 @@ describe("graphspec serialization", () => {
 
     expect(normalized.spec_version).toBe("1.0")
     expect((normalized.nodes[0] as any).input_mappings).toEqual({ query: "{{ state.q }}" })
+    expect((normalized.nodes[0] as any).config).toEqual({ input_mappings: { query: "{{ state.q }}" } })
+    expect((normalized.nodes[0] as any).data?.config).toBeUndefined()
     expect((normalized.edges[0] as any).source_handle).toBe("approve")
     expect((normalized.edges[0] as any).target_handle).toBe("reject")
   })

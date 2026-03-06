@@ -61,23 +61,12 @@ class AgentNode(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def lift_config_from_data(cls, data: Any) -> Any:
+    def normalize_input_mappings(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            # Check if config is provided at top level
-            if "config" not in data or not data["config"]:
-                # Try to find it in data.config
-                node_data = data.get("data", {})
-                if node_data and isinstance(node_data, dict) and "config" in node_data:
-                    data["config"] = node_data["config"]
             # Normalize inputMappings -> input_mappings
             if "input_mappings" not in data:
                 if "inputMappings" in data:
                     data["input_mappings"] = data.get("inputMappings")
-                else:
-                    node_data = data.get("data", {})
-                    if node_data and isinstance(node_data, dict):
-                        if "inputMappings" in node_data:
-                            data["input_mappings"] = node_data.get("inputMappings")
         return data
 
 

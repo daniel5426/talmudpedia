@@ -547,10 +547,11 @@ function AgentBuilderInner({
                 y: event.clientY,
             })
 
-            const newNode: Node<AgentNodeData> = {
+            const newNode = {
                 id: `node-${nanoid(6)}`,
                 type: nodeType,
                 position,
+                config: {},
                 data: {
                     nodeType,
                     category,
@@ -561,7 +562,7 @@ function AgentBuilderInner({
                     isConfigured: (spec.configFields || []).length === 0,
                     hasErrors: false,
                 },
-            }
+            } as Node<AgentNodeData>
 
             setNodes((nds) => [...nds, newNode])
             setTimeout(() => takeSnapshot([...nodes, newNode] as Node<AgentNodeData>[], edges), 0)
@@ -608,12 +609,13 @@ function AgentBuilderInner({
 
                         return {
                             ...node,
+                            config,
                             data: {
                                 ...data,
                                 config,
                                 isConfigured,
                             },
-                        }
+                        } as Node<AgentNodeData>
                     }
                     return node
                 })

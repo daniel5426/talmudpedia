@@ -15,6 +15,7 @@ Hard-cut graph validation on agent write paths (`create_agent`, `update_agent`, 
 - API returns canonical `VALIDATION_ERROR` payload on create/update validation failures.
 - Service validation (`validate_agent`) now runs real compiler + runtime reference checks and returns structured errors/warnings.
 - Node intelligence endpoints are covered: `/agents/nodes/catalog` and bulk `/agents/nodes/schema`.
+- Runtime config inside `node.data.config` is rejected; top-level `node.config` is the only accepted source of truth.
 
 ## Last run command + date/time + result
 - Command: `pytest -q backend/tests/agent_graph_validation/test_agent_graph_validation.py`

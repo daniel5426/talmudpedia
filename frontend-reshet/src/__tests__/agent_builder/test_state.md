@@ -1,6 +1,6 @@
 # Test State: Agent Builder (GraphSpec Serialization + Branch Handles)
 
-Last Updated: 2026-02-09
+Last Updated: 2026-03-06
 
 **Scope**
 Frontend GraphSpec v1 serialization, builder node normalization, and branch handle rendering.
@@ -10,14 +10,15 @@ Frontend GraphSpec v1 serialization, builder node normalization, and branch hand
 - `branch_handles.test.tsx`
 
 **Scenarios Covered**
-- Serialization of legacy handle fields into GraphSpec v1
+- GraphSpec v1 save writes canonical top-level `node.config` and strips persisted `data.config`
+- Serialization of handle fields into GraphSpec v1
 - Artifact input mappings normalization and preservation
 - Classify and if/else branch handle IDs (fallbacks, dedupe, else handle)
 
 **Last Run**
-- Command: `npm test -- agent_builder`
-- Date: 2026-02-09 18:42 EET
-- Result: Pass (7 suites, 13 tests)
+- Command: `npm test -- --runTestsByPath src/__tests__/agent_builder/graphspec_serialization.test.tsx`
+- Date: 2026-03-06
+- Result: Pass (1 suite, 2 tests)
 
 **Known Gaps / Follow-ups**
 - No end-to-end builder save/publish UI test

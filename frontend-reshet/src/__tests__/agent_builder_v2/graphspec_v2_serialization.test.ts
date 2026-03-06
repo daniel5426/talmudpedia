@@ -7,6 +7,7 @@ const buildNode = (id: string, type: string, config: Record<string, unknown> = {
   id,
   type,
   position: { x: 0, y: 0 },
+  config,
   data: {
     nodeType: type as any,
     category: "logic",
@@ -17,7 +18,7 @@ const buildNode = (id: string, type: string, config: Record<string, unknown> = {
     isConfigured: true,
     hasErrors: false,
   },
-})
+} as Node<AgentNodeData>)
 
 describe("graphspec v2 serialization", () => {
   it("preserves loaded spec version when there are no v2 orchestration nodes", () => {
@@ -51,13 +52,14 @@ describe("graphspec v2 serialization", () => {
     ]
 
     const saved = normalizeGraphSpecForSave(nodes, [], { specVersion: "2.0" })
-    const spawnRunConfig = (saved.nodes[0].data as AgentNodeData).config as Record<string, unknown>
-    const spawnGroupConfig = (saved.nodes[1].data as AgentNodeData).config as Record<string, unknown>
+    const spawnRunConfig = (saved.nodes[0] as any).config as Record<string, unknown>
+    const spawnGroupConfig = (saved.nodes[1] as any).config as Record<string, unknown>
 
     expect(typeof spawnRunConfig.idempotency_key).toBe("string")
     expect(String(spawnRunConfig.idempotency_key)).toContain("spawn-run-node:")
     expect(typeof spawnGroupConfig.idempotency_key_prefix).toBe("string")
     expect(String(spawnGroupConfig.idempotency_key_prefix)).toContain("spawn-group-node:")
+    expect((saved.nodes[0] as any).data?.config).toBeUndefined()
   })
 
   it("normalizes route_table inputs for router and judge configs", () => {
@@ -70,8 +72,8 @@ describe("graphspec v2 serialization", () => {
       }),
     ]
     const saved = normalizeGraphSpecForSave(nodes, [], { specVersion: "2.0" })
-    const routerConfig = (saved.nodes[0].data as AgentNodeData).config as Record<string, unknown>
-    const judgeConfig = (saved.nodes[1].data as AgentNodeData).config as Record<string, unknown>
+    const routerConfig = (saved.nodes[0] as any).config as Record<string, unknown>
+    const judgeConfig = (saved.nodes[1] as any).config as Record<string, unknown>
 
     expect(Array.isArray(routerConfig.routes)).toBe(true)
     expect(routerConfig.routes).toEqual([

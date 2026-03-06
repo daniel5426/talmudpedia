@@ -1,5 +1,7 @@
 # GraphSpec v1 (Agent Builder)
 
+Last Updated: 2026-03-06
+
 ## Overview
 GraphSpec v1 is the canonical, runtime-agnostic graph format used by:
 - Agent Builder (frontend)
@@ -30,6 +32,8 @@ Optional:
 - `input_mappings`: `{ [field: string]: string }`
 
 Notes:
+- `config` is the only persisted runtime configuration source of truth.
+- `data` is UI metadata only; persisted graphs must not store functional node configuration in `data.config`.
 - `input_mappings` is used for artifact nodes to map inputs to state/upstream output.
 
 ## Edge Schema (v1)

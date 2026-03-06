@@ -1,6 +1,6 @@
 # Test State: Agent Builder v2 (Orchestration + Runtime Overlay)
 
-Last Updated: 2026-02-10
+Last Updated: 2026-03-06
 
 **Scope**
 GraphSpec v2 frontend compatibility for orchestration node rendering, save-version guardrails, execute-mode runtime overlay reduction, and run-tree reconciliation behavior.
@@ -14,6 +14,7 @@ GraphSpec v2 frontend compatibility for orchestration node rendering, save-versi
 
 **Scenarios Covered**
 - GraphSpec save keeps/forces `spec_version` correctly for v1/v2 graphs
+- GraphSpec v2 save writes canonical top-level `node.config` for orchestration nodes and does not persist `data.config`
 - Orchestration node renderer registration and branch-handle rendering for `join`/`router`/`judge`/`replan`
 - Runtime overlay reducers for spawn/lifecycle/join/cancel/policy events
 - Run-tree reconciliation correcting stream-only divergence and preserving terminal status authority
@@ -23,9 +24,9 @@ GraphSpec v2 frontend compatibility for orchestration node rendering, save-versi
 - Save-time orchestration config normalization (idempotency defaults + route/outcome normalization)
 
 **Last Run**
-- Command: `npm test -- agent_builder_v2`
-- Date: 2026-02-10 16:55 EET
-- Result: Pass (5 suites, 12 tests)
+- Command: `npm test -- --runTestsByPath src/__tests__/agent_builder_v2/graphspec_v2_serialization.test.ts`
+- Date: 2026-03-06
+- Result: Pass (1 suite, 5 tests)
 
 **Known Gaps / Follow-ups**
 - No full DOM integration test for live polling/reconciliation timing in `useAgentRuntimeGraph`
