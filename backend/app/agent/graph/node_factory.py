@@ -2,6 +2,8 @@ import logging
 from typing import Any, Dict, Optional
 from uuid import UUID
 
+from langchain_core.messages import AIMessage
+
 from app.agent.registry import AgentExecutorRegistry
 from app.agent.graph.ir import GraphIRNode
 
@@ -76,6 +78,23 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             return state_update
         except Exception as e:
             logger.error(f"Error executing node {node.id} ({node.type}): {e}")
-            raise e
+            if emitter:
+                emitter.emit_error(str(e), node.id)
+            state_payload = state.get("state", {}) if isinstance(state, dict) else {}
+            if not isinstance(state_payload, dict):
+                state_payload = {}
+            return {
+                "messages": [AIMessage(content=f"[{node.id}] execution error: {e}")],
+                "state": {
+                    **state_payload,
+                    "last_error": {
+                        "code": "NODE_EXECUTION_ERROR",
+                        "node_id": node.id,
+                        "node_type": node.type,
+                        "message": str(e),
+                    },
+                },
+                "error": str(e),
+            }
 
     return node_fn

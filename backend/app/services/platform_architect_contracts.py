@@ -296,6 +296,43 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "failure_codes": ["VALIDATION_ERROR"],
                 },
             },
+            "agents.nodes.catalog": {
+                "mutation": False,
+                "payload_schema": _payload_schema(properties={}, additional_properties=False),
+                "contract": {
+                    "summary": "List available agent node/operator types and their contracts.",
+                    "required_fields": [],
+                    "example_payload": {},
+                    "failure_codes": [],
+                },
+            },
+            "agents.nodes.schema": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={"node_types": {"type": "array", "items": {"type": "string"}, "minItems": 1}},
+                    required=["node_types"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Resolve schemas/contracts for multiple node types in one call.",
+                    "required_fields": ["node_types"],
+                    "example_payload": {"node_types": ["agent", "tool", "router"]},
+                    "failure_codes": ["VALIDATION_ERROR"],
+                },
+            },
+            "agents.nodes.validate": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={"agent_id": {"type": "string"}, "id": {"type": "string"}},
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Validate persisted agent graph by id with compiler and runtime reference checks.",
+                    "required_fields": ["agent_id|id"],
+                    "example_payload": {"agent_id": "agent-123"},
+                    "failure_codes": ["VALIDATION_ERROR", "NOT_FOUND"],
+                },
+            },
             "agents.execute": {
                 "mutation": True,
                 "payload_schema": _payload_schema(
@@ -549,6 +586,10 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
         "For agents.create specifically, graph_definition must include exactly one start node, at least one end node, "
         "and at least one control edge from start to a downstream node. "
+        "Before introducing unfamiliar node types, call agents.nodes.catalog first. "
+        "For any node set you plan to add/update, call agents.nodes.schema once with all node types in node_types[]. "
+        "After each draft graph mutation, call agents.nodes.validate on the target agent id and repair based on "
+        "returned structured errors/warnings. "
         "If a node you are creating/updating requires model_id (for example agent/llm/classify) and model_id is "
         "missing or rejected, call platform-assets with action models.list first, select a valid active chat-capable "
         "model id from the response, and retry the mutation. Do not ask the user for model_id unless models.list "

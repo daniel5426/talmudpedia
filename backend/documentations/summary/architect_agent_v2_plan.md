@@ -1,9 +1,40 @@
 # Architect Agent v2 — Full‑Control, Multi‑Agent Builder (API‑Only, Draft‑Only)
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-06
 
-> Status Note (2026-03-02): This is a V2 planning document (future state).
+> Status Note (2026-03-06): This is still a V2 planning document (future state).
 > Current implemented runtime is Architect V1.1 single-agent direct domain-tool loop (`platform-architect` + 4 domain tools, no `architect.run` runtime path), documented in `backend/documentations/platform_architect_current_architecture.md`.
+
+## Implementation Delta (Now Live in V1.1)
+The following capabilities from recent architect hardening are implemented and active:
+
+1. Node intelligence actions on `platform-agents`:
+- `agents.nodes.catalog`
+- `agents.nodes.schema` (bulk input only: `node_types[]`)
+- `agents.nodes.validate` (agent-id based persisted draft validation)
+
+2. Real graph validation in agent service:
+- `agents.validate` now performs real compiler validation on persisted draft graphs (no longer placeholder `valid=true` behavior).
+- Validation responses are structured for repair loops:
+  - `valid`
+  - `errors[]` with `code`, `message`, `severity`, `node_id`, `edge_id`, `path`, `expected`, `actual`, `suggestions`
+  - `warnings[]`
+- Validation also includes tenant-aware runtime reference checks (for example model/tool existence where required).
+
+3. Architect contracts and prompt behavior:
+- Runtime guidance now expects catalog/schema discovery before unfamiliar node usage.
+- Schema retrieval is performed in batch for planned node types.
+- Validation is expected after draft mutation and before next repair step.
+
+4. Scope and safety hardening:
+- Router scope propagation no longer auto-injects broad caller scopes into `requested_scopes` by default.
+- Delegated chains (`grant_id`) keep explicit propagation behavior.
+- Draft-first and tenant-required policies remain enforced.
+
+5. SDK error quality improvements:
+- Agent mutation failure surfaces now preserve structured backend validation details via:
+  - `details`
+  - `validation_errors`
 
 ## Summary
 Design and implement a multi‑agent “Architect” system that can introspect platform capabilities, create draft agents/workflows/tools/artifacts, and run multi‑case tests before returning a final report. The system is API‑only and uses service tokens for privileged internal calls. It upgrades the current linear Platform Architect into a multi‑agent orchestrator while keeping all mutations in draft status.

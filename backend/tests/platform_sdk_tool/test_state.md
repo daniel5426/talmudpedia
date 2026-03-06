@@ -1,6 +1,6 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-06
 
 Scope:
 - Platform SDK tool action dispatch and strict explicit-action behavior.
@@ -43,6 +43,10 @@ Key scenarios covered:
   - `rag.get_executable_input_schema`
   - `agents.create`
   - `agents.update`
+- Agent node-intelligence action parity now covered:
+  - `agents.nodes.catalog`
+  - `agents.nodes.schema`
+  - `agents.nodes.validate`
 - Parity-coverage guard asserts every currently dispatched canonical action has a corresponding parity test reference.
 - Cross-surface integration parity coverage now includes env-gated core mutation paths:
   - `artifacts.create_draft`
@@ -56,9 +60,9 @@ Key scenarios covered:
   - `agents.resume_run` (error-path parity on nonexistent run)
   These validate persisted-state equivalence across UI HTTP path, SDK path, and tool-action path.
 
-Last run command: `cd backend && pytest -q tests/platform_sdk_tool/test_platform_sdk_actions.py`
-Last run date/time: 2026-03-02 01:21:26 EET
-Last run result: pass (6 passed, 1 warning)
+Last run command: `pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
+Last run date/time: 2026-03-06 (local run during this change set)
+Last run result: pass (`65 passed`)
 
 Known gaps / follow-ups:
 - Promote env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.

@@ -240,6 +240,23 @@ def _patch_auth(monkeypatch):
             "options",
         ),
         ("agents.validate", {"agent_id": "ag1", "validation": {"strict": True}}, "agents", "validate", "ag1", None),
+        ("agents.nodes.catalog", {}, "agents", "list_nodes_catalog", None, None),
+        (
+            "agents.nodes.schema",
+            {"node_types": ["agent", "tool"]},
+            "agents",
+            "get_nodes_schema",
+            ["agent", "tool"],
+            None,
+        ),
+        (
+            "agents.nodes.validate",
+            {"agent_id": "ag1"},
+            "agents",
+            "validate_nodes",
+            "ag1",
+            None,
+        ),
         (
             "agents.resume_run",
             {"run_id": "run-1", "run": {"input": "resume"}},

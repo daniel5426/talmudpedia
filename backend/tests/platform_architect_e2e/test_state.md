@@ -1,6 +1,6 @@
 # Platform Architect E2E Tests State
 
-Last Updated: 2026-03-05
+Last Updated: 2026-03-06
 
 ## Scope of the feature
 Live end-to-end validation of the seeded `platform-architect` agent against the full domain action matrix, with API and DB-backed evidence checks.
@@ -26,7 +26,7 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Result: partial pass baseline after scope remediation (`9 passed, 35 failed, 1 warning`, ~5m03s). Scope/delegation run-start blocker is cleared; remaining failures are action-level (missing required payload fields, unsupported action/schema mismatches, and side-effect assertions).
 
 ## Known gaps or follow-ups
-- `agents.validate` endpoint currently returns placeholder-valid in service layer; this limits strict graph correctness assertions.
+- Add dedicated live E2E scenarios for `agents.nodes.catalog`, `agents.nodes.schema`, and `agents.nodes.validate` to verify architect preflight/repair loops in real tenant data.
 - Action attempt detection relies on run payload/tree textual evidence; schema-specific trace extraction can be tightened after observing live payloads.
 - Some governance outcomes depend on caller role/policy state and are asserted primarily via expected block-code presence.
 - Remaining failing scenarios are concentrated in strict side-effect checks plus schema/action mismatches (especially governance/workload actions) and missing action-specific prerequisites for read/query scenarios.

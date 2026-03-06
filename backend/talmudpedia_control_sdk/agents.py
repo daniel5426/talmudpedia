@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .types import RequestOptions, ResponseEnvelope
 
@@ -65,6 +65,15 @@ class AgentsAPI:
 
     def validate(self, agent_id: str, payload: Optional[Dict[str, Any]] = None) -> ResponseEnvelope:
         return self._client.request("POST", f"/agents/{agent_id}/validate", json_body=payload or {})
+
+    def list_nodes_catalog(self) -> ResponseEnvelope:
+        return self._client.request("GET", "/agents/nodes/catalog")
+
+    def get_nodes_schema(self, node_types: List[str]) -> ResponseEnvelope:
+        return self._client.request("POST", "/agents/nodes/schema", json_body={"node_types": list(node_types or [])})
+
+    def validate_nodes(self, agent_id: str) -> ResponseEnvelope:
+        return self._client.request("POST", f"/agents/{agent_id}/validate", json_body={})
 
     def publish(self, agent_id: str, options: Optional[RequestOptions] = None) -> ResponseEnvelope:
         return self._client.request(

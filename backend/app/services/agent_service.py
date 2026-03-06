@@ -4,17 +4,20 @@ from datetime import datetime, timezone
 from typing import Any, Optional, Tuple, List, Dict
 from uuid import UUID
 from dataclasses import dataclass, field
+from difflib import get_close_matches
 
-from sqlalchemy import select, func, and_, delete
+from sqlalchemy import select, func, and_, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 from pydantic import ValidationError as PydanticValidationError
 
 from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrace, AgentStatus, RunStatus
+from app.db.postgres.models.registry import ModelRegistry, ToolRegistry
 from app.services.usage_quota_service import QuotaExceededError
 from app.services.workload_provisioning_service import WorkloadProvisioningService
 from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.schema import AgentGraph
+from app.agent.registry import AgentOperatorRegistry
 # from ..agent.graph.compiler import AgentCompiler # Mocking compiler for now if not ready, or use it
 # from ..agent.graph.schema import AgentGraph
 
@@ -46,6 +49,14 @@ class ExecuteAgentData:
     input: Optional[str] = None
     messages: List[Dict[str, Any]] = field(default_factory=list)
     context: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class AgentValidationResult:
+    valid: bool
+    errors: List[Dict[str, Any]] = field(default_factory=list)
+    warnings: List[Dict[str, Any]] = field(default_factory=list)
+
 
 class AgentServiceError(Exception):
     """Base exception for AgentService."""
@@ -108,6 +119,160 @@ class AgentService:
                 }
             )
         return normalized
+
+    @staticmethod
+    def _normalize_node_type(node_type: Any) -> str:
+        mapping = {
+            "input": "start",
+            "start": "start",
+            "output": "end",
+            "end": "end",
+            "llm_call": "llm",
+            "llm": "llm",
+            "tool_call": "tool",
+            "rag_retrieval": "rag",
+        }
+        return mapping.get(str(node_type), str(node_type))
+
+    @staticmethod
+    def _build_rich_validation_issue(
+        *,
+        code: str,
+        message: str,
+        severity: str,
+        node_id: Optional[str] = None,
+        edge_id: Optional[str] = None,
+        path: Optional[str] = None,
+        expected: Any = None,
+        actual: Any = None,
+        suggestions: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "code": str(code),
+            "message": str(message),
+            "severity": str(severity),
+            "node_id": node_id,
+            "edge_id": edge_id,
+            "path": path,
+            "expected": expected,
+            "actual": actual,
+            "suggestions": suggestions if isinstance(suggestions, list) else None,
+        }
+
+    @staticmethod
+    def _derive_error_code(message: str) -> str:
+        lowered = str(message or "").lower()
+        if "exactly one start node" in lowered:
+            return "GRAPH_START_NODE_COUNT_INVALID"
+        if "at least one end node" in lowered:
+            return "GRAPH_END_NODE_MISSING"
+        if "unreachable from start node" in lowered:
+            return "GRAPH_UNREACHABLE_NODE"
+        if "unknown node type" in lowered:
+            return "UNKNOWN_NODE_TYPE"
+        if "config error" in lowered:
+            return "NODE_CONFIG_INVALID"
+        if "invalid branch handle" in lowered:
+            return "INVALID_BRANCH_HANDLE"
+        if "missing branch edges" in lowered:
+            return "MISSING_BRANCH_EDGES"
+        if "missing source_handle" in lowered:
+            return "MISSING_SOURCE_HANDLE"
+        if "duplicate branch handle" in lowered:
+            return "DUPLICATE_BRANCH_HANDLE"
+        if "graphspec v2 orchestration" in lowered:
+            return "GRAPHSPEC_V2_ORCHESTRATION_ERROR"
+        return "GRAPH_VALIDATION_ERROR"
+
+    async def _model_exists(self, model_ref: str) -> bool:
+        if not model_ref:
+            return False
+        clause = None
+        try:
+            clause = ModelRegistry.id == UUID(str(model_ref))
+        except Exception:
+            text_ref = str(model_ref)
+            clause = or_(ModelRegistry.slug == text_ref, ModelRegistry.name == text_ref)
+        res = await self.db.execute(
+            select(ModelRegistry.id).where(
+                clause,
+                ModelRegistry.is_active.is_(True),
+                or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id.is_(None)),
+            ).limit(1)
+        )
+        return res.scalar_one_or_none() is not None
+
+    async def _tool_exists(self, tool_ref: str) -> bool:
+        if not tool_ref:
+            return False
+        clause = None
+        try:
+            clause = ToolRegistry.id == UUID(str(tool_ref))
+        except Exception:
+            clause = ToolRegistry.slug == str(tool_ref)
+        res = await self.db.execute(
+            select(ToolRegistry.id).where(
+                clause,
+                ToolRegistry.is_active.is_(True),
+                or_(ToolRegistry.tenant_id == self.tenant_id, ToolRegistry.tenant_id.is_(None)),
+            ).limit(1)
+        )
+        return res.scalar_one_or_none() is not None
+
+    async def _collect_runtime_reference_issues(
+        self,
+        graph_definition: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        issues: List[Dict[str, Any]] = []
+        nodes = graph_definition.get("nodes") if isinstance(graph_definition, dict) else []
+        if not isinstance(nodes, list):
+            return issues
+
+        model_required_node_types = {"agent", "llm", "classify"}
+
+        for idx, node in enumerate(nodes):
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("id")) if node.get("id") is not None else None
+            node_type = self._normalize_node_type(node.get("type"))
+            config = node.get("config") if isinstance(node.get("config"), dict) else {}
+
+            if node_type in model_required_node_types:
+                model_ref = str(config.get("model_id") or "").strip()
+                if model_ref:
+                    exists = await self._model_exists(model_ref)
+                    if not exists:
+                        issues.append(
+                            self._build_rich_validation_issue(
+                                code="MODEL_NOT_FOUND",
+                                message=f"Referenced model '{model_ref}' was not found in tenant/global active models",
+                                severity="error",
+                                node_id=node_id,
+                                path=f"/nodes/{idx}/config/model_id",
+                                expected="Existing active model id/slug/name in tenant or global scope",
+                                actual=model_ref,
+                                suggestions=None,
+                            )
+                        )
+
+            if node_type == "tool":
+                tool_ref = str(config.get("tool_id") or "").strip()
+                if tool_ref:
+                    exists = await self._tool_exists(tool_ref)
+                    if not exists:
+                        issues.append(
+                            self._build_rich_validation_issue(
+                                code="TOOL_NOT_FOUND",
+                                message=f"Referenced tool '{tool_ref}' was not found in tenant/global active tools",
+                                severity="error",
+                                node_id=node_id,
+                                path=f"/nodes/{idx}/config/tool_id",
+                                expected="Existing active tool id/slug in tenant or global scope",
+                                actual=tool_ref,
+                                suggestions=None,
+                            )
+                        )
+        return issues
 
     async def _validate_graph_for_write(
         self,
@@ -321,14 +486,91 @@ class AgentService:
         await self.db.commit()
         return True
 
-    async def validate_agent(self, agent_id: UUID) -> Any:
-        """Validate agent graph."""
-        # placeholder for validation logic
-        class ValidationResult:
-            def __init__(self, valid, errors):
-                self.valid = valid
-                self.errors = errors
-        return ValidationResult(True, [])
+    async def validate_agent(self, agent_id: UUID) -> AgentValidationResult:
+        """Validate persisted agent graph using compiler + tenant resource checks."""
+        agent = await self.get_agent(agent_id)
+        graph_definition = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
+        if not isinstance(graph_definition, dict):
+            issue = self._build_rich_validation_issue(
+                code="INVALID_GRAPH_DEFINITION",
+                message="graph_definition must be an object",
+                severity="error",
+                expected="object",
+                actual=type(graph_definition).__name__,
+            )
+            return AgentValidationResult(valid=False, errors=[issue], warnings=[])
+
+        nodes = graph_definition.get("nodes") if isinstance(graph_definition.get("nodes"), list) else []
+        node_index_by_id: Dict[str, int] = {}
+        for idx, node in enumerate(nodes):
+            if isinstance(node, dict) and node.get("id") is not None:
+                node_index_by_id[str(node.get("id"))] = idx
+
+        from app.agent.executors.standard import register_standard_operators
+        register_standard_operators()
+        operator_types = [spec.type for spec in AgentOperatorRegistry.list_operators()]
+
+        issues: List[Dict[str, Any]] = []
+        try:
+            graph = AgentGraph(**graph_definition)
+        except PydanticValidationError as exc:
+            issues.append(
+                self._build_rich_validation_issue(
+                    code="INVALID_GRAPH_SCHEMA",
+                    message=f"Invalid graph schema: {exc}",
+                    severity="error",
+                    expected="AgentGraph schema compliant object",
+                    actual="schema_validation_failed",
+                )
+            )
+            return AgentValidationResult(valid=False, errors=issues, warnings=[])
+
+        compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
+        raw_errors = await compiler.validate(graph, agent_id=agent.id)
+        for raw in raw_errors:
+            payload = raw.model_dump() if hasattr(raw, "model_dump") else (dict(raw) if isinstance(raw, dict) else {"message": str(raw)})
+            node_id = str(payload.get("node_id")) if payload.get("node_id") is not None else None
+            message = str(payload.get("message") or "Graph validation failed")
+            severity = str(payload.get("severity") or "error")
+            code = self._derive_error_code(message)
+
+            path: Optional[str] = None
+            expected: Any = None
+            actual: Any = None
+            suggestions: Optional[List[str]] = None
+
+            if node_id is not None and node_id in node_index_by_id:
+                path = f"/nodes/{node_index_by_id[node_id]}"
+
+            if code == "UNKNOWN_NODE_TYPE" and node_id and node_id in node_index_by_id:
+                node_idx = node_index_by_id[node_id]
+                candidate = None
+                if 0 <= node_idx < len(nodes) and isinstance(nodes[node_idx], dict):
+                    candidate = str(nodes[node_idx].get("type") or "")
+                    path = f"/nodes/{node_idx}/type"
+                    actual = candidate
+                expected = "Registered node type"
+                suggestions = get_close_matches(candidate or "", operator_types, n=5, cutoff=0.35) or None
+
+            issues.append(
+                self._build_rich_validation_issue(
+                    code=code,
+                    message=message,
+                    severity=severity,
+                    node_id=node_id,
+                    edge_id=str(payload.get("edge_id")) if payload.get("edge_id") is not None else None,
+                    path=path,
+                    expected=expected,
+                    actual=actual,
+                    suggestions=suggestions,
+                )
+            )
+
+        issues.extend(await self._collect_runtime_reference_issues(graph_definition))
+
+        errors = [item for item in issues if str(item.get("severity") or "").lower() == "error"]
+        warnings = [item for item in issues if str(item.get("severity") or "").lower() != "error"]
+        return AgentValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings)
 
     async def publish_agent(self, agent_id: UUID, user_id: Optional[UUID] = None) -> Agent:
         """Publishes the current draft of an agent, creating a version snapshot."""

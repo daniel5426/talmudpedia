@@ -423,54 +423,67 @@ class AgentExecutorService:
             run.started_at = datetime.utcnow()
         await db.commit()
 
-        # 2. Compile Graph to GraphIR
-        compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
-        resolved_model_id = str(run.resolved_model_id) if run.resolved_model_id else None
-        if not resolved_model_id:
-            candidate = runtime_context.get("resolved_model_id")
-            if candidate:
-                resolved_model_id = str(candidate)
-        graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
-        graph_payload = self._apply_run_scoped_model_override(graph_payload, resolved_model_id)
-        graph_def = AgentGraph(**graph_payload)
-        compile_input_params = run_input_params
-        if resume_payload and isinstance(resume_payload, dict):
-            if "approval" in resume_payload:
-                compile_input_params = dict(run_input_params or {})
-                compile_input_params["approval"] = resume_payload.get("approval")
-        graph_ir = await compiler.compile(
-            agent.id,
-            agent.version,
-            graph_def,
-            config={"mode": mode.value},
-            input_params=compile_input_params,
-        )
+        try:
+            # 2. Compile Graph to GraphIR
+            compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
+            resolved_model_id = str(run.resolved_model_id) if run.resolved_model_id else None
+            if not resolved_model_id:
+                candidate = runtime_context.get("resolved_model_id")
+                if candidate:
+                    resolved_model_id = str(candidate)
+            graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
+            graph_payload = self._apply_run_scoped_model_override(graph_payload, resolved_model_id)
+            graph_def = AgentGraph(**graph_payload)
+            compile_input_params = run_input_params
+            if resume_payload and isinstance(resume_payload, dict):
+                if "approval" in resume_payload:
+                    compile_input_params = dict(run_input_params or {})
+                    compile_input_params["approval"] = resume_payload.get("approval")
+            graph_ir = await compiler.compile(
+                agent.id,
+                agent.version,
+                graph_def,
+                config={"mode": mode.value},
+                input_params=compile_input_params,
+            )
 
-        # 3. Create Runtime Adapter + Executable
-        adapter_cls = RuntimeAdapterRegistry.get_default()
-        adapter = adapter_cls(tenant_id=agent.tenant_id, db=db)
-        executable = await adapter.compile(graph_ir, checkpointer=self._checkpointer)
+            # 3. Create Runtime Adapter + Executable
+            adapter_cls = RuntimeAdapterRegistry.get_default()
+            adapter = adapter_cls(tenant_id=agent.tenant_id, db=db)
+            executable = await adapter.compile(graph_ir, checkpointer=self._checkpointer)
 
-        # 4. Prepare Config
-        config = {
-            "thread_id": str(run_id),
-            "run_id": str(run_id),
-            "mode": mode.value,
-            "resume_payload": resume_payload,
-            "grant_id": str(run.delegation_grant_id) if run.delegation_grant_id else None,
-            "principal_id": str(run.workload_principal_id) if run.workload_principal_id else None,
-            "initiator_user_id": str(run.initiator_user_id) if run.initiator_user_id else None,
-            "tenant_id": str(run.tenant_id) if run.tenant_id else None,
-            "user_id": str(run.user_id) if run.user_id else None,
-            "auth_token": runtime_context.get("token"),
-            "root_run_id": str(run.root_run_id) if run.root_run_id else None,
-            "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
-            "parent_node_id": run.parent_node_id,
-            "depth": int(run.depth or 0),
-            "spawn_key": run.spawn_key,
-            "orchestration_group_id": str(run.orchestration_group_id) if run.orchestration_group_id else None,
-            "orchestration_surface": runtime_context.get("orchestration_surface"),
-        }
+            # 4. Prepare Config
+            config = {
+                "thread_id": str(run_id),
+                "run_id": str(run_id),
+                "mode": mode.value,
+                "resume_payload": resume_payload,
+                "grant_id": str(run.delegation_grant_id) if run.delegation_grant_id else None,
+                "principal_id": str(run.workload_principal_id) if run.workload_principal_id else None,
+                "initiator_user_id": str(run.initiator_user_id) if run.initiator_user_id else None,
+                "tenant_id": str(run.tenant_id) if run.tenant_id else None,
+                "user_id": str(run.user_id) if run.user_id else None,
+                "auth_token": runtime_context.get("token"),
+                "root_run_id": str(run.root_run_id) if run.root_run_id else None,
+                "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+                "parent_node_id": run.parent_node_id,
+                "depth": int(run.depth or 0),
+                "spawn_key": run.spawn_key,
+                "orchestration_group_id": str(run.orchestration_group_id) if run.orchestration_group_id else None,
+                "orchestration_surface": runtime_context.get("orchestration_surface"),
+            }
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Execution setup failed for run {run_id}: {e}")
+            traceback.print_exc()
+            yield ExecutionEvent(
+                event="error",
+                data={"error": str(e)},
+                run_id=str(run_id),
+                visibility=EventVisibility.CLIENT_SAFE
+            )
+            await self._mark_run_failed(run_id, e, mode=mode)
+            return
 
         try:
             max_observed_usage_tokens = 0
@@ -579,37 +592,67 @@ class AgentExecutorService:
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE
             )
+            await self._mark_run_failed(run_id, e, mode=mode)
 
-            # Update error status in fresh session
-            try:
-                from app.db.postgres.engine import sessionmaker as get_session
-                async with get_session() as err_db:
-                    err_run = await err_db.get(AgentRun, run_id)
-                    if err_run:
-                        err_run.status = RunStatus.failed
-                        err_run.error_message = str(e)
-                        err_run.completed_at = datetime.utcnow()
-                        if err_run.usage_tokens is None:
-                            err_run.usage_tokens = 0
-                        quota_service = UsageQuotaService(err_db)
-                        await quota_service.settle_for_run(
-                            run_id=run_id,
-                            actual_usage_tokens=int(err_run.usage_tokens or 0),
-                        )
-                        if err_run.thread_id:
-                            thread_service = ThreadService(err_db)
-                            await thread_service.complete_turn(
-                                run_id=run_id,
-                                status=AgentThreadTurnStatus.failed,
-                                assistant_output_text=self._extract_assistant_output_text(
-                                    err_run.output_result if isinstance(err_run.output_result, dict) else None
-                                ),
-                                usage_tokens=int(err_run.usage_tokens or 0),
-                                metadata={"error": str(e)},
-                            )
-                        await err_db.commit()
-            except Exception as se:
-                logger.error(f"Failed to save error status for {run_id}: {se}")
+    async def _mark_run_failed(self, run_id: UUID, error: Exception, *, mode: ExecutionMode | None = None) -> None:
+        error_text = str(error)
+        assistant_error_text = f"Execution failed: {error_text}"
+        try:
+            from app.db.postgres.engine import sessionmaker as get_session
+            async with get_session() as err_db:
+                err_run = await err_db.get(AgentRun, run_id)
+                if not err_run:
+                    return
+
+                err_run.status = RunStatus.failed
+                err_run.error_message = error_text
+                err_run.completed_at = datetime.utcnow()
+                if err_run.usage_tokens is None:
+                    err_run.usage_tokens = 0
+
+                output_result: Dict[str, Any] = {}
+                if isinstance(err_run.output_result, dict):
+                    output_result = dict(err_run.output_result)
+                messages = output_result.get("messages")
+                if not isinstance(messages, list):
+                    messages = []
+                messages.append({"role": "assistant", "content": assistant_error_text})
+                output_result["messages"] = messages
+                output_result["error"] = error_text
+                err_run.output_result = output_result
+
+                quota_service = UsageQuotaService(err_db)
+                await quota_service.settle_for_run(
+                    run_id=run_id,
+                    actual_usage_tokens=int(err_run.usage_tokens or 0),
+                )
+
+                if err_run.thread_id:
+                    thread_service = ThreadService(err_db)
+                    input_text = None
+                    if isinstance(err_run.input_params, dict):
+                        raw_input = err_run.input_params.get("input")
+                        if isinstance(raw_input, str):
+                            input_text = raw_input
+                    start_meta: Dict[str, Any] = {"error": error_text}
+                    if mode is not None:
+                        start_meta["mode"] = mode.value
+                    await thread_service.start_turn(
+                        thread_id=err_run.thread_id,
+                        run_id=run_id,
+                        user_input_text=input_text,
+                        metadata=start_meta,
+                    )
+                    await thread_service.complete_turn(
+                        run_id=run_id,
+                        status=AgentThreadTurnStatus.failed,
+                        assistant_output_text=self._extract_assistant_output_text(err_run.output_result),
+                        usage_tokens=int(err_run.usage_tokens or 0),
+                        metadata={"error": error_text},
+                    )
+                await err_db.commit()
+        except Exception as se:
+            logger.error(f"Failed to save error status for {run_id}: {se}")
 
     def _schedule_trace_persistence(self, run_id: UUID, event: Dict[str, Any]):
         """

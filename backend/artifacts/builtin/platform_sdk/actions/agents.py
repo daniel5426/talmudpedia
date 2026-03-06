@@ -228,6 +228,63 @@ def validate(
         return None, [{"error": "validate_agent_failed", "detail": str(exc), "agent_id": agent_id}]
 
 
+def nodes_catalog(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    del payload
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.list_nodes_catalog()
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("agents_nodes_catalog_failed", exc)]
+    except Exception as exc:
+        return None, [{"error": "agents_nodes_catalog_failed", "detail": str(exc)}]
+
+
+def nodes_schema(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    node_types = payload.get("node_types")
+    if not isinstance(node_types, list) or not [str(item).strip() for item in node_types]:
+        return None, [{"error": "missing_fields", "fields": ["node_types"]}]
+
+    normalized_types = [str(item).strip() for item in node_types if str(item).strip()]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.get_nodes_schema(normalized_types)
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("agents_nodes_schema_failed", exc)]
+    except Exception as exc:
+        return None, [{"error": "agents_nodes_schema_failed", "detail": str(exc)}]
+
+
+def nodes_validate(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    agent_id = payload.get("agent_id") or payload.get("id")
+    if not agent_id:
+        return None, [{"error": "missing_fields", "fields": ["agent_id"]}]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.validate_nodes(str(agent_id))
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("agents_nodes_validate_failed", exc, agent_id=agent_id)]
+    except Exception as exc:
+        return None, [{"error": "agents_nodes_validate_failed", "detail": str(exc), "agent_id": agent_id}]
+
+
 def execute(
     client: Client,
     payload: Dict[str, Any],

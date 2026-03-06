@@ -55,6 +55,26 @@ def test_catalog_list_agent_operators_uses_agents_operators_route() -> None:
     assert call["url"].endswith("/agents/operators")
 
 
+def test_agents_nodes_routes_use_expected_paths() -> None:
+    session = _RecordingSession(_FakeResponse(payload={"ok": True}))
+    client = _client_with_session(session)
+
+    client.agents.list_nodes_catalog()
+    client.agents.get_nodes_schema(["agent", "tool"])
+    client.agents.validate_nodes("agent-1")
+
+    first = session.calls[0]
+    second = session.calls[1]
+    third = session.calls[2]
+    assert first["method"] == "GET"
+    assert first["url"].endswith("/agents/nodes/catalog")
+    assert second["method"] == "POST"
+    assert second["url"].endswith("/agents/nodes/schema")
+    assert second["json"]["node_types"] == ["agent", "tool"]
+    assert third["method"] == "POST"
+    assert third["url"].endswith("/agents/agent-1/validate")
+
+
 def test_rag_upload_input_file_serialization() -> None:
     session = _RecordingSession(_FakeResponse(payload={"path": "uploads/demo.txt"}))
     client = _client_with_session(session)

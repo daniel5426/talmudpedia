@@ -40,10 +40,15 @@ def test_platform_domain_schema_is_action_specific_one_of():
     by_action = {variant["properties"]["action"]["const"]: variant for variant in variants}
 
     assert "agents.create" in by_action
+    assert "agents.nodes.catalog" in by_action
+    assert "agents.nodes.schema" in by_action
+    assert "agents.nodes.validate" in by_action
     assert "agents.publish" in by_action
     assert "architect.run" not in by_action
     assert "x-action-contract" in by_action["agents.create"]
     assert "idempotency_key" in by_action["agents.create"]["required"]
     assert "request_metadata" in by_action["agents.create"]["required"]
     assert "tenant_id" in by_action["agents.create"]["required"]
+    assert "node_types" in by_action["agents.nodes.schema"]["properties"]["payload"]["required"]
+    assert "idempotency_key" not in by_action["agents.nodes.catalog"]["required"]
     assert "idempotency_key" not in by_action["agents.get"]["required"]

@@ -1,6 +1,6 @@
 # Platform Architect: General Overview and Gap Check (Chat-Based)
 
-Last Updated: 2026-03-05
+Last Updated: 2026-03-06
 
 ## Context
 This review uses:
@@ -8,6 +8,19 @@ This review uses:
 - `backend/documentations/summary/architect_agent_v2_plan.md`
 - A real user transcript where the architect repeatedly claimed graph fixes, but agent execution still failed with:
   - `Graph validation failed: Graph must have exactly one Start node (found 0); Graph must have at least one End node`
+
+## Status Update (2026-03-06)
+Recent architect hardening addressed core validation/discovery blind spots from this gap check:
+
+- Implemented `agents.nodes.catalog` for node-type discovery from registry-backed operators.
+- Implemented `agents.nodes.schema` as bulk-only schema introspection (`node_types[]`).
+- Implemented `agents.nodes.validate` (agent-id based) for compile-grade persisted graph validation.
+- Replaced prior placeholder `agents.validate` behavior with real compiler validation + tenant-aware runtime reference checks.
+- Standardized rich validation payloads (`errors[]`, `warnings[]`, nullable repair fields) for targeted repair loops.
+- Added scope-propagation hardening in run/stream to avoid broad default scope injection into `requested_scopes`.
+- Improved SDK mutation error surfacing (`details`, `validation_errors`) for better self-repair guidance.
+
+This means G8 is resolved, and G2/G4 have materially improved due to real post-mutation validation signals.
 
 ## Current Platform Architect State (What Exists Now)
 - Active runtime is Architect V1.1 single-agent loop (not V2 orchestrator).
@@ -48,6 +61,9 @@ This review uses:
     - at least one `end`,
     - connectivity from `start` to each `end`.
   - Fail the step if invariants fail; do not emit success language.
+- 2026-03-06 status:
+  - Improved: compile-grade validation tooling now exists and is exposed to architect (`agents.nodes.validate` + real `agents.validate`).
+  - Still recommended: enforce this as a strict mandatory runtime gate policy (not only prompt-level guidance).
 
 ### G3. Ambiguous Repair Loop Exit Criteria
 - Symptom: repetitive “fixed” claims with no real state convergence.
@@ -66,6 +82,9 @@ This review uses:
     1) `agents.get` graph state,
     2) `agents.validate` result,
     3) then mutation response metadata.
+- 2026-03-06 status:
+  - Improved: `agents.validate` is now real compiler output and suitable as truth-source input.
+  - Still recommended: explicitly codify precedence in runtime policy/executor checks.
 
 ### G5. Missing Agent Graph Patch Helper (Ergonomics)
 - Symptom: high friction to safely patch graph nodes/edges; easier to accidentally call unrelated actions.
@@ -101,11 +120,12 @@ This review uses:
 - Symptom: tool-driven validation cannot be relied on to catch invalid graph shape.
 - Impact: architect loop lacks trustworthy validation signal and can report false success.
 - Confirmed evidence:
-  - `AgentService.validate_agent` currently returns `valid=True` with placeholder implementation.
-    - `backend/app/services/agent_service.py`
+  - Prior state (2026-03-05): `AgentService.validate_agent` returned placeholder `valid=True`.
 - Fix direction:
   - Implement real graph validation with explicit invariant error codes.
   - Use this as mandatory post-mutation gate for architect flows.
+- 2026-03-06 status:
+  - Resolved: `AgentService.validate_agent` now performs real compile validation and returns structured error/warning payloads.
 
 ### G9. Missing First-Class Graph Update Action in Domain Tool Surface (Confirmed)
 - Symptom: platform SDK exposes `agents.create/update`, but not explicit graph-only update action.
@@ -119,15 +139,14 @@ This review uses:
   - Add `agents.update_graph` action wrapper and include in architect contracts/examples as preferred repair primitive.
 
 ## Immediate Priority Order
-1. P0: G2 mandatory read-after-write validation gate.
+1. P0: G2 enforce mandatory read-after-write validation gate in runtime policy.
 2. P0: G1 target-kind lock to prevent agent/pipeline cross-mutation drift.
 3. P0: G7 contract-enforcement alignment (block/create-valid graph only).
-4. P0: G8 real graph validation implementation.
-5. P1: G9 expose graph-specific action (`agents.update_graph`) for reliable repair.
-6. P1: G3 deterministic repair-loop termination.
-7. P1: G6 verified-success-only messaging policy.
-8. P2: G5 graph patch helper action(s).
-9. P2: G4 explicit truth-source precedence in runtime prompt + executor logic.
+4. P1: G9 expose graph-specific action (`agents.update_graph`) for reliable repair.
+5. P1: G3 deterministic repair-loop termination.
+6. P1: G6 verified-success-only messaging policy.
+7. P2: G5 graph patch helper action(s).
+8. P2: G4 codify truth-source precedence in executor logic.
 
 ## Suggested Acceptance Checks
 - Scenario A: User says “fix this agent graph” with explicit `agent_id`.

@@ -37,6 +37,33 @@ def _invalid_graph_missing_end() -> dict:
     }
 
 
+def _graph_with_missing_runtime_refs() -> dict:
+    return {
+        "spec_version": "1.0",
+        "nodes": [
+            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+            {
+                "id": "assistant",
+                "type": "agent",
+                "position": {"x": 150, "y": 0},
+                "config": {"model_id": "missing-chat-model", "instructions": "help"},
+            },
+            {
+                "id": "tool_call",
+                "type": "tool",
+                "position": {"x": 300, "y": 0},
+                "config": {"tool_id": "missing-tool"},
+            },
+            {"id": "end", "type": "end", "position": {"x": 450, "y": 0}, "config": {"output_message": "done"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "assistant", "type": "control"},
+            {"id": "e2", "source": "assistant", "target": "tool_call", "type": "control"},
+            {"id": "e3", "source": "tool_call", "target": "end", "type": "control"},
+        ],
+    }
+
+
 async def _seed_tenant_admin(db_session):
     suffix = uuid4().hex[:8]
     tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
@@ -220,3 +247,87 @@ async def test_update_graph_endpoint_invalid_graph_returns_validation_error(clie
     detail = response.json()["detail"]
     assert detail["code"] == "VALIDATION_ERROR"
     assert any("at least one End node" in entry["message"] for entry in detail["errors"])
+
+
+@pytest.mark.asyncio
+async def test_service_validate_agent_reports_runtime_reference_errors(db_session):
+    tenant, user = await _seed_tenant_admin(db_session)
+    service = AgentService(db=db_session, tenant_id=tenant.id)
+    agent = await service.create_agent(
+        CreateAgentData(
+            name="Runtime Ref Validation",
+            slug=f"runtime-ref-validation-{uuid4().hex[:8]}",
+            graph_definition=_graph_with_missing_runtime_refs(),
+        ),
+        user_id=user.id,
+    )
+
+    result = await service.validate_agent(agent.id)
+
+    assert result.valid is False
+    codes = {entry["code"] for entry in result.errors}
+    assert "MODEL_NOT_FOUND" in codes
+    assert "TOOL_NOT_FOUND" in codes
+
+
+@pytest.mark.asyncio
+async def test_validate_endpoint_returns_structured_errors_and_warnings(client, db_session):
+    tenant, user = await _seed_tenant_admin(db_session)
+    service = AgentService(db=db_session, tenant_id=tenant.id)
+    agent = await service.create_agent(
+        CreateAgentData(
+            name="Validate Endpoint Shape",
+            slug=f"validate-endpoint-shape-{uuid4().hex[:8]}",
+            graph_definition=_graph_with_missing_runtime_refs(),
+        ),
+        user_id=user.id,
+    )
+
+    response = await client.post(
+        f"/agents/{agent.id}/validate",
+        headers=_headers(user, tenant),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is False
+    assert isinstance(payload.get("errors"), list)
+    assert isinstance(payload.get("warnings"), list)
+    assert any("code" in item for item in payload["errors"])
+    assert any("path" in item for item in payload["errors"])
+
+
+@pytest.mark.asyncio
+async def test_nodes_catalog_and_schema_endpoints(client, db_session):
+    tenant, user = await _seed_tenant_admin(db_session)
+    headers = _headers(user, tenant)
+
+    catalog_response = await client.get("/agents/nodes/catalog", headers=headers)
+    assert catalog_response.status_code == 200
+    catalog_payload = catalog_response.json()
+    nodes = catalog_payload.get("nodes") or []
+    assert isinstance(nodes, list)
+    assert any(item.get("type") == "agent" for item in nodes)
+
+    schema_response = await client.post(
+        "/agents/nodes/schema",
+        json={"node_types": ["agent", "tool", "unknown_custom_node"]},
+        headers=headers,
+    )
+    assert schema_response.status_code == 200
+    schema_payload = schema_response.json()
+    assert "agent" in schema_payload.get("schemas", {})
+    assert "tool" in schema_payload.get("schemas", {})
+    assert "unknown_custom_node" in schema_payload.get("unknown", [])
+
+
+@pytest.mark.asyncio
+async def test_nodes_schema_requires_non_empty_node_types(client, db_session):
+    tenant, user = await _seed_tenant_admin(db_session)
+
+    response = await client.post(
+        "/agents/nodes/schema",
+        json={"node_types": []},
+        headers=_headers(user, tenant),
+    )
+    assert response.status_code == 422

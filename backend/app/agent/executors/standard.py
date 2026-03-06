@@ -36,6 +36,49 @@ def _resolve_quota_max_output_tokens(state: Dict[str, Any]) -> Optional[int]:
         return None
     return None
 
+
+def _build_recoverable_error_update(
+    *,
+    state: Dict[str, Any],
+    error: Exception,
+    node_id: str,
+    node_name: str,
+    existing_messages: Optional[List[BaseMessage]] = None,
+    last_agent_output: Any = None,
+    tool_outputs: Optional[List[Any]] = None,
+    last_context: Any = None,
+) -> Dict[str, Any]:
+    error_text = str(error)
+    rendered = f"[{node_name}] runtime error: {error_text}"
+    merged_messages = list(existing_messages or [])
+    merged_messages.append(AIMessage(content=rendered))
+
+    state_payload = state.get("state", {}) if isinstance(state, dict) else {}
+    if not isinstance(state_payload, dict):
+        state_payload = {}
+
+    next_state = {
+        **state_payload,
+        "last_agent_output": last_agent_output if last_agent_output is not None else rendered,
+        "last_error": {
+            "code": "NODE_RUNTIME_ERROR",
+            "node_id": node_id,
+            "node_name": node_name,
+            "message": error_text,
+        },
+    }
+
+    update: Dict[str, Any] = {
+        "messages": merged_messages,
+        "state": next_state,
+        "error": error_text,
+    }
+    if tool_outputs is not None:
+        update["tool_outputs"] = tool_outputs
+    if last_context is not None:
+        update["context"] = last_context
+    return update
+
 # =============================================================================
 # Control Flow Executors
 # =============================================================================
@@ -249,7 +292,12 @@ class LLMNodeExecutor(BaseNodeExecutor):
             logger.error(f"LLM execution failed: {e}")
             if emitter:
                 emitter.emit_error(str(e), node_id)
-            raise e
+            return _build_recoverable_error_update(
+                state=state,
+                error=e,
+                node_id=node_id,
+                node_name=node_name,
+            )
     
     def _format_messages(self, messages: List[Any]) -> List[BaseMessage]:
         """Convert messages to LangChain format."""
@@ -1460,7 +1508,16 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             logger.error(f"Agent execution failed: {e}")
             if emitter:
                 emitter.emit_error(str(e), node_id)
-            raise e
+            return _build_recoverable_error_update(
+                state=state,
+                error=e,
+                node_id=node_id,
+                node_name=node_name,
+                existing_messages=locals().get("emitted_messages", []),
+                last_agent_output=locals().get("last_agent_output"),
+                tool_outputs=locals().get("tool_outputs"),
+                last_context=locals().get("last_context"),
+            )
     
     def _format_messages(self, messages: List[Any]) -> List[BaseMessage]:
         """Convert messages to LangChain format."""

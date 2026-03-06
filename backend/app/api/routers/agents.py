@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import logging
 import os
+from pydantic import BaseModel, Field
 
 from app.db.postgres.session import get_db
 from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
@@ -51,6 +52,10 @@ from typing import Optional
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+class NodeSchemaRequest(BaseModel):
+    node_types: list[str] = Field(default_factory=list)
 
 
 def _stream_v2_enforced() -> bool:
@@ -198,6 +203,74 @@ async def list_operators(
     
     operators = AgentOperatorRegistry.list_operators()
     return [op.model_dump() for op in operators]
+
+
+@router.get("/nodes/catalog")
+async def list_node_catalog(
+    _: Dict[str, Any] = Depends(require_scopes("agents.read")),
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    del context, db
+    from app.agent.registry import AgentOperatorRegistry
+    from app.agent.executors.standard import register_standard_operators
+
+    register_standard_operators()
+    operators = AgentOperatorRegistry.list_operators()
+    catalog = []
+    for spec in operators:
+        config_schema = spec.config_schema if isinstance(spec.config_schema, dict) else {}
+        required_fields = config_schema.get("required") if isinstance(config_schema.get("required"), list) else []
+        catalog.append(
+            {
+                "type": spec.type,
+                "name": spec.display_name,
+                "description": spec.description,
+                "reads": list(spec.reads or []),
+                "writes": list(spec.writes or []),
+                "config_schema": config_schema,
+                "ui_schema": spec.ui if isinstance(spec.ui, dict) else {},
+                "required_fields": [str(item) for item in required_fields],
+            }
+        )
+    return {"nodes": catalog}
+
+
+@router.post("/nodes/schema")
+async def get_node_schemas(
+    request: NodeSchemaRequest,
+    _: Dict[str, Any] = Depends(require_scopes("agents.read")),
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    del context, db
+    node_types = [str(item).strip() for item in (request.node_types or []) if str(item).strip()]
+    if not node_types:
+        raise HTTPException(status_code=422, detail="node_types must be a non-empty array")
+
+    from app.agent.registry import AgentOperatorRegistry
+    from app.agent.executors.standard import register_standard_operators
+
+    register_standard_operators()
+    schemas: Dict[str, Dict[str, Any]] = {}
+    unknown: list[str] = []
+
+    for node_type in node_types:
+        spec = AgentOperatorRegistry.get(node_type)
+        if spec is None:
+            unknown.append(node_type)
+            continue
+        config_schema = spec.config_schema if isinstance(spec.config_schema, dict) else {}
+        required_fields = config_schema.get("required") if isinstance(config_schema.get("required"), list) else []
+        schemas[node_type] = {
+            "config_schema": config_schema,
+            "ui_schema": spec.ui if isinstance(spec.ui, dict) else {},
+            "required_fields": [str(item) for item in required_fields],
+            "reads": list(spec.reads or []),
+            "writes": list(spec.writes or []),
+        }
+
+    return {"schemas": schemas, "unknown": unknown}
 
 
 # =============================================================================
@@ -351,7 +424,7 @@ async def delete_agent(
 @router.post("/{agent_id}/validate")
 async def validate_agent(
     agent_id: UUID,
-    _: Dict[str, Any] = Depends(require_scopes("agents.run_tests")),
+    _: Dict[str, Any] = Depends(require_scopes("agents.write")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -361,7 +434,7 @@ async def validate_agent(
     
     try:
         result = await service.validate_agent(agent_id)
-        return {"valid": result.valid, "errors": result.errors}
+        return {"valid": result.valid, "errors": result.errors, "warnings": result.warnings}
     except AgentServiceError as e:
         handle_service_error(e)
 

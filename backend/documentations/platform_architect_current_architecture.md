@@ -1,6 +1,6 @@
 # Platform Architect Current Architecture
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-06
 
 ## Scope
 This document describes the current Platform Architect runtime after the V1.1 hard cut to direct multi-tool execution.
@@ -47,6 +47,11 @@ The architect node prompt now enforces a direct loop:
 Execution is dynamic via canonical domain actions in the Platform SDK handler.
 There is no architect-meta runtime path.
 
+Node intelligence actions are now part of the `platform-agents` surface:
+- `agents.nodes.catalog`
+- `agents.nodes.schema` (bulk `node_types[]`)
+- `agents.nodes.validate` (agent-id based persisted draft validation)
+
 Primary source:
 - `backend/artifacts/builtin/platform_sdk/handler.py`
 
@@ -68,6 +73,9 @@ Cross-domain action use via the wrong tool returns `SCOPE_DENIED`.
   - `result.status = blocked_approval`
   - error code `SENSITIVE_ACTION_APPROVAL_REQUIRED`
   - actionable `next_actions`.
+- Run/stream scope propagation was hardened:
+  - router no longer auto-injects broad caller scopes into `requested_scopes` by default.
+  - delegated chains (`grant_id` present) still propagate requested scopes explicitly.
 
 ## Output Contract
 Domain tool output envelope is standardized:
@@ -89,6 +97,17 @@ Architect run report contract (returned by the seeded architect node) remains ma
 - validation evidence
 - observability (`trace_id`, `tool_calls`, `decision_events`)
 - `failures`, `next_actions`
+
+`agents.nodes.validate` and `agents.validate` now return structured validation payloads:
+- `valid`
+- `errors[]` with rich fields (`code`, `message`, `severity`, `node_id`, `edge_id`, `path`, `expected`, `actual`, `suggestions`)
+- `warnings[]`
+
+Validation combines compiler checks and tenant-aware runtime references (for example model/tool existence).
+
+SDK error surfaces for agent mutations now preserve structured backend validation details:
+- `details` (raw structured payload when available)
+- `validation_errors` (normalized list extracted from backend `detail.errors`)
 
 ## Legacy Removal Status
 Removed from active path:
