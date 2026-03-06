@@ -67,12 +67,20 @@ class EventEmitter:
             metadata=self._metadata()
         ))
     
-    def emit_tool_start(self, tool_name: str, input_data: Any = None, node_id: Optional[str] = None) -> None:
+    def emit_tool_start(
+        self,
+        tool_name: str,
+        input_data: Any = None,
+        node_id: Optional[str] = None,
+        tool_metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
         """Emit a tool start event."""
         data = {"input": input_data} if input_data else {}
         # Lift message to top level if present in input (for UI display)
         if isinstance(input_data, dict) and "message" in input_data:
             data["message"] = input_data["message"]
+        if isinstance(tool_metadata, dict):
+            data.update(tool_metadata)
 
         self._emit(ExecutionEvent(
             event="on_tool_start",
@@ -84,11 +92,20 @@ class EventEmitter:
             metadata=self._metadata()
         ))
 
-    def emit_tool_end(self, tool_name: str, output_data: Any = None, node_id: Optional[str] = None) -> None:
+    def emit_tool_end(
+        self,
+        tool_name: str,
+        output_data: Any = None,
+        node_id: Optional[str] = None,
+        tool_metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
         """Emit a tool end event."""
+        data = {"output": output_data} if output_data else {}
+        if isinstance(tool_metadata, dict):
+            data.update(tool_metadata)
         self._emit(ExecutionEvent(
             event="on_tool_end",
-            data={"output": output_data} if output_data else {},
+            data=data,
             run_id=self._run_id,
             span_id=node_id,
             name=tool_name,

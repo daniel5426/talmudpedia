@@ -3,10 +3,17 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { nanoid } from "nanoid";
-import { SearchIcon, DotIcon } from "lucide-react";
 import { agentService } from "@/services";
 import type { AgentExecutionEvent, AgentRunStatus } from "@/services";
-import { ChatController, ChatMessage, Citation, mergeReasoningSteps } from "@/components/layout/useChatController";
+import { ChatController, ChatMessage, Citation } from "@/components/layout/useChatController";
+import type { ChatRenderBlock } from "@/services/chat-presentation";
+import {
+  adaptRunStreamEvent,
+  applyRunStreamEventToBlocks,
+  extractStructuredAssistantText,
+  finalizeAssistantRenderBlocks,
+  sortChatRenderBlocks,
+} from "@/services/chat-presentation";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { AgentChatHistoryItem, useAgentThreadHistory } from "./useAgentThreadHistory";
 
@@ -20,131 +27,14 @@ export interface ExecutionStep {
   timestamp: Date;
 }
 
-const extractJsonFromContent = (content: string) => {
-  const trimmed = content.trim();
-  if (!trimmed) return null;
-
-  if (trimmed.startsWith("```")) {
-    const match = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-  }
-
-  return trimmed;
-};
-
 const resolveArchitectResponse = (content: string) => {
-  const candidate = extractJsonFromContent(content);
-  if (!candidate) return content;
-
-  try {
-    const parsed = JSON.parse(candidate);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      parsed.action === "respond" &&
-      typeof parsed.message === "string" &&
-      parsed.message.trim().length > 0
-    ) {
-      return parsed.message.trim();
-    }
-  } catch {
-    // ignore JSON parse failures
-  }
-
-  return content;
-};
-
-const adaptStreamEvent = (event: any): any => {
-  if (!event || event.version !== "run-stream.v2") return event;
-
-  const payload = (event.payload && typeof event.payload === "object") ? event.payload : {};
-  const eventName = String(event.event || "");
-
-  if (eventName === "assistant.delta") {
-    return { event: "token", run_id: event.run_id, data: { content: payload.content } };
-  }
-  if (eventName === "run.accepted") {
-    return {
-      event: "run_status",
-      run_id: event.run_id,
-      data: { status: payload.status || "running", thread_id: payload.thread_id },
-    };
-  }
-  if (eventName === "run.completed") {
-    return { event: "run_status", run_id: event.run_id, data: { status: "completed" } };
-  }
-  if (eventName === "run.paused") {
-    return {
-      event: "run_status",
-      run_id: event.run_id,
-      data: { status: "paused", next: payload.next, next_nodes: payload.next_nodes },
-    };
-  }
-  if (eventName === "run.cancelled") {
-    return { event: "run_status", run_id: event.run_id, data: { status: "cancelled" } };
-  }
-  if (eventName === "run.failed") {
-    return {
-      event: "error",
-      run_id: event.run_id,
-      data: { error: payload.error || event.diagnostics?.[0]?.message || "Agent error" },
-    };
-  }
-  if (eventName === "tool.started") {
-    return {
-      event: "on_tool_start",
-      run_id: event.run_id,
-      span_id: payload.span_id,
-      name: payload.tool,
-      data: { input: payload.input, message: payload.message },
-    };
-  }
-  if (eventName === "tool.completed") {
-    return {
-      event: "on_tool_end",
-      run_id: event.run_id,
-      span_id: payload.span_id,
-      name: payload.tool,
-      data: { output: payload.output },
-    };
-  }
-  if (eventName === "tool.failed") {
-    return {
-      event: "error",
-      run_id: event.run_id,
-      span_id: payload.span_id,
-      data: { error: payload.error || "Tool failed" },
-    };
-  }
-  if (eventName === "reasoning.update") {
-    return { type: "reasoning", run_id: event.run_id, data: payload };
-  }
-  if (eventName.startsWith("orchestration.")) {
-    return {
-      event: eventName,
-      run_id: event.run_id,
-      span_id: payload.span_id,
-      name: payload.name,
-      data: payload.data || payload,
-      metadata: payload.metadata,
-    };
-  }
-
-  return {
-    event: eventName || "event",
-    run_id: event.run_id,
-    span_id: payload.span_id,
-    name: payload.name,
-    data: payload.data || payload,
-    metadata: payload.metadata,
-  };
+  return extractStructuredAssistantText(content) || content;
 };
 
 export function useAgentRunController(agentId: string | undefined): ChatController & {
   executionSteps: ExecutionStep[];
   executionEvents: AgentExecutionEvent[];
+  currentResponseBlocks: ChatRenderBlock[];
   currentRunId: string | null;
   currentRunStatus: AgentRunStatus["status"] | null;
   isPaused: boolean;
@@ -158,6 +48,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [currentReasoning, setCurrentReasoning] = useState<ChatMessage["reasoningSteps"]>([]);
+  const [currentResponseBlocks, setCurrentResponseBlocks] = useState<ChatRenderBlock[]>([]);
   const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([]);
   const [liked, setLiked] = useState<Record<string, boolean>>({});
   const [disliked, setDisliked] = useState<Record<string, boolean>>({});
@@ -177,6 +68,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   // Use refs to capture current state for final message (avoids stale closure bug)
   const reasoningRef = useRef<ChatMessage["reasoningSteps"]>([]);
   const lastReasoningRef = useRef<ChatMessage["reasoningSteps"]>([]);
+  const responseBlocksRef = useRef<ChatRenderBlock[]>([]);
   const thinkingDurationRef = useRef<number | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
   const streamingContentRef = useRef<string>("");
@@ -213,6 +105,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setIsLoading(false);
     setStreamingContent("");
     setCurrentReasoning([]);
+    setCurrentResponseBlocks([]);
     setExecutionSteps([]);
     setLastThinkingDurationMs(null);
     setActiveStreamingId(null);
@@ -224,6 +117,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setExecutionEvents([]);
     reasoningRef.current = [];
     lastReasoningRef.current = [];
+    responseBlocksRef.current = [];
     thinkingDurationRef.current = null;
     currentThreadIdRef.current = null;
     if (abortControllerRef.current) {
@@ -262,14 +156,16 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
         (lastReasoningRef.current && lastReasoningRef.current.length > 0)
           ? lastReasoningRef.current
           : reasoningRef.current;
+      const responseBlocks = responseBlocksRef.current;
 
-      if (!trimmedContent && (!reasoning || reasoning.length === 0)) return;
+      if (!trimmedContent && (!reasoning || reasoning.length === 0) && responseBlocks.length === 0) return;
 
       const assistantMsg: ChatMessage = {
         id: streamingId,
         role: "assistant",
         content: trimmedContent,
         createdAt: new Date(),
+        responseBlocks: responseBlocks.length > 0 ? responseBlocks : undefined,
         reasoningSteps: reasoning && reasoning.length > 0 ? reasoning : undefined,
         thinkingDurationMs: thinkingDurationRef.current || undefined,
       };
@@ -294,6 +190,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setActiveStreamingId(null);
     setStreamingContent("");
     setCurrentReasoning([]);
+    setCurrentResponseBlocks([]);
     setIsLoading(false);
   }, [commitStreamingMessage]);
 
@@ -305,6 +202,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setIsLoading(false);
     setStreamingContent("");
     setCurrentReasoning([]);
+    setCurrentResponseBlocks([]);
     setExecutionSteps([]);
     setExecutionEvents([]);
     setLastThinkingDurationMs(null);
@@ -316,6 +214,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setPendingApproval(false);
     reasoningRef.current = [];
     lastReasoningRef.current = [];
+    responseBlocksRef.current = [];
     thinkingDurationRef.current = null;
     currentThreadIdRef.current = null;
   }, []);
@@ -366,6 +265,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setIsLoading(true);
     setStreamingContent("");
     setCurrentReasoning([]);
+    setCurrentResponseBlocks([]);
     setExecutionSteps([]);
     setExecutionEvents([]);
     setCurrentRunStatus("running");
@@ -373,6 +273,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     const newStreamingId = nanoid();
     setActiveStreamingId(newStreamingId);
     thinkingStartRef.current = Date.now();
+    responseBlocksRef.current = [];
 
     try {
       // New runs must include full prior conversation history; the backend will append request.input as the latest user turn.
@@ -401,6 +302,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       let buffer = "";
       let fullAiContent = "";
       let terminalError: string | null = null;
+      let streamEventIndex = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -418,55 +320,41 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
           if (dataStr === "[DONE]") break;
 
           try {
-            const event = adaptStreamEvent(JSON.parse(dataStr));
-            const eventName =
-              typeof event.event === "string"
-                ? event.event
-                : typeof event.type === "string"
-                ? event.type
-                : "";
-            if (eventName.startsWith("orchestration.") || eventName === "node_end") {
-              setExecutionEvents((prev) => [...prev, { ...(event as AgentExecutionEvent), received_at: Date.now() }]);
+            const rawEvent = JSON.parse(dataStr) as Record<string, unknown>;
+            const eventName = String(rawEvent.event || "");
+            const payload =
+              rawEvent.payload && typeof rawEvent.payload === "object"
+                ? (rawEvent.payload as Record<string, unknown>)
+                : {};
+            if (typeof rawEvent.run_id === "string" && rawEvent.run_id.trim().length > 0) {
+              setCurrentRunId(rawEvent.run_id);
             }
-            
-            if (event.type === "done") break;
-            if (event.type === "error" || event.event === "error") {
-              terminalError = event.error || event.data?.error || "Agent error";
+
+            if (eventName.startsWith("orchestration.") || eventName === "node_end") {
+              setExecutionEvents((prev) => [...prev, { ...(rawEvent as AgentExecutionEvent), received_at: Date.now() }]);
+            }
+
+            const nextBlocks = sortChatRenderBlocks(
+              applyRunStreamEventToBlocks(
+                responseBlocksRef.current,
+                adaptRunStreamEvent(rawEvent, streamEventIndex++),
+              ),
+            );
+            responseBlocksRef.current = nextBlocks;
+            setCurrentResponseBlocks(nextBlocks);
+
+            if (eventName === "run.failed") {
+              terminalError = String(payload.error || (Array.isArray(rawEvent.diagnostics) ? (rawEvent.diagnostics[0] as Record<string, unknown> | undefined)?.message : "") || "Agent error");
               setCurrentRunStatus("failed");
               break;
             }
 
-            // Handle unified reasoning events (Phase 3)
-            if (event.type === "reasoning") {
-              const stepData = event.data;
-              const step = {
-                id: stepData.step_id || nanoid(),
-                label: stepData.step,
-                status: stepData.status,
-                icon: stepData.step.toLowerCase().includes("retrieval") ? SearchIcon : DotIcon,
-                description: stepData.message,
-                citations: stepData.citations,
-                query: stepData.query,
-                sources: stepData.sources,
-              };
-              
-              setCurrentReasoning(prev => {
-                const merged = mergeReasoningSteps([...(prev || []), step]);
-                reasoningRef.current = merged;
-                lastReasoningRef.current = merged;
-                return merged;
-              });
-              continue; 
-            }
+            if (eventName === "assistant.delta") {
+              const content = String(payload.content || "");
+              if (content) {
+                fullAiContent += content;
+                flushSync(() => setStreamingContent(fullAiContent));
 
-            // Handle LangGraph Events
-            if (event.event === "on_chat_model_stream") {
-              // Legacy path (callback-based tokens)
-              const content = event.data?.chunk?.content;
-              if (content) {
-                fullAiContent += content;
-                flushSync(() => setStreamingContent(fullAiContent));
-                
                 if (thinkingStartRef.current) {
                   const duration = Date.now() - thinkingStartRef.current;
                   thinkingDurationRef.current = duration;
@@ -474,36 +362,29 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
                   thinkingStartRef.current = null;
                 }
               }
-            } else if (event.event === "token") {
-              // New explicit token event
-              const content = event.data?.content;
-              if (content) {
-                fullAiContent += content;
-                flushSync(() => setStreamingContent(fullAiContent));
-                
-                if (thinkingStartRef.current) {
-                  const duration = Date.now() - thinkingStartRef.current;
-                  thinkingDurationRef.current = duration;
-                  setLastThinkingDurationMs(duration);
-                  thinkingStartRef.current = null;
-                }
-              }
-            }
- else if (event.event === "run_id") {
-              setCurrentRunId(event.run_id);
-            } else if (event.event === "run_status") {
-              const status = event.data?.status;
-              const threadIdFromStatus = event.data?.thread_id;
+            } else if (
+              eventName === "run.accepted" ||
+              eventName === "run.completed" ||
+              eventName === "run.paused" ||
+              eventName === "run.cancelled"
+            ) {
+              const status =
+                eventName === "run.completed"
+                  ? "completed"
+                  : eventName === "run.paused"
+                    ? "paused"
+                    : eventName === "run.cancelled"
+                      ? "cancelled"
+                      : String(payload.status || "running");
+              const threadIdFromStatus = payload.thread_id;
               if (typeof threadIdFromStatus === "string" && threadIdFromStatus.trim().length > 0) {
                 setCurrentThreadId(threadIdFromStatus);
               }
-              if (typeof status === "string") {
-                setCurrentRunStatus(status as AgentRunStatus["status"]);
-              }
+              setCurrentRunStatus(status as AgentRunStatus["status"]);
               if (status === "paused") {
                 setIsPaused(true);
-                const nextNodes = Array.isArray(event.data?.next_nodes) ? event.data.next_nodes : [];
-                const next = event.data?.next;
+                const nextNodes = Array.isArray(payload.next_nodes) ? payload.next_nodes : [];
+                const next = payload.next;
                 const nextList = Array.isArray(next) ? next : [];
                 const nextTypes = nextNodes.map((node: any) => node?.type).filter(Boolean);
                 const hasApproval = nextTypes.includes("user_approval") || nextList.includes("user_approval");
@@ -512,42 +393,41 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
                 setIsPaused(false);
                 setPendingApproval(false);
               }
-            } else if (event.event === "on_tool_start") {
-              const stepId = event.span_id || event.run_id || nanoid();
+            } else if (eventName === "tool.started") {
+              const stepId = String(payload.span_id || rawEvent.run_id || nanoid());
               setExecutionSteps(prev => [...prev, {
                 id: stepId,
-                name: event.name || "Tool",
+                name: String(payload.display_name || payload.summary || payload.tool || "Tool"),
                 type: "tool",
                 status: "running",
-                input: event.data?.input,
+                input: payload.input,
                 timestamp: new Date(),
               }]);
-              // Reasoning update handled by 'reasoning' event now
-            } else if (event.event === "on_tool_end") {
-              const stepId = event.span_id || event.run_id;
+            } else if (eventName === "tool.completed") {
+              const stepId = String(payload.span_id || rawEvent.run_id || "");
               setExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
                 status: "completed",
-                output: event.data?.output,
+                output: payload.output,
               } : s));
-              // Reasoning update handled by 'reasoning' event now
-            } else if (event.event === "on_chain_start" || event.event === "node_start") {
-              // Node execution
-              const stepId = event.span_id || event.run_id || nanoid();
+            } else if (eventName === "node_start" || eventName === "on_chain_start") {
+              const data = rawEvent.data && typeof rawEvent.data === "object" ? rawEvent.data as Record<string, unknown> : {};
+              const stepId = String(rawEvent.span_id || rawEvent.run_id || nanoid());
               setExecutionSteps(prev => [...prev, {
                 id: stepId,
-                name: event.name || "Node",
+                name: String(rawEvent.name || "Node"),
                 type: "node",
                 status: "running",
-                input: event.data?.input,
+                input: data.input,
                 timestamp: new Date(),
               }]);
-            } else if (event.event === "on_chain_end" || event.event === "node_end") {
-              const stepId = event.span_id || event.run_id;
+            } else if (eventName === "node_end" || eventName === "on_chain_end") {
+              const data = rawEvent.data && typeof rawEvent.data === "object" ? rawEvent.data as Record<string, unknown> : {};
+              const stepId = String(rawEvent.span_id || rawEvent.run_id || "");
               setExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
                 status: "completed",
-                output: event.data?.output,
+                output: data.output,
               } : s));
             }
           } catch (e) {
@@ -562,8 +442,16 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
         fullAiContent = `Error: ${terminalError}`;
       }
       const resolvedContent = resolveArchitectResponse(fullAiContent);
+      const finalizedBlocks = sortChatRenderBlocks(
+        finalizeAssistantRenderBlocks(responseBlocksRef.current, resolvedContent, {
+          runId: currentRunId || newStreamingId,
+          fallbackSeq: streamEventIndex + 1,
+        }),
+      );
+      responseBlocksRef.current = finalizedBlocks;
       const hasAssistantPayload =
         (resolvedContent && resolvedContent.trim().length > 0) ||
+        finalizedBlocks.length > 0 ||
         (lastReasoningRef.current && lastReasoningRef.current.length > 0);
       if (hasAssistantPayload) {
         const assistantMsg: ChatMessage = {
@@ -571,6 +459,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
           role: "assistant",
           content: resolvedContent,
           createdAt: new Date(),
+          responseBlocks: finalizedBlocks.length > 0 ? finalizedBlocks : undefined,
           reasoningSteps: lastReasoningRef.current && lastReasoningRef.current.length > 0 ? lastReasoningRef.current : undefined,
           thinkingDurationMs: thinkingDurationRef.current || undefined,
         };
@@ -611,10 +500,12 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       }
       setStreamingContent("");
       setCurrentReasoning([]);
+      setCurrentResponseBlocks([]);
       setActiveStreamingId(null);
       setIsLoading(false);
       reasoningRef.current = [];
       lastReasoningRef.current = [];
+      responseBlocksRef.current = [];
       thinkingDurationRef.current = null;
     } catch (e) {
       console.error("Agent execution failed:", e);
@@ -663,6 +554,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     isLoadingHistory: false,
     streamingContent,
     currentReasoning,
+    currentResponseBlocks,
     executionSteps,
     executionEvents,
     liked,

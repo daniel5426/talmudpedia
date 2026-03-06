@@ -114,6 +114,16 @@ function isOrchestrationNodeType(nodeType: string): boolean {
     return ["spawn_run", "spawn_group", "join", "router", "judge", "replan", "cancel_subtree"].includes(nodeType)
 }
 
+function needsBuilderNormalization(node: Node): boolean {
+    const data = node.data as AgentNodeData | undefined
+    const hasCategory = Boolean(data?.category)
+    const hasBuilderConfig = Boolean(data?.config && typeof data.config === "object")
+    const hasCanonicalConfig = Boolean((node as unknown as { config?: unknown }).config && typeof (node as unknown as { config?: unknown }).config === "object")
+    if (!hasCategory) return true
+    if (hasCanonicalConfig && !hasBuilderConfig) return true
+    return false
+}
+
 function toStringList(value: unknown): string[] {
     if (!Array.isArray(value)) return []
     return value
@@ -215,12 +225,7 @@ function AgentBuilderInner({
     const normalizeNode = useCallback((node: Node) => normalizeBuilderNode(node), [])
 
     const normalizedInitialNodes = useMemo(() => {
-        return (initialNodes || []).map((node) => {
-            if (node.data && (node.data as AgentNodeData).category) {
-                return node as Node<AgentNodeData>
-            }
-            return normalizeNode(node)
-        })
+        return (initialNodes || []).map((node) => normalizeNode(node))
     }, [initialNodes, normalizeNode])
 
     const normalizedInitialEdges = useMemo(() => normalizeBuilderEdges(initialEdges || []), [initialEdges])
@@ -235,7 +240,7 @@ function AgentBuilderInner({
         setNodes((nds) => {
             let changed = false
             const normalized = nds.map((node) => {
-                if (node.data && (node.data as AgentNodeData).category) {
+                if (!needsBuilderNormalization(node)) {
                     return node
                 }
                 changed = true

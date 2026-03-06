@@ -8,6 +8,7 @@ import type { LucideIcon } from "lucide-react";
 import { SearchIcon, DotIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { chatService } from "@/services";
+import type { ChatRenderBlock } from "@/services/chat-presentation";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { hasPendingChatMessage } from "@/lib/chatPrefill";
 import {
@@ -32,6 +33,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: Date;
+  responseBlocks?: ChatRenderBlock[];
   isFinal?: boolean;
   approvalRequest?: boolean;
   attachments?: FileUIPart[];

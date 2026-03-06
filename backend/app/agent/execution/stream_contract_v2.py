@@ -48,6 +48,10 @@ def normalize_filtered_event_to_v2(
                 "span_id": raw_event.get("span_id"),
                 "input": data.get("input"),
                 "message": data.get("message"),
+                "tool_slug": data.get("tool_slug"),
+                "action": data.get("action"),
+                "display_name": data.get("display_name"),
+                "summary": data.get("summary"),
             },
             [],
         )
@@ -60,6 +64,10 @@ def normalize_filtered_event_to_v2(
                 "tool": raw_event.get("name"),
                 "span_id": raw_event.get("span_id"),
                 "output": data.get("output"),
+                "tool_slug": data.get("tool_slug"),
+                "action": data.get("action"),
+                "display_name": data.get("display_name"),
+                "summary": data.get("summary"),
             },
             [],
         )

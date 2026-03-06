@@ -59,4 +59,27 @@ describe("graphspec serialization", () => {
     expect(normalized.data.inputMappings).toEqual({ documents: "{{ state.docs }}" })
     expect(normalized.data.config).toHaveProperty("input_mappings")
   })
+
+  it("rebuilds builder data.config from canonical top-level config on reload", () => {
+    const node = {
+      id: "agent-1",
+      type: "agent",
+      position: { x: 0, y: 0 },
+      config: { model_id: "model-123", temperature: 1 },
+      data: {
+        nodeType: "agent",
+        category: "reasoning",
+        displayName: "Agent",
+        inputType: "message",
+        outputType: "message",
+        isConfigured: true,
+        hasErrors: false,
+      },
+    } as Node
+
+    const normalized = normalizeBuilderNode(node)
+
+    expect(normalized.data.config).toEqual({ model_id: "model-123", temperature: 1 })
+    expect((normalized as any).config).toEqual({ model_id: "model-123", temperature: 1 })
+  })
 })

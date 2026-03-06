@@ -17,6 +17,7 @@ from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import ProgrammingError
 
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
+from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
 from app.services.credentials_service import CredentialsService
@@ -935,14 +936,14 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
             if self.tenant_id is None:
                 raw_query = """
-                    SELECT id, name, description, scope, schema, config_schema, is_active, is_system
+                    SELECT id, name, slug, description, scope, schema, config_schema, is_active, is_system
                     FROM tool_registry
                     WHERE id = :tool_id AND tenant_id IS NULL
                 """
                 raw_params = {"tool_id": str(tool_id)}
             else:
                 raw_query = """
-                    SELECT id, name, description, scope, schema, config_schema, is_active, is_system
+                    SELECT id, name, slug, description, scope, schema, config_schema, is_active, is_system
                     FROM tool_registry
                     WHERE id = :tool_id AND (tenant_id = :tenant_id OR tenant_id IS NULL)
                 """
@@ -953,12 +954,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 tool = SimpleNamespace(
                     id=row[0],
                     name=row[1],
-                    description=row[2],
-                    scope=row[3],
-                    schema=row[4] or {},
-                    config_schema=row[5] or {},
-                    is_active=row[6],
-                    is_system=row[7],
+                    slug=row[2],
+                    description=row[3],
+                    scope=row[4],
+                    schema=row[5] or {},
+                    config_schema=row[6] or {},
+                    is_active=row[7],
+                    is_system=row[8],
                     artifact_id=None,
                     artifact_version=None,
                     builtin_key=None,
@@ -990,8 +992,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         emitter = active_emitter.get()
         node_id = context.get("node_id", "tool_node") if context else "tool_node"
+        tool_event_metadata = resolve_tool_event_metadata(
+            tool_slug=getattr(tool, "slug", None),
+            tool_name=tool.name,
+            input_data=input_data,
+        )
         if emitter:
-            emitter.emit_tool_start(tool.name, input_data, node_id)
+            emitter.emit_tool_start(tool.name, input_data, node_id, tool_event_metadata)
 
         config_schema = tool.config_schema or {}
         if isinstance(config_schema, str):
@@ -1027,7 +1034,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 }
                 result = await artifact_executor.execute(state, artifact_config, context)
                 if emitter:
-                    emitter.emit_tool_end(tool.name, result, node_id)
+                    emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
                 return result
 
             if impl_type == "artifact" and implementation_config.get("artifact_id"):
@@ -1047,7 +1054,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 }
                 result = await artifact_executor.execute(state, artifact_config, context)
                 if emitter:
-                    emitter.emit_tool_end(tool.name, result, node_id)
+                    emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
                 return result
 
             output_data = await self._execute_builtin_dispatch(
@@ -1078,7 +1085,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     raise NotImplementedError(f"Unsupported tool implementation type: {impl_type}")
 
             if emitter:
-                emitter.emit_tool_end(tool.name, output_data, node_id)
+                emitter.emit_tool_end(tool.name, output_data, node_id, tool_event_metadata)
 
             return {
                 "tool_outputs": [output_data],

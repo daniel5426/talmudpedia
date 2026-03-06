@@ -18,7 +18,7 @@ Frontend GraphSpec v1 serialization, builder node normalization, and branch hand
 **Last Run**
 - Command: `npm test -- --runTestsByPath src/__tests__/agent_builder/graphspec_serialization.test.tsx`
 - Date: 2026-03-06
-- Result: Pass (1 suite, 2 tests)
+- Result: Pass (1 suite, 3 tests)
 
 **Known Gaps / Follow-ups**
 - No end-to-end builder save/publish UI test

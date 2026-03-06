@@ -25,6 +25,7 @@ import {
   MessageAttachments,
   MessageAttachment,
 } from "@/components/ai-elements/message";
+import { AssistantResponseTimeline } from "@/components/ai-elements/assistant-response-timeline";
 import {
   InlineCitation,
   InlineCitationCard,
@@ -61,6 +62,11 @@ import { ReactArtifactPane } from "@/components/ai-elements/ReactArtifactPane";
 import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPanel";
 import { parseReactArtifact } from "@/lib/react-artifacts/parseReactArtifact";
 import { useTenant } from "@/contexts/TenantContext";
+import {
+  blocksFromLegacyAssistantContent,
+  createApprovalRequestBlock,
+  sortChatRenderBlocks,
+} from "@/services/chat-presentation";
 
 const formatThinkingDuration = (durationMs?: number | null) => {
   if (!durationMs || durationMs <= 0) {
@@ -324,6 +330,7 @@ export function ChatWorkspace({
     messages,
     streamingContent,
     currentReasoning,
+    currentResponseBlocks,
     isLoading,
     isLoadingHistory,
     liked,
@@ -350,7 +357,7 @@ export function ChatWorkspace({
   // Auto (Agent Router) - Container width state for responsive layout
   const [containerWidth, setContainerWidth] = useState<number>(1000);
   // Auto (Agent Router) - Scroll to bottom context for auto-scrolling
-  const { scrollToBottom } = useStickToBottomContext();
+  useStickToBottomContext();
 
   // Smoothing the streaming content for a better UX (typewriter effect)
   const smoothedStreamingContent = useSmoothStream(streamingContent, isLoading);
@@ -359,13 +366,15 @@ export function ChatWorkspace({
   const displayMessages = React.useMemo(() => {
     const list = [...messages];
     const isStreamingInHistory = activeStreamingId && messages.some((m: ChatMessage) => m.id === activeStreamingId);
+    const liveBlocks = Array.isArray(currentResponseBlocks) ? currentResponseBlocks : [];
 
-    if (activeStreamingId && !isStreamingInHistory && (streamingContent || currentReasoning.length > 0 || isLoading)) {
+    if (activeStreamingId && !isStreamingInHistory && (streamingContent || currentReasoning.length > 0 || liveBlocks.length > 0 || isLoading)) {
       list.push({
         id: activeStreamingId,
         role: "assistant",
         content: smoothedStreamingContent,
         createdAt: new Date(),
+        responseBlocks: liveBlocks.length > 0 ? liveBlocks : undefined,
         reasoningSteps: currentReasoning,
         thinkingDurationMs: lastThinkingDurationMs,
         _isStreaming: true, // Internal flag for conditional logic
@@ -377,11 +386,17 @@ export function ChatWorkspace({
         role: "assistant",
         content: "Do you wish to continue?",
         createdAt: new Date(),
-        approvalRequest: true,
+        responseBlocks: [
+          createApprovalRequestBlock({
+            id: "approval-request-block",
+            text: "Do you wish to continue?",
+            runId: (controller as any).currentRunId || "approval-request",
+          }),
+        ],
       } as any);
     }
     return list;
-  }, [messages, activeStreamingId, smoothedStreamingContent, currentReasoning, lastThinkingDurationMs, isLoading, pendingApproval]);
+  }, [messages, activeStreamingId, streamingContent, smoothedStreamingContent, currentReasoning, currentResponseBlocks, lastThinkingDurationMs, isLoading, pendingApproval, controller]);
 
   // Auto (Agent Router) - Determine if chat is in empty state.
   // We use a "hasStarted" check to prevent flickering back to empty state during completion.
@@ -606,7 +621,31 @@ export function ChatWorkspace({
                     <MessageContent dir={direction}>
                       {msg.role === "assistant" ? (
                         <>
-                          {!msg.approvalRequest && ((msg.reasoningSteps && msg.reasoningSteps.length > 0) || (msg.thinkingDurationMs && msg.thinkingDurationMs > 0) || (msg.id === activeStreamingId && isLoading)) && (
+                          {(() => {
+                            const responseBlocks =
+                              Array.isArray(msg.responseBlocks) && msg.responseBlocks.length > 0
+                                ? sortChatRenderBlocks(msg.responseBlocks)
+                                : blocksFromLegacyAssistantContent({
+                                    messageId: msg.id,
+                                    content: msg.content,
+                                  });
+
+                            if (responseBlocks.length > 0) {
+                              return (
+                                <div dir={direction} className="overflow-hidden">
+                                  <AssistantResponseTimeline
+                                    blocks={responseBlocks}
+                                    onApprovalAction={handleApprovalClick}
+                                    isLoading={isLoading}
+                                  />
+                                </div>
+                              );
+                            }
+
+                            return null;
+                          })()}
+
+                          {!msg.responseBlocks && !msg.approvalRequest && ((msg.reasoningSteps && msg.reasoningSteps.length > 0) || (msg.thinkingDurationMs && msg.thinkingDurationMs > 0) || (msg.id === activeStreamingId && isLoading)) && (
                             <div className="space-y-2">
                               <ChainOfThought
                                 dir={direction}
@@ -661,6 +700,7 @@ export function ChatWorkspace({
                             </div>
                           )}
 
+                          {!msg.responseBlocks && (
                           <div dir={direction} className="overflow-hidden">
                             {msg.approvalRequest ? (
                               <MessageResponse>{msg.content}</MessageResponse>
@@ -679,15 +719,16 @@ export function ChatWorkspace({
                                       return parsed.message;
                                     }
                                   }
-                                } catch (e) {
+                                } catch {
                                   // Not JSON or invalid, ignore
                                 }
                                 return msg.content;
                               })()}</MessageResponse>
                             )}
                           </div>
+                          )}
 
-                          {msg.approvalRequest && (
+                          {!msg.responseBlocks && msg.approvalRequest && (
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                               <Button
                                 type="button"
@@ -757,7 +798,7 @@ export function ChatWorkspace({
                                     return parsed.message;
                                   }
                                 }
-                              } catch (e) {
+                              } catch {
                                 // Not JSON or invalid, ignore
                               }
                               return msg.content;

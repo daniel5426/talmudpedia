@@ -1,6 +1,20 @@
 # Agent Streaming Response UI & Architecture
 
+Last Updated: 2026-03-06
+
 This document describes the end-to-end architecture for streaming agentic responses in Talmudpedia, covering the backend event stream, frontend state management, and the high-performance UI implementation designed for zero flicker.
+
+## Current Standard
+
+The canonical assistant-response model for the builder execution panel and the agent playground is now an ordered response timeline:
+
+- assistant text
+- tool calls
+- reasoning notes
+- approval prompts
+- errors
+
+These items are rendered inline in chronological order inside one assistant response flow. Reasoning is no longer the primary render primitive for these surfaces; it is an optional block type within the response timeline.
 
 ---
 

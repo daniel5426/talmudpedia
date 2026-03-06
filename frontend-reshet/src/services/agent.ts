@@ -220,6 +220,8 @@ export interface AgentExecutionEvent {
   event?: string
   type?: string
   run_id?: string
+  seq?: number
+  ts?: string
   span_id?: string
   name?: string
   data?: Record<string, any>
