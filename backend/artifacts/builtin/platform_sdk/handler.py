@@ -83,6 +83,7 @@ PUBLISH_ACTIONS = {
 def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     inputs = _resolve_inputs(state, context)
     inputs = _coerce_json_text(inputs)
+    parse_error = _extract_wrapped_json_parse_error(inputs)
 
     payload = dict(inputs.get("payload")) if isinstance(inputs.get("payload"), dict) else {}
     if inputs.get("idempotency_key") and not payload.get("idempotency_key"):
@@ -99,6 +100,20 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     explicit_action = _extract_explicit_action(inputs, payload)
     action = _resolve_action(explicit_action, inputs, payload, [], tests)
     tenant_for_flags = _resolve_effective_tenant_id(inputs, payload, state, context)
+    tenant_mismatch_error = _validate_tenant_override(inputs, payload, state, context)
+
+    if parse_error is not None:
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "invalid_wrapped_json",
+                "message": parse_error["message"],
+            },
+            "errors": [parse_error],
+            "action": "noop",
+            "dry_run": dry_run,
+        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
 
     if action == "noop":
         output = {
@@ -115,6 +130,19 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
                 "retryable": False,
             }],
             "action": "noop",
+            "dry_run": dry_run,
+        }
+        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+
+    if tenant_mismatch_error is not None:
+        output = {
+            "result": {
+                "status": "validation_error",
+                "reason": "tenant_override_denied",
+                "message": tenant_mismatch_error["message"],
+            },
+            "errors": [tenant_mismatch_error],
+            "action": _canonicalize_action(action),
             "dry_run": dry_run,
         }
         return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
@@ -312,17 +340,55 @@ def _resolve_effective_tenant_id(
     state: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
 ) -> Optional[str]:
+    runtime_tenant_id = _resolve_runtime_tenant_id(state, context)
+    if runtime_tenant_id is not None:
+        return runtime_tenant_id
+    explicit_tenant_id = _resolve_explicit_tenant_id(inputs, payload)
+    if explicit_tenant_id is not None:
+        return explicit_tenant_id
+    return None
+
+
+def _resolve_runtime_tenant_id(
+    state: Optional[Dict[str, Any]],
+    context: Optional[Dict[str, Any]],
+) -> Optional[str]:
     state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
     tool_ctx = context if isinstance(context, dict) else {}
-    tenant_id = (
-        payload.get("tenant_id")
-        or inputs.get("tenant_id")
-        or state_ctx.get("tenant_id")
-        or tool_ctx.get("tenant_id")
-    )
+    tenant_id = state_ctx.get("tenant_id") or tool_ctx.get("tenant_id")
     if tenant_id is None:
         return None
     return str(tenant_id)
+
+
+def _resolve_explicit_tenant_id(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
+    tenant_id = payload.get("tenant_id") or inputs.get("tenant_id")
+    if tenant_id is None:
+        return None
+    return str(tenant_id)
+
+
+def _validate_tenant_override(
+    inputs: Dict[str, Any],
+    payload: Dict[str, Any],
+    state: Optional[Dict[str, Any]],
+    context: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    runtime_tenant_id = _resolve_runtime_tenant_id(state, context)
+    explicit_tenant_id = _resolve_explicit_tenant_id(inputs, payload)
+    if not runtime_tenant_id or not explicit_tenant_id:
+        return None
+    if runtime_tenant_id == explicit_tenant_id:
+        return None
+    return {
+        "error": "tenant_override_denied",
+        "code": "TENANT_MISMATCH",
+        "message": "Tenant override is not allowed; runtime tenant context is authoritative.",
+        "http_status": 403,
+        "retryable": False,
+        "runtime_tenant_id": runtime_tenant_id,
+        "requested_tenant_id": explicit_tenant_id,
+    }
 
 
 def _resolve_tool_slug(
@@ -415,7 +481,76 @@ def _coerce_json_text(inputs: Dict[str, Any]) -> Dict[str, Any]:
             except json.JSONDecodeError:
                 return inputs
 
+    if not any(isinstance(inputs.get(key), str) and inputs.get(key).strip() for key in ("action", "value", "query", "text")):
+        return inputs
+
+    if isinstance(inputs.get("action"), str) and inputs.get("action").strip():
+        return inputs
+
+    for candidate_key in ("value", "query", "text"):
+        candidate = inputs.get(candidate_key)
+        if not isinstance(candidate, str):
+            continue
+        text = candidate.strip()
+        if not (text.startswith("{") and text.endswith("}")):
+            continue
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if not isinstance(parsed.get("action"), str) or not parsed.get("action", "").strip():
+            continue
+
+        merged = dict(inputs)
+        merged.pop("value", None)
+        merged.pop("query", None)
+        merged.pop("text", None)
+        merged.update(parsed)
+        return merged
+
     return inputs
+
+
+def _extract_wrapped_json_parse_error(inputs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(inputs, dict):
+        return None
+    if isinstance(inputs.get("action"), str) and inputs.get("action", "").strip():
+        return None
+
+    for candidate_key in ("value", "query", "text"):
+        candidate = inputs.get(candidate_key)
+        if not isinstance(candidate, str):
+            continue
+        text = candidate.strip()
+        if not (text.startswith("{") and text.endswith("}")):
+            continue
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            snippet_start = max(0, exc.pos - 40)
+            snippet_end = min(len(text), exc.pos + 40)
+            snippet = text[snippet_start:snippet_end]
+            return {
+                "error": "invalid_wrapped_json",
+                "code": "INVALID_JSON",
+                "message": (
+                    f"Malformed JSON in '{candidate_key}' while extracting Platform SDK action: "
+                    f"{exc.msg} at line {exc.lineno} column {exc.colno}."
+                ),
+                "http_status": 422,
+                "retryable": False,
+                "source_field": candidate_key,
+                "line": exc.lineno,
+                "column": exc.colno,
+                "char_pos": exc.pos,
+                "snippet": snippet,
+            }
+        if isinstance(parsed, dict) and isinstance(parsed.get("action"), str) and parsed.get("action", "").strip():
+            return None
+
+    return None
 
 
 def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Optional[str]) -> Dict[str, Any]:
@@ -513,14 +648,7 @@ def _resolve_auth(
     if tool_ctx is None:
         tool_ctx = {}
 
-    tenant_id = (
-        payload.get("tenant_id")
-        or inputs.get("tenant_id")
-        or state_ctx.get("tenant_id")
-        or tool_ctx.get("tenant_id")
-    )
-    if tenant_id is not None:
-        tenant_id = str(tenant_id)
+    tenant_id = _resolve_effective_tenant_id(inputs, payload, state, context)
 
     token = (
         payload.get("token")

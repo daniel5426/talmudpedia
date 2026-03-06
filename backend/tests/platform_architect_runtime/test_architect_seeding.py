@@ -19,6 +19,10 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "Never call architect.run" in instructions
     assert "one tool call at a time" in instructions
     assert "Draft-first is mandatory" in instructions
+    assert "Never ask the user for tenant_id" in instructions
+    assert "machine-readable JSON report" not in instructions
+    assert "output_format" not in runtime_node["config"]
+    assert "output_schema" not in runtime_node["config"]
 
 
 def test_platform_architect_domain_tool_specs_are_seeded():
@@ -46,9 +50,9 @@ def test_platform_domain_schema_is_action_specific_one_of():
     assert "agents.publish" in by_action
     assert "architect.run" not in by_action
     assert "x-action-contract" in by_action["agents.create"]
-    assert "idempotency_key" in by_action["agents.create"]["required"]
-    assert "request_metadata" in by_action["agents.create"]["required"]
-    assert "tenant_id" in by_action["agents.create"]["required"]
+    assert "idempotency_key" not in by_action["agents.create"]["required"]
+    assert "request_metadata" not in by_action["agents.create"]["required"]
+    assert "tenant_id" not in by_action["agents.create"]["required"]
     assert "node_types" in by_action["agents.nodes.schema"]["properties"]["payload"]["required"]
     assert "idempotency_key" not in by_action["agents.nodes.catalog"]["required"]
     assert "idempotency_key" not in by_action["agents.get"]["required"]

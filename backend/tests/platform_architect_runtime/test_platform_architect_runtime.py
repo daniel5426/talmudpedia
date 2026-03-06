@@ -14,7 +14,7 @@ def _patch_auth(monkeypatch):
         lambda inputs, payload, state=None, context=None, action=None, required_scopes=None: (
             "http://localhost:8000",
             "token",
-            payload.get("tenant_id") or inputs.get("tenant_id"),
+            handler._resolve_effective_tenant_id(inputs, payload, state, context),
             {},
         ),
     )
@@ -132,6 +132,27 @@ def _call(action: str, payload: Dict[str, Any], *, tool_slug: str) -> Dict[str, 
                 "idempotency_key": payload.get("idempotency_key"),
                 "request_metadata": payload.get("request_metadata"),
             }
+        },
+    )["context"]
+
+
+def _call_with_runtime_tenant(
+    action: str,
+    payload: Dict[str, Any],
+    *,
+    tool_slug: str,
+    runtime_tenant_id: str,
+) -> Dict[str, Any]:
+    return handler.execute(
+        state={},
+        config={},
+        context={
+            "tenant_id": runtime_tenant_id,
+            "inputs": {
+                "action": action,
+                "payload": payload,
+                "tool_slug": tool_slug,
+            },
         },
     )["context"]
 
@@ -395,3 +416,47 @@ def test_agent_create_surfaces_structured_validation_errors(monkeypatch):
     assert err["http_status"] == 422
     assert err["details"]["detail"]["error"] == "validation_error"
     assert err["validation_errors"][0]["code"] == "GRAPH_START_NODE_COUNT_INVALID"
+
+
+def test_runtime_tenant_context_satisfies_mutation_without_payload_tenant(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _FakeControlClient()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    response = _call_with_runtime_tenant(
+        "rag.create_visual_pipeline",
+        {
+            "tenant_slug": "tenant-a",
+            "name": "FAQ Pipeline",
+            "slug": "faq-pipeline",
+            "graph_definition": {"nodes": [], "edges": []},
+        },
+        tool_slug="platform-rag",
+        runtime_tenant_id="tenant-runtime-1",
+    )
+
+    assert response["errors"] == []
+    assert response["result"]["id"] == "pipe-1"
+
+
+def test_runtime_tenant_override_is_rejected(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _FakeControlClient()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    response = _call_with_runtime_tenant(
+        "rag.create_visual_pipeline",
+        {
+            "tenant_id": "tenant-other",
+            "tenant_slug": "tenant-a",
+            "name": "FAQ Pipeline",
+            "slug": "faq-pipeline",
+            "graph_definition": {"nodes": [], "edges": []},
+        },
+        tool_slug="platform-rag",
+        runtime_tenant_id="tenant-runtime-1",
+    )
+
+    assert response["errors"][0]["code"] == "TENANT_MISMATCH"
+    assert response["errors"][0]["runtime_tenant_id"] == "tenant-runtime-1"
+    assert response["errors"][0]["requested_tenant_id"] == "tenant-other"

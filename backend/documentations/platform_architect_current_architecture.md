@@ -41,7 +41,7 @@ The architect node prompt now enforces a direct loop:
 3. Execute one domain tool call at a time.
 4. Validate after each mutation.
 5. Repair/replan with max two loops.
-6. Return final machine-readable JSON report only.
+6. Return a normal text response; no architect-specific JSON output format is enforced.
 
 ## Runtime Execution Model
 Execution is dynamic via canonical domain actions in the Platform SDK handler.
@@ -66,6 +66,10 @@ Cross-domain action use via the wrong tool returns `SCOPE_DENIED`.
 
 ## Runtime Safety and Policy
 - Tenant context is required before mutating actions (`TENANT_REQUIRED` on violation).
+- Runtime tenant context is now authoritative for architect-issued mutations:
+  - the architect prompt/contracts no longer require asking the user for `tenant_id`, `idempotency_key`, or `request_metadata`
+  - if runtime tenant context exists, payload attempts to override `tenant_id` are rejected with `TENANT_MISMATCH`
+  - mutation idempotency and request metadata may be synthesized from runtime/control-plane layers when absent
 - Draft-first is hard policy:
   - `agents.publish`, `tools.publish`, and `artifacts.promote` are blocked unless explicit publish intent is set (`objective_flags.allow_publish=true`).
   - Policy denial returns `DRAFT_FIRST_POLICY_DENIED`.

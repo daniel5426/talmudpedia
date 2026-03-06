@@ -3,7 +3,7 @@
 Last Updated: 2026-03-06
 
 Scope:
-- Platform SDK tool action dispatch and strict explicit-action behavior.
+- Platform SDK tool action dispatch, explicit-action behavior, and wrapped-input recovery.
 - Domain-method action wrappers for control-plane SDK surfaces.
 - Runtime primitive orchestration action dispatch and validation.
 
@@ -18,6 +18,8 @@ Test files present:
 
 Key scenarios covered:
 - Missing action fails fast with structured validation errors (`MISSING_REQUIRED_FIELD`).
+- Wrapped JSON tool calls embedded in `value`/`query` are unwrapped into canonical Platform SDK actions when top-level `action` is absent.
+- Malformed wrapped JSON in `value`/`query` returns a structured `INVALID_JSON` error with source field and line/column details.
 - Deprecated planner-centric actions (`validate_plan`, `execute_plan`) fail with explicit `deprecated_action` validation errors.
 - Legacy action aliases normalize to canonical domain action IDs.
 - Additional architect-safety aliases now map common non-canonical planner outputs to canonical IDs (e.g. `create_agent` -> `agents.create`) to prevent avoidable scope mismatch failures.
@@ -60,9 +62,9 @@ Key scenarios covered:
   - `agents.resume_run` (error-path parity on nonexistent run)
   These validate persisted-state equivalence across UI HTTP path, SDK path, and tool-action path.
 
-Last run command: `pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
+Last run command: `pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_actions.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py`
 Last run date/time: 2026-03-06 (local run during this change set)
-Last run result: pass (`65 passed`)
+Last run result: pass (`19 passed, 1 warning`)
 
 Known gaps / follow-ups:
 - Promote env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.
