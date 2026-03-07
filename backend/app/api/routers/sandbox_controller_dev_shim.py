@@ -5,11 +5,13 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
@@ -315,14 +317,64 @@ class _SandboxOpenCodeServerStore:
 _sandbox_opencode_servers = _SandboxOpenCodeServerStore()
 
 
+def _project_root_for_sandbox(sandbox_id: str) -> Path:
+    root_dir = (os.getenv("APPS_DRAFT_DEV_LOCAL_ROOT_DIR") or "/tmp/talmudpedia-draft-dev").strip()
+    return Path(root_dir).expanduser().resolve() / str(sandbox_id)
+
+
+def _opencode_metadata_path_for_project(project_root: Path) -> Path:
+    return project_root / ".talmudpedia" / "opencode-server.json"
+
+
+def _write_opencode_metadata(*, sandbox_id: str, project_root: Path, pid: int, port: int, workspace_path: str) -> None:
+    payload = {
+        "sandbox_id": str(sandbox_id),
+        "pid": int(pid),
+        "port": int(port),
+        "project_root": str(project_root),
+        "workspace_path": str(workspace_path or "").strip(),
+    }
+    target = _opencode_metadata_path_for_project(project_root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+
+def _clear_opencode_metadata(*, sandbox_id: str) -> None:
+    _opencode_metadata_path_for_project(_project_root_for_sandbox(sandbox_id)).unlink(missing_ok=True)
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        return True
+
+
+def _terminate_process_group(pid: int, *, sig: signal.Signals) -> None:
+    try:
+        os.killpg(int(pid), sig)
+    except ProcessLookupError:
+        return
+    except Exception:
+        try:
+            os.kill(int(pid), sig)
+        except ProcessLookupError:
+            return
+        except Exception:
+            return
+
+
 def _terminate_opencode_process(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
-    process.terminate()
+    _terminate_process_group(process.pid, sig=signal.SIGTERM)
     try:
         process.wait(timeout=3.0)
     except Exception:
-        process.kill()
+        _terminate_process_group(process.pid, sig=signal.SIGKILL)
         try:
             process.wait(timeout=2.0)
         except Exception:
@@ -332,8 +384,31 @@ def _terminate_opencode_process(process: subprocess.Popen) -> None:
 async def _stop_sandbox_opencode_server(*, sandbox_id: str) -> None:
     state = await _sandbox_opencode_servers.pop(sandbox_id)
     if state is None:
+        _clear_opencode_metadata(sandbox_id=sandbox_id)
         return
     _terminate_opencode_process(state.process)
+    _clear_opencode_metadata(sandbox_id=sandbox_id)
+
+
+def reclaim_orphaned_sandbox_opencode_servers() -> None:
+    root_dir = (os.getenv("APPS_DRAFT_DEV_LOCAL_ROOT_DIR") or "/tmp/talmudpedia-draft-dev").strip()
+    root_path = Path(root_dir).expanduser().resolve()
+    root_path.mkdir(parents=True, exist_ok=True)
+    for project_root in root_path.iterdir():
+        if not project_root.is_dir():
+            continue
+        metadata_path = _opencode_metadata_path_for_project(project_root)
+        if not metadata_path.exists():
+            continue
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            metadata_path.unlink(missing_ok=True)
+            continue
+        pid = int(payload.get("pid") or 0)
+        if pid > 0 and _process_exists(pid):
+            _terminate_process_group(pid, sig=signal.SIGTERM)
+        metadata_path.unlink(missing_ok=True)
 
 
 async def _get_per_sandbox_opencode_client(*, sandbox_id: str, workspace_path: str) -> OpenCodeServerClient:
@@ -379,6 +454,14 @@ async def _get_per_sandbox_opencode_client(*, sandbox_id: str, workspace_path: s
         )
 
     base_url = f"http://127.0.0.1:{port}"
+    project_root = _project_root_for_sandbox(sandbox_id)
+    _write_opencode_metadata(
+        sandbox_id=sandbox_id,
+        project_root=project_root,
+        pid=process.pid,
+        port=port,
+        workspace_path=workspace_root,
+    )
     await _sandbox_opencode_servers.put(
         _SandboxOpenCodeServerState(
             sandbox_id=str(sandbox_id),

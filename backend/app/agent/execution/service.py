@@ -398,6 +398,8 @@ class AgentExecutorService:
             runtime_context["orchestration_group_id"] = str(run.orchestration_group_id)
         if run.tenant_id:
             runtime_context["tenant_id"] = str(run.tenant_id)
+        if getattr(agent, "slug", None):
+            runtime_context["agent_slug"] = str(agent.slug)
         if run.resolved_model_id:
             runtime_context["resolved_model_id"] = str(run.resolved_model_id)
         runtime_context["orchestration_surface"] = "option_a_graphspec_v2"

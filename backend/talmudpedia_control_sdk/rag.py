@@ -43,6 +43,13 @@ class RagAPI:
             params=_tenant_params(tenant_slug),
         )
 
+    def get_pipeline_graph(self, pipeline_id: str, tenant_slug: Optional[str] = None) -> ResponseEnvelope:
+        return self._client.request(
+            "GET",
+            f"/admin/pipelines/visual-pipelines/{pipeline_id}/graph",
+            params=_tenant_params(tenant_slug),
+        )
+
     def update_visual_pipeline(
         self,
         pipeline_id: str,
@@ -55,6 +62,72 @@ class RagAPI:
             f"/admin/pipelines/visual-pipelines/{pipeline_id}",
             params=_tenant_params(tenant_slug),
             json_body=patch,
+            options=options,
+            mutation=True,
+        )
+
+    def validate_graph_patch(
+        self,
+        pipeline_id: str,
+        operations: list[Dict[str, Any]],
+        tenant_slug: Optional[str] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/admin/pipelines/visual-pipelines/{pipeline_id}/graph/validate-patch",
+            params=_tenant_params(tenant_slug),
+            json_body={"operations": list(operations or [])},
+        )
+
+    def apply_graph_patch(
+        self,
+        pipeline_id: str,
+        operations: list[Dict[str, Any]],
+        tenant_slug: Optional[str] = None,
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/admin/pipelines/visual-pipelines/{pipeline_id}/graph/apply-patch",
+            params=_tenant_params(tenant_slug),
+            json_body={"operations": list(operations or [])},
+            options=options,
+            mutation=True,
+        )
+
+    def attach_knowledge_store_to_node(
+        self,
+        pipeline_id: str,
+        *,
+        node_id: str,
+        knowledge_store_id: str,
+        tenant_slug: Optional[str] = None,
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/admin/pipelines/visual-pipelines/{pipeline_id}/graph/attach-knowledge-store-to-node",
+            params=_tenant_params(tenant_slug),
+            json_body={"node_id": node_id, "knowledge_store_id": knowledge_store_id},
+            options=options,
+            mutation=True,
+        )
+
+    def set_pipeline_node_config(
+        self,
+        pipeline_id: str,
+        *,
+        node_id: str,
+        path: str,
+        value: Any,
+        tenant_slug: Optional[str] = None,
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/admin/pipelines/visual-pipelines/{pipeline_id}/graph/set-node-config",
+            params=_tenant_params(tenant_slug),
+            json_body={"node_id": node_id, "path": path, "value": value},
             options=options,
             mutation=True,
         )

@@ -10,7 +10,7 @@ Use this file as the source of truth for current runtime behavior, active constr
 `platform-architect` is the backend platform-building agent responsible for drafting and repairing agents, RAG pipelines, tools, artifacts, and related platform assets through internal domain-scoped tools.
 
 This spec covers:
-- the current live V1.1 runtime
+- the current live V1.2 runtime
 - control-plane/tooling boundaries
 - safety and mutation rules
 - active gaps and acceptance criteria
@@ -20,7 +20,7 @@ This spec covers:
 ## Current State (Source of Truth)
 
 ### Runtime classification
-- Active runtime is Architect V1.1.
+- Active runtime is Architect V1.2.
 - It is a single tool-using runtime agent.
 - It is not the old staged GraphSpec v2 orchestrator.
 - There is no active `architect.run` runtime path.
@@ -52,9 +52,10 @@ The architect runtime follows this direct loop:
 1. Extract intent and constraints.
 2. Build an explicit step plan in context.
 3. Execute one domain tool call at a time.
-4. Validate after each mutation.
-5. Repair or replan with a bounded retry loop.
-6. Return a normal text response.
+4. Prefer semantic graph helpers for graph edits, then schema-aware patch actions when needed.
+5. Validate after each mutation.
+6. Stop on repeated identical mutation failures with a blocker report instead of looping indefinitely.
+7. Return a normal text response.
 
 ### Node intelligence and validation
 The architect can discover and validate agent graph structure through `platform-agents`:
@@ -84,7 +85,9 @@ Each domain tool exposes:
 
 Current architect-facing policy:
 - architect should use canonical action ids only
+- architect must send only canonical top-level `action` / `payload` tool input
 - architect should not ask the user for mutation metadata that runtime can derive
+- architect should prefer graph helper actions before generic graph patch actions
 - architect should validate after mutations instead of claiming success from mutation responses alone
 
 ## Safety, Auth, and Mutation Rules
@@ -119,18 +122,18 @@ Current architect-facing policy:
 
 ### Current handler behavior
 Platform SDK handler behavior now supports:
-- canonical top-level `action` / `payload` dispatch
-- recovery of wrapped JSON tool calls embedded in `value` / `query` / `text`, if the wrapped JSON is valid and contains `action`
-- structured parse errors when wrapped JSON is malformed
+- canonical top-level `action` / `payload` dispatch only
+- explicit contract failures when callers send wrapped tool input in `value` / `query` / `text`
+- structured mutation errors that preserve backend validation details
 
 ### Important practical constraint
-The best path is still to send structured top-level tool input directly.
-Wrapped JSON inside `value` / `query` is a fallback recovery path, not the preferred architecture.
+There is no wrapped-input recovery path anymore.
+Platform SDK callers must send a structured top-level tool input object directly.
 
 ### Structured error expectations
 Important architect-visible error categories:
 - `MISSING_REQUIRED_FIELD`
-- `INVALID_JSON`
+- `NON_CANONICAL_PLATFORM_SDK_INPUT`
 - `SCOPE_DENIED`
 - `TENANT_REQUIRED`
 - `TENANT_MISMATCH`
@@ -148,28 +151,16 @@ Agent mutation failures should preserve structured backend validation details th
 1. Target-kind lock is still not enforced strongly enough.
 - If user intent is “fix an agent,” architect should not drift into `rag.*` mutations.
 
-2. Post-mutation validation should be a hard runtime gate, not only prompt guidance.
-- Architect should not declare success until read-after-write validation passes.
-
-3. Contract/enforcement alignment is still incomplete in some mutation paths.
-- Server boundaries should reject invalid create/update payloads earlier and more deterministically.
-
-### P1 gaps
-4. Repair-loop exit criteria are still not strict enough.
-- Repeated identical failures should stop earlier with a blocker report.
-
-5. Truth-source precedence should be codified.
+2. Truth-source precedence should be codified more strictly in final user messaging.
 - Prefer observed state and validation over mutation response narratives.
 
-6. User-facing success language still needs hard gating.
+### P1 gaps
+3. User-facing success language still needs hard gating.
 - “fixed” should only be emitted after post-checks pass.
 
 ### P1/P2 ergonomics gaps
-7. Graph-safe patch primitives are still missing or underexposed.
-- `agents.update_graph` / graph-specific repair helper remains desirable.
-
-8. Tool-call emission path still needs upstream cleanup.
-- Runtime should stop serializing SDK calls into generic `value` / `query` wrappers where possible.
+4. Graph mutation helper coverage can still expand.
+- The current helper set covers common agent and RAG edits but not every high-frequency mutation intent yet.
 
 ## Testing and Verification
 
@@ -192,9 +183,9 @@ Feature directory:
 - `backend/tests/platform_sdk_tool/`
 
 Relevant coverage includes:
-- wrapped `value` / `query` JSON recovery
-- malformed wrapped JSON returning structured `INVALID_JSON`
+- strict rejection of wrapped `value` / `query` / `text` tool input
 - canonical action dispatch and alias normalization
+- parity coverage for `agents.graph.*` and `rag.graph.*` actions
 
 ### Live E2E harness
 Harness directory:
@@ -234,9 +225,10 @@ When iterating on Platform Architect, these checks should remain true:
 1. If the user asks to fix an agent graph, only `agents.*` mutations should be used unless the user explicitly changes target type.
 2. Architect should validate state after each mutation and should not claim success before validation passes.
 3. Tenant scope must remain runtime-bound and non-overridable by model payload.
-4. Wrapped malformed tool input should return a specific parse error, not a fake missing-action error.
+4. Wrapped tool input should fail fast with `NON_CANONICAL_PLATFORM_SDK_INPUT`.
 5. Architect prompt/config should stay plain-text oriented; no forced architect-only JSON response contract.
 6. Every architect run should expose an ordered execution-event log that is sufficient to reconstruct tool calls, lifecycle phases, and terminal failure context.
+7. Repeated identical graph mutation failures should stop the run with `architect.repair_blocked` / `architect.progress_stalled` events.
 
 ## Future Direction (V2)
 
@@ -259,6 +251,10 @@ V2 should build on the current direct domain-action contracts and runtime safety
 ### Primary implementation
 - `backend/app/services/platform_architect_contracts.py`
 - `backend/app/services/registry_seeding.py`
+- `backend/app/services/platform_architect_guardrails.py`
+- `backend/app/services/graph_mutation_service.py`
+- `backend/app/services/agent_graph_mutation_service.py`
+- `backend/app/services/rag_graph_mutation_service.py`
 - `backend/artifacts/builtin/platform_sdk/handler.py`
 - `backend/artifacts/builtin/platform_sdk/actions/agents.py`
 - `backend/artifacts/builtin/platform_sdk/actions/rag.py`

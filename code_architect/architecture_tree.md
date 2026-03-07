@@ -13,7 +13,6 @@ Rules applied in this map:
 backend/
 backend/main.py
 backend/run_celery.py
-backend/run_voice_agent.py
 
 backend/app/
 
@@ -23,6 +22,8 @@ backend/app/api/routers/
 backend/app/api/routers/sandbox_controller_dev_shim.py
 backend/app/api/routers/published_apps_admin_routes_coding_agent_v2.py
 backend/app/api/routers/published_apps_host_runtime.py
+backend/app/api/routers/agent_graph_mutations.py
+backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/schemas/
 
 backend/app/core/
@@ -109,6 +110,10 @@ backend/app/services/credentials_service.py
 backend/app/services/integration_provider_catalog.py
 backend/app/services/registry_seeding.py
 backend/app/services/platform_architect_contracts.py
+backend/app/services/platform_architect_guardrails.py
+backend/app/services/graph_mutation_service.py
+backend/app/services/agent_graph_mutation_service.py
+backend/app/services/rag_graph_mutation_service.py
 backend/app/services/tool_function_registry.py
 backend/app/services/artifact_registry.py
 backend/app/services/builtin_tools.py
@@ -148,10 +153,6 @@ backend/app/services/thread_service.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
 backend/app/services/published_app_coding_agent_engines/prompt_history.py
-backend/app/services/opencode_server_client.py
-backend/app/services/published_app_templates.py
-backend/app/services/published_app_auth_templates.py
-backend/app/services/apps_builder_dependency_policy.py
 backend/app/services/library/
 backend/app/services/stt/
 backend/app/services/text/

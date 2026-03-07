@@ -6,7 +6,6 @@ Executes platform control-plane actions via SDK method wrappers.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
@@ -82,8 +81,7 @@ PUBLISH_ACTIONS = {
 
 def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     inputs = _resolve_inputs(state, context)
-    inputs = _coerce_json_text(inputs)
-    parse_error = _extract_wrapped_json_parse_error(inputs)
+    noncanonical_input_error = _extract_noncanonical_input_error(inputs)
 
     payload = dict(inputs.get("payload")) if isinstance(inputs.get("payload"), dict) else {}
     if inputs.get("idempotency_key") and not payload.get("idempotency_key"):
@@ -97,19 +95,19 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         tests = payload.get("tests") or []
 
     dry_run = bool(inputs.get("dry_run") or payload.get("dry_run", False))
-    explicit_action = _extract_explicit_action(inputs, payload)
+    explicit_action = _extract_explicit_action(inputs)
     action = _resolve_action(explicit_action, inputs, payload, [], tests)
     tenant_for_flags = _resolve_effective_tenant_id(inputs, payload, state, context)
     tenant_mismatch_error = _validate_tenant_override(inputs, payload, state, context)
 
-    if parse_error is not None:
+    if noncanonical_input_error is not None:
         output = {
             "result": {
                 "status": "validation_error",
-                "reason": "invalid_wrapped_json",
-                "message": parse_error["message"],
+                "reason": "non_canonical_input",
+                "message": noncanonical_input_error["message"],
             },
-            "errors": [parse_error],
+            "errors": [noncanonical_input_error],
             "action": "noop",
             "dry_run": dry_run,
         }
@@ -306,15 +304,10 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
 
 
-def _extract_explicit_action(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
+def _extract_explicit_action(inputs: Dict[str, Any]) -> Optional[str]:
     action = inputs.get("action")
     if isinstance(action, str) and action.strip():
         return action.strip()
-
-    payload_action = payload.get("action")
-    if isinstance(payload_action, str) and payload_action.strip():
-        return payload_action.strip()
-
     return None
 
 
@@ -458,62 +451,7 @@ def _resolve_inputs(state: Dict[str, Any], context: Dict[str, Any]) -> Dict[str,
     return {}
 
 
-def _coerce_json_text(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(inputs, dict):
-        return {}
-
-    if set(inputs.keys()) == {"text"} and isinstance(inputs.get("text"), str):
-        text = inputs.get("text", "").strip()
-        if text.startswith("```"):
-            text = text.lstrip("`")
-            first_newline = text.find("\n")
-            if first_newline != -1:
-                text = text[first_newline + 1 :]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-
-        if text.startswith("{") and text.endswith("}"):
-            try:
-                parsed = json.loads(text)
-                if isinstance(parsed, dict):
-                    return parsed
-            except json.JSONDecodeError:
-                return inputs
-
-    if not any(isinstance(inputs.get(key), str) and inputs.get(key).strip() for key in ("action", "value", "query", "text")):
-        return inputs
-
-    if isinstance(inputs.get("action"), str) and inputs.get("action").strip():
-        return inputs
-
-    for candidate_key in ("value", "query", "text"):
-        candidate = inputs.get(candidate_key)
-        if not isinstance(candidate, str):
-            continue
-        text = candidate.strip()
-        if not (text.startswith("{") and text.endswith("}")):
-            continue
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(parsed, dict):
-            continue
-        if not isinstance(parsed.get("action"), str) or not parsed.get("action", "").strip():
-            continue
-
-        merged = dict(inputs)
-        merged.pop("value", None)
-        merged.pop("query", None)
-        merged.pop("text", None)
-        merged.update(parsed)
-        return merged
-
-    return inputs
-
-
-def _extract_wrapped_json_parse_error(inputs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _extract_noncanonical_input_error(inputs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not isinstance(inputs, dict):
         return None
     if isinstance(inputs.get("action"), str) and inputs.get("action", "").strip():
@@ -524,31 +462,34 @@ def _extract_wrapped_json_parse_error(inputs: Dict[str, Any]) -> Optional[Dict[s
         if not isinstance(candidate, str):
             continue
         text = candidate.strip()
-        if not (text.startswith("{") and text.endswith("}")):
+        if not text:
             continue
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError as exc:
-            snippet_start = max(0, exc.pos - 40)
-            snippet_end = min(len(text), exc.pos + 40)
-            snippet = text[snippet_start:snippet_end]
+        if text.startswith("```"):
             return {
-                "error": "invalid_wrapped_json",
-                "code": "INVALID_JSON",
+                "error": "non_canonical_wrapped_input",
+                "code": "NON_CANONICAL_PLATFORM_SDK_INPUT",
                 "message": (
-                    f"Malformed JSON in '{candidate_key}' while extracting Platform SDK action: "
-                    f"{exc.msg} at line {exc.lineno} column {exc.colno}."
+                    f"Platform SDK no longer accepts wrapped tool input in '{candidate_key}'. "
+                    "Send a top-level action and payload object instead."
                 ),
                 "http_status": 422,
                 "retryable": False,
                 "source_field": candidate_key,
-                "line": exc.lineno,
-                "column": exc.colno,
-                "char_pos": exc.pos,
-                "snippet": snippet,
+                "migration_hint": 'Send {"action":"...","payload":{...}} as the tool input object.',
             }
-        if isinstance(parsed, dict) and isinstance(parsed.get("action"), str) and parsed.get("action", "").strip():
-            return None
+        if text.startswith("{") or text.startswith("["):
+            return {
+                "error": "non_canonical_wrapped_input",
+                "code": "NON_CANONICAL_PLATFORM_SDK_INPUT",
+                "message": (
+                    f"Platform SDK no longer accepts wrapped JSON in '{candidate_key}'. "
+                    "Send a top-level action and payload object instead."
+                ),
+                "http_status": 422,
+                "retryable": False,
+                "source_field": candidate_key,
+                "migration_hint": 'Send {"action":"...","payload":{...}} as the tool input object.',
+            }
 
     return None
 
@@ -924,6 +865,11 @@ def _dispatch_action(
         "rag.create_or_update_pipeline": lambda: rag_actions.create_or_update_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "rag.create_visual_pipeline": lambda: rag_actions.create_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "rag.update_visual_pipeline": lambda: rag_actions.update_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.graph.get": lambda: rag_actions.graph_get(client, payload, control_client_factory=_control_client),
+        "rag.graph.validate_patch": lambda: rag_actions.graph_validate_patch(client, payload, control_client_factory=_control_client),
+        "rag.graph.apply_patch": lambda: rag_actions.graph_apply_patch(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.graph.attach_knowledge_store_to_node": lambda: rag_actions.graph_attach_knowledge_store_to_node(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "rag.graph.set_pipeline_node_config": lambda: rag_actions.graph_set_pipeline_node_config(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "rag.compile_pipeline": lambda: rag_actions.compile_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "rag.compile_visual_pipeline": lambda: rag_actions.compile_visual_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "rag.create_job": lambda: rag_actions.create_job(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
@@ -947,6 +893,13 @@ def _dispatch_action(
         "agents.get": lambda: agent_actions.get_agent(client, payload, control_client_factory=_control_client),
         "agents.create": lambda: agent_actions.create(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "agents.update": lambda: agent_actions.update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.graph.get": lambda: agent_actions.graph_get(client, payload, control_client_factory=_control_client),
+        "agents.graph.validate_patch": lambda: agent_actions.graph_validate_patch(client, payload, control_client_factory=_control_client),
+        "agents.graph.apply_patch": lambda: agent_actions.graph_apply_patch(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.graph.add_tool_to_agent_node": lambda: agent_actions.graph_add_tool_to_agent_node(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.graph.remove_tool_from_agent_node": lambda: agent_actions.graph_remove_tool_from_agent_node(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.graph.set_agent_model": lambda: agent_actions.graph_set_agent_model(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
+        "agents.graph.set_agent_instructions": lambda: agent_actions.graph_set_agent_instructions(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "agents.create_or_update": lambda: agent_actions.create_or_update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "agents.publish": lambda: agent_actions.publish(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "agents.validate": lambda: agent_actions.validate(client, payload, control_client_factory=_control_client),

@@ -154,6 +154,25 @@ class EventEmitter:
             metadata=self._metadata()
         ))
 
+    def emit_internal_event(
+        self,
+        event_name: str,
+        data: dict[str, Any],
+        *,
+        node_id: Optional[str] = None,
+        category: Optional[str] = None,
+        visibility: EventVisibility = EventVisibility.INTERNAL,
+    ) -> None:
+        metadata_extra = {"category": category} if category else None
+        self._emit(ExecutionEvent(
+            event=event_name,
+            data=data,
+            run_id=self._run_id,
+            span_id=node_id,
+            visibility=visibility,
+            metadata=self._metadata(metadata_extra),
+        ))
+
     def emit_orchestration_spawn_decision(
         self,
         *,

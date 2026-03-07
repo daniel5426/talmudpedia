@@ -53,37 +53,8 @@ def test_execute_requires_explicit_action():
     assert any(err.get("code") == "MISSING_REQUIRED_FIELD" for err in out["context"]["errors"])
 
 
-def test_execute_unwraps_json_action_from_value_wrapper(monkeypatch):
-    monkeypatch.setattr(
-        handler,
-        "_resolve_auth",
-        lambda inputs, payload, state=None, context=None, action=None, required_scopes=None: (
-            "http://localhost:8000",
-            "token",
-            "tenant-1",
-            {},
-        ),
-    )
-    monkeypatch.setattr(handler, "_control_client", lambda _client: type("C", (), {
-        "rag": type("R", (), {
-            "create_visual_pipeline": staticmethod(lambda payload, tenant_slug=None, options=None: {
-                "data": {"id": "pipe-1", "tenant_slug": tenant_slug, **payload}
-            })
-        })()
-    })())
-
-    wrapped = json.dumps(
-        {
-            "action": "rag.create_visual_pipeline",
-            "payload": {
-                "name": "Vector Search + Summarize RAG Pipeline",
-                "tenant_slug": "tenant-a",
-                "graph_definition": {"nodes": [], "edges": []},
-            },
-            "validate_only": False,
-        }
-    )
-
+def test_execute_rejects_wrapped_json_action_from_value_wrapper():
+    wrapped = '{"action":"rag.create_visual_pipeline","payload":{"name":"Vector Search","tenant_slug":"tenant-a","graph_definition":{"nodes":[],"edges":[]}}}'
     out = handler.execute(
         state={},
         config={},
@@ -96,17 +67,37 @@ def test_execute_unwraps_json_action_from_value_wrapper(monkeypatch):
                 "initiator_user_id": "u1",
                 "run_id": "r1",
                 "value": wrapped,
-                "query": wrapped,
             }
         },
     )
 
-    assert out["context"]["action"] == "rag.create_visual_pipeline"
-    assert out["context"]["errors"] == []
-    assert out["context"]["result"]["id"] == "pipe-1"
+    err = out["context"]["errors"][0]
+    assert out["context"]["action"] == "noop"
+    assert out["context"]["result"]["reason"] == "non_canonical_input"
+    assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
+    assert err["source_field"] == "value"
+    assert "top-level action and payload" in err["message"]
 
 
-def test_execute_reports_malformed_wrapped_json_details():
+def test_execute_rejects_noncanonical_wrapped_text_input():
+    out = handler.execute(
+        state={},
+        config={},
+        context={
+            "inputs": {
+                "tenant_id": "tenant-1",
+                "text": '{"action":"agents.get","payload":{"agent_id":"agent-1"}}',
+            }
+        },
+    )
+
+    err = out["context"]["errors"][0]
+    assert out["context"]["result"]["reason"] == "non_canonical_input"
+    assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
+    assert err["source_field"] == "text"
+
+
+def test_execute_reports_noncanonical_wrapped_json_as_contract_error():
     malformed = (
         '{"action":"rag.create_visual_pipeline","payload":{"nodes":['
         '{"id":"start","type":"start","config":,"x":100,"y":100}]}}'
@@ -125,12 +116,10 @@ def test_execute_reports_malformed_wrapped_json_details():
     )
 
     err = out["context"]["errors"][0]
-    assert out["context"]["result"]["reason"] == "invalid_wrapped_json"
-    assert err["code"] == "INVALID_JSON"
+    assert out["context"]["result"]["reason"] == "non_canonical_input"
+    assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
     assert err["source_field"] == "value"
-    assert err["line"] >= 1
-    assert err["column"] >= 1
-    assert '"config":,' in err["snippet"]
+    assert "top-level action and payload" in err["message"]
 
 
 def test_execute_rejects_deprecated_plan_actions():

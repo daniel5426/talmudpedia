@@ -48,6 +48,21 @@ def _normalize_visual_pipeline_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
     return patch_payload
 
 
+def _sdk_error_payload(error_name: str, exc: ControlPlaneSDKError, **extra: Any) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "error": error_name,
+        "detail": str(exc),
+        "code": exc.code,
+        "http_status": exc.http_status,
+    }
+    if exc.details is not None:
+        payload["details"] = exc.details
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
 def list_pipelines(
     client: Client,
     payload: Dict[str, Any],
@@ -166,6 +181,165 @@ def update_visual_pipeline(
         return None, [{"error": "update_visual_pipeline_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
     except Exception as exc:
         return None, [{"error": "update_visual_pipeline_failed", "detail": str(exc)}]
+
+
+def graph_get(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    pipeline_id = payload.get("pipeline_id") or payload.get("id")
+    if not pipeline_id:
+        return None, [{"error": "missing_fields", "fields": ["pipeline_id"]}]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.get_pipeline_graph(str(pipeline_id), tenant_slug=payload.get("tenant_slug"))
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("get_pipeline_graph_failed", exc, pipeline_id=pipeline_id)]
+    except Exception as exc:
+        return None, [{"error": "get_pipeline_graph_failed", "detail": str(exc), "pipeline_id": pipeline_id}]
+
+
+def graph_validate_patch(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    pipeline_id = payload.get("pipeline_id") or payload.get("id")
+    operations = payload.get("operations") if isinstance(payload.get("operations"), list) else []
+    if not pipeline_id:
+        return None, [{"error": "missing_fields", "fields": ["pipeline_id"]}]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.validate_graph_patch(
+            str(pipeline_id),
+            operations,
+            tenant_slug=payload.get("tenant_slug"),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("validate_pipeline_graph_patch_failed", exc, pipeline_id=pipeline_id)]
+    except Exception as exc:
+        return None, [{"error": "validate_pipeline_graph_patch_failed", "detail": str(exc), "pipeline_id": pipeline_id}]
+
+
+def graph_apply_patch(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    pipeline_id = payload.get("pipeline_id") or payload.get("id")
+    operations = payload.get("operations") if isinstance(payload.get("operations"), list) else []
+    if not pipeline_id:
+        return None, [{"error": "missing_fields", "fields": ["pipeline_id"]}]
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "pipeline_id": str(pipeline_id), "operations": operations}, []
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.apply_graph_patch(
+            str(pipeline_id),
+            operations,
+            tenant_slug=payload.get("tenant_slug"),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("apply_pipeline_graph_patch_failed", exc, pipeline_id=pipeline_id)]
+    except Exception as exc:
+        return None, [{"error": "apply_pipeline_graph_patch_failed", "detail": str(exc), "pipeline_id": pipeline_id}]
+
+
+def graph_attach_knowledge_store_to_node(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    pipeline_id = payload.get("pipeline_id") or payload.get("id")
+    node_id = payload.get("node_id")
+    knowledge_store_id = payload.get("knowledge_store_id")
+    missing = [
+        name
+        for name, value in (
+            ("pipeline_id", pipeline_id),
+            ("node_id", node_id),
+            ("knowledge_store_id", knowledge_store_id),
+        )
+        if not value
+    ]
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+    if dry_run:
+        return {
+            "status": "skipped",
+            "dry_run": True,
+            "pipeline_id": str(pipeline_id),
+            "node_id": str(node_id),
+            "knowledge_store_id": str(knowledge_store_id),
+        }, []
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.attach_knowledge_store_to_node(
+            str(pipeline_id),
+            node_id=str(node_id),
+            knowledge_store_id=str(knowledge_store_id),
+            tenant_slug=payload.get("tenant_slug"),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("attach_knowledge_store_to_node_failed", exc, pipeline_id=pipeline_id)]
+    except Exception as exc:
+        return None, [{"error": "attach_knowledge_store_to_node_failed", "detail": str(exc), "pipeline_id": pipeline_id}]
+
+
+def graph_set_pipeline_node_config(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    pipeline_id = payload.get("pipeline_id") or payload.get("id")
+    node_id = payload.get("node_id")
+    path = payload.get("path")
+    missing = [name for name, value in (("pipeline_id", pipeline_id), ("node_id", node_id), ("path", path)) if not value]
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+    if "value" not in payload:
+        return None, [{"error": "missing_fields", "fields": ["value"]}]
+    if dry_run:
+        return {
+            "status": "skipped",
+            "dry_run": True,
+            "pipeline_id": str(pipeline_id),
+            "node_id": str(node_id),
+            "path": str(path),
+        }, []
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.set_pipeline_node_config(
+            str(pipeline_id),
+            node_id=str(node_id),
+            path=str(path),
+            value=payload.get("value"),
+            tenant_slug=payload.get("tenant_slug"),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("set_pipeline_node_config_failed", exc, pipeline_id=pipeline_id)]
+    except Exception as exc:
+        return None, [{"error": "set_pipeline_node_config_failed", "detail": str(exc), "pipeline_id": pipeline_id}]
 
 
 def compile_pipeline(

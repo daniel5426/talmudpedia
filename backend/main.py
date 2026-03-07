@@ -392,6 +392,12 @@ def _ensure_local_draft_dev_runtime_if_needed() -> None:
 
         manager = get_local_draft_dev_runtime_manager()
         manager.bootstrap()
+        if _is_truthy(os.getenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "0")):
+            from app.api.routers.sandbox_controller_dev_shim import (
+                reclaim_orphaned_sandbox_opencode_servers,
+            )
+
+            reclaim_orphaned_sandbox_opencode_servers()
         logger.info("Embedded local draft-dev runtime is ready")
     except Exception as exc:
         logger.warning("Failed to bootstrap embedded local draft-dev runtime: %s", exc)
@@ -813,10 +819,12 @@ app.add_middleware(PublishedAppsHostRuntimeMiddleware)
 from app.api.routers import auth, general, search, stt, texts, library, admin, tts, rag_admin
 from app.api.routers.agents import router as agents_router
 from app.api.routers import agent_run_logs as agent_run_logs_router
+from app.api.routers import agent_graph_mutations as agent_graph_mutations_router
 from app.api.routers import org_units as org_units_router
 from app.api.routers import rbac as rbac_router
 from app.api.routers import audit as audit_router
 from app.api.routers import rag_pipelines as rag_pipelines_router
+from app.api.routers import rag_graph_mutations as rag_graph_mutations_router
 from app.api.routers import rag_custom_operators as rag_custom_operators_router
 from app.api.routers import models as models_router
 from app.api.routers import tools as tools_router
@@ -834,9 +842,11 @@ from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_de
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(agents_router)
 app.include_router(agent_run_logs_router.router)
+app.include_router(agent_graph_mutations_router.router)
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
 app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
+app.include_router(rag_graph_mutations_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
 app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom-operators", tags=["rag-custom-operators"])
 app.include_router(artifacts_router.router, tags=["artifacts"])
 app.include_router(stats_router.router, prefix="/admin", tags=["stats"])

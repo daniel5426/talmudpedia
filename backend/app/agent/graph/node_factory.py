@@ -80,6 +80,12 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             logger.error(f"Error executing node {node.id} ({node.type}): {e}")
             if emitter:
                 emitter.emit_error(str(e), node.id)
+            try:
+                from app.services.platform_architect_guardrails import PlatformArchitectBlockedError
+            except Exception:
+                PlatformArchitectBlockedError = None
+            if PlatformArchitectBlockedError is not None and isinstance(e, PlatformArchitectBlockedError):
+                raise
             state_payload = state.get("state", {}) if isinstance(state, dict) else {}
             if not isinstance(state_payload, dict):
                 state_payload = {}

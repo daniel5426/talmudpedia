@@ -1,6 +1,6 @@
 # Custom Coding Agent
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-07
 
 ## Current State: Hard Cut v2 (OpenCode-Only)
 
@@ -33,6 +33,14 @@ The coding-agent/revision pipeline now integrates directly with async app-build 
   - target = latest existing coding-agent chat session for the publishing user/app scope
   - no new session is auto-created
   - diagnostics include either `auto_fix_run_id`, `auto_fix_skipped`, or `auto_fix_error`
+
+## Latest Applied Update (2026-03-07)
+
+Local embedded draft-dev/runtime cleanup was hardened for development setups:
+- Draft-dev Vite processes are now tracked with per-sandbox metadata and reclaimed on app boot if a previous backend process exited without clean shutdown.
+- Draft-dev shutdown now terminates the full spawned process group, not only the parent process, to avoid lingering `vite`/`tsserver`/`esbuild` children.
+- Dev-shim per-sandbox `opencode serve` processes are now tracked with per-sandbox metadata and reclaimed on app boot when stale.
+- Dev-shim OpenCode shutdown now terminates the full spawned process group, reducing orphaned local `opencode` helpers after restarts/crashes.
 
 ## OpenCode Protocol Evidence (2026-02-25 Deep-Dive)
 

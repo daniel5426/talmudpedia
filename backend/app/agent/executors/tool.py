@@ -1018,6 +1018,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
         impl_type = str(impl_type).lower()
 
         try:
+            from app.services.platform_architect_guardrails import enforce_platform_architect_guardrails
+
             if getattr(tool, "artifact_id", None):
                 from app.agent.executors.artifact import ArtifactNodeExecutor
 
@@ -1034,6 +1036,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     "_literal_inputs": True,
                 }
                 result = await artifact_executor.execute(state, artifact_config, context)
+                enforce_platform_architect_guardrails(
+                    tool_slug=getattr(tool, "slug", None),
+                    tool_result=result,
+                    input_data=input_data,
+                    node_context=context,
+                    emitter=emitter,
+                )
                 if emitter:
                     emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
                 return result
@@ -1054,6 +1063,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     "_literal_inputs": True,
                 }
                 result = await artifact_executor.execute(state, artifact_config, context)
+                enforce_platform_architect_guardrails(
+                    tool_slug=getattr(tool, "slug", None),
+                    tool_result=result,
+                    input_data=input_data,
+                    node_context=context,
+                    emitter=emitter,
+                )
                 if emitter:
                     emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
                 return result
@@ -1085,6 +1101,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 else:
                     raise NotImplementedError(f"Unsupported tool implementation type: {impl_type}")
 
+            enforce_platform_architect_guardrails(
+                tool_slug=getattr(tool, "slug", None),
+                tool_result=output_data,
+                input_data=input_data,
+                node_context=context,
+                emitter=emitter,
+            )
             if emitter:
                 emitter.emit_tool_end(tool.name, output_data, node_id, tool_event_metadata)
 

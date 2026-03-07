@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import logging
 import os
 import re
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import tarfile
@@ -67,9 +69,14 @@ class LocalDraftDevRuntimeManager:
         self._host = (os.getenv("APPS_DRAFT_DEV_HOST") or "127.0.0.1").strip()
         self._state: Dict[str, _SessionProcess] = {}
         self._lock = asyncio.Lock()
+        self._bootstrapped = False
 
     def bootstrap(self) -> None:
         self._root_dir.mkdir(parents=True, exist_ok=True)
+        if self._bootstrapped:
+            return
+        self._reclaim_orphaned_sessions()
+        self._bootstrapped = True
 
     async def stop_all(self) -> None:
         async with self._lock:
@@ -997,15 +1004,16 @@ class LocalDraftDevRuntimeManager:
         if state is None:
             return
         await self._stop_process_locked(state.process)
+        self._clear_process_metadata(state.project_dir)
 
     async def _stop_process_locked(self, process: subprocess.Popen) -> None:
         if process.poll() is not None:
             return
-        process.terminate()
+        self._terminate_process_group(process.pid, sig=signal.SIGTERM)
         try:
             await asyncio.wait_for(asyncio.to_thread(process.wait), timeout=8)
         except asyncio.TimeoutError:
-            process.kill()
+            self._terminate_process_group(process.pid, sig=signal.SIGKILL)
             await asyncio.to_thread(process.wait)
 
     async def _spawn_vite_process_locked(self, project_dir: Path, port: int) -> subprocess.Popen:
@@ -1027,6 +1035,7 @@ class LocalDraftDevRuntimeManager:
                 f"Draft dev Vite server did not become ready on {self._host}:{port}. "
                 f"See {log_path} for details."
             )
+        self._write_process_metadata(project_dir=project_dir, pid=process.pid, port=port)
         return process
 
     def _resolve_dev_command(self, port: int) -> list[str]:
@@ -1156,6 +1165,69 @@ class LocalDraftDevRuntimeManager:
     def _write_dependency_hash_marker(self, project_dir: Path, dependency_hash: str) -> None:
         marker = project_dir / ".draft-dev-dependency-hash"
         marker.write_text((dependency_hash or "").strip(), encoding="utf-8")
+
+    @staticmethod
+    def _terminate_process_group(pid: int, *, sig: signal.Signals) -> None:
+        try:
+            os.killpg(int(pid), sig)
+        except ProcessLookupError:
+            return
+        except Exception:
+            try:
+                os.kill(int(pid), sig)
+            except ProcessLookupError:
+                return
+            except Exception:
+                return
+
+    @staticmethod
+    def _process_exists(pid: int) -> bool:
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except Exception:
+            return True
+
+    @staticmethod
+    def _process_metadata_path(project_dir: Path) -> Path:
+        return project_dir / ".talmudpedia" / "draft-dev-process.json"
+
+    def _write_process_metadata(self, *, project_dir: Path, pid: int, port: int) -> None:
+        payload = {
+            "pid": int(pid),
+            "port": int(port),
+            "project_dir": str(project_dir),
+        }
+        target = self._process_metadata_path(project_dir)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+    def _clear_process_metadata(self, project_dir: Path) -> None:
+        self._process_metadata_path(project_dir).unlink(missing_ok=True)
+
+    def _reclaim_orphaned_sessions(self) -> None:
+        for child in self._root_dir.iterdir():
+            if not child.is_dir():
+                continue
+            metadata_path = self._process_metadata_path(child)
+            if not metadata_path.exists():
+                continue
+            try:
+                payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                metadata_path.unlink(missing_ok=True)
+                continue
+            pid = int(payload.get("pid") or 0)
+            if pid > 0 and self._process_exists(pid):
+                logger.info(
+                    "Reclaiming orphaned local draft-dev process pid=%s project_dir=%s",
+                    pid,
+                    child,
+                )
+                self._terminate_process_group(pid, sig=signal.SIGTERM)
+            metadata_path.unlink(missing_ok=True)
 
 
 _LOCAL_RUNTIME_MANAGER: Optional[LocalDraftDevRuntimeManager] = None

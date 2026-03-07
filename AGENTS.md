@@ -80,3 +80,8 @@ Last Updated: 2026-03-07
 - If the user asks to log every step of an agent or process run, prefer the shared execution-event logging path over ad-hoc prints or one-off debug files.
 - Use `backend/app/agent/execution/trace_recorder.py` as the reusable logging mechanism and read logs through `GET /agents/runs/{run_id}/events` when applicable.
 - Keep new logging reusable across runtimes and subsystems by preserving a consistent event shape and shared run/trace identifiers.
+
+## Fallback Policy
+- Keep fallbacks to a minimum across the app.
+- Prefer explicit canonical contracts over permissive recovery behavior.
+- Only add a fallback when it is clearly necessary, highly useful, and the tradeoff is documented.

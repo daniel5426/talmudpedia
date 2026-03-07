@@ -13,11 +13,23 @@ _ADDITIONAL_DISPATCH_COVERAGE = [
     "rag.list_visual_pipelines",
     "rag.create_visual_pipeline",
     "rag.update_visual_pipeline",
+    "rag.graph.get",
+    "rag.graph.validate_patch",
+    "rag.graph.apply_patch",
+    "rag.graph.attach_knowledge_store_to_node",
+    "rag.graph.set_pipeline_node_config",
     "rag.compile_visual_pipeline",
     "rag.get_executable_pipeline",
     "rag.get_executable_input_schema",
     "agents.create",
     "agents.update",
+    "agents.graph.get",
+    "agents.graph.validate_patch",
+    "agents.graph.apply_patch",
+    "agents.graph.add_tool_to_agent_node",
+    "agents.graph.remove_tool_from_agent_node",
+    "agents.graph.set_agent_model",
+    "agents.graph.set_agent_instructions",
 ]
 
 
@@ -82,6 +94,39 @@ def _patch_auth(monkeypatch):
             {"pipeline_id": "pipe-1", "patch": {"name": "updated"}},
             "rag",
             "update_visual_pipeline",
+            "pipe-1",
+            "options",
+        ),
+        ("rag.graph.get", {"pipeline_id": "pipe-1"}, "rag", "get_pipeline_graph", "pipe-1", None),
+        (
+            "rag.graph.validate_patch",
+            {"pipeline_id": "pipe-1", "operations": [{"op": "set_node_config_value"}]},
+            "rag",
+            "validate_graph_patch",
+            "pipe-1",
+            None,
+        ),
+        (
+            "rag.graph.apply_patch",
+            {"pipeline_id": "pipe-1", "operations": [{"op": "set_node_config_value"}]},
+            "rag",
+            "apply_graph_patch",
+            "pipe-1",
+            "options",
+        ),
+        (
+            "rag.graph.attach_knowledge_store_to_node",
+            {"pipeline_id": "pipe-1", "node_id": "lookup_1", "knowledge_store_id": "ks-1"},
+            "rag",
+            "attach_knowledge_store_to_node",
+            "pipe-1",
+            "options",
+        ),
+        (
+            "rag.graph.set_pipeline_node_config",
+            {"pipeline_id": "pipe-1", "node_id": "lookup_1", "path": "top_k", "value": 4},
+            "rag",
+            "set_pipeline_node_config",
             "pipe-1",
             "options",
         ),
@@ -229,6 +274,55 @@ def _patch_auth(monkeypatch):
             "agents",
             "create",
             None,
+            "options",
+        ),
+        ("agents.graph.get", {"agent_id": "ag1"}, "agents", "get_graph", "ag1", None),
+        (
+            "agents.graph.validate_patch",
+            {"agent_id": "ag1", "operations": [{"op": "set_node_config_value"}]},
+            "agents",
+            "validate_graph_patch",
+            "ag1",
+            None,
+        ),
+        (
+            "agents.graph.apply_patch",
+            {"agent_id": "ag1", "operations": [{"op": "set_node_config_value"}]},
+            "agents",
+            "apply_graph_patch",
+            "ag1",
+            "options",
+        ),
+        (
+            "agents.graph.add_tool_to_agent_node",
+            {"agent_id": "ag1", "node_id": "assistant", "tool_id": "tool-1"},
+            "agents",
+            "add_tool_to_agent_node",
+            "ag1",
+            "options",
+        ),
+        (
+            "agents.graph.remove_tool_from_agent_node",
+            {"agent_id": "ag1", "node_id": "assistant", "tool_id": "tool-1"},
+            "agents",
+            "remove_tool_from_agent_node",
+            "ag1",
+            "options",
+        ),
+        (
+            "agents.graph.set_agent_model",
+            {"agent_id": "ag1", "node_id": "assistant", "model_id": "model-1"},
+            "agents",
+            "set_agent_model",
+            "ag1",
+            "options",
+        ),
+        (
+            "agents.graph.set_agent_instructions",
+            {"agent_id": "ag1", "node_id": "assistant", "instructions": "Use tools"},
+            "agents",
+            "set_agent_instructions",
+            "ag1",
             "options",
         ),
         (
@@ -433,19 +527,19 @@ def test_rag_update_visual_pipeline_translates_graph_definition_patch(monkeypatc
 
 
 def test_dispatch_actions_have_parity_test_coverage():
-    handler_text = Path("backend/artifacts/builtin/platform_sdk/handler.py").read_text()
-    dispatched = set(re.findall(r'"([a-z_]+\.[a-z_]+)": lambda:', handler_text))
+    handler_text = Path("artifacts/builtin/platform_sdk/handler.py").read_text()
+    dispatched = set(re.findall(r'"([a-z_]+(?:\.[a-z_]+)+)": lambda:', handler_text))
 
     parity_text = "\n".join(
         Path(p).read_text()
         for p in [
-            "backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py",
-            "backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py",
-            "backend/tests/platform_sdk_tool/test_platform_sdk_actions.py",
-            "backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py",
+            "tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py",
+            "tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py",
+            "tests/platform_sdk_tool/test_platform_sdk_actions.py",
+            "tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py",
         ]
     )
-    covered = set(re.findall(r"([a-z_]+\.[a-z_]+)", parity_text))
+    covered = set(re.findall(r"([a-z_]+(?:\.[a-z_]+)+)", parity_text))
     missing = sorted(dispatched - covered)
 
     assert missing == [], f"Missing parity coverage for actions: {missing}"

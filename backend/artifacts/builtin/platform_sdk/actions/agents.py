@@ -285,6 +285,197 @@ def nodes_validate(
         return None, [{"error": "agents_nodes_validate_failed", "detail": str(exc), "agent_id": agent_id}]
 
 
+def graph_get(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    agent_id = payload.get("agent_id") or payload.get("id")
+    if not agent_id:
+        return None, [{"error": "missing_fields", "fields": ["agent_id"]}]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.get_graph(str(agent_id))
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("get_agent_graph_failed", exc, agent_id=agent_id)]
+    except Exception as exc:
+        return None, [{"error": "get_agent_graph_failed", "detail": str(exc), "agent_id": agent_id}]
+
+
+def graph_validate_patch(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    agent_id = payload.get("agent_id") or payload.get("id")
+    operations = payload.get("operations") if isinstance(payload.get("operations"), list) else []
+    if not agent_id:
+        return None, [{"error": "missing_fields", "fields": ["agent_id"]}]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.validate_graph_patch(str(agent_id), operations)
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("validate_agent_graph_patch_failed", exc, agent_id=agent_id)]
+    except Exception as exc:
+        return None, [{"error": "validate_agent_graph_patch_failed", "detail": str(exc), "agent_id": agent_id}]
+
+
+def graph_apply_patch(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    agent_id = payload.get("agent_id") or payload.get("id")
+    operations = payload.get("operations") if isinstance(payload.get("operations"), list) else []
+    if not agent_id:
+        return None, [{"error": "missing_fields", "fields": ["agent_id"]}]
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "agent_id": str(agent_id), "operations": operations}, []
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.apply_graph_patch(
+            str(agent_id),
+            operations,
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("apply_agent_graph_patch_failed", exc, agent_id=agent_id)]
+    except Exception as exc:
+        return None, [{"error": "apply_agent_graph_patch_failed", "detail": str(exc), "agent_id": agent_id}]
+
+
+def graph_add_tool_to_agent_node(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    agent_id = payload.get("agent_id") or payload.get("id")
+    node_id = payload.get("node_id")
+    tool_id = payload.get("tool_id")
+    missing = [name for name, value in (("agent_id", agent_id), ("node_id", node_id), ("tool_id", tool_id)) if not value]
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "agent_id": str(agent_id), "node_id": str(node_id), "tool_id": str(tool_id)}, []
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.add_tool_to_agent_node(
+            str(agent_id),
+            node_id=str(node_id),
+            tool_id=str(tool_id),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("add_tool_to_agent_node_failed", exc, agent_id=agent_id)]
+    except Exception as exc:
+        return None, [{"error": "add_tool_to_agent_node_failed", "detail": str(exc), "agent_id": agent_id}]
+
+
+def graph_remove_tool_from_agent_node(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    agent_id = payload.get("agent_id") or payload.get("id")
+    node_id = payload.get("node_id")
+    tool_id = payload.get("tool_id")
+    missing = [name for name, value in (("agent_id", agent_id), ("node_id", node_id), ("tool_id", tool_id)) if not value]
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "agent_id": str(agent_id), "node_id": str(node_id), "tool_id": str(tool_id)}, []
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.remove_tool_from_agent_node(
+            str(agent_id),
+            node_id=str(node_id),
+            tool_id=str(tool_id),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("remove_tool_from_agent_node_failed", exc, agent_id=agent_id)]
+    except Exception as exc:
+        return None, [{"error": "remove_tool_from_agent_node_failed", "detail": str(exc), "agent_id": agent_id}]
+
+
+def graph_set_agent_model(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    agent_id = payload.get("agent_id") or payload.get("id")
+    node_id = payload.get("node_id")
+    model_id = payload.get("model_id")
+    missing = [name for name, value in (("agent_id", agent_id), ("node_id", node_id), ("model_id", model_id)) if not value]
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "agent_id": str(agent_id), "node_id": str(node_id), "model_id": str(model_id)}, []
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.set_agent_model(
+            str(agent_id),
+            node_id=str(node_id),
+            model_id=str(model_id),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("set_agent_model_failed", exc, agent_id=agent_id)]
+    except Exception as exc:
+        return None, [{"error": "set_agent_model_failed", "detail": str(exc), "agent_id": agent_id}]
+
+
+def graph_set_agent_instructions(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    agent_id = payload.get("agent_id") or payload.get("id")
+    node_id = payload.get("node_id")
+    instructions = payload.get("instructions")
+    missing = [name for name, value in (("agent_id", agent_id), ("node_id", node_id), ("instructions", instructions)) if not value]
+    if missing:
+        return None, [{"error": "missing_fields", "fields": missing}]
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "agent_id": str(agent_id), "node_id": str(node_id)}, []
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.agents.set_agent_instructions(
+            str(agent_id),
+            node_id=str(node_id),
+            instructions=str(instructions),
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("set_agent_instructions_failed", exc, agent_id=agent_id)]
+    except Exception as exc:
+        return None, [{"error": "set_agent_instructions_failed", "detail": str(exc), "agent_id": agent_id}]
+
+
 def execute(
     client: Client,
     payload: Dict[str, Any],

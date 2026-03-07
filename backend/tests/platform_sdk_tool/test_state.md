@@ -1,9 +1,9 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-07
 
 Scope:
-- Platform SDK tool action dispatch, explicit-action behavior, and wrapped-input recovery.
+- Platform SDK tool action dispatch, explicit-action behavior, and strict canonical input enforcement.
 - Domain-method action wrappers for control-plane SDK surfaces.
 - Runtime primitive orchestration action dispatch and validation.
 
@@ -18,8 +18,7 @@ Test files present:
 
 Key scenarios covered:
 - Missing action fails fast with structured validation errors (`MISSING_REQUIRED_FIELD`).
-- Wrapped JSON tool calls embedded in `value`/`query` are unwrapped into canonical Platform SDK actions when top-level `action` is absent.
-- Malformed wrapped JSON in `value`/`query` returns a structured `INVALID_JSON` error with source field and line/column details.
+- Wrapped tool input in `value`/`query`/`text` is rejected with `NON_CANONICAL_PLATFORM_SDK_INPUT`.
 - Deprecated planner-centric actions (`validate_plan`, `execute_plan`) fail with explicit `deprecated_action` validation errors.
 - Legacy action aliases normalize to canonical domain action IDs.
 - Additional architect-safety aliases now map common non-canonical planner outputs to canonical IDs (e.g. `create_agent` -> `agents.create`) to prevent avoidable scope mismatch failures.
@@ -40,11 +39,23 @@ Key scenarios covered:
   - `rag.list_visual_pipelines`
   - `rag.create_visual_pipeline`
   - `rag.update_visual_pipeline`
+  - `rag.graph.get`
+  - `rag.graph.validate_patch`
+  - `rag.graph.apply_patch`
+  - `rag.graph.attach_knowledge_store_to_node`
+  - `rag.graph.set_pipeline_node_config`
   - `rag.compile_visual_pipeline`
   - `rag.get_executable_pipeline`
   - `rag.get_executable_input_schema`
   - `agents.create`
   - `agents.update`
+  - `agents.graph.get`
+  - `agents.graph.validate_patch`
+  - `agents.graph.apply_patch`
+  - `agents.graph.add_tool_to_agent_node`
+  - `agents.graph.remove_tool_from_agent_node`
+  - `agents.graph.set_agent_model`
+  - `agents.graph.set_agent_instructions`
 - Agent node-intelligence action parity now covered:
   - `agents.nodes.catalog`
   - `agents.nodes.schema`
@@ -62,9 +73,9 @@ Key scenarios covered:
   - `agents.resume_run` (error-path parity on nonexistent run)
   These validate persisted-state equivalence across UI HTTP path, SDK path, and tool-action path.
 
-Last run command: `pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_actions.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py`
-Last run date/time: 2026-03-06 (local run during this change set)
-Last run result: pass (`19 passed, 1 warning`)
+Last run command: `cd backend && pytest -q tests/platform_sdk_tool/test_platform_sdk_actions.py tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py tests/platform_architect_runtime/test_architect_seeding.py tests/platform_architect_runtime/test_platform_architect_runtime.py tests/graph_mutation_agents tests/graph_mutation_rag`
+Last run date/time: 2026-03-07
+Last run result: pass (`94 passed, 5 warnings`)
 
 Known gaps / follow-ups:
 - Promote env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.

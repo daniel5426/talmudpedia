@@ -60,6 +60,99 @@ class AgentsAPI:
             mutation=True,
         )
 
+    def get_graph(self, agent_id: str) -> ResponseEnvelope:
+        return self._client.request("GET", f"/agents/{agent_id}/graph")
+
+    def validate_graph_patch(
+        self,
+        agent_id: str,
+        operations: List[Dict[str, Any]],
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/agents/{agent_id}/graph/validate-patch",
+            json_body={"operations": list(operations or [])},
+            mutation=False,
+        )
+
+    def apply_graph_patch(
+        self,
+        agent_id: str,
+        operations: List[Dict[str, Any]],
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/agents/{agent_id}/graph/apply-patch",
+            json_body={"operations": list(operations or [])},
+            options=options,
+            mutation=True,
+        )
+
+    def add_tool_to_agent_node(
+        self,
+        agent_id: str,
+        *,
+        node_id: str,
+        tool_id: str,
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/agents/{agent_id}/graph/add-tool-to-agent-node",
+            json_body={"node_id": node_id, "tool_id": tool_id},
+            options=options,
+            mutation=True,
+        )
+
+    def remove_tool_from_agent_node(
+        self,
+        agent_id: str,
+        *,
+        node_id: str,
+        tool_id: str,
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/agents/{agent_id}/graph/remove-tool-from-agent-node",
+            json_body={"node_id": node_id, "tool_id": tool_id},
+            options=options,
+            mutation=True,
+        )
+
+    def set_agent_model(
+        self,
+        agent_id: str,
+        *,
+        node_id: str,
+        model_id: str,
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/agents/{agent_id}/graph/set-agent-model",
+            json_body={"node_id": node_id, "model_id": model_id},
+            options=options,
+            mutation=True,
+        )
+
+    def set_agent_instructions(
+        self,
+        agent_id: str,
+        *,
+        node_id: str,
+        instructions: str,
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/agents/{agent_id}/graph/set-agent-instructions",
+            json_body={"node_id": node_id, "instructions": instructions},
+            options=options,
+            mutation=True,
+        )
+
     def delete(self, agent_id: str, options: Optional[RequestOptions] = None) -> ResponseEnvelope:
         return self._client.request("DELETE", f"/agents/{agent_id}", options=options, mutation=True)
 

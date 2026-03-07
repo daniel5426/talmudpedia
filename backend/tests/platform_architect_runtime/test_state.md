@@ -1,9 +1,9 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-07
 
 ## Scope
-- Platform Architect v1.1 direct domain-tool loop runtime (no `architect.run` path).
+- Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
 - Success, repair, approval-blocked, tenant/scope-denied, and replay idempotency behaviors.
 
 ## Test files present
@@ -13,6 +13,8 @@ Last Updated: 2026-03-06
 ## Key scenarios covered
 - Happy path executes direct `rag.*` and `agents.*` calls for create/compile/validate/execute.
 - Recovery path handles first compile failure, applies patch action, and succeeds on retry.
+- Repeated identical architect mutation failures now stop with a blocker instead of looping indefinitely.
+- Non-canonical Platform SDK contract failures are treated as immediate blocker conditions for architect mutation branches.
 - Approval-sensitive mutation maps to `blocked_approval` with explicit next actions.
 - Domain tool boundaries deny cross-domain action usage with `SCOPE_DENIED`.
 - Missing tenant context for mutations fails with deterministic `TENANT_REQUIRED`.
@@ -24,9 +26,9 @@ Last Updated: 2026-03-06
 - Seeded architect runtime no longer forces JSON-only output in prompt or node config.
 
 ## Last run command + date/time + result
-- Command: `pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py`
-- Date/Time: 2026-03-06 (local run after tenant-binding hardening)
-- Result: pass (`11 passed, 1 warning`)
+- Command: `cd backend && pytest -q tests/platform_architect_runtime/test_architect_seeding.py tests/platform_architect_runtime/test_platform_architect_runtime.py`
+- Date/Time: 2026-03-07
+- Result: pass (`14 passed, 3 warnings`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.

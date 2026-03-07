@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+import pytest
+
 from artifacts.builtin.platform_sdk import handler
+from app.services.platform_architect_guardrails import (
+    PlatformArchitectBlockedError,
+    enforce_platform_architect_guardrails,
+)
 from talmudpedia_control_sdk import ControlPlaneSDKError
 
 
@@ -233,6 +239,79 @@ def test_direct_tool_loop_happy_path(monkeypatch):
     assert execute_agent["errors"] == []
     assert create_pipeline["meta"]["idempotency_provided"] is True
     assert create_agent["meta"]["idempotency_provided"] is True
+
+
+def test_platform_architect_guardrails_block_repeated_identical_mutation_failures():
+    emitted: list[tuple[str, dict[str, Any]]] = []
+
+    class _Emitter:
+        def emit_internal_event(self, event_name, data, *, node_id=None, category=None, visibility=None):
+            del node_id, category, visibility
+            emitted.append((event_name, data))
+
+    node_context = {
+        "run_id": "run-1",
+        "node_id": "tool-node",
+        "state_context": {"agent_slug": "platform-architect"},
+    }
+    tool_result = {
+        "context": {
+            "action": "agents.graph.apply_patch",
+            "errors": [
+                {
+                    "code": "VALIDATION_ERROR",
+                    "validation_errors": [{"code": "GRAPH_INVALID", "path": "/graph/edges", "message": "missing"}],
+                }
+            ],
+        }
+    }
+
+    enforce_platform_architect_guardrails(
+        tool_slug="platform-agents",
+        tool_result=tool_result,
+        input_data={"agent_id": "agent-1"},
+        node_context=node_context,
+        emitter=_Emitter(),
+    )
+
+    with pytest.raises(PlatformArchitectBlockedError) as exc_info:
+        enforce_platform_architect_guardrails(
+            tool_slug="platform-agents",
+            tool_result=tool_result,
+            input_data={"agent_id": "agent-1"},
+            node_context=node_context,
+            emitter=_Emitter(),
+        )
+
+    assert exc_info.value.blocker["attempted_action"] == "agents.graph.apply_patch"
+    assert exc_info.value.blocker["target_resource"] == "agent_id:agent-1"
+    assert [name for name, _data in emitted].count("architect.repair_attempted") == 2
+    assert any(name == "architect.repair_blocked" for name, _data in emitted)
+
+
+def test_platform_architect_guardrails_block_contract_failures_immediately():
+    node_context = {
+        "run_id": "run-contract",
+        "node_id": "tool-node",
+        "state_context": {"agent_slug": "platform-architect"},
+    }
+    tool_result = {
+        "context": {
+            "action": "agents.graph.apply_patch",
+            "errors": [{"code": "NON_CANONICAL_PLATFORM_SDK_INPUT", "message": "bad wrapper"}],
+        }
+    }
+
+    with pytest.raises(PlatformArchitectBlockedError) as exc_info:
+        enforce_platform_architect_guardrails(
+            tool_slug="platform-agents",
+            tool_result=tool_result,
+            input_data={"agent_id": "agent-1"},
+            node_context=node_context,
+            emitter=None,
+        )
+
+    assert exc_info.value.blocker["normalized_failure_code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
 
 
 def test_direct_tool_loop_repair_path(monkeypatch):

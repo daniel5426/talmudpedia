@@ -88,6 +88,110 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
                 },
             },
+            "rag.graph.get": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "pipeline_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "tenant_slug": {"type": "string"},
+                    },
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Get the persisted graph for a visual pipeline.",
+                    "required_fields": ["pipeline_id|id"],
+                    "example_payload": {"pipeline_id": "pipe-123", "tenant_slug": "acme"},
+                    "failure_codes": ["NOT_FOUND"],
+                },
+            },
+            "rag.graph.validate_patch": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "pipeline_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "tenant_slug": {"type": "string"},
+                        "operations": {"type": "array", "items": {"type": "object"}},
+                    },
+                    required=["operations"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Validate schema-aware graph mutation operations for a visual pipeline without persisting.",
+                    "required_fields": ["pipeline_id|id", "operations"],
+                    "example_payload": {
+                        "pipeline_id": "pipe-123",
+                        "tenant_slug": "acme",
+                        "operations": [{"op": "set_node_config_value", "node_id": "lookup_1", "path": "top_k", "value": 8}],
+                    },
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "rag.graph.apply_patch": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "pipeline_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "tenant_slug": {"type": "string"},
+                        "operations": {"type": "array", "items": {"type": "object"}},
+                    },
+                    required=["operations"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Apply validated graph mutation operations to a visual pipeline and return persisted validation state.",
+                    "required_fields": ["pipeline_id|id", "operations"],
+                    "example_payload": {
+                        "pipeline_id": "pipe-123",
+                        "tenant_slug": "acme",
+                        "operations": [{"op": "rewire_edge", "edge_id": "e1", "target": "answer_1"}],
+                    },
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "rag.graph.attach_knowledge_store_to_node": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "pipeline_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "tenant_slug": {"type": "string"},
+                        "node_id": {"type": "string"},
+                        "knowledge_store_id": {"type": "string"},
+                    },
+                    required=["node_id", "knowledge_store_id"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Attach a knowledge store to an existing pipeline node without rebuilding the whole graph.",
+                    "required_fields": ["pipeline_id|id", "node_id", "knowledge_store_id"],
+                    "example_payload": {"pipeline_id": "pipe-123", "node_id": "lookup_1", "knowledge_store_id": "ks-123", "tenant_slug": "acme"},
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "rag.graph.set_pipeline_node_config": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "pipeline_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "tenant_slug": {"type": "string"},
+                        "node_id": {"type": "string"},
+                        "path": {"type": "string"},
+                        "value": {},
+                    },
+                    required=["node_id", "path", "value"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Set one config field on an existing pipeline node through the graph mutation layer.",
+                    "required_fields": ["pipeline_id|id", "node_id", "path", "value"],
+                    "example_payload": {"pipeline_id": "pipe-123", "node_id": "lookup_1", "path": "top_k", "value": 8, "tenant_slug": "acme"},
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
             "rag.compile_visual_pipeline": {
                 "mutation": True,
                 "payload_schema": _payload_schema(
@@ -263,6 +367,137 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Patch an existing agent.",
                     "required_fields": ["agent_id|id", "patch"],
                     "example_payload": {"agent_id": "agent-123", "patch": {"description": "updated"}},
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "agents.graph.get": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={"agent_id": {"type": "string"}, "id": {"type": "string"}},
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Get the persisted graph for an agent.",
+                    "required_fields": ["agent_id|id"],
+                    "example_payload": {"agent_id": "agent-123"},
+                    "failure_codes": ["NOT_FOUND"],
+                },
+            },
+            "agents.graph.validate_patch": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "agent_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "operations": {"type": "array", "items": {"type": "object"}},
+                    },
+                    required=["operations"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Validate schema-aware graph mutation operations for an agent without persisting.",
+                    "required_fields": ["agent_id|id", "operations"],
+                    "example_payload": {
+                        "agent_id": "agent-123",
+                        "operations": [{"op": "append_unique_node_config_list_item", "node_id": "assistant", "path": "tools", "value": "tool-123"}],
+                    },
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "agents.graph.apply_patch": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "agent_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "operations": {"type": "array", "items": {"type": "object"}},
+                    },
+                    required=["operations"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Apply validated graph mutation operations to an agent and return persisted validation state.",
+                    "required_fields": ["agent_id|id", "operations"],
+                    "example_payload": {
+                        "agent_id": "agent-123",
+                        "operations": [{"op": "set_node_config_value", "node_id": "assistant", "path": "instructions", "value": "Use web search when needed."}],
+                    },
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "agents.graph.add_tool_to_agent_node": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "agent_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "node_id": {"type": "string"},
+                        "tool_id": {"type": "string"},
+                    },
+                    required=["node_id", "tool_id"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Add a tool reference to an existing agent node without rebuilding the full graph.",
+                    "required_fields": ["agent_id|id", "node_id", "tool_id"],
+                    "example_payload": {"agent_id": "agent-123", "node_id": "assistant", "tool_id": "tool-123"},
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "agents.graph.remove_tool_from_agent_node": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "agent_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "node_id": {"type": "string"},
+                        "tool_id": {"type": "string"},
+                    },
+                    required=["node_id", "tool_id"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Remove a tool reference from an existing agent node through the graph mutation layer.",
+                    "required_fields": ["agent_id|id", "node_id", "tool_id"],
+                    "example_payload": {"agent_id": "agent-123", "node_id": "assistant", "tool_id": "tool-123"},
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "agents.graph.set_agent_model": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "agent_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "node_id": {"type": "string"},
+                        "model_id": {"type": "string"},
+                    },
+                    required=["node_id", "model_id"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Set model_id on an agent node through the graph mutation layer.",
+                    "required_fields": ["agent_id|id", "node_id", "model_id"],
+                    "example_payload": {"agent_id": "agent-123", "node_id": "assistant", "model_id": "model-123"},
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "agents.graph.set_agent_instructions": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "agent_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "node_id": {"type": "string"},
+                        "instructions": {"type": "string"},
+                    },
+                    required=["node_id", "instructions"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Set instructions on an agent node through the graph mutation layer.",
+                    "required_fields": ["agent_id|id", "node_id", "instructions"],
+                    "example_payload": {"agent_id": "agent-123", "node_id": "assistant", "instructions": "Use web search when needed."},
                     "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
                 },
             },
@@ -572,14 +807,20 @@ def build_platform_domain_tool_schema(tool_slug: str, tool_spec: Dict[str, Any])
 
 def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None = None) -> dict:
     instructions = (
-        "You are Platform Architect v1.1. "
+        "You are Platform Architect v1.2. "
         "You must plan and execute directly through visible domain tools only: platform-rag, platform-agents, "
         "platform-assets, platform-governance. "
         "Never call architect.run or any meta action. "
         "Use only exact canonical action IDs from tool schemas (for example: agents.create, rag.create_visual_pipeline, "
         "artifacts.create_or_update_draft). Never invent aliases like create_agent/register_asset. "
+        "Every Platform SDK call must use canonical top-level action and payload fields. "
+        "Never wrap a tool call inside query, text, value, or markdown. "
         "Workflow policy: extract intent and constraints, build a step plan, execute one tool call at a time, "
         "validate after each mutation, and repair/replan with a hard max of 2 repair loops. "
+        "Prefer semantic graph helpers first (agents.graph.add_tool_to_agent_node, agents.graph.set_agent_model, "
+        "agents.graph.set_agent_instructions, rag.graph.attach_knowledge_store_to_node, "
+        "rag.graph.set_pipeline_node_config). Use agents.graph.apply_patch or rag.graph.apply_patch only when a helper "
+        "does not cover the requested mutation. "
         "For rag.create_visual_pipeline, pass nodes/edges at payload top-level (graph_definition is backward-compatible only). "
         "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
         "For agents.create specifically, graph_definition must include exactly one start node, at least one end node, "
@@ -588,6 +829,9 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "For any node set you plan to add/update, call agents.nodes.schema once with all node types in node_types[]. "
         "After each draft graph mutation, call agents.nodes.validate on the target agent id and repair based on "
         "returned structured errors/warnings. "
+        "If the same mutation action fails twice with the same normalized error, stop mutating, summarize the blocker, "
+        "and report the target resource, attempted action, normalized failure code, last validation details, whether any "
+        "mutation succeeded, and the recommended next repair action. "
         "If a node you are creating/updating requires model_id (for example agent/llm/classify) and model_id is "
         "missing or rejected, call platform-assets with action models.list first, select a valid active chat-capable "
         "model id from the response, and retry the mutation. Do not ask the user for model_id unless models.list "

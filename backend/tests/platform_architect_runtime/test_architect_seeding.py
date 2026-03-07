@@ -18,6 +18,9 @@ def test_platform_architect_graph_is_single_agent_topology():
     instructions = runtime_node["config"]["instructions"]
     assert "Never call architect.run" in instructions
     assert "one tool call at a time" in instructions
+    assert "top-level action and payload" in instructions
+    assert "Never wrap a tool call inside query, text, value" in instructions
+    assert "agents.graph.add_tool_to_agent_node" in instructions
     assert "Draft-first is mandatory" in instructions
     assert "Never ask the user for tenant_id" in instructions
     assert "machine-readable JSON report" not in instructions
@@ -44,10 +47,12 @@ def test_platform_domain_schema_is_action_specific_one_of():
     by_action = {variant["properties"]["action"]["const"]: variant for variant in variants}
 
     assert "agents.create" in by_action
+    assert "agents.graph.add_tool_to_agent_node" in by_action
     assert "agents.nodes.catalog" in by_action
     assert "agents.nodes.schema" in by_action
     assert "agents.nodes.validate" in by_action
     assert "agents.publish" in by_action
+    assert "rag.graph.apply_patch" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
     assert "architect.run" not in by_action
     assert "x-action-contract" in by_action["agents.create"]
     assert "idempotency_key" not in by_action["agents.create"]["required"]
