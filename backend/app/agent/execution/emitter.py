@@ -82,11 +82,15 @@ class EventEmitter:
         if isinstance(tool_metadata, dict):
             data.update(tool_metadata)
 
+        span_id = node_id
+        if isinstance(tool_metadata, dict) and tool_metadata.get("tool_call_id"):
+            span_id = str(tool_metadata["tool_call_id"])
+
         self._emit(ExecutionEvent(
             event="on_tool_start",
             data=data,
             run_id=self._run_id,
-            span_id=node_id,
+            span_id=span_id,
             name=tool_name,
             visibility=EventVisibility.INTERNAL,
             metadata=self._metadata()
@@ -103,11 +107,14 @@ class EventEmitter:
         data = {"output": output_data} if output_data else {}
         if isinstance(tool_metadata, dict):
             data.update(tool_metadata)
+        span_id = node_id
+        if isinstance(tool_metadata, dict) and tool_metadata.get("tool_call_id"):
+            span_id = str(tool_metadata["tool_call_id"])
         self._emit(ExecutionEvent(
             event="on_tool_end",
             data=data,
             run_id=self._run_id,
-            span_id=node_id,
+            span_id=span_id,
             name=tool_name,
             visibility=EventVisibility.INTERNAL,
             metadata=self._metadata()

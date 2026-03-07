@@ -116,7 +116,9 @@ export function AppsBuilderVersionHistoryPanel({
                     className="min-w-0 flex-1 text-left"
                     onClick={() => onSelectVersion(version.id)}
                   >
-                    <div className="truncate text-sm font-semibold">{buildVersionTitle(version)}</div>
+                    <div className="line-clamp-3 text-sm font-semibold leading-5 whitespace-normal [overflow-wrap:anywhere]">
+                      {buildVersionTitle(version)}
+                    </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       {new Date(version.created_at).toLocaleString()}
                     </div>

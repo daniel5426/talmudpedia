@@ -87,6 +87,8 @@ function buildBootstrapFromBasePath(ctx: QueryRuntimeContext, basePath: string):
   const normalizedBase = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
   return {
     version: "runtime-bootstrap.v1",
+    stream_contract_version: "run-stream.v2",
+    request_contract_version: "thread.v1",
     app_id: String(config.app_id || ""),
     slug: String(config.app_slug || ""),
     mode: ctx.mode || "published-runtime",
@@ -189,7 +191,7 @@ export const createRuntimeClient = (basePath?: string) => {
     async stream(
       input: RuntimeInput,
       onEvent: (event: RuntimeEvent) => void,
-    ): Promise<{ chatId: string | null }> {
+    ): Promise<{ threadId: string | null }> {
       const bootstrap = await resolveBootstrap(basePath);
       const runtimeClient = createSdkRuntimeClient({
         apiBaseUrl: normalizeApiBaseUrl(config.api_base_url),

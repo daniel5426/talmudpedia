@@ -1,6 +1,6 @@
 # Agent Operating Instructions (Talmudpedia)
 
-Last Updated: 2026-02-15
+Last Updated: 2026-03-07
 
 ## Documentation Hygiene (Context-dependent)
 - When asked for a chat summary, unless explicitly requested otherwise, create a markdown file in `backend/documentations/summary/` with a descriptive filename and include a "Last Updated" date.
@@ -75,3 +75,8 @@ Last Updated: 2026-02-15
 
 ## Suggestions for Continuity
 - If you repeatedly update the same doc/test structures, consider proposing a Codex skill to automate the workflow.
+
+## Execution Logging (When requested)
+- If the user asks to log every step of an agent or process run, prefer the shared execution-event logging path over ad-hoc prints or one-off debug files.
+- Use `backend/app/agent/execution/trace_recorder.py` as the reusable logging mechanism and read logs through `GET /agents/runs/{run_id}/events` when applicable.
+- Keep new logging reusable across runtimes and subsystems by preserving a consistent event shape and shared run/trace identifiers.

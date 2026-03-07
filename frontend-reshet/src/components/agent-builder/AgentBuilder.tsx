@@ -353,7 +353,15 @@ function AgentBuilderInner({
                 // Note: LangGraph nodes usually match the display name or a simplified version of it
                 const nodeSteps = executionSteps.filter((step) => matchesStepToNode(step, node as Node<AgentNodeData>, data))
 
-                if (nodeSteps.length === 0) return node
+                if (nodeSteps.length === 0) {
+                    if (!data.executionStatus) return node
+                    const rest = { ...data }
+                    delete (rest as Record<string, unknown>).executionStatus
+                    return {
+                        ...node,
+                        data: rest,
+                    }
+                }
 
                 // Get the latest status
                 const latestStep = nodeSteps[nodeSteps.length - 1]

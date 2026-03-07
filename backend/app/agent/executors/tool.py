@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from typing import Any
 from types import SimpleNamespace
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -997,6 +997,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             tool_name=tool.name,
             input_data=input_data,
         )
+        tool_event_metadata["tool_call_id"] = uuid4().hex
         if emitter:
             emitter.emit_tool_start(tool.name, input_data, node_id, tool_event_metadata)
 

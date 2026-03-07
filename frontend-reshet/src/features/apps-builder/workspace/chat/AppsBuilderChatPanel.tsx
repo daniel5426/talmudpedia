@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
   GitBranch,
@@ -12,7 +12,6 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import {
   ModelSelector,
   ModelSelectorContent,
@@ -31,8 +30,6 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
-import { Shimmer } from "@/components/ai-elements/shimmer";
-import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "@/components/ai-elements/task";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -41,16 +38,14 @@ import type { AppVersionListItem, CodingAgentChatSession, OpenCodeCodingModelOpt
 
 import {
   TimelineItem,
-  formatToolPathLabel,
-  formatToolReadPath,
-  isEditToolName,
   isExplorationToolName,
   isAssistantTimelineItem,
-  isReadToolName,
-  isSearchToolName,
   isToolTimelineItem,
   isUserTimelineItem,
 } from "./chat-model";
+import { AppsBuilderChatScrollBindings } from "./AppsBuilderChatScrollBindings";
+import { AppsBuilderChatQuestionPanel } from "./AppsBuilderChatQuestionPanel";
+import { AppsBuilderChatTimeline } from "./AppsBuilderChatTimeline";
 import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import type { QueuedPrompt } from "./useAppsBuilderChat";
 import { AppsBuilderVersionHistoryPanel } from "./AppsBuilderVersionHistoryPanel";
@@ -149,16 +144,19 @@ export function AppsBuilderChatPanel({
 }: AppsBuilderChatPanelProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isVersionsOpen, setIsVersionsOpen] = useState(false);
-  const [questionStepIndex, setQuestionStepIndex] = useState(0);
-  const [questionSelections, setQuestionSelections] = useState<Record<number, string[]>>({});
-  const [questionCustomInput, setQuestionCustomInput] = useState<Record<number, string>>({});
   const [isScrolled, setIsScrolled] = useState(false);
+  const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const isLoadingOlderRef = useRef(false);
+  const wasVersionsOpenRef = useRef(false);
+  const handleScrollContainerChange = useCallback((node: HTMLDivElement | null) => {
+    setScrollContainer((current) => (current === node ? current : node));
+  }, []);
 
   useEffect(() => {
     const sentinel = topSentinelRef.current;
-    if (!sentinel) return;
+    const root = scrollContainer;
+    if (!sentinel || !root) return;
     if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -168,7 +166,7 @@ export function AppsBuilderChatPanel({
         if (!hasOlderHistory || isLoadingOlderHistory || isLoadingOlderRef.current) {
           return;
         }
-        const scrollNode = sentinel.parentElement?.parentElement as HTMLElement | null;
+        const scrollNode = root;
         const previousHeight = scrollNode?.scrollHeight || 0;
         const previousTop = scrollNode?.scrollTop || 0;
         isLoadingOlderRef.current = true;
@@ -180,18 +178,16 @@ export function AppsBuilderChatPanel({
           isLoadingOlderRef.current = false;
         });
       },
-      { threshold: 0 }
+      { root, threshold: 0 }
     );
     observer.observe(sentinel);
     return () => {
       observer.disconnect();
     };
-  }, [hasOlderHistory, isLoadingOlderHistory, onLoadOlderHistory]);
+  }, [hasOlderHistory, isLoadingOlderHistory, onLoadOlderHistory, scrollContainer]);
 
   useEffect(() => {
-    const sentinel = topSentinelRef.current;
-    if (!sentinel) return;
-    const scrollNode = sentinel.parentElement?.parentElement as HTMLElement | null;
+    const scrollNode = scrollContainer;
     if (!scrollNode) return;
 
     const handleScroll = () => {
@@ -201,7 +197,16 @@ export function AppsBuilderChatPanel({
     scrollNode.addEventListener("scroll", handleScroll, { passive: true });
     handleScroll();
     return () => scrollNode.removeEventListener("scroll", handleScroll);
-  }, []);
+  }, [scrollContainer]);
+
+  useEffect(() => {
+    const wasOpen = wasVersionsOpenRef.current;
+    wasVersionsOpenRef.current = isVersionsOpen;
+    if (!isVersionsOpen || wasOpen) {
+      return;
+    }
+    onRefreshVersions();
+  }, [isVersionsOpen, onRefreshVersions]);
 
   const hasRunningTool = useMemo(
     () => timeline.some((item) => isToolTimelineItem(item) && item.toolStatus === "running"),
@@ -262,252 +267,10 @@ export function AppsBuilderChatPanel({
     () => new Set([...runningSessionIds, ...sendingSessionIds]),
     [runningSessionIds, sendingSessionIds],
   );
-
-  useEffect(() => {
-    setQuestionStepIndex(0);
-    setQuestionSelections({});
-    setQuestionCustomInput({});
-  }, [pendingQuestion?.requestId]);
-
-  const activeQuestion = useMemo(() => {
-    if (!pendingQuestion) return null;
-    const index = Math.max(0, Math.min(questionStepIndex, pendingQuestion.questions.length - 1));
-    return pendingQuestion.questions[index] || null;
-  }, [pendingQuestion, questionStepIndex]);
-
-  const canSubmitQuestion = useMemo(() => {
-    if (!pendingQuestion) return false;
-    return pendingQuestion.questions.some((question, index) => {
-      const selections = questionSelections[index] || [];
-      const custom = String(questionCustomInput[index] || "").trim();
-      return selections.length > 0 || !!custom;
-    });
-  }, [pendingQuestion, questionCustomInput, questionSelections]);
   const sendBlocked = !isSending && (isAnsweringQuestion || isSendBlockedBySandbox);
   const sendBlockedHint = isAnsweringQuestion
     ? "Answer the pending question before sending a new prompt."
     : sendBlockedReason;
-
-  const handleQuestionOptionToggle = (label: string) => {
-    if (!pendingQuestion || !activeQuestion) return;
-    const normalizedLabel = String(label || "").trim();
-    if (!normalizedLabel) return;
-    const questionCount = pendingQuestion.questions.length;
-    setQuestionSelections((prev) => {
-      const current = prev[questionStepIndex] || [];
-      if (activeQuestion.multiple) {
-        const next = current.includes(normalizedLabel)
-          ? current.filter((item) => item !== normalizedLabel)
-          : [...current, normalizedLabel];
-        return { ...prev, [questionStepIndex]: next };
-      }
-      return { ...prev, [questionStepIndex]: [normalizedLabel] };
-    });
-    if (!activeQuestion.multiple && questionCount > 1 && questionStepIndex < questionCount - 1) {
-      setQuestionStepIndex((prev) => Math.min(questionCount - 1, prev + 1));
-    }
-  };
-
-  const handleSubmitQuestion = async () => {
-    if (!pendingQuestion) return;
-    const answers = pendingQuestion.questions.map((question, index) => {
-      const fromOptions = (questionSelections[index] || []).map((item) => String(item || "").trim()).filter(Boolean);
-      const custom = String(questionCustomInput[index] || "").trim();
-      if (custom) {
-        if (fromOptions.includes(custom)) {
-          return fromOptions;
-        }
-        return [...fromOptions, custom];
-      }
-      return fromOptions;
-    });
-    await onAnswerQuestion(answers);
-  };
-
-  const renderedTimeline = useMemo(() => {
-    const renderUserDeliveryLabel = (status?: TimelineItem["userDeliveryStatus"]) => {
-      if (!status || status === "sent") return null;
-      if (status === "pending") return "Sending...";
-      return "Failed";
-    };
-
-    const renderStandardToolRow = (item: TimelineItem) => {
-      const status = item.toolStatus || "completed";
-      const showPathBadge = item.toolPath && !isEditToolName(String(item.toolName || ""));
-      return (
-        <Message key={item.id} from="assistant" className="max-w-full">
-          <MessageContent className="bg-transparent px-0 py-0 text-sm">
-            <Task defaultOpen className="w-full">
-              <TaskItem
-                className={cn(
-                  "flex items-center gap-2 text-sm",
-                  status === "failed" ? "text-destructive" : "text-muted-foreground",
-                )}
-              >
-                {status === "running" ? (
-                  <Shimmer className="flex items-center gap-2 text-sm">
-                    <span>{item.title}</span>
-                    {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(item.toolPath || ""))}</TaskItemFile> : null}
-                    {item.toolDetail ? <TaskItemFile>{item.toolDetail}</TaskItemFile> : null}
-                  </Shimmer>
-                ) : (
-                  <>
-                    <span>{item.title}</span>
-                    {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(item.toolPath || ""))}</TaskItemFile> : null}
-                    {item.toolDetail ? <TaskItemFile>{item.toolDetail}</TaskItemFile> : null}
-                  </>
-                )}
-              </TaskItem>
-            </Task>
-          </MessageContent>
-        </Message>
-      );
-    };
-
-    const renderedItems: JSX.Element[] = [];
-    let index = 0;
-
-    while (index < timeline.length) {
-      const item = timeline[index];
-      if (isUserTimelineItem(item)) {
-        if (item.userDeliveryStatus === "queued") {
-          index += 1;
-          continue;
-        }
-        renderedItems.push(
-          <Message key={item.id} from="user" className="group/usermsg max-w-full">
-            <MessageContent className="relative">
-              <MessageResponse>{item.description || "Request submitted."}</MessageResponse>
-              {renderUserDeliveryLabel(item.userDeliveryStatus) ? (
-                <div className="mt-1 text-[9px] text-muted-foreground">
-                  {renderUserDeliveryLabel(item.userDeliveryStatus)}
-                </div>
-              ) : null}
-            </MessageContent>
-          </Message>
-        );
-        index += 1;
-        continue;
-      }
-
-      if (isAssistantTimelineItem(item)) {
-        renderedItems.push(
-          <Message key={item.id} from="assistant" className="max-w-full">
-            <MessageContent className="bg-transparent px-0 py-0">
-              <MessageResponse>
-                {item.description}
-              </MessageResponse>
-            </MessageContent>
-          </Message>
-        );
-        index += 1;
-        continue;
-      }
-
-      if (isToolTimelineItem(item)) {
-        if (isExplorationToolName(String(item.toolName || ""))) {
-          const explorationStreak: TimelineItem[] = [];
-          while (index < timeline.length) {
-            const candidate = timeline[index];
-            if (!isToolTimelineItem(candidate) || !isExplorationToolName(String(candidate.toolName || ""))) {
-              break;
-            }
-            explorationStreak.push(candidate);
-            index += 1;
-          }
-
-          const readItems = explorationStreak.filter((entry) => isReadToolName(String(entry.toolName || "")));
-          const searchItems = explorationStreak.filter((entry) => isSearchToolName(String(entry.toolName || "")));
-          const readCount = readItems.length;
-          const searchCount = searchItems.length;
-          const hasRunningExplore = explorationStreak.some((entry) => (entry.toolStatus || "completed") === "running");
-          const keepExploreHeaderShimmer =
-            hasRunningExplore
-            || (
-              isSending
-              && lastToolAfterCurrentUserIsExploration
-              && explorationStreak.some((entry) => entry.id === lastToolAfterCurrentUser?.id)
-            );
-          const headerParts: string[] = [];
-          if (readCount > 0) {
-            headerParts.push(`${readCount} ${readCount === 1 ? "file" : "files"}`);
-          }
-          if (searchCount > 0) {
-            headerParts.push(`${searchCount} ${searchCount === 1 ? "search" : "searches"}`);
-          }
-          const headerText = `Exploring ${headerParts.join(", ") || "workspace"}`;
-
-          renderedItems.push(
-            <Message key={`explore-group-${explorationStreak[0].id}`} from="assistant" className="max-w-full">
-              <MessageContent className="bg-transparent px-0 py-0 text-sm">
-                <Task defaultOpen={false} className="w-full">
-                  <TaskTrigger asChild title={headerText}>
-                    <button
-                      type="button"
-                      className="group flex w-full items-center justify-between gap-2 rounded-md px-0 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      {keepExploreHeaderShimmer ? (
-                        <Shimmer className="text-sm">{headerText}</Shimmer>
-                      ) : (
-                        <span className="text-sm">{headerText}</span>
-                      )}
-                    </button>
-                  </TaskTrigger>
-                  <TaskContent className="mt-1">
-                    {explorationStreak.map((entry) => {
-                      const toolStatus = entry.toolStatus || "completed";
-                      const isRead = isReadToolName(String(entry.toolName || ""));
-                      const readPath = isRead ? formatToolReadPath(String(entry.toolPath || "")) : "";
-                      const searchDetail = String(entry.toolDetail || "").trim();
-                      const searchPath = String(entry.toolPath || "").trim();
-                      const rowTitle = isRead
-                        ? (readPath ? `Reading file ${readPath}` : "Reading file")
-                        : (searchDetail
-                          ? `Searching code ${searchDetail}`
-                          : searchPath
-                            ? `Searching code ${formatToolPathLabel(searchPath)}`
-                            : "Searching code");
-                      return (
-                        <TaskItem
-                          key={entry.id}
-                          className={cn("flex items-center gap-2 text-sm", toolStatus === "failed" ? "text-destructive" : "text-muted-foreground")}
-                        >
-                          {toolStatus === "running" ? (
-                            <Shimmer className="text-sm">{rowTitle}</Shimmer>
-                          ) : (
-                            <span>{rowTitle}</span>
-                          )}
-                        </TaskItem>
-                      );
-                    })}
-                  </TaskContent>
-                </Task>
-              </MessageContent>
-            </Message>,
-          );
-          continue;
-        }
-
-        renderedItems.push(renderStandardToolRow(item));
-        index += 1;
-        continue;
-      }
-
-      renderedItems.push(
-        <Message key={item.id} from="assistant" className="max-w-full">
-          <MessageContent className="bg-transparent px-0 py-0 text-xs text-muted-foreground">
-            <div>
-              {item.title}
-              {item.description ? ` ${item.description}` : ""}
-            </div>
-          </MessageContent>
-        </Message>
-      );
-      index += 1;
-    }
-
-    return renderedItems;
-  }, [timeline]);
 
   if (!isOpen) {
     return null;
@@ -515,108 +278,111 @@ export function AppsBuilderChatPanel({
 
   return (
     <aside className="flex h-full min-h-0 w-[430px] shrink-0 flex-col overflow-hidden border-l border-border/60 bg-background">
-      <div className="relative z-10 flex h-7 pt-2 shrink-0 items-center gap-1 px-2 bg-background">
-        <div
-          className={cn(
-            "absolute inset-x-0 -bottom-6 h-6 bg-gradient-to-b from-background via-background/90 to-transparent pointer-events-none transition-opacity duration-300",
-            isScrolled ? "opacity-100" : "opacity-0"
-          )}
-        />
-        <div
-          className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          onWheel={handleTabsWheel}
-        >
-          <div className="flex w-max items-center gap-1 pr-2">
-            {threadTabs.map((session) => {
-              const isSessionTab = session.kind === "session" || session.kind === "provisional";
-              const sessionId = session.kind === "session"
-                ? session.session.id
-                : session.kind === "provisional"
-                  ? session.sessionId
-                  : "__draft__";
-              const sessionTitle = session.title;
-              const isActive = isSessionTab
-                ? activeChatSessionId === sessionId
-                : !activeChatSessionId;
-              return (
-                <div key={session.id} className="h-7.5 group/thread relative shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      "h-7 max-w-[150px] shrink-0 gap-1 rounded-md px-2 text-[12px]",
-                      isActive
-                        ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:text-foreground group-hover/thread:bg-muted group-hover/thread:text-foreground",
-                    )}
-                    onClick={() => {
-                      if (session.kind === "draft") {
-                        handleActivateDraftThreadTab();
-                        return;
-                      }
-                      if (isSessionTab) {
-                        handleOpenThreadTab(sessionId);
-                        return;
-                      }
-                      handleStartNewThreadTab();
-                    }}
-                    aria-label={`Open chat ${sessionTitle}`}
-                  >
-                    <span className="truncate">{sessionTitle}</span>
-                    {isSessionTab && runningSessionIdSet.has(sessionId) ? (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
-                    ) : null}
-                  </Button>
-                  <button
-                    type="button"
-                    aria-label={`Close tab ${sessionTitle}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleCloseThreadTab(sessionId);
-                    }}
-                    className="absolute inset-y-0 bg-muted hover:bg-muted right-0.5 my-auto flex h-fit w-fit items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/thread:opacity-100"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </div>
-              );
-            })}
+      {!isVersionsOpen ? (
+        <div className="relative z-10 flex h-7 pt-2 shrink-0 items-center gap-1 px-2 bg-background">
+          <div
+            className={cn(
+              "pointer-events-none absolute mt-1 inset-x-0 top-full z-10 h-8 bg-gradient-to-b from-background via-background/90 to-transparent transition-opacity duration-300",
+              isScrolled ? "opacity-100" : "opacity-0"
+            )}
+            aria-hidden="true"
+          />
+          <div
+            className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            onWheel={handleTabsWheel}
+          >
+            <div className="flex w-max items-center gap-1 pr-2">
+              {threadTabs.map((session) => {
+                const isSessionTab = session.kind === "session" || session.kind === "provisional";
+                const sessionId = session.kind === "session"
+                  ? session.session.id
+                  : session.kind === "provisional"
+                    ? session.sessionId
+                    : "__draft__";
+                const sessionTitle = session.title;
+                const isActive = isSessionTab
+                  ? activeChatSessionId === sessionId
+                  : !activeChatSessionId;
+                return (
+                  <div key={session.id} className="h-7.5 group/thread relative shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        "h-7 max-w-[150px] shrink-0 gap-1 rounded-md px-2 text-[12px]",
+                        isActive
+                          ? "bg-muted text-foreground"
+                          : "text-muted-foreground hover:text-foreground group-hover/thread:bg-muted group-hover/thread:text-foreground",
+                      )}
+                      onClick={() => {
+                        if (session.kind === "draft") {
+                          handleActivateDraftThreadTab();
+                          return;
+                        }
+                        if (isSessionTab) {
+                          handleOpenThreadTab(sessionId);
+                          return;
+                        }
+                        handleStartNewThreadTab();
+                      }}
+                      aria-label={`Open chat ${sessionTitle}`}
+                    >
+                      <span className="truncate">{sessionTitle}</span>
+                      {isSessionTab && runningSessionIdSet.has(sessionId) ? (
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+                      ) : null}
+                    </Button>
+                    <button
+                      type="button"
+                      aria-label={`Close tab ${sessionTitle}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleCloseThreadTab(sessionId);
+                      }}
+                      className="absolute inset-y-0 bg-muted hover:bg-muted right-0.5 my-auto flex h-fit w-fit items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/thread:opacity-100"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+            onClick={handleStartNewThreadTab}
+            aria-label="Create new chat"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              onOpenHistory();
+              setIsHistoryOpen(true);
+            }}
+            aria-label="Chat history"
+          >
+            <Clock className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "h-6 w-6 text-muted-foreground hover:text-foreground",
+              isVersionsOpen ? "bg-muted text-foreground" : "",
+            )}
+            onClick={() => setIsVersionsOpen((prev) => !prev)}
+            aria-label="Version history"
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={handleStartNewThreadTab}
-          aria-label="Create new chat"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={() => {
-            onOpenHistory();
-            setIsHistoryOpen(true);
-          }}
-          aria-label="Chat history"
-        >
-          <Clock className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn(
-            "h-6 w-6 text-muted-foreground hover:text-foreground",
-            isVersionsOpen ? "bg-muted text-foreground" : "",
-          )}
-          onClick={() => setIsVersionsOpen((prev) => !prev)}
-          aria-label="Version history"
-        >
-          <GitBranch className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+      ) : null}
       {isVersionsOpen ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <AppsBuilderVersionHistoryPanel
@@ -642,21 +408,18 @@ export function AppsBuilderChatPanel({
       ) : (
         <div className="flex min-h-0 pt-1 flex-1 flex-col px-3 pb-3">
         <Conversation className="flex min-h-0 pb-[-200px] flex-1 flex-col transition-all">
+          <AppsBuilderChatScrollBindings onScrollContainerChange={handleScrollContainerChange} />
           <ConversationContent className="gap-2 px-0 py-0 pb-3">
-            <div ref={topSentinelRef} className="h-1 w-full shrink-0" />
-            {isLoadingOlderHistory ? (
-              <div className="py-1 text-center text-[11px] text-muted-foreground">Loading older messages...</div>
-            ) : null}
-            {renderedTimeline}
-            {isSending && !hasRunningTool && !hasCurrentRunAssistantStream && !lastToolAfterCurrentUserIsExploration ? (
-              <Message from="assistant" className="max-w-full">
-                <MessageContent className="bg-transparent px-0 py-0 text-sm text-muted-foreground">
-                  <Shimmer className="text-sm">
-                    {`Reasoning...${activeThinkingSummary && activeThinkingSummary !== "Thinking..." ? ` ${activeThinkingSummary}` : ""}`}
-                  </Shimmer>
-                </MessageContent>
-              </Message>
-            ) : null}
+            <AppsBuilderChatTimeline
+              timeline={timeline}
+              isSending={isSending}
+              activeThinkingSummary={activeThinkingSummary}
+              isLoadingOlderHistory={isLoadingOlderHistory}
+              hasRunningTool={hasRunningTool}
+              hasCurrentRunAssistantStream={hasCurrentRunAssistantStream}
+              lastToolAfterCurrentUserIsExploration={lastToolAfterCurrentUserIsExploration}
+              topSentinelRef={topSentinelRef}
+            />
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
@@ -694,96 +457,13 @@ export function AppsBuilderChatPanel({
           </section>
         ) : null}
 
-        {pendingQuestion && activeQuestion ? (
-          <section
-            aria-label="Question prompt"
-            data-testid="question-prompt-panel"
-            className="mb-2 overflow-hidden rounded-lg border border-border/60 bg-background"
-          >
-            <header className="flex items-center justify-between border-b border-border/50 px-3 py-2">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  {activeQuestion.header || "Need your input"}
-                </p>
-                <p className="mt-0.5 text-xs text-foreground">{activeQuestion.question}</p>
-              </div>
-              {pendingQuestion.questions.length > 1 ? (
-                <span className="text-[11px] text-muted-foreground">
-                  {questionStepIndex + 1}/{pendingQuestion.questions.length}
-                </span>
-              ) : null}
-            </header>
-            <div className="space-y-2 p-2.5">
-              <div className="grid gap-1.5">
-                {activeQuestion.options.map((option) => {
-                  const selected = (questionSelections[questionStepIndex] || []).includes(option.label);
-                  return (
-                    <button
-                      key={`${pendingQuestion.requestId}-${questionStepIndex}-${option.label}`}
-                      type="button"
-                      onClick={() => handleQuestionOptionToggle(option.label)}
-                      className={cn(
-                        "rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
-                        selected
-                          ? "border-foreground/30 bg-muted text-foreground"
-                          : "border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                      )}
-                    >
-                      <div className="font-medium">{option.label}</div>
-                      {option.description ? <div className="mt-0.5 text-[11px]">{option.description}</div> : null}
-                    </button>
-                  );
-                })}
-              </div>
-              <input
-                type="text"
-                value={questionCustomInput[questionStepIndex] || ""}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setQuestionCustomInput((prev) => ({ ...prev, [questionStepIndex]: value }));
-                }}
-                placeholder="Or type your own answer"
-                className="h-8 w-full rounded-md border border-border/70 bg-background px-2.5 text-xs outline-none ring-0 placeholder:text-muted-foreground/80 focus:border-foreground/30"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-6 px-2 text-[11px]"
-                    onClick={() => setQuestionStepIndex((prev) => Math.max(0, prev - 1))}
-                    disabled={questionStepIndex <= 0}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-6 px-2 text-[11px]"
-                    onClick={() =>
-                      setQuestionStepIndex((prev) => Math.min((pendingQuestion.questions.length || 1) - 1, prev + 1))
-                    }
-                    disabled={questionStepIndex >= pendingQuestion.questions.length - 1}
-                  >
-                    Next
-                  </Button>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-6 px-2 text-[11px]"
-                  onClick={() => {
-                    void handleSubmitQuestion();
-                  }}
-                  disabled={isAnsweringQuestion || !canSubmitQuestion}
-                >
-                  {isAnsweringQuestion ? "Submitting..." : "Submit answer"}
-                </Button>
-              </div>
-            </div>
-          </section>
+        {pendingQuestion ? (
+          <AppsBuilderChatQuestionPanel
+            key={pendingQuestion.requestId}
+            pendingQuestion={pendingQuestion}
+            isAnsweringQuestion={isAnsweringQuestion}
+            onAnswerQuestion={onAnswerQuestion}
+          />
         ) : null}
 
         <div className="shrink-0 bg-transparent">

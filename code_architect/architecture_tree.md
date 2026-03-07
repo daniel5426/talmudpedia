@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-07
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -63,6 +63,7 @@ backend/app/agent/execution/durable_checkpointer.py
 backend/app/agent/execution/adapter.py
 backend/app/agent/execution/field_resolver.py
 backend/app/agent/execution/emitter.py
+backend/app/agent/execution/trace_recorder.py
 backend/app/agent/execution/stream_contract_v2.py
 backend/app/agent/execution/tool_event_metadata.py
 backend/app/agent/execution/types.py

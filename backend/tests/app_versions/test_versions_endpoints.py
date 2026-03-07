@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -8,10 +9,13 @@ from sqlalchemy import func, select
 
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppPublishJob,
+    PublishedAppPublishJobStatus,
     PublishedAppRevision,
     PublishedAppRevisionBuildStatus,
     PublishedAppStatus,
 )
+from app.api.routers.published_apps_admin_access import _get_active_publish_job_for_app
 from app.workers.tasks import publish_version_pointer_after_build_task
 from tests.published_apps._helpers import (
     admin_headers,
@@ -506,6 +510,50 @@ async def test_publish_selected_version_missing_dist_fails_and_keeps_previous_pu
     refreshed_app = await db_session.get(PublishedApp, UUID(app_id))
     assert refreshed_app is not None
     assert str(refreshed_app.current_published_revision_id) == initial_revision_id
+
+
+@pytest.mark.asyncio
+async def test_get_active_publish_job_expires_stale_job(db_session, monkeypatch):
+    tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = PublishedApp(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        name="Publish Stale Timeout App",
+        slug="publish-stale-timeout-app",
+    )
+    db_session.add(app)
+    await db_session.flush()
+
+    stale_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    stale_job = PublishedAppPublishJob(
+        published_app_id=app.id,
+        tenant_id=tenant.id,
+        requested_by=user.id,
+        status=PublishedAppPublishJobStatus.running,
+        stage="waiting_for_build",
+        error=None,
+        diagnostics=[],
+        created_at=stale_at,
+        started_at=stale_at,
+        last_heartbeat_at=stale_at,
+        finished_at=None,
+    )
+    db_session.add(stale_job)
+    await db_session.commit()
+
+    monkeypatch.setenv("APPS_PUBLISH_ACTIVE_JOB_STALE_TIMEOUT_SECONDS", "60")
+
+    active_job = await _get_active_publish_job_for_app(db_session, app_id=app.id)
+    assert active_job is None
+
+    refreshed_stale_job = await db_session.get(PublishedAppPublishJob, stale_job.id)
+    assert refreshed_stale_job is not None
+    assert refreshed_stale_job.status == PublishedAppPublishJobStatus.failed
+    assert refreshed_stale_job.stage == "timed_out"
+    assert "timed out" in str(refreshed_stale_job.error or "").lower()
+
+    diagnostics = list(refreshed_stale_job.diagnostics or [])
+    assert any(str(item.get("kind")) == "publish_job_timeout" for item in diagnostics if isinstance(item, dict))
 
 
 @pytest.mark.asyncio

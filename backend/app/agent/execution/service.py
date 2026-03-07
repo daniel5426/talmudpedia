@@ -1,7 +1,6 @@
 import logging
 import asyncio
 import traceback
-import json
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, AsyncGenerator
@@ -9,13 +8,14 @@ from typing import Dict, Any, Optional, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.db.postgres.models.agents import Agent, AgentRun, AgentTrace, RunStatus
+from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.schema import AgentGraph
 from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
+from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
 from app.services.thread_service import ThreadAccessError, ThreadService
 from app.services.usage_quota_service import UsageQuotaService
@@ -30,6 +30,7 @@ class AgentExecutorService:
         # Initial compiler for non-execution tasks if needed, 
         # but _execute will create its own local compiler.
         self.compiler = AgentCompiler(db=db) if db else None
+        self.trace_recorder = ExecutionTraceRecorder(serializer=self._serialize_state)
 
     @staticmethod
     def _apply_run_scoped_model_override(
@@ -423,8 +424,43 @@ class AgentExecutorService:
             run.started_at = datetime.utcnow()
         await db.commit()
 
+        event_sequence = 0
+
+        def persist_event(event: ExecutionEvent | dict[str, Any]) -> None:
+            nonlocal event_sequence
+            event_sequence += 1
+            self.trace_recorder.schedule_persist(run_id, event, sequence=event_sequence)
+
+        persist_event(
+            ExecutionEvent(
+                event="run.lifecycle",
+                data={
+                    "phase": "started",
+                    "agent_id": str(agent.id),
+                    "agent_slug": getattr(agent, "slug", None),
+                    "mode": mode.value,
+                },
+                run_id=str(run_id),
+                span_id=str(run_id),
+                name="AgentRun",
+                visibility=EventVisibility.INTERNAL,
+                metadata={"category": "lifecycle", "mode": mode.value},
+            )
+        )
+
         try:
             # 2. Compile Graph to GraphIR
+            persist_event(
+                ExecutionEvent(
+                    event="run.lifecycle",
+                    data={"phase": "compile_graph_started"},
+                    run_id=str(run_id),
+                    span_id=str(run_id),
+                    name="AgentRun",
+                    visibility=EventVisibility.INTERNAL,
+                    metadata={"category": "lifecycle"},
+                )
+            )
             compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
             resolved_model_id = str(run.resolved_model_id) if run.resolved_model_id else None
             if not resolved_model_id:
@@ -446,11 +482,37 @@ class AgentExecutorService:
                 config={"mode": mode.value},
                 input_params=compile_input_params,
             )
+            persist_event(
+                ExecutionEvent(
+                    event="run.lifecycle",
+                    data={
+                        "phase": "compile_graph_completed",
+                        "node_count": len(graph_def.nodes),
+                        "edge_count": len(graph_def.edges),
+                    },
+                    run_id=str(run_id),
+                    span_id=str(run_id),
+                    name="AgentRun",
+                    visibility=EventVisibility.INTERNAL,
+                    metadata={"category": "lifecycle"},
+                )
+            )
 
             # 3. Create Runtime Adapter + Executable
             adapter_cls = RuntimeAdapterRegistry.get_default()
             adapter = adapter_cls(tenant_id=agent.tenant_id, db=db)
             executable = await adapter.compile(graph_ir, checkpointer=self._checkpointer)
+            persist_event(
+                ExecutionEvent(
+                    event="run.lifecycle",
+                    data={"phase": "adapter_ready", "adapter": adapter_cls.__name__},
+                    run_id=str(run_id),
+                    span_id=str(run_id),
+                    name="AgentRun",
+                    visibility=EventVisibility.INTERNAL,
+                    metadata={"category": "lifecycle"},
+                )
+            )
 
             # 4. Prepare Config
             config = {
@@ -476,12 +538,25 @@ class AgentExecutorService:
             await db.rollback()
             logger.error(f"Execution setup failed for run {run_id}: {e}")
             traceback.print_exc()
-            yield ExecutionEvent(
+            persist_event(
+                ExecutionEvent(
+                    event="run.lifecycle",
+                    data={"phase": "setup_failed", "error": str(e)},
+                    run_id=str(run_id),
+                    span_id=str(run_id),
+                    name="AgentRun",
+                    visibility=EventVisibility.INTERNAL,
+                    metadata={"category": "lifecycle"},
+                )
+            )
+            error_event = ExecutionEvent(
                 event="error",
                 data={"error": str(e)},
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE
             )
+            persist_event(error_event)
+            yield error_event
             await self._mark_run_failed(run_id, e, mode=mode)
             return
 
@@ -496,19 +571,23 @@ class AgentExecutorService:
                     metadata={"mode": mode.value},
                 )
             # 5. Stream Execution Events (Platform-normalized)
+            persist_event(
+                ExecutionEvent(
+                    event="run.lifecycle",
+                    data={"phase": "stream_started"},
+                    run_id=str(run_id),
+                    span_id=str(run_id),
+                    name="AgentRun",
+                    visibility=EventVisibility.INTERNAL,
+                    metadata={"category": "lifecycle"},
+                )
+            )
             async for event in adapter.stream(executable, run_input_params, config):
                 max_observed_usage_tokens = max(
                     max_observed_usage_tokens,
                     self._extract_usage_tokens_from_event(event),
                 )
-                self._schedule_trace_persistence(run_id, {
-                    "event": event.event,
-                    "data": event.data,
-                    "name": event.name,
-                    "run_id": event.span_id,
-                    "metadata": event.metadata,
-                    "parent_ids": [],
-                })
+                persist_event(event)
                 yield event
 
             # 6. Post-Execution Check
@@ -547,7 +626,7 @@ class AgentExecutorService:
                     else:
                         next_nodes.append({"id": next_id})
 
-            yield ExecutionEvent(
+            run_status_event = ExecutionEvent(
                 event="run_status",
                 data={
                     "status": final_status.value,
@@ -557,6 +636,23 @@ class AgentExecutorService:
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE,
                 metadata={"mode": mode.value}
+            )
+            persist_event(run_status_event)
+            yield run_status_event
+            persist_event(
+                ExecutionEvent(
+                    event="run.lifecycle",
+                    data={
+                        "phase": "finished",
+                        "status": final_status.value,
+                        "next": snapshot.next,
+                    },
+                    run_id=str(run_id),
+                    span_id=str(run_id),
+                    name="AgentRun",
+                    visibility=EventVisibility.INTERNAL,
+                    metadata={"category": "lifecycle", "mode": mode.value},
+                )
             )
 
             quota_service = UsageQuotaService(db)
@@ -584,14 +680,27 @@ class AgentExecutorService:
             await db.rollback()
             logger.error(f"Streaming execution failed for run {run_id}: {e}")
             traceback.print_exc()
+            persist_event(
+                ExecutionEvent(
+                    event="run.lifecycle",
+                    data={"phase": "stream_failed", "error": str(e)},
+                    run_id=str(run_id),
+                    span_id=str(run_id),
+                    name="AgentRun",
+                    visibility=EventVisibility.INTERNAL,
+                    metadata={"category": "lifecycle"},
+                )
+            )
 
             # Emit error event
-            yield ExecutionEvent(
+            error_event = ExecutionEvent(
                 event="error",
                 data={"error": str(e)},
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE
             )
+            persist_event(error_event)
+            yield error_event
             await self._mark_run_failed(run_id, e, mode=mode)
 
     async def _mark_run_failed(self, run_id: UUID, error: Exception, *, mode: ExecutionMode | None = None) -> None:
@@ -653,87 +762,6 @@ class AgentExecutorService:
                 await err_db.commit()
         except Exception as se:
             logger.error(f"Failed to save error status for {run_id}: {se}")
-
-    def _schedule_trace_persistence(self, run_id: UUID, event: Dict[str, Any]):
-        """
-        Schedules trace persistence as a background background task.
-        Fully decoupled from the execution loop.
-        """
-        asyncio.create_task(self._persist_trace_safe(run_id, event))
-
-    async def _persist_trace_safe(self, run_id: UUID, event: Dict[str, Any]):
-        """
-        Safe wrapper for trace persistence that swallows errors.
-        Creates its own DB session.
-        """
-        from app.db.postgres.engine import sessionmaker as get_session
-        try:
-            async with get_session() as session:
-                await self._save_trace_event(run_id, session, event)
-                await session.commit()
-        except Exception as e:
-            logger.error(f"Trace persistence failed [Run {run_id}]: {e}")
-            # Do NOT re-raise
-
-    async def _save_trace_event(self, run_id: UUID, db: AsyncSession, event: Dict[str, Any]):
-        """
-        Persists execution events to AgentTrace table.
-        """
-        from uuid import uuid4 as _uuid4
-        kind = event.get("event")
-        name = event.get("name")
-        span_id = event.get("run_id")
-        span_id_str = str(span_id) if span_id is not None else None
-        
-        if kind not in ("on_chain_start", "on_chain_end", "on_tool_start", "on_tool_end", "node_start", "node_end"):
-            return
-        if not span_id_str:
-            return
-
-        # Avoid duplicate inserts for the same span
-        existing = await db.execute(
-            select(AgentTrace).where(
-                AgentTrace.run_id == run_id,
-                AgentTrace.span_id == span_id_str,
-            )
-        )
-        trace_existing = existing.scalars().first()
-
-        if kind.endswith("_start"):
-            if trace_existing:
-                return
-            trace = AgentTrace(
-                id=_uuid4(),
-                run_id=run_id,
-                span_id=span_id_str,
-                parent_span_id=str(event.get("parent_ids", [])[-1]) if event.get("parent_ids") else None,
-                name=name,
-                span_type=kind,
-                inputs=self._serialize_state(event.get("data", {}).get("input")),
-                start_time=datetime.utcnow(),
-                metadata_=event.get("metadata", {})
-            )
-            db.add(trace)
-        
-        elif kind.endswith("_end"):
-            if trace_existing:
-                trace_existing.end_time = datetime.utcnow()
-                trace_existing.outputs = self._serialize_state(event.get("data", {}).get("output"))
-            else:
-                trace = AgentTrace(
-                    id=_uuid4(),
-                    run_id=run_id,
-                    span_id=span_id_str,
-                    parent_span_id=str(event.get("parent_ids", [])[-1]) if event.get("parent_ids") else None,
-                    name=name,
-                    span_type=kind,
-                    inputs=self._serialize_state(event.get("data", {}).get("input")),
-                    start_time=datetime.utcnow(),
-                    end_time=datetime.utcnow(),
-                    outputs=self._serialize_state(event.get("data", {}).get("output")),
-                    metadata_=event.get("metadata", {})
-                )
-                db.add(trace)
 
     def _serialize_state(self, state: Any) -> Any:
         """Helper to make state JSON serializable (handling LangChain messages)."""

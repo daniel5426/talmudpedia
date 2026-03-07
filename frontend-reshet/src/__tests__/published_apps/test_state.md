@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-07
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
@@ -9,6 +9,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - `frontend-reshet/src/__tests__/published_apps/apps_admin_page.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/apps_builder_file_filter.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/chat_thread_tabs.test.tsx`
+- `frontend-reshet/src/__tests__/published_apps/chat_panel_behaviors.test.tsx`
 - `frontend-reshet/src/__tests__/published_apps/chat_history_timeline.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/chat_model_path_parsing.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
@@ -18,13 +19,14 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Apps admin page list/create/update behavior.
 - Builder file-filter and blocked path rules.
 - Chat timeline/thread rendering behaviors.
+- Chat panel shimmer cutoff and scroll-fade activation.
 - Coding-agent stream speed/coalescing expectations.
 - Preview auth token channel updates.
 
 ## Last Run
-- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/chat_history_timeline.test.ts`
-- Date: 2026-03-01
-- Result: Pending
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/chat_panel_behaviors.test.tsx`
+- Date: 2026-03-07
+- Result: Pass
 
 ## Known Gaps / Follow-ups
 - Workspace versions-first flows moved to `frontend-reshet/src/__tests__/apps_builder_versions/`.

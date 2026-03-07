@@ -1,3 +1,5 @@
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from uuid import UUID
 
@@ -25,6 +27,67 @@ from .published_apps_admin_builder_core import _next_build_seq
 from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify
 
 CODING_AGENT_SURFACE = "published_app_coding_agent"
+
+
+def _publish_job_stale_timeout_seconds() -> int:
+    raw = (os.getenv("APPS_PUBLISH_ACTIVE_JOB_STALE_TIMEOUT_SECONDS") or "").strip()
+    try:
+        return max(60, int(raw or "100"))
+    except Exception:
+        return 100
+
+
+async def _expire_stale_publish_job_if_needed(
+    db: AsyncSession,
+    *,
+    job: PublishedAppPublishJob,
+) -> bool:
+    status_value = job.status.value if hasattr(job.status, "value") else str(job.status)
+    if status_value not in {
+        PublishedAppPublishJobStatus.queued.value,
+        PublishedAppPublishJobStatus.running.value,
+    }:
+        return False
+
+    timeout_seconds = _publish_job_stale_timeout_seconds()
+    reference_at = (
+        job.last_heartbeat_at
+        or job.started_at
+        or job.updated_at
+        or job.created_at
+    )
+    if reference_at is None:
+        return False
+    if reference_at.tzinfo is None:
+        reference_at = reference_at.replace(tzinfo=timezone.utc)
+
+    stale_after = reference_at + timedelta(seconds=timeout_seconds)
+    now = datetime.now(timezone.utc)
+    if now < stale_after:
+        return False
+
+    message = (
+        f"Publish job timed out after {timeout_seconds}s without heartbeat "
+        f"(last_stage={job.stage or 'unknown'})."
+    )
+    diagnostics = list(job.diagnostics or [])
+    diagnostics.append(
+        {
+            "kind": "publish_job_timeout",
+            "message": message,
+            "last_stage": str(job.stage or "unknown"),
+            "last_heartbeat_at": reference_at.isoformat(),
+            "timeout_seconds": str(timeout_seconds),
+        }
+    )
+    job.status = PublishedAppPublishJobStatus.failed
+    job.stage = "timed_out"
+    job.error = message
+    job.finished_at = now
+    job.last_heartbeat_at = now
+    job.diagnostics = diagnostics
+    await db.flush()
+    return True
 
 
 async def _resolve_tenant_admin_context(
@@ -272,7 +335,13 @@ async def _get_active_publish_job_for_app(
         .order_by(PublishedAppPublishJob.created_at.desc())
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+    expired = await _expire_stale_publish_job_if_needed(db, job=job)
+    if expired:
+        return None
+    return job
 
 
 async def _get_custom_domain_for_app(

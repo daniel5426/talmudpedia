@@ -31,6 +31,52 @@ const resolveArchitectResponse = (content: string) => {
   return extractStructuredAssistantText(content) || content;
 };
 
+const normalizeExecutionEvent = (rawEvent: Record<string, unknown>): AgentExecutionEvent => {
+  const payload =
+    rawEvent.payload && typeof rawEvent.payload === "object"
+      ? (rawEvent.payload as Record<string, unknown>)
+      : null;
+
+  const topLevelData =
+    rawEvent.data && typeof rawEvent.data === "object"
+      ? (rawEvent.data as Record<string, unknown>)
+      : null;
+  const topLevelMetadata =
+    rawEvent.metadata && typeof rawEvent.metadata === "object"
+      ? (rawEvent.metadata as Record<string, unknown>)
+      : null;
+
+  return {
+    event: typeof rawEvent.event === "string" ? rawEvent.event : undefined,
+    type: typeof rawEvent.type === "string" ? rawEvent.type : undefined,
+    run_id: typeof rawEvent.run_id === "string" ? rawEvent.run_id : undefined,
+    seq: typeof rawEvent.seq === "number" ? rawEvent.seq : undefined,
+    ts: typeof rawEvent.ts === "string" ? rawEvent.ts : undefined,
+    span_id:
+      typeof rawEvent.span_id === "string"
+        ? rawEvent.span_id
+        : typeof payload?.span_id === "string"
+          ? payload.span_id
+          : undefined,
+    name:
+      typeof rawEvent.name === "string"
+        ? rawEvent.name
+        : typeof payload?.name === "string"
+          ? payload.name
+          : undefined,
+    data:
+      topLevelData ||
+      (payload?.data && typeof payload.data === "object"
+        ? (payload.data as Record<string, unknown>)
+        : undefined),
+    metadata:
+      topLevelMetadata ||
+      (payload?.metadata && typeof payload.metadata === "object"
+        ? (payload.metadata as Record<string, unknown>)
+        : undefined),
+  };
+};
+
 export function useAgentRunController(agentId: string | undefined): ChatController & {
   executionSteps: ExecutionStep[];
   executionEvents: AgentExecutionEvent[];
@@ -262,14 +308,17 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     };
 
     setMessages(prev => [...prev, userMsg]);
-    setIsLoading(true);
-    setStreamingContent("");
-    setCurrentReasoning([]);
-    setCurrentResponseBlocks([]);
-    setExecutionSteps([]);
-    setExecutionEvents([]);
-    setCurrentRunStatus("running");
-    setLastThinkingDurationMs(null);
+    flushSync(() => {
+      setIsLoading(true);
+      setStreamingContent("");
+      setCurrentReasoning([]);
+      setCurrentResponseBlocks([]);
+      setExecutionSteps([]);
+      setExecutionEvents([]);
+      setCurrentRunId(null);
+      setCurrentRunStatus(null);
+      setLastThinkingDurationMs(null);
+    });
     const newStreamingId = nanoid();
     setActiveStreamingId(newStreamingId);
     thinkingStartRef.current = Date.now();
@@ -321,6 +370,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
 
           try {
             const rawEvent = JSON.parse(dataStr) as Record<string, unknown>;
+            const normalizedEvent = normalizeExecutionEvent(rawEvent);
             const eventName = String(rawEvent.event || "");
             const payload =
               rawEvent.payload && typeof rawEvent.payload === "object"
@@ -331,7 +381,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
             }
 
             if (eventName.startsWith("orchestration.") || eventName === "node_end") {
-              setExecutionEvents((prev) => [...prev, { ...(rawEvent as AgentExecutionEvent), received_at: Date.now() }]);
+              setExecutionEvents((prev) => [...prev, { ...normalizedEvent, received_at: Date.now() }]);
             }
 
             const nextBlocks = sortChatRenderBlocks(
@@ -411,19 +461,19 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
                 output: payload.output,
               } : s));
             } else if (eventName === "node_start" || eventName === "on_chain_start") {
-              const data = rawEvent.data && typeof rawEvent.data === "object" ? rawEvent.data as Record<string, unknown> : {};
-              const stepId = String(rawEvent.span_id || rawEvent.run_id || nanoid());
+              const data = normalizedEvent.data || {};
+              const stepId = String(normalizedEvent.span_id || normalizedEvent.run_id || nanoid());
               setExecutionSteps(prev => [...prev, {
                 id: stepId,
-                name: String(rawEvent.name || "Node"),
+                name: String(normalizedEvent.name || "Node"),
                 type: "node",
                 status: "running",
                 input: data.input,
                 timestamp: new Date(),
               }]);
             } else if (eventName === "node_end" || eventName === "on_chain_end") {
-              const data = rawEvent.data && typeof rawEvent.data === "object" ? rawEvent.data as Record<string, unknown> : {};
-              const stepId = String(rawEvent.span_id || rawEvent.run_id || "");
+              const data = normalizedEvent.data || {};
+              const stepId = String(normalizedEvent.span_id || normalizedEvent.run_id || "");
               setExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
                 status: "completed",

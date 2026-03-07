@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agent.execution.emitter import EventEmitter
-from app.agent.execution.service import AgentExecutorService
+from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agents import Agent, AgentRun, AgentTrace, RunStatus
 
 
@@ -47,7 +47,7 @@ async def test_event_emitter_enqueues_events():
 
 @pytest.mark.asyncio
 @pytest.mark.real_db
-async def test_trace_persistence_filters_and_deduplicates(db_session, test_tenant_id, test_user_id, run_prefix):
+async def test_trace_persistence_persists_point_events_in_sequence(db_session, test_tenant_id, test_user_id, run_prefix):
     agent = Agent(
         tenant_id=test_tenant_id,
         name=f"{run_prefix}-trace",
@@ -69,31 +69,51 @@ async def test_trace_persistence_filters_and_deduplicates(db_session, test_tenan
     await db_session.commit()
     await db_session.refresh(run)
 
-    service = AgentExecutorService(db=db_session)
+    recorder = ExecutionTraceRecorder(serializer=lambda value: value)
 
-    await service._save_trace_event(run.id, db_session, {"event": "token", "run_id": "span-1"})
+    await recorder.save_event(
+        run.id,
+        db_session,
+        {
+            "event": "token",
+            "run_id": str(run.id),
+            "span_id": "span-1",
+            "name": "Token",
+            "data": {"content": "hi"},
+            "metadata": {"category": "stream"},
+            "sequence": 1,
+        },
+    )
     result = await db_session.execute(select(AgentTrace).where(AgentTrace.run_id == run.id))
-    assert result.scalars().all() == []
+    traces = result.scalars().all()
+    assert len(traces) == 1
+    assert traces[0].span_type == "token"
+    assert traces[0].outputs == {"content": "hi"}
+    assert traces[0].metadata_["sequence"] == 1
 
     start_event = {
         "event": "node_start",
-        "run_id": "span-1",
+        "run_id": str(run.id),
+        "span_id": "span-1",
         "name": "Node 1",
         "data": {"input": {"foo": "bar"}},
         "metadata": {},
         "parent_ids": [],
+        "sequence": 2,
     }
-    await service._save_trace_event(run.id, db_session, start_event)
-    await service._save_trace_event(run.id, db_session, start_event)
+    await recorder.save_event(run.id, db_session, start_event)
+    await recorder.save_event(run.id, db_session, start_event | {"sequence": 3})
 
     result = await db_session.execute(select(AgentTrace).where(AgentTrace.run_id == run.id))
     traces = result.scalars().all()
-    assert len(traces) == 1
+    assert len(traces) == 3
+    sequences = sorted(int(trace.metadata_["sequence"]) for trace in traces)
+    assert sequences == [1, 2, 3]
 
 
 @pytest.mark.asyncio
 @pytest.mark.real_db
-async def test_trace_persistence_updates_end_event(db_session, test_tenant_id, test_user_id, run_prefix):
+async def test_trace_persistence_lists_events_in_order(db_session, test_tenant_id, test_user_id, run_prefix):
     agent = Agent(
         tenant_id=test_tenant_id,
         name=f"{run_prefix}-trace-end",
@@ -115,30 +135,35 @@ async def test_trace_persistence_updates_end_event(db_session, test_tenant_id, t
     await db_session.commit()
     await db_session.refresh(run)
 
-    service = AgentExecutorService(db=db_session)
+    recorder = ExecutionTraceRecorder(serializer=lambda value: value)
 
     start_event = {
         "event": "node_start",
-        "run_id": "span-2",
+        "run_id": str(run.id),
+        "span_id": "span-2",
         "name": "Node 2",
         "data": {"input": {"value": 1}},
         "metadata": {},
         "parent_ids": [],
+        "sequence": 1,
     }
     end_event = {
         "event": "node_end",
-        "run_id": "span-2",
+        "run_id": str(run.id),
+        "span_id": "span-2",
         "name": "Node 2",
         "data": {"output": {"value": 2}},
         "metadata": {},
         "parent_ids": [],
+        "sequence": 2,
     }
 
-    await service._save_trace_event(run.id, db_session, start_event)
-    await service._save_trace_event(run.id, db_session, end_event)
+    await recorder.save_event(run.id, db_session, start_event)
+    await recorder.save_event(run.id, db_session, end_event)
 
-    result = await db_session.execute(select(AgentTrace).where(AgentTrace.run_id == run.id))
-    trace = result.scalars().first()
-    assert trace is not None
-    assert trace.end_time is not None
-    assert trace.outputs == {"value": 2}
+    events = await recorder.list_events(db_session, run.id)
+    assert [event["event"] for event in events] == ["node_start", "node_end"]
+    assert events[0]["sequence"] == 1
+    assert events[0]["inputs"] == {"input": {"value": 1}}
+    assert events[1]["sequence"] == 2
+    assert events[1]["outputs"] == {"output": {"value": 2}}

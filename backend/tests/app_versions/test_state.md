@@ -1,6 +1,6 @@
 # App Versions Test State
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-07
 
 ## Scope
 Hard-cut versions-first API behavior for builder versioning, restore, and publish-by-version.
@@ -20,6 +20,7 @@ Hard-cut versions-first API behavior for builder versioning, restore, and publis
 - Manual save (`/versions/draft`) enqueues revision build, while restore does not auto-enqueue.
 - Publish-by-version with missing dist returns queued publish job and waits for build completion via worker flow.
 - Publish-by-version fails safely when selected revision build fails and keeps previous published pointer unchanged.
+- Stale queued/running publish jobs are timed out and no longer block subsequent publish requests.
 - Publish failure diagnostics include publish-wait build state and auto-fix submission metadata.
 - Version preview runtime returns `409 VERSION_BUILD_NOT_READY` when dist artifacts are missing.
 - Cross-app version access returns `404`.
@@ -27,8 +28,8 @@ Hard-cut versions-first API behavior for builder versioning, restore, and publis
 
 ## Last Run
 - Command: `cd backend && pytest tests/app_versions/test_versions_endpoints.py`
-- Date: 2026-03-01
-- Result: Pass (9 passed)
+- Date: 2026-03-07
+- Result: Partial pass (`pytest backend/tests/app_versions/test_versions_endpoints.py -q -k get_active_publish_job_expires_stale_job` -> `1 passed, 9 deselected`)
 
 ## Known Gaps / Follow-ups
 - Add deeper assertions for `version_seq` ordering under concurrent version writes.
