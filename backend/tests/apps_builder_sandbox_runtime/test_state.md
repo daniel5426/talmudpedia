@@ -11,6 +11,8 @@ Last Updated: 2026-03-08
 - `backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_e2b_live_smoke.py`
+- `backend/tests/apps_builder_sandbox_runtime/test_e2b_backend_config.py`
+- `backend/tests/apps_builder_sandbox_runtime/test_e2b_workspace_paths.py`
 
 ## Key scenarios covered
 - The draft-dev runtime client delegates `start_session` to the selected sandbox backend and injects the stable preview proxy base path.
@@ -20,20 +22,26 @@ Last Updated: 2026-03-08
 - A failed initial sandbox start does not persist a placeholder sandbox id in the draft-dev session row.
 - A stale sandbox id error during `ensure` triggers a clean restart path and updates the session to the new sandbox id.
 - Stopping a draft-dev session and re-entering the app starts a fresh runtime cleanly.
-- A gated live E2B smoke test now exists for create -> ensure -> preview -> kill -> recover -> stop, but it is not passing yet in real provider runs.
+- Heartbeat no longer upgrades a draft-dev session to `running` when its `sandbox_id` is missing.
+- Runtime restart now increments `runtime_generation`, reconciles remote ownership, and sweeps stale E2B sandboxes against DB-owned sessions.
+- Draft-dev session API/runtime state now distinguishes `building`, `serving`, `degraded`, and `stopping` instead of collapsing everything into `running`.
+- E2B workspace listing preserves leading-dot filenames, which fixes the coding-agent stage-prepare path that depends on `.draft-dev-dependency-hash`.
+- E2B backend startup validation now requires both `E2B_API_KEY` and an explicit `APPS_E2B_TEMPLATE` unless the default-template bypass is deliberately enabled.
+- E2B backend config now resolves `APPS_E2B_TEMPLATE` plus `APPS_E2B_TEMPLATE_TAG` into a concrete tagged template reference so sandbox creation targets a specific built template revision.
+- The gated live E2B smoke test now covers create -> ensure -> preview HTML -> proxied Vite asset -> out-of-band kill -> recover -> remote sandbox collapse -> stop -> zero remaining provider sandboxes for the session.
 
 ## Last run command + date/time + result
-- Command: `cd backend && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
-- Date: 2026-03-08 16:55:00 EET
-- Result: PASS (7 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py tests/apps_builder_sandbox_runtime/test_e2b_workspace_paths.py tests/apps_builder_sandbox_runtime/test_e2b_backend_config.py`
+- Date: 2026-03-08 23:15 EET
+- Result: PASS
 
 ## Live provider run
-- Command: `cd backend && E2B_API_KEY=... TEST_E2B_LIVE=1 APPS_SANDBOX_BACKEND=e2b PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_e2b_live_smoke.py -s`
-- Date: 2026-03-08 17:00 EET
-- Result: FAIL / HANG during preview readiness validation against real E2B
+- Command: `cd backend && TEST_E2B_LIVE=1 PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_e2b_live_smoke.py -s`
+- Date: 2026-03-08 23:18 EET
+- Result: PASS (1 passed, 6 warnings) with runtime generation recovery, Vite asset fetch, and provider-side cleanup assertions
 
 ## Known gaps or follow-ups
 - Add websocket proxy coverage once the proxied Vite/HMR path is exercised against a live draft-dev sandbox.
 - Add contract tests for the real E2B backend once a deterministic fake sandbox harness is available.
-- Investigate why live E2B Vite previews eventually die with `esbuild` `write EPIPE` inside the sandbox.
-- Fix leaked/orphaned E2B sandboxes for the same draft-dev session scope during restart/recovery flows.
+- Add a second live E2B scenario that asserts proxied asset fetches and HMR websocket behavior, not only initial HTML preview health.
+- Add an explicit scheduled sweeper entrypoint so orphan cleanup does not rely only on request-driven best-effort sweeps.

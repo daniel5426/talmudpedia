@@ -13,9 +13,12 @@ from datetime import datetime
 import asyncio
 import traceback
 import uuid
+from urllib.parse import urlparse
 
 from app.rag.pipeline.registry import OperatorSpec, DataType
 from app.rag.factory import RAGFactory
+from app.rag.interfaces import WebCrawlerRequest
+from app.rag.providers.crawler import Crawl4AIProvider
 
 
 class OperatorInput(BaseModel):
@@ -688,6 +691,132 @@ class LoaderExecutor(OperatorExecutor):
         )
 
 
+class WebCrawlerExecutor(OperatorExecutor):
+    """Execute website crawling via Crawl4AI."""
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        config_dict = {**context.config}
+        if isinstance(input_data.data, dict) and input_data.source_operator_id is None:
+            config_dict.update(input_data.data)
+
+        request = WebCrawlerRequest(
+            start_urls=self._parse_start_urls(config_dict.get("start_urls")),
+            max_depth=self._parse_optional_int(config_dict.get("max_depth"), field_name="max_depth", minimum=1),
+            max_pages=self._parse_optional_int(config_dict.get("max_pages"), field_name="max_pages", minimum=1),
+            respect_robots_txt=self._parse_optional_bool(
+                config_dict.get("respect_robots_txt"),
+                field_name="respect_robots_txt",
+            ),
+            content_preference=self._parse_optional_select(
+                config_dict.get("content_preference"),
+                field_name="content_preference",
+                allowed={"fit_markdown", "raw_markdown", "html", "auto"},
+                default="fit_markdown",
+            ),
+            wait_until=self._parse_optional_select(
+                config_dict.get("wait_until"),
+                field_name="wait_until",
+                allowed={"domcontentloaded", "load", "networkidle"},
+            ),
+            page_timeout_ms=self._parse_optional_int(
+                config_dict.get("page_timeout_ms"),
+                field_name="page_timeout_ms",
+                minimum=1,
+            ),
+            scan_full_page=self._parse_optional_bool(
+                config_dict.get("scan_full_page"),
+                field_name="scan_full_page",
+            ),
+        )
+
+        if not request.start_urls:
+            raise ValueError("web_crawler requires at least one start URL")
+
+        provider = self._build_provider()
+        documents = await provider.crawl(request)
+        doc_list = [doc.model_dump() if hasattr(doc, "model_dump") else doc for doc in documents]
+
+        return OperatorOutput(
+            data=doc_list,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
+        )
+
+    def _build_provider(self) -> Crawl4AIProvider:
+        return Crawl4AIProvider()
+
+    def _parse_start_urls(self, raw_value: Any) -> List[str]:
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, str):
+            parts = [part.strip() for chunk in raw_value.splitlines() for part in chunk.split(",")]
+        elif isinstance(raw_value, list):
+            parts = [str(item).strip() for item in raw_value]
+        else:
+            raise ValueError("start_urls must be a comma-separated string or list of URLs")
+
+        urls = [part for part in parts if part]
+        invalid = [url for url in urls if not self._is_supported_url(url)]
+        if invalid:
+            raise ValueError(f"Invalid start_urls; expected http/https URLs: {', '.join(invalid)}")
+        return urls
+
+    def _parse_optional_int(
+        self,
+        raw_value: Any,
+        *,
+        field_name: str,
+        minimum: int,
+    ) -> Optional[int]:
+        if raw_value is None or raw_value == "":
+            return None
+        value = int(raw_value)
+        if value < minimum:
+            raise ValueError(f"{field_name} must be >= {minimum}")
+        return value
+
+    def _parse_optional_bool(self, raw_value: Any, *, field_name: str = "value") -> Optional[bool]:
+        if raw_value is None or raw_value == "":
+            return None
+        if isinstance(raw_value, bool):
+            return raw_value
+        if isinstance(raw_value, str):
+            lowered = raw_value.strip().lower()
+            if lowered in {"true", "1", "yes"}:
+                return True
+            if lowered in {"false", "0", "no"}:
+                return False
+        raise ValueError(f"{field_name} must be a boolean")
+
+    def _parse_optional_select(
+        self,
+        raw_value: Any,
+        *,
+        field_name: str,
+        allowed: set[str],
+        default: Optional[str] = None,
+    ) -> Optional[str]:
+        if raw_value is None or raw_value == "":
+            return default
+        if not isinstance(raw_value, str):
+            raise ValueError(f"{field_name} must be a string")
+        value = raw_value.strip()
+        if not value:
+            return default
+        if value not in allowed:
+            raise ValueError(f"{field_name} must be one of: {', '.join(sorted(allowed))}")
+        return value
+
+    def _is_supported_url(self, value: str) -> bool:
+        parsed = urlparse(value)
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
 class ChunkerExecutor(OperatorExecutor):
     """Execute text chunking."""
     
@@ -1273,6 +1402,7 @@ class ExecutorRegistry:
         "metadata_extractor": MetadataExtractorExecutor,
         "local_loader": LoaderExecutor,
         "s3_loader": LoaderExecutor,
+        "web_crawler": WebCrawlerExecutor,
         "recursive_chunker": ChunkerExecutor,
         "token_based_chunker": ChunkerExecutor,
         "model_embedder": EmbedderExecutor,

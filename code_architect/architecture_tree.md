@@ -87,7 +87,10 @@ backend/app/rag/pipeline/registry.py
 backend/app/rag/pipeline/input_storage.py
 
 backend/app/rag/interfaces/
+backend/app/rag/interfaces/web_crawler.py
 backend/app/rag/providers/
+backend/app/rag/providers/crawler/
+backend/app/rag/providers/crawler/crawl4ai.py
 backend/app/rag/adapters/
 
 backend/app/db/
@@ -136,6 +139,7 @@ backend/app/services/published_app_sandbox_backend_factory.py
 backend/app/services/published_app_sandbox_backend_local.py
 backend/app/services/published_app_sandbox_backend_controller.py
 backend/app/services/published_app_sandbox_backend_e2b_workspace.py
+backend/app/services/published_app_sandbox_backend_e2b_runtime.py
 backend/app/services/published_app_sandbox_backend_e2b.py
 backend/app/services/published_app_draft_dev_runtime.py
 backend/app/services/published_app_draft_dev_local_runtime.py

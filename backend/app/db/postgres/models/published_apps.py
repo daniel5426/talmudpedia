@@ -39,7 +39,11 @@ class PublishedAppRevisionBuildStatus(str, enum.Enum):
 
 class PublishedAppDraftDevSessionStatus(str, enum.Enum):
     starting = "starting"
+    building = "building"
+    serving = "serving"
+    degraded = "degraded"
     running = "running"
+    stopping = "stopping"
     stopped = "stopped"
     expired = "expired"
     error = "error"
@@ -524,6 +528,7 @@ class PublishedAppDraftDevSession(Base):
         default=PublishedAppDraftDevSessionStatus.starting,
     )
     sandbox_id = Column(String(128), nullable=True)
+    runtime_generation = Column(Integer, nullable=False, default=0)
     runtime_backend = Column(String(32), nullable=True)
     backend_metadata = Column(JSONB, nullable=False, default=dict)
     preview_url = Column(String, nullable=True)

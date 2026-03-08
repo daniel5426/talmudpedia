@@ -118,7 +118,28 @@ export interface BuilderStateResponse {
   draft_dev?: DraftDevSessionResponse | null;
 }
 
-export type DraftDevSessionStatus = "starting" | "running" | "stopped" | "expired" | "error";
+export type DraftDevSessionStatus =
+  | "starting"
+  | "building"
+  | "serving"
+  | "degraded"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "expired"
+  | "error";
+
+export function isDraftDevServingStatus(status?: DraftDevSessionStatus | null): boolean {
+  return status === "serving" || status === "running";
+}
+
+export function isDraftDevPendingStatus(status?: DraftDevSessionStatus | null): boolean {
+  return status === "starting" || status === "building" || status === "stopping";
+}
+
+export function isDraftDevFailureStatus(status?: DraftDevSessionStatus | null): boolean {
+  return status === "degraded" || status === "error" || status === "expired";
+}
 
 export interface DraftDevSessionResponse {
   session_id: string;

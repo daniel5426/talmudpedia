@@ -50,7 +50,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { publishedAppsService } from "@/services";
+import {
+  isDraftDevFailureStatus,
+  isDraftDevServingStatus,
+  publishedAppsService,
+} from "@/services";
 import type {
   BuilderStateResponse,
   DraftDevSessionResponse,
@@ -741,7 +745,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
 
     const inMemoryPreviewUrl =
-      draftDevStatus === "running" ? previewFrameUrl || state?.draft_dev?.preview_url || null : null;
+      isDraftDevServingStatus(draftDevStatus) ? previewFrameUrl || state?.draft_dev?.preview_url || null : null;
     if (inMemoryPreviewUrl) {
       window.open(
         appendRuntimeTokenToUrl(inMemoryPreviewUrl, previewAuthToken || state?.draft_dev?.preview_auth_token || null),
@@ -851,9 +855,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                       "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
                       state.app.status === "published"
                         ? "bg-emerald-500"
-                        : draftDevStatus === "running"
+                        : isDraftDevServingStatus(draftDevStatus)
                           ? "bg-blue-500"
-                          : draftDevStatus === "error"
+                          : isDraftDevFailureStatus(draftDevStatus)
                             ? "bg-destructive"
                             : "bg-muted-foreground/40",
                     )}

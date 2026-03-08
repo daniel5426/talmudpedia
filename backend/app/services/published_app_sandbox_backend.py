@@ -25,6 +25,7 @@ class PublishedAppSandboxBackendConfig:
     embedded_local_enabled: bool
     preview_proxy_base_path: str
     e2b_template: Optional[str]
+    e2b_template_tag: Optional[str]
     e2b_timeout_seconds: int
     e2b_workspace_path: str
     e2b_preview_port: int
@@ -46,6 +47,7 @@ class PublishedAppSandboxBackend(ABC):
         self,
         *,
         session_id: str,
+        runtime_generation: int,
         tenant_id: str,
         app_id: str,
         user_id: str,
@@ -239,3 +241,25 @@ class PublishedAppSandboxBackend(ABC):
         answers: list[list[str]],
     ) -> Dict[str, Any]:
         raise NotImplementedError
+
+    async def reconcile_session_scope(
+        self,
+        *,
+        session_id: str,
+        expected_sandbox_id: str | None,
+        runtime_generation: int | None,
+    ) -> Dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "kept_sandbox_id": expected_sandbox_id,
+            "runtime_generation": int(runtime_generation or 0),
+            "removed_sandbox_ids": [],
+        }
+
+    async def sweep_remote_sessions(
+        self,
+        *,
+        active_sessions: Dict[str, Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        _ = active_sessions
+        return {"checked": 0, "removed_sandbox_ids": []}

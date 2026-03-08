@@ -3,9 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
-import os
 import tarfile
-from dataclasses import dataclass
 from typing import Any, Dict
 
 import httpx
@@ -15,30 +13,26 @@ from app.services.published_app_sandbox_backend import (
     PublishedAppSandboxBackend,
     PublishedAppSandboxBackendError,
 )
+from app.services.published_app_sandbox_backend_e2b_runtime import (
+    E2BSandboxRuntimeMixin,
+    _E2BProcessState,
+    _E2B_PROCESS_STATE,
+)
 from app.services.published_app_sandbox_backend_e2b_workspace import E2BSandboxWorkspaceMixin
 
 try:
     from e2b import AsyncSandbox
+    from e2b.sandbox.sandbox_api import SandboxQuery
 except Exception:  # pragma: no cover - import failure is handled at runtime
     AsyncSandbox = None
+    SandboxQuery = None
 
-
-@dataclass
-class _E2BProcessState:
-    preview_pid: int | None = None
-    preview_base_path: str = "/"
-    opencode_pid: int | None = None
-
-
-_E2B_PROCESS_STATE: dict[str, _E2BProcessState] = {}
-
-
-class E2BSandboxBackend(E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
+class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
     backend_name = "e2b"
     is_remote = True
 
     def _require_sdk(self) -> None:
-        if AsyncSandbox is None:
+        if AsyncSandbox is None or SandboxQuery is None:
             raise PublishedAppSandboxBackendError(
                 "E2B backend is configured but the `e2b` package is unavailable."
             )
@@ -157,62 +151,11 @@ class E2BSandboxBackend(E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
             metadata["preview"]["traffic_access_token"] = traffic_access_token
         return metadata
 
-    def _opencode_headers(self, sandbox) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        traffic_access_token = str(sandbox.traffic_access_token or "").strip()
-        if traffic_access_token:
-            headers["e2b-traffic-access-token"] = traffic_access_token
-        return headers
-
-    def _build_opencode_client(self, sandbox):
-        from app.services.opencode_server_client import OpenCodeServerClient, OpenCodeServerClientConfig
-
-        base_url = self._normalize_upstream_base_url(sandbox.get_host(self.config.e2b_opencode_port))
-        return OpenCodeServerClient(
-            OpenCodeServerClientConfig(
-                enabled=True,
-                base_url=base_url,
-                api_key=None,
-                request_timeout_seconds=max(20.0, float(self.config.request_timeout_seconds)),
-                connect_timeout_seconds=5.0,
-                health_cache_seconds=5,
-                sandbox_controller_mode_override=False,
-                extra_headers=self._opencode_headers(sandbox),
-            )
-        )
-
-    async def _ensure_opencode_server(self, sandbox, *, sandbox_id: str, workspace_path: str):
-        state = _E2B_PROCESS_STATE.setdefault(sandbox_id, _E2BProcessState())
-        if state.opencode_pid:
-            try:
-                listed = await sandbox.commands.list()
-                if any(int(process.pid) == int(state.opencode_pid) for process in listed):
-                    return self._build_opencode_client(sandbox)
-            except Exception:
-                pass
-            state.opencode_pid = None
-
-        explicit = (os.getenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_SERVER_COMMAND") or "").strip()
-        if not explicit:
-            explicit = (os.getenv("APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND") or "").strip()
-        template = explicit or "opencode serve --hostname {host} --port {port}"
-        command = template.format(host="0.0.0.0", port=self.config.e2b_opencode_port)
-        pid = await self._spawn_detached_shell(
-            sandbox,
-            command,
-            cwd=workspace_path,
-            log_path=f"{workspace_path}/.opencode/server.log",
-        )
-        state.opencode_pid = int(pid)
-        await self._wait_for_port(sandbox, self.config.e2b_opencode_port, timeout_seconds=60)
-        client = self._build_opencode_client(sandbox)
-        await client.ensure_healthy(force=True)
-        return client
-
     async def start_session(
         self,
         *,
         session_id: str,
+        runtime_generation: int,
         tenant_id: str,
         app_id: str,
         user_id: str,
@@ -233,6 +176,7 @@ class E2BSandboxBackend(E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
             "user_id": user_id,
             "revision_id": revision_id,
             "session_id": session_id,
+            "runtime_generation": str(int(runtime_generation or 0)),
         }
         sandbox = await self._create_sandbox(metadata=metadata, idle_timeout_seconds=idle_timeout_seconds)
         await self._ensure_directory(sandbox, workspace_root)
@@ -246,11 +190,13 @@ class E2BSandboxBackend(E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
             workspace_root=workspace_root,
             preview_base_path=preview_base_path,
         )
+        removed = await self._kill_session_sandboxes(session_id=session_id, exclude_sandbox_id=str(sandbox.sandbox_id))
         return {
             "sandbox_id": str(sandbox.sandbox_id),
-            "status": "running",
+            "status": "serving",
             "workspace_path": workspace_root,
             "runtime_backend": self.backend_name,
+            "removed_sandbox_ids": removed,
             "backend_metadata": await self._build_backend_metadata(
                 sandbox,
                 preview_base_path=preview_base_path,
@@ -286,7 +232,7 @@ class E2BSandboxBackend(E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
             preview_base_path=effective_preview_base_path,
         )
         return {
-            "status": "running",
+            "status": "serving",
             "sandbox_id": sandbox_id,
             "runtime_backend": self.backend_name,
             "backend_metadata": await self._build_backend_metadata(
@@ -298,7 +244,14 @@ class E2BSandboxBackend(E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
     async def heartbeat_session(self, *, sandbox_id: str, idle_timeout_seconds: int) -> Dict[str, Any]:
         sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
         await sandbox.set_timeout(max(int(idle_timeout_seconds), int(self.config.e2b_timeout_seconds)))
-        return {"status": "running", "sandbox_id": sandbox_id, "runtime_backend": self.backend_name}
+        preview_base_path = _E2B_PROCESS_STATE.get(sandbox_id, _E2BProcessState()).preview_base_path or "/"
+        await self._ensure_preview_process(
+            sandbox,
+            sandbox_id=sandbox_id,
+            workspace_root=self._workspace_root(self.config.e2b_workspace_path),
+            preview_base_path=preview_base_path,
+        )
+        return {"status": "serving", "sandbox_id": sandbox_id, "runtime_backend": self.backend_name}
 
     async def stop_session(self, *, sandbox_id: str) -> Dict[str, Any]:
         sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
@@ -776,63 +729,3 @@ class E2BSandboxBackend(E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
     async def resolve_workspace_path(self, *, sandbox_id: str) -> str | None:
         _ = sandbox_id
         return self._workspace_root(self.config.e2b_workspace_path)
-
-    async def start_opencode_run(
-        self,
-        *,
-        sandbox_id: str,
-        run_id: str,
-        app_id: str,
-        workspace_path: str,
-        model_id: str,
-        prompt: str,
-        messages: list[dict[str, str]],
-    ) -> Dict[str, Any]:
-        sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
-        resolved_workspace = await self._resolve_workspace_path(sandbox, workspace_path)
-        client = await self._ensure_opencode_server(
-            sandbox,
-            sandbox_id=sandbox_id,
-            workspace_path=resolved_workspace,
-        )
-        run_ref = await client.start_run(
-            run_id=run_id,
-            app_id=app_id,
-            sandbox_id=sandbox_id,
-            workspace_path=resolved_workspace,
-            model_id=model_id,
-            prompt=prompt,
-            messages=messages,
-        )
-        return {"run_ref": run_ref, "sandbox_id": sandbox_id, "status": "started"}
-
-    async def stream_opencode_events(self, *, sandbox_id: str, run_ref: str):
-        sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
-        client = self._build_opencode_client(sandbox)
-        async for event in client.stream_run_events(run_ref=run_ref):
-            if isinstance(event, dict):
-                yield event
-
-    async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
-        sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
-        client = self._build_opencode_client(sandbox)
-        cancelled = await client.cancel_run(run_ref=run_ref, sandbox_id=None)
-        return {"cancelled": bool(cancelled)}
-
-    async def answer_opencode_question(
-        self,
-        *,
-        sandbox_id: str,
-        run_ref: str,
-        question_id: str,
-        answers: list[list[str]],
-    ) -> Dict[str, Any]:
-        sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
-        client = self._build_opencode_client(sandbox)
-        ok = await client.answer_question(
-            run_ref=run_ref,
-            question_id=question_id,
-            answers=answers,
-            sandbox_id=None,
-        )
-        return {"ok": bool(ok)}

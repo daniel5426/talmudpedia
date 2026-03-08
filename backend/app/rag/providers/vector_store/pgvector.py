@@ -91,8 +91,10 @@ class PgvectorVectorStore(VectorStoreProvider):
                 """)
             
             return True
-        except Exception:
-            return False
+        except Exception as e:
+            raise RuntimeError(
+                f"PGVector create_index failed for collection '{name}': {e}"
+            ) from e
     
     async def delete_index(self, name: str) -> bool:
         try:

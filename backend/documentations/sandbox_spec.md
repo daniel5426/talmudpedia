@@ -26,6 +26,7 @@ The current implementation lives primarily in:
 - [backend/app/services/published_app_sandbox_backend_local.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_local.py)
 - [backend/app/services/published_app_sandbox_backend_controller.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_controller.py)
 - [backend/app/services/published_app_sandbox_backend_e2b.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b.py)
+- [backend/app/services/published_app_sandbox_backend_e2b_runtime.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b_runtime.py)
 - [backend/app/services/published_app_sandbox_backend_e2b_workspace.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b_workspace.py)
 - [backend/app/services/published_app_draft_dev_runtime.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_draft_dev_runtime.py)
 - [backend/app/services/published_app_draft_dev_runtime_client.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_draft_dev_runtime_client.py)
@@ -131,13 +132,15 @@ Important implementation detail:
 The app-builder draft-dev session model now stores backend identity and provider metadata.
 
 Current persisted fields on `PublishedAppDraftDevSession`:
+- `runtime_generation`
 - `runtime_backend`
 - `backend_metadata`
 
 Purpose:
+- make runtime ownership explicit across restarts
 - identify which backend owns a session
 - persist provider-specific recovery or routing metadata
-- support future reconnect/recovery logic
+- support provider reconciliation and reconnect/recovery logic
 
 Migration:
 - [backend/alembic/versions/2a4c6e8f1b3d_add_draft_dev_runtime_backend_metadata.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/alembic/versions/2a4c6e8f1b3d_add_draft_dev_runtime_backend_metadata.py)
@@ -150,6 +153,7 @@ Important operational note:
 
 The app-builder runtime semantics above the backend abstraction were preserved:
 - one active draft-dev session per `(app_id, user_id)`
+- generation-based runtime ownership for that session scope
 - dependency-hash based install reuse
 - mutable live workspace
 - separate stage workspace
@@ -232,6 +236,12 @@ Current E2B-related runtime env vars:
 - `E2B_API_KEY`
 - `APPS_SANDBOX_BACKEND`
 - `APPS_E2B_TEMPLATE`
+- `APPS_E2B_TEMPLATE_TAG`
+- `APPS_E2B_ALLOW_DEFAULT_TEMPLATE`
+- `APPS_E2B_TEMPLATE_ALIAS`
+- `APPS_E2B_TEMPLATE_CPU_COUNT`
+- `APPS_E2B_TEMPLATE_MEMORY_MB`
+- `APPS_E2B_TEMPLATE_TAGS`
 - `APPS_E2B_SANDBOX_TIMEOUT_SECONDS`
 - `APPS_E2B_WORKSPACE_PATH`
 - `APPS_E2B_PREVIEW_PORT`
@@ -243,6 +253,46 @@ Current E2B-related runtime env vars:
 Startup rule:
 - if `APPS_SANDBOX_BACKEND=e2b`, the backend process must have `E2B_API_KEY`
 - startup now fails fast with a clear error if that key is missing
+- startup also now requires `APPS_E2B_TEMPLATE` by default
+- when using custom E2B templates, the runtime should target a concrete tagged reference, not a bare alias
+- the provider default sandbox template is treated as unsafe for app-builder because the observed memory budget was too small for the real Vite dev graph
+- `APPS_E2B_ALLOW_DEFAULT_TEMPLATE=1` exists only as a temporary bypass for debugging
+
+### Dedicated App-Builder Template
+
+The repo now includes a repeatable E2B template build helper:
+- [backend/scripts/e2b/build_app_builder_template.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/e2b/build_app_builder_template.py)
+
+Purpose:
+- create a named app-builder template alias with explicit CPU and memory sizing
+- stop local/dev/prod environments from silently falling back to the low-memory provider default
+
+Current intended flow:
+1. set `E2B_API_KEY`
+2. optionally set:
+   - `APPS_E2B_TEMPLATE_ALIAS`
+   - `APPS_E2B_TEMPLATE_TAG`
+   - `APPS_E2B_TEMPLATE_CPU_COUNT`
+   - `APPS_E2B_TEMPLATE_MEMORY_MB`
+   - `APPS_E2B_TEMPLATE_TAGS`
+3. run:
+   - `python backend/scripts/e2b/build_app_builder_template.py`
+4. set:
+   - `APPS_E2B_TEMPLATE` to the resulting alias
+   - `APPS_E2B_TEMPLATE_TAG` to the chosen build tag
+
+Current default repo convention:
+- alias: `talmudpedia-app-builder-dev`
+- tag: `apps-builder`
+- effective runtime reference: `talmudpedia-app-builder-dev:apps-builder`
+
+Recommended starting size for app-builder:
+- `2 vCPU`
+- `2048 MB`
+
+Reason:
+- live E2B debugging showed the app-builder preview was dying because `esbuild` was being OOM-killed in a roughly `~512 MB` sandbox
+- a minimal Vite app worked fine in E2B, which isolated the issue to the real app-builder template/dependency graph rather than to E2B or Vite itself
 
 ### Workspace Contract
 
@@ -253,6 +303,10 @@ Current responsibilities:
 - preserve dependency marker semantics
 - manage preview/OpenCode background processes in the same sandbox
 - expose internal connection data for proxying
+
+Important implementation note:
+- workspace listing must preserve leading-dot filenames
+- this is required so hidden runtime markers like `.draft-dev-dependency-hash` round-trip correctly for the coding-agent stage workspace flow
 
 ### Process Model
 
@@ -319,13 +373,39 @@ This preserves the previous service contract while swapping the substrate below 
 2. Service loads the app revision and computes dependency hash.
 3. Service ensures a session row exists for `(app_id, user_id)`.
 4. Client selects the configured backend.
-5. Backend starts or syncs the runtime session.
+5. Service increments `runtime_generation` when a new sandbox must be created.
+6. Backend starts or syncs the runtime session.
+7. Service reconciles provider state so only the owned `(session_id, runtime_generation, sandbox_id)` remains.
+8. Best-effort provider sweeps collapse orphaned or duplicate E2B sandboxes against DB-owned active sessions.
 6. Service persists:
    - `sandbox_id`
+   - `runtime_generation`
    - `runtime_backend`
    - `backend_metadata`
    - preview and workspace details
-7. Response returns a platform proxy preview URL.
+9. Response returns a platform proxy preview URL.
+
+### Runtime State Model
+
+Draft-dev sessions now use explicit health states instead of collapsing almost everything into `running`.
+
+Current states:
+- `starting`
+- `building`
+- `serving`
+- `degraded`
+- `running`
+- `stopping`
+- `stopped`
+- `expired`
+- `error`
+
+Current interpretation:
+- `serving` is the canonical healthy state for a ready preview
+- `running` is kept as a compatibility state for older rows/clients
+- `building` means the sandbox is provisioning or reinstalling dependencies
+- `degraded` means the session exists but the preview/runtime health check failed and needs restart or recovery
+- `stopping` is transient ownership handoff before the sandbox is killed and the row becomes `stopped` or `expired`
 
 ### Dependency Install Reuse
 
@@ -370,8 +450,8 @@ Purpose:
 ## Current Limitations
 
 The new substrate is in place, but some parts are still intentionally incomplete:
-- no confirmed live E2B end-to-end validation against a real template in this spec
-- reconnect/recovery paths for orphaned or stale E2B sandboxes still need hardening
+- live E2B end-to-end validation now exists for create -> preview HTML -> proxied Vite asset -> out-of-band kill -> recover -> cleanup -> stop
+- the remote sweeper is currently request-driven best effort, not a dedicated scheduled background job
 - tenant or environment-specific rollout controls are still to be added
 - artifact runtime migration is not implemented yet
 - the current local backend remains the manual fallback and should not silently replace a failed E2B session

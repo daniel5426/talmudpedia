@@ -160,9 +160,7 @@ class PgVectorAdapter(VectorBackendAdapter):
         dimension = next((len(v.values) for v in vectors if isinstance(v.values, list) and v.values), 0)
         if dimension <= 0:
             raise ValueError("No valid embedding vectors were provided for PGVector upsert")
-        created = await self._store.create_index(self._collection_name, dimension)
-        if not created:
-            raise ValueError(f"Failed to initialize pgvector collection '{self._collection_name}'")
+        await self._store.create_index(self._collection_name, dimension)
 
         docs = [
             VectorDocument(

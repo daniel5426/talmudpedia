@@ -13,6 +13,10 @@ class WebCrawlerRequest(BaseModel):
     max_depth: Optional[int] = None
     max_pages: Optional[int] = None
     respect_robots_txt: Optional[bool] = None
+    content_preference: str = "fit_markdown"
+    wait_until: Optional[str] = None
+    page_timeout_ms: Optional[int] = None
+    scan_full_page: Optional[bool] = None
 
 
 class WebCrawlerProvider(ABC):

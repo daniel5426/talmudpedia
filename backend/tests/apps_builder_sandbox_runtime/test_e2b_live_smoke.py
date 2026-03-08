@@ -48,6 +48,7 @@ async def _poll_preview(client, preview_url: str, preview_auth_token: str, *, at
 @pytest.mark.asyncio
 async def test_e2b_live_builder_preview_smoke(client, db_session, monkeypatch: pytest.MonkeyPatch):
     from e2b import AsyncSandbox
+    from e2b.sandbox.sandbox_api import SandboxQuery
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
@@ -58,7 +59,7 @@ async def test_e2b_live_builder_preview_smoke(client, db_session, monkeypatch: p
     ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
     assert ensure_resp.status_code == 200, ensure_resp.text
     payload = ensure_resp.json()
-    assert payload["status"] == "running", payload
+    assert payload["status"] == "serving", payload
     assert payload["runtime_backend"] == "e2b"
     assert payload.get("preview_url")
     assert payload.get("preview_auth_token")
@@ -76,18 +77,34 @@ async def test_e2b_live_builder_preview_smoke(client, db_session, monkeypatch: p
     assert preview_resp.status_code == 200
     assert "<!doctype html" in preview_resp.text.lower() or "<html" in preview_resp.text.lower()
 
+    vite_client_resp = await client.get(
+        f"{payload['preview_url']}@vite/client",
+        params={"runtime_token": str(payload["preview_auth_token"])},
+        follow_redirects=True,
+    )
+    assert vite_client_resp.status_code == 200
+    assert "import" in vite_client_resp.text
+
     sandbox = await AsyncSandbox.connect(sandbox_id=sandbox_id, timeout=60)
     await sandbox.kill()
 
     recovered_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
     assert recovered_resp.status_code == 200, recovered_resp.text
     recovered = recovered_resp.json()
-    assert recovered["status"] == "running", recovered
+    assert recovered["status"] == "serving", recovered
 
     refreshed_row = await db_session.get(PublishedAppDraftDevSession, UUID(payload["session_id"]))
     assert refreshed_row is not None
     assert str(refreshed_row.sandbox_id or "").strip()
     assert str(refreshed_row.sandbox_id) != sandbox_id
+
+    paginator = AsyncSandbox.list(
+        query=SandboxQuery(metadata={"session_id": str(payload["session_id"])}),
+        limit=20,
+    )
+    session_sandboxes = await paginator.next_items()
+    live_sandbox_ids = [str(getattr(item, "sandbox_id", "") or "").strip() for item in session_sandboxes or [] if str(getattr(item, "sandbox_id", "") or "").strip()]
+    assert live_sandbox_ids == [str(refreshed_row.sandbox_id)]
 
     recovered_preview_resp = await _poll_preview(
         client,
@@ -99,3 +116,11 @@ async def test_e2b_live_builder_preview_smoke(client, db_session, monkeypatch: p
     stop_resp = await client.delete(f"/admin/apps/{app_id}/builder/draft-dev/session", headers=headers)
     assert stop_resp.status_code == 200, stop_resp.text
     assert stop_resp.json()["status"] == "stopped"
+
+    paginator = AsyncSandbox.list(
+        query=SandboxQuery(metadata={"session_id": str(payload["session_id"])}),
+        limit=20,
+    )
+    remaining = await paginator.next_items()
+    remaining_sandbox_ids = [str(getattr(item, "sandbox_id", "") or "").strip() for item in remaining or [] if str(getattr(item, "sandbox_id", "") or "").strip()]
+    assert remaining_sandbox_ids == []

@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { publishedAppsService } from "@/services";
+import {
+  isDraftDevFailureStatus,
+  isDraftDevPendingStatus,
+  isDraftDevServingStatus,
+} from "@/services";
 import type { DraftDevSessionResponse, DraftDevSessionStatus } from "@/services";
 import { filterAppsBuilderFiles } from "@/services/apps-builder-file-filter";
 import {
@@ -144,11 +149,11 @@ export function useAppsBuilderSandboxLifecycle({
       syncFingerprintRef.current = currentSyncFingerprintRef.current;
     }
 
-    if (session.status === "running") {
+    if (isDraftDevServingStatus(session.status as DraftDevSessionStatus | undefined)) {
       setPhase("running");
-    } else if (session.status === "starting") {
+    } else if (isDraftDevPendingStatus(session.status as DraftDevSessionStatus | undefined)) {
       setPhase((prev) => (prev === "recovering" ? "recovering" : "ensuring"));
-    } else if (session.status === "error" || session.status === "expired") {
+    } else if (isDraftDevFailureStatus(session.status as DraftDevSessionStatus | undefined)) {
       setPhase("error");
     } else {
       setPhase("idle");
@@ -187,7 +192,7 @@ export function useAppsBuilderSandboxLifecycle({
     const reusableSession = latestSessionPayloadRef.current;
     const hasReusableRunningSession =
       !force
-      && reusableSession?.status === "running"
+      && isDraftDevServingStatus(reusableSession?.status)
       && Boolean(reusableSession?.session_id)
       && Boolean(reusableSession?.preview_url)
       && !draftDevError;
@@ -243,7 +248,7 @@ export function useAppsBuilderSandboxLifecycle({
   }, [appId, applySession, draftDevError]);
 
   const syncDraftDevSession = useCallback(async (fingerprint: string) => {
-    if (!currentRevisionId || !draftDevSessionId || draftDevStatus !== "running") {
+    if (!currentRevisionId || !draftDevSessionId || !isDraftDevServingStatus(draftDevStatus)) {
       return null;
     }
     if (syncInFlightRef.current) {
@@ -356,11 +361,11 @@ export function useAppsBuilderSandboxLifecycle({
 
     const snapshot = sessionSnapshotRef.current;
     const hasReusableSession =
-      snapshot.status === "running"
+      isDraftDevServingStatus(snapshot.status)
       && Boolean(snapshot.sessionId)
       && Boolean(snapshot.previewUrl);
 
-    if (hasReusableSession || snapshot.status === "starting") {
+    if (hasReusableSession || isDraftDevPendingStatus(snapshot.status)) {
       return;
     }
 
@@ -379,7 +384,7 @@ export function useAppsBuilderSandboxLifecycle({
     if (hasActiveCodingRunLock) {
       return;
     }
-    if (!draftDevSessionId || draftDevStatus !== "running") {
+    if (!draftDevSessionId || !isDraftDevServingStatus(draftDevStatus)) {
       return;
     }
 
@@ -435,7 +440,7 @@ export function useAppsBuilderSandboxLifecycle({
   }, [appId, applySession, draftDevSessionId]);
 
   const isReady =
-    draftDevStatus === "running"
+    isDraftDevServingStatus(draftDevStatus)
     && Boolean(draftDevSessionId)
     && Boolean(previewAssetUrl)
     && !draftDevError;
@@ -446,10 +451,10 @@ export function useAppsBuilderSandboxLifecycle({
     if (phase === "syncing") {
       return "Syncing latest changes to sandbox...";
     }
-    if (phase === "ensuring" || phase === "recovering" || draftDevStatus === "starting") {
+    if (phase === "ensuring" || phase === "recovering" || isDraftDevPendingStatus(draftDevStatus)) {
       return "Waiting for sandbox to finish loading...";
     }
-    if (draftDevStatus === "error" || draftDevStatus === "expired" || draftDevError) {
+    if (isDraftDevFailureStatus(draftDevStatus) || draftDevError) {
       return "Sandbox is unavailable. Retry to continue.";
     }
     if (draftDevStatus === "stopped" || !draftDevSessionId || !previewAssetUrl) {
@@ -465,7 +470,7 @@ export function useAppsBuilderSandboxLifecycle({
     if (phase === "recovering") {
       return "Recovering preview sandbox...";
     }
-    if (phase === "ensuring" || draftDevStatus === "starting") {
+    if (phase === "ensuring" || isDraftDevPendingStatus(draftDevStatus)) {
       return "Starting preview sandbox...";
     }
     if (!isReady) {

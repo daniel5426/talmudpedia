@@ -6,9 +6,23 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import {
+  isDraftDevFailureStatus,
+  isDraftDevPendingStatus,
+  isDraftDevServingStatus,
+} from "@/services";
 import type { SandboxLifecyclePhase } from "@/features/apps-builder/workspace/useAppsBuilderSandboxLifecycle";
 
-type DraftDevStatus = "starting" | "running" | "stopped" | "expired" | "error";
+type DraftDevStatus =
+  | "starting"
+  | "building"
+  | "serving"
+  | "degraded"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "expired"
+  | "error";
 
 type PreviewCanvasProps = {
   previewUrl?: string | null;
@@ -62,10 +76,10 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
 
     useEffect(() => clearTimers, [clearTimers]);
 
-    const isPending = devStatus === "starting" || lifecyclePhase === "ensuring" || lifecyclePhase === "recovering" || lifecyclePhase === "syncing";
-    const hasFailed = devStatus === "error" || devStatus === "expired" || lifecyclePhase === "error";
+    const isPending = isDraftDevPendingStatus(devStatus) || lifecyclePhase === "ensuring" || lifecyclePhase === "recovering" || lifecyclePhase === "syncing";
+    const hasFailed = isDraftDevFailureStatus(devStatus) || lifecyclePhase === "error";
     const hasSessionError = Boolean(devError);
-    const canLoadFrame = (forceReady || devStatus === "running") && Boolean(previewUrl) && !hasFailed && !hasSessionError;
+    const canLoadFrame = (forceReady || isDraftDevServingStatus(devStatus)) && Boolean(previewUrl) && !hasFailed && !hasSessionError;
     const warmupMessage = String(loadingMessage || "").trim() || (isPending ? "Starting draft preview..." : "Warming preview sandbox...");
     const previewSrc = canLoadFrame
       ? appendRuntimeTokenToUrl(String(previewUrl || ""), previewAuthToken)

@@ -12,6 +12,44 @@ from app.services.published_app_sandbox_backend_e2b import E2BSandboxBackend
 from app.services.published_app_sandbox_backend_local import LocalSandboxBackend
 
 
+def _resolve_e2b_template_reference(template: str | None, template_tag: str | None) -> str | None:
+    raw_template = str(template or "").strip()
+    if not raw_template:
+        return None
+    if ":" in raw_template:
+        return raw_template
+    raw_tag = str(template_tag or "").strip()
+    if not raw_tag:
+        return raw_template
+    return f"{raw_template}:{raw_tag}"
+
+
+def validate_published_app_sandbox_backend_env() -> None:
+    backend = (os.getenv("APPS_SANDBOX_BACKEND") or "").strip().lower()
+    if backend != "e2b":
+        return
+
+    api_key = (os.getenv("E2B_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "APPS_SANDBOX_BACKEND=e2b requires E2B_API_KEY to be set in the backend environment."
+        )
+
+    allow_default_template = is_truthy(os.getenv("APPS_E2B_ALLOW_DEFAULT_TEMPLATE", "0"), default=False)
+    template = _resolve_e2b_template_reference(
+        (os.getenv("APPS_E2B_TEMPLATE") or "").strip(),
+        (os.getenv("APPS_E2B_TEMPLATE_TAG") or "").strip(),
+    )
+    if template or allow_default_template:
+        return
+
+    raise RuntimeError(
+        "APPS_SANDBOX_BACKEND=e2b requires APPS_E2B_TEMPLATE to be set. "
+        "Build the dedicated app-builder template first or set APPS_E2B_ALLOW_DEFAULT_TEMPLATE=1 "
+        "to bypass this guard temporarily."
+    )
+
+
 def load_published_app_sandbox_backend_config() -> PublishedAppSandboxBackendConfig:
     timeout_seconds = int(os.getenv("APPS_DRAFT_DEV_CONTROLLER_TIMEOUT_SECONDS", "15"))
     controller_url = (
@@ -37,7 +75,11 @@ def load_published_app_sandbox_backend_config() -> PublishedAppSandboxBackendCon
         local_preview_base_url=(os.getenv("APPS_DRAFT_DEV_PREVIEW_BASE_URL") or "http://127.0.0.1:5173").strip(),
         embedded_local_enabled=is_truthy(os.getenv("APPS_DRAFT_DEV_EMBEDDED_LOCAL_ENABLED", "1"), default=True),
         preview_proxy_base_path=preview_proxy_base_path.rstrip("/"),
-        e2b_template=(os.getenv("APPS_E2B_TEMPLATE") or "").strip() or None,
+        e2b_template=_resolve_e2b_template_reference(
+            (os.getenv("APPS_E2B_TEMPLATE") or "").strip() or None,
+            (os.getenv("APPS_E2B_TEMPLATE_TAG") or "").strip() or None,
+        ),
+        e2b_template_tag=(os.getenv("APPS_E2B_TEMPLATE_TAG") or "").strip() or None,
         e2b_timeout_seconds=max(180, int(os.getenv("APPS_E2B_SANDBOX_TIMEOUT_SECONDS", "1800"))),
         e2b_workspace_path=(os.getenv("APPS_E2B_WORKSPACE_PATH") or "/workspace").strip() or "/workspace",
         e2b_preview_port=max(1024, int(os.getenv("APPS_E2B_PREVIEW_PORT", "4173"))),

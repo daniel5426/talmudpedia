@@ -28,6 +28,7 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         self,
         *,
         session_id: str,
+        runtime_generation: int,
         tenant_id: str,
         app_id: str,
         user_id: str,
@@ -39,7 +40,7 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
-        _ = tenant_id, app_id, user_id, revision_id, entry_file, idle_timeout_seconds
+        _ = runtime_generation, tenant_id, app_id, user_id, revision_id, entry_file, idle_timeout_seconds
         try:
             payload = await self._manager().start_session(
                 session_id=session_id,

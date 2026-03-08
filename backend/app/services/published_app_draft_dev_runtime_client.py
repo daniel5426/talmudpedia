@@ -25,6 +25,7 @@ class PublishedAppDraftDevRuntimeClientConfig:
     backend: Optional[str] = None
     preview_proxy_base_path: str = "/public/apps-builder/draft-dev/sessions"
     e2b_template: Optional[str] = None
+    e2b_template_tag: Optional[str] = None
     e2b_timeout_seconds: int = 1800
     e2b_workspace_path: str = "/workspace"
     e2b_preview_port: int = 4173
@@ -50,6 +51,7 @@ class PublishedAppDraftDevRuntimeClient:
             embedded_local_enabled=config.embedded_local_enabled,
             preview_proxy_base_path=config.preview_proxy_base_path,
             e2b_template=config.e2b_template,
+            e2b_template_tag=config.e2b_template_tag,
             e2b_timeout_seconds=config.e2b_timeout_seconds,
             e2b_workspace_path=config.e2b_workspace_path,
             e2b_preview_port=config.e2b_preview_port,
@@ -73,6 +75,7 @@ class PublishedAppDraftDevRuntimeClient:
                 backend=backend_config.backend,
                 preview_proxy_base_path=backend_config.preview_proxy_base_path,
                 e2b_template=backend_config.e2b_template,
+                e2b_template_tag=backend_config.e2b_template_tag,
                 e2b_timeout_seconds=backend_config.e2b_timeout_seconds,
                 e2b_workspace_path=backend_config.e2b_workspace_path,
                 e2b_preview_port=backend_config.e2b_preview_port,
@@ -99,6 +102,7 @@ class PublishedAppDraftDevRuntimeClient:
         self,
         *,
         session_id: str,
+        runtime_generation: int,
         tenant_id: str,
         app_id: str,
         user_id: str,
@@ -113,6 +117,7 @@ class PublishedAppDraftDevRuntimeClient:
         try:
             return await self._backend.start_session(
                 session_id=session_id,
+                runtime_generation=runtime_generation,
                 tenant_id=tenant_id,
                 app_id=app_id,
                 user_id=user_id,
@@ -124,6 +129,32 @@ class PublishedAppDraftDevRuntimeClient:
                 draft_dev_token=draft_dev_token,
                 preview_base_path=preview_base_path or self.build_preview_proxy_path(session_id),
             )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+
+    async def reconcile_session_scope(
+        self,
+        *,
+        session_id: str,
+        expected_sandbox_id: str | None,
+        runtime_generation: int | None,
+    ) -> Dict[str, Any]:
+        try:
+            return await self._backend.reconcile_session_scope(
+                session_id=session_id,
+                expected_sandbox_id=expected_sandbox_id,
+                runtime_generation=runtime_generation,
+            )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+
+    async def sweep_remote_sessions(
+        self,
+        *,
+        active_sessions: Dict[str, Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        try:
+            return await self._backend.sweep_remote_sessions(active_sessions=active_sessions)
         except PublishedAppSandboxBackendError as exc:
             raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 

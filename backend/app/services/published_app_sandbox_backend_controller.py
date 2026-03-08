@@ -94,6 +94,7 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
         self,
         *,
         session_id: str,
+        runtime_generation: int,
         tenant_id: str,
         app_id: str,
         user_id: str,
@@ -107,6 +108,7 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "session_id": session_id,
+            "runtime_generation": int(runtime_generation or 0),
             "tenant_id": tenant_id,
             "app_id": app_id,
             "user_id": user_id,

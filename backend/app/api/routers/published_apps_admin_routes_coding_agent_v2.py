@@ -196,7 +196,14 @@ async def _refresh_draft_from_active_builder_sandbox(
     if (
         session is None
         or not session.sandbox_id
-        or session.status not in {PublishedAppDraftDevSessionStatus.running, PublishedAppDraftDevSessionStatus.starting}
+        or session.status
+        not in {
+            PublishedAppDraftDevSessionStatus.starting,
+            PublishedAppDraftDevSessionStatus.building,
+            PublishedAppDraftDevSessionStatus.serving,
+            PublishedAppDraftDevSessionStatus.degraded,
+            PublishedAppDraftDevSessionStatus.running,
+        }
     ):
         return draft
 

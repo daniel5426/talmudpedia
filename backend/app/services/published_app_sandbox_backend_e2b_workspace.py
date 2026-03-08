@@ -142,7 +142,11 @@ class E2BSandboxWorkspaceMixin:
         stdout = str(result.stdout or "")
         rows: list[str] = []
         for raw in stdout.splitlines():
-            normalized = raw.strip().lstrip("./")
+            line = raw.strip()
+            if line.startswith("./"):
+                normalized = line[2:]
+            else:
+                normalized = line.lstrip("/")
             if not normalized or self._is_runtime_ignored_artifact_path(normalized):
                 continue
             rows.append(normalized)

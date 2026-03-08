@@ -29,6 +29,8 @@ logger = logging.getLogger("backend.startup")
 _INFRA_BOOTSTRAPPED = False
 _LOCAL_PGVECTOR_STARTED_BY_APP = False
 _LOCAL_PGVECTOR_CONTAINER_NAME = ""
+_LOCAL_CRAWL4AI_STARTED_BY_APP = False
+_LOCAL_CRAWL4AI_CONTAINER_NAME = ""
 _LOCAL_OPENCODE_STARTED_BY_APP = False
 _LOCAL_OPENCODE_PROCESS: subprocess.Popen | None = None
 _LOCAL_OPENCODE_GCP_CREDS_FILE: Path | None = None
@@ -226,6 +228,128 @@ def _stop_local_pgvector_if_needed() -> None:
         logger.warning(
             "Failed to stop local pgvector container `%s`: %s",
             _LOCAL_PGVECTOR_CONTAINER_NAME,
+            (stop_result.stderr or stop_result.stdout).strip(),
+        )
+
+
+def _ensure_local_crawl4ai_if_needed() -> None:
+    """
+    Ensure a local Crawl4AI Docker service is available for dev mode.
+
+    Behavior:
+    - If CRAWL4AI_BASE_URL points to a non-local host, do nothing.
+    - Otherwise, start/reuse a local Docker Crawl4AI container and set
+      CRAWL4AI_BASE_URL for the current process if missing.
+    """
+    global _LOCAL_CRAWL4AI_STARTED_BY_APP, _LOCAL_CRAWL4AI_CONTAINER_NAME
+
+    if not _is_truthy(os.getenv("LOCAL_CRAWL4AI_AUTO_BOOTSTRAP", "1")):
+        return
+    if not _docker_available():
+        logger.warning(
+            "Crawl4AI auto-bootstrap requested but docker is unavailable; "
+            "local Crawl4AI auto-bootstrap is skipped"
+        )
+        return
+
+    base_url = (os.getenv("CRAWL4AI_BASE_URL") or "").strip()
+    if not base_url:
+        host = (os.getenv("LOCAL_CRAWL4AI_HOST") or "127.0.0.1").strip()
+        port = int((os.getenv("LOCAL_CRAWL4AI_PORT") or "11235").strip())
+        base_url = f"http://{host}:{port}"
+        os.environ["CRAWL4AI_BASE_URL"] = base_url
+
+    parsed = _parse_endpoint_host_port(base_url)
+    if not parsed:
+        logger.warning("CRAWL4AI_BASE_URL is invalid: %s", base_url)
+        return
+
+    host, port = parsed
+    if not _is_local_host(host):
+        return
+    if _is_port_open(host, port):
+        logger.info("Crawl4AI is already reachable at %s:%s", host, port)
+        return
+
+    image = (os.getenv("LOCAL_CRAWL4AI_IMAGE") or "unclecode/crawl4ai:latest").strip()
+    container_name = (os.getenv("LOCAL_CRAWL4AI_CONTAINER_NAME") or "talmudpedia-crawl4ai-dev").strip()
+    startup_timeout_seconds = float((os.getenv("LOCAL_CRAWL4AI_STARTUP_TIMEOUT_SECONDS") or "30").strip())
+    container_port = int((os.getenv("LOCAL_CRAWL4AI_CONTAINER_PORT") or str(port)).strip())
+    shm_size = (os.getenv("LOCAL_CRAWL4AI_SHM_SIZE") or "1g").strip()
+
+    _LOCAL_CRAWL4AI_CONTAINER_NAME = container_name
+
+    inspect = _run_docker_command(
+        ["ps", "-a", "--filter", f"name=^/{container_name}$", "--format", "{{.Names}}\t{{.Status}}"]
+    )
+    container_exists = container_name in (inspect.stdout or "")
+    container_running = "Up " in (inspect.stdout or "")
+
+    if not container_exists:
+        run_result = _run_docker_command(
+            [
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "--shm-size",
+                shm_size,
+                "-p",
+                f"{port}:{container_port}",
+                image,
+            ]
+        )
+        if run_result.returncode != 0:
+            logger.warning(
+                "Failed to start local Crawl4AI container `%s`: %s",
+                container_name,
+                (run_result.stderr or run_result.stdout).strip(),
+            )
+            return
+        _LOCAL_CRAWL4AI_STARTED_BY_APP = True
+    elif not container_running:
+        start_result = _run_docker_command(["start", container_name])
+        if start_result.returncode != 0:
+            logger.warning(
+                "Failed to start existing Crawl4AI container `%s`: %s",
+                container_name,
+                (start_result.stderr or start_result.stdout).strip(),
+            )
+            return
+        _LOCAL_CRAWL4AI_STARTED_BY_APP = True
+
+    if not _wait_for_port(host, port, timeout_seconds=startup_timeout_seconds):
+        logger.warning(
+            "Local Crawl4AI container `%s` did not become reachable on %s:%s",
+            container_name,
+            host,
+            port,
+        )
+        return
+
+    logger.info(
+        "Local Crawl4AI ready at %s:%s (container=%s)",
+        host,
+        port,
+        container_name,
+    )
+
+
+def _stop_local_crawl4ai_if_needed() -> None:
+    if not _LOCAL_CRAWL4AI_STARTED_BY_APP:
+        return
+    if not _docker_available():
+        return
+    if not _LOCAL_CRAWL4AI_CONTAINER_NAME:
+        return
+
+    stop_result = _run_docker_command(["stop", _LOCAL_CRAWL4AI_CONTAINER_NAME])
+    if stop_result.returncode == 0:
+        logger.info("Stopped local Crawl4AI container `%s`", _LOCAL_CRAWL4AI_CONTAINER_NAME)
+    else:
+        logger.warning(
+            "Failed to stop local Crawl4AI container `%s`: %s",
+            _LOCAL_CRAWL4AI_CONTAINER_NAME,
             (stop_result.stderr or stop_result.stdout).strip(),
         )
 
@@ -670,6 +794,7 @@ def _bootstrap_local_infra_once() -> None:
     _try_start_brew_service("postgresql@17", "127.0.0.1", 5432)
     _try_start_brew_service("redis", "127.0.0.1", 6379)
     _ensure_local_pgvector_if_needed()
+    _ensure_local_crawl4ai_if_needed()
     _ensure_local_moto_server_if_needed()
     _ensure_local_bundle_bucket_if_needed()
     _ensure_celery_worker_if_needed()
@@ -689,15 +814,11 @@ def start_livekit_worker():
 
 
 def _validate_sandbox_backend_env() -> None:
-    backend = (os.getenv("APPS_SANDBOX_BACKEND") or "").strip().lower()
-    if backend != "e2b":
-        return
-    api_key = (os.getenv("E2B_API_KEY") or "").strip()
-    if api_key:
-        return
-    raise RuntimeError(
-        "APPS_SANDBOX_BACKEND=e2b requires E2B_API_KEY to be set in the backend environment."
+    from app.services.published_app_sandbox_backend_factory import (
+        validate_published_app_sandbox_backend_env,
     )
+
+    validate_published_app_sandbox_backend_env()
 
 
 @asynccontextmanager
@@ -781,6 +902,7 @@ async def lifespan(app: FastAPI):
         pass
 
     _stop_local_pgvector_if_needed()
+    _stop_local_crawl4ai_if_needed()
     _stop_local_opencode_if_needed()
 
     await MongoDatabase.close()

@@ -1,5 +1,5 @@
 # RAG Management Current State
-Last Updated: 2026-02-22
+Last Updated: 2026-03-08
 
 ## Overview
 The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pipeline orchestration engine designed to manage the full lifecycle of data ingestion, transformation, and storage for semantic search. It has evolved from a simple linear flow to a highly customizable, contract-driven architecture.
@@ -82,8 +82,8 @@ The RAG (Retrieval-Augmented Generation) subsystem is a flexible, graph-based pi
   - `knowledge_store_sink` updates store metrics (`document_count`, `chunk_count`) after upsert.
   - `upsert_count: 0` with successful steps usually means no chunks reached the sink (empty chunk output), not necessarily a provider failure.
 - **Current PGVector Limitation**:
-  - If PGVector cannot initialize the collection/table for the resolved name, sink execution fails with `Failed to initialize pgvector collection '<name>'`.
-  - Common causes are pgvector extension/schema readiness or collection init returning false before first upsert.
+  - If PGVector cannot initialize the collection/table for the resolved name, sink execution now surfaces the provider exception directly.
+  - Common causes are missing `PGVECTOR_CONNECTION_STRING`, pgvector extension/schema readiness, or database connectivity/setup failures before first upsert.
 
 ### 8. Data Integrity & Cascading Lifecycle (NEW)
 - **Robust Constraint Management**: Implemented `ondelete="CASCADE"` for ownership-based relations (e.g., Tenant deletion wipes associated RAG resources).

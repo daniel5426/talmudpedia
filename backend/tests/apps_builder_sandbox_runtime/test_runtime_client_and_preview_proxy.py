@@ -40,6 +40,7 @@ async def test_runtime_client_delegates_start_session_to_selected_backend(monkey
 
     result = await client.start_session(
         session_id="session-1",
+        runtime_generation=1,
         tenant_id="tenant-1",
         app_id="app-1",
         user_id="user-1",
