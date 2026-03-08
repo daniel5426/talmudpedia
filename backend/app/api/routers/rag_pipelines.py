@@ -919,8 +919,6 @@ class PipelineInputSchemaBuilder:
         fields: List[InputSchemaField] = []
         required_names = spec.get_required_field_names()
         for field in spec.required_config + spec.optional_config:
-            if field.name in config:
-                continue
             if not field.runtime:
                 continue
             fields.append(InputSchemaField(
@@ -964,6 +962,7 @@ class PipelineInputValidator:
         for step in schema.steps:
             step_params = normalized.get(step.step_id, {})
             allowed_fields = {field.name: field for field in step.fields}
+            config_values = step.config if isinstance(step.config, dict) else {}
 
             for key in step_params.keys():
                 if key not in allowed_fields:
@@ -975,7 +974,8 @@ class PipelineInputValidator:
 
             for field in step.fields:
                 value_provided = field.name in step_params
-                if field.required and not value_provided and field.default is None:
+                has_config_value = field.name in config_values and config_values.get(field.name) is not None
+                if field.required and not value_provided and not has_config_value and field.default is None:
                     errors.append({
                         "step_id": step.step_id,
                         "field": field.name,

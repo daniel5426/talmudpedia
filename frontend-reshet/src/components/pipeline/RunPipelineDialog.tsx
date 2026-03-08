@@ -29,6 +29,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
     useEffect(() => {
         const execId = compileResult?.executable_pipeline_id
         if (!open || !execId) {
+            setInputData({})
             setSchema(null)
             setSchemaError(null)
             setShowAdvanced(false)
@@ -70,7 +71,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[500px]">
+            <DialogContent className="sm:max-w-[560px]">
                 <DialogHeader>
                     <DialogTitle>Run Pipeline</DialogTitle>
                     <DialogDescription>
