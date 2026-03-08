@@ -825,6 +825,7 @@ from app.api.routers import rbac as rbac_router
 from app.api.routers import audit as audit_router
 from app.api.routers import rag_pipelines as rag_pipelines_router
 from app.api.routers import rag_graph_mutations as rag_graph_mutations_router
+from app.api.routers import rag_operator_contracts as rag_operator_contracts_router
 from app.api.routers import rag_custom_operators as rag_custom_operators_router
 from app.api.routers import models as models_router
 from app.api.routers import tools as tools_router
@@ -847,6 +848,7 @@ app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(rag_admin.router, prefix="/admin/rag", tags=["rag-admin"])
 app.include_router(rag_pipelines_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
 app.include_router(rag_graph_mutations_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
+app.include_router(rag_operator_contracts_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
 app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom-operators", tags=["rag-custom-operators"])
 app.include_router(artifacts_router.router, tags=["artifacts"])
 app.include_router(stats_router.router, prefix="/admin", tags=["stats"])

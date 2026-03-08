@@ -268,9 +268,53 @@ async def get_node_schemas(
             "required_fields": [str(item) for item in required_fields],
             "reads": list(spec.reads or []),
             "writes": list(spec.writes or []),
+            "graph_node_contract": {
+                "required_fields": ["id", "type", "position"],
+                "field_shapes": {
+                    "id": {"type": "string"},
+                    "type": {"type": "string", "const": spec.type},
+                    "position": {
+                        "type": "object",
+                        "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
+                        "required": ["x", "y"],
+                        "additionalProperties": False,
+                    },
+                    "label": {"type": "string"},
+                    "config": config_schema,
+                    "data": {"type": "object"},
+                    "input_mappings": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                    },
+                },
+                "example_node": {
+                    "id": f"{spec.type}_1",
+                    "type": spec.type,
+                    "position": {"x": 0, "y": 0},
+                    "config": {},
+                },
+            },
         }
 
-    return {"schemas": schemas, "unknown": unknown}
+    return {
+        "schemas": schemas,
+        "unknown": unknown,
+        "graph_create_contract": {
+            "required_fields": ["nodes", "edges"],
+            "node_required_fields": ["id", "type", "position"],
+            "edge_required_fields": ["id", "source", "target"],
+            "edge_field_shapes": {
+                "id": {"type": "string"},
+                "source": {"type": "string"},
+                "target": {"type": "string"},
+                "type": {"type": "string", "enum": ["control", "data"]},
+                "source_handle": {"type": "string"},
+                "target_handle": {"type": "string"},
+                "label": {"type": "string"},
+                "condition": {"type": "string"},
+            },
+        },
+    }
 
 
 # =============================================================================

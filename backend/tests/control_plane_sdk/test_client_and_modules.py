@@ -85,6 +85,38 @@ def test_error_mapping_uses_structured_body() -> None:
     assert err.retryable is False
 
 
+def test_error_mapping_preserves_structured_detail_and_request_id() -> None:
+    payload = {
+        "detail": {
+            "code": "GRAPH_MUTATION_INTERNAL_ERROR",
+            "message": "Agent graph mutation failed due to an internal server error",
+            "operation": "agents.graph.apply_patch",
+            "phase": "post_write_validation",
+            "error_class": "RuntimeError",
+        }
+    }
+    session = _RecordingSession(
+        _FakeResponse(
+            status_code=500,
+            payload=payload,
+            headers={"X-Request-ID": "req-sdk-500"},
+            text="Internal Server Error",
+        )
+    )
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+
+    with pytest.raises(ControlPlaneSDKError) as excinfo:
+        client.agents.apply_graph_patch("agent-1", [{"op": "set_node_config_value"}])
+
+    err = excinfo.value
+    assert err.code == "GRAPH_MUTATION_INTERNAL_ERROR"
+    assert err.http_status == 500
+    assert err.details is not None
+    assert err.details["request_id"] == "req-sdk-500"
+    assert err.details["operation"] == "agents.graph.apply_patch"
+    assert err.details["phase"] == "post_write_validation"
+
+
 def test_agents_update_uses_patch_route_by_default() -> None:
     session = _RecordingSession(_FakeResponse(payload={"id": "agent-1"}))
     client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)

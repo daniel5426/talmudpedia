@@ -60,7 +60,72 @@ def _sdk_error_payload(error_name: str, exc: ControlPlaneSDKError, **extra: Any)
     for key, value in extra.items():
         if value is not None:
             payload[key] = value
+    validation_errors: list[dict[str, Any]] = []
+    if isinstance(exc.details, dict):
+        detail_payload = exc.details.get("detail") if isinstance(exc.details.get("detail"), dict) else exc.details
+        if isinstance(detail_payload, dict) and isinstance(detail_payload.get("errors"), list):
+            validation_errors.extend(item for item in detail_payload["errors"] if isinstance(item, dict))
+        if validation_errors:
+            payload["validation_errors"] = validation_errors
     return payload
+
+
+def operators_catalog(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.get_operator_catalog(tenant_slug=payload.get("tenant_slug"))
+        data = response.get("data")
+        operators: list[dict[str, Any]] = []
+        if isinstance(data, dict):
+            for category, items in data.items():
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    entry = dict(item)
+                    entry.setdefault("category", category)
+                    required_fields = []
+                    if isinstance(entry.get("required_config"), list):
+                        required_fields = [
+                            str(field.get("name"))
+                            for field in entry["required_config"]
+                            if isinstance(field, dict) and field.get("name")
+                        ]
+                    entry["required_fields"] = required_fields
+                    operators.append(entry)
+        return {"operators": operators, "categories": data}, []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("get_operator_catalog_failed", exc)]
+    except Exception as exc:
+        return None, [{"error": "get_operator_catalog_failed", "detail": str(exc)}]
+
+
+def operators_schema(
+    client: Client,
+    payload: Dict[str, Any],
+    *,
+    control_client_factory=control_client,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    operator_ids = [str(item).strip() for item in list(payload.get("operator_ids") or []) if str(item).strip()]
+    if not operator_ids:
+        return None, [{"error": "missing_fields", "fields": ["operator_ids"]}]
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.get_operator_schemas(
+            operator_ids,
+            tenant_slug=payload.get("tenant_slug"),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("get_operator_schemas_failed", exc, operator_ids=operator_ids)]
+    except Exception as exc:
+        return None, [{"error": "get_operator_schemas_failed", "detail": str(exc), "operator_ids": operator_ids}]
 
 
 def list_pipelines(
@@ -144,7 +209,7 @@ def create_visual_pipeline(
         )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
-        return None, [{"error": "create_visual_pipeline_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
+        return None, [_sdk_error_payload("create_visual_pipeline_failed", exc)]
     except Exception as exc:
         return None, [{"error": "create_visual_pipeline_failed", "detail": str(exc)}]
 

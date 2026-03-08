@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -9,6 +10,8 @@ from app.agent.executors.standard import register_standard_operators
 from app.agent.registry import AgentOperatorRegistry
 from app.services.agent_service import AgentGraphValidationError, AgentService, UpdateAgentData
 from app.services.graph_mutation_service import GraphMutationError, apply_graph_operations
+
+logger = logging.getLogger(__name__)
 
 
 class AgentGraphMutationService:
@@ -50,21 +53,39 @@ class AgentGraphMutationService:
         *,
         user_id: UUID | None = None,
     ) -> dict[str, Any]:
-        preview = await self.validate_patch(agent_id, operations)
-        if not preview["validation"]["valid"]:
-            raise AgentGraphValidationError(preview["validation"]["errors"])
-        agent = await self.agent_service.update_agent(
-            agent_id,
-            UpdateAgentData(graph_definition=preview["graph_definition"]),
-            user_id=user_id,
-        )
-        validation_result = await self.agent_service.validate_agent(agent.id)
-        return self._build_result(
-            agent_id=agent.id,
-            graph_definition=agent.graph_definition if isinstance(agent.graph_definition, dict) else {},
-            mutation=preview["mutation"],
-            validation_result=validation_result,
-        )
+        phase = "preview_validation"
+        try:
+            preview = await self.validate_patch(agent_id, operations)
+            if not preview["validation"]["valid"]:
+                raise AgentGraphValidationError(preview["validation"]["errors"])
+
+            phase = "persist_graph"
+            agent = await self.agent_service.update_agent(
+                agent_id,
+                UpdateAgentData(graph_definition=preview["graph_definition"]),
+                user_id=user_id,
+            )
+
+            phase = "post_write_validation"
+            validation_result = await self.agent_service.validate_agent(agent.id)
+            return self._build_result(
+                agent_id=agent.id,
+                graph_definition=agent.graph_definition if isinstance(agent.graph_definition, dict) else {},
+                mutation=preview["mutation"],
+                validation_result=validation_result,
+            )
+        except Exception as exc:
+            setattr(exc, "graph_mutation_phase", phase)
+            logger.exception(
+                "Agent graph patch failed",
+                extra={
+                    "agent_id": str(agent_id),
+                    "tenant_id": str(getattr(self, "tenant_id", "") or ""),
+                    "phase": phase,
+                    "operation_count": len(operations or []),
+                },
+            )
+            raise
 
     async def add_tool_to_agent_node(
         self,

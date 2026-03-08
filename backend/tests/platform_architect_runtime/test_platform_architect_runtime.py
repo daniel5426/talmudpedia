@@ -31,10 +31,50 @@ class _FakeRagAPI:
     pipelines_by_slug: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     idempotency_to_pipeline_id: Dict[str, str] = field(default_factory=dict)
     compile_failures_remaining: int = 0
+    create_error: Dict[str, Any] | None = None
     calls: List[Dict[str, Any]] = field(default_factory=list)
+
+    def get_operator_catalog(self, tenant_slug=None):
+        self.calls.append({"method": "get_operator_catalog", "tenant_slug": tenant_slug})
+        return {
+            "data": {
+                "input": [
+                    {
+                        "operator_id": "query_input",
+                        "display_name": "Query Input",
+                        "category": "input",
+                        "description": "Accept a runtime query.",
+                    }
+                ]
+            }
+        }
+
+    def get_operator_schemas(self, operator_ids, tenant_slug=None):
+        self.calls.append({"method": "get_operator_schemas", "operator_ids": list(operator_ids or []), "tenant_slug": tenant_slug})
+        return {
+            "data": {
+                "schemas": {
+                    str(operator_id): {
+                        "operator_id": str(operator_id),
+                        "required_config": [],
+                        "optional_config": [],
+                    }
+                    for operator_id in list(operator_ids or [])
+                },
+                "unknown": [],
+            }
+        }
 
     def create_visual_pipeline(self, spec, tenant_slug=None, options=None):
         self.calls.append({"method": "create_visual_pipeline", "spec": spec, "tenant_slug": tenant_slug, "options": options})
+        if isinstance(self.create_error, dict):
+            raise ControlPlaneSDKError(
+                code=str(self.create_error.get("code") or "VALIDATION_ERROR"),
+                message=str(self.create_error.get("message") or "create failed"),
+                http_status=int(self.create_error.get("http_status") or 422),
+                retryable=False,
+                details=self.create_error.get("details"),
+            )
         idem = (options or {}).get("idempotency_key")
         slug = str(spec.get("slug") or f"pipeline-{len(self.pipelines_by_slug) + 1}")
         if idem and idem in self.idempotency_to_pipeline_id:
@@ -266,13 +306,14 @@ def test_platform_architect_guardrails_block_repeated_identical_mutation_failure
         }
     }
 
-    enforce_platform_architect_guardrails(
-        tool_slug="platform-agents",
-        tool_result=tool_result,
-        input_data={"agent_id": "agent-1"},
-        node_context=node_context,
-        emitter=_Emitter(),
-    )
+    for _ in range(4):
+        enforce_platform_architect_guardrails(
+            tool_slug="platform-agents",
+            tool_result=tool_result,
+            input_data={"agent_id": "agent-1"},
+            node_context=node_context,
+            emitter=_Emitter(),
+        )
 
     with pytest.raises(PlatformArchitectBlockedError) as exc_info:
         enforce_platform_architect_guardrails(
@@ -285,7 +326,7 @@ def test_platform_architect_guardrails_block_repeated_identical_mutation_failure
 
     assert exc_info.value.blocker["attempted_action"] == "agents.graph.apply_patch"
     assert exc_info.value.blocker["target_resource"] == "agent_id:agent-1"
-    assert [name for name, _data in emitted].count("architect.repair_attempted") == 2
+    assert [name for name, _data in emitted].count("architect.repair_attempted") == 5
     assert any(name == "architect.repair_blocked" for name, _data in emitted)
 
 
@@ -312,6 +353,89 @@ def test_platform_architect_guardrails_block_contract_failures_immediately():
         )
 
     assert exc_info.value.blocker["normalized_failure_code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
+
+
+def test_platform_architect_guardrails_allow_one_replan_for_unknown_action_then_block():
+    node_context = {
+        "run_id": "run-unknown-action",
+        "node_id": "tool-node",
+        "state_context": {"agent_slug": "platform-architect"},
+    }
+    tool_result = {
+        "context": {
+            "action": "rag.nodes.catalog",
+            "errors": [{"code": "INVALID_ARGUMENT", "error": "unknown_action", "message": "unsupported"}],
+        }
+    }
+
+    for _ in range(4):
+        enforce_platform_architect_guardrails(
+            tool_slug="platform-rag",
+            tool_result=tool_result,
+            input_data={},
+            node_context=node_context,
+            emitter=None,
+        )
+
+    with pytest.raises(PlatformArchitectBlockedError) as exc_info:
+        enforce_platform_architect_guardrails(
+            tool_slug="platform-rag",
+            tool_result=tool_result,
+            input_data={},
+            node_context=node_context,
+            emitter=None,
+        )
+
+    assert exc_info.value.blocker["attempted_action"] == "rag.nodes.catalog"
+    assert exc_info.value.blocker["recommended_next_repair_action"].startswith("Consult the advertised platform-rag action schema")
+
+
+def test_platform_architect_guardrails_preserve_fastapi_validation_details_for_rag_create():
+    node_context = {
+        "run_id": "run-rag-create-validation",
+        "node_id": "tool-node",
+        "state_context": {"agent_slug": "platform-architect"},
+    }
+    tool_result = {
+        "context": {
+            "action": "rag.create_visual_pipeline",
+            "errors": [
+                {
+                    "code": "INVALID_ARGUMENT",
+                    "details": {
+                        "detail": [
+                            {"loc": ["body", "nodes", 0, "category"], "msg": "Field required", "type": "missing"},
+                            {"loc": ["body", "edges", 0, "id"], "msg": "Field required", "type": "missing"},
+                        ]
+                    },
+                }
+            ],
+        }
+    }
+
+    for _ in range(4):
+        enforce_platform_architect_guardrails(
+            tool_slug="platform-rag",
+            tool_result=tool_result,
+            input_data={"payload": {"name": "website_ingestion_pipeline_runtime_url"}},
+            node_context=node_context,
+            emitter=None,
+        )
+
+    with pytest.raises(PlatformArchitectBlockedError) as exc_info:
+        enforce_platform_architect_guardrails(
+            tool_slug="platform-rag",
+            tool_result=tool_result,
+            input_data={"payload": {"name": "website_ingestion_pipeline_runtime_url"}},
+            node_context=node_context,
+            emitter=None,
+        )
+
+    assert exc_info.value.blocker["target_resource"] == "name:website_ingestion_pipeline_runtime_url"
+    assert exc_info.value.blocker["last_validation_details"] == [
+        {"loc": ["body", "nodes", 0, "category"], "msg": "Field required", "type": "missing"},
+        {"loc": ["body", "edges", 0, "id"], "msg": "Field required", "type": "missing"},
+    ]
 
 
 def test_direct_tool_loop_repair_path(monkeypatch):
@@ -495,6 +619,44 @@ def test_agent_create_surfaces_structured_validation_errors(monkeypatch):
     assert err["http_status"] == 422
     assert err["details"]["detail"]["error"] == "validation_error"
     assert err["validation_errors"][0]["code"] == "GRAPH_START_NODE_COUNT_INVALID"
+
+
+def test_rag_create_visual_pipeline_surfaces_structured_validation_errors(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _FakeControlClient()
+    fake.rag.create_error = {
+        "code": "INVALID_ARGUMENT",
+        "message": "create failed",
+        "http_status": 422,
+        "details": {
+            "detail": {
+                "error": "validation_error",
+                "errors": [
+                    {"code": "MISSING_FIELD", "path": "nodes[0].category", "message": "Field required"},
+                    {"code": "MISSING_FIELD", "path": "edges[0].id", "message": "Field required"},
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    response = _call(
+        "rag.create_visual_pipeline",
+        {
+            "tenant_id": "tenant-1",
+            "tenant_slug": "tenant-a",
+            "name": "Website Ingest",
+            "nodes": [{"id": "start"}],
+            "edges": [{"source": "start", "target": "end"}],
+        },
+        tool_slug="platform-rag",
+    )
+
+    err = response["errors"][0]
+    assert response["action"] == "rag.create_visual_pipeline"
+    assert err["code"] == "INVALID_ARGUMENT"
+    assert err["details"]["detail"]["error"] == "validation_error"
+    assert err["validation_errors"][0]["path"] == "nodes[0].category"
 
 
 def test_runtime_tenant_context_satisfies_mutation_without_payload_tenant(monkeypatch):

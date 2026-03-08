@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -11,6 +12,8 @@ from app.db.postgres.models.rag import VisualPipeline
 from app.rag.pipeline.compiler import PipelineCompiler, VisualPipeline as CompilerVisualPipeline
 from app.rag.pipeline.registry import OperatorRegistry
 from app.services.graph_mutation_service import GraphMutationError, apply_graph_operations
+
+logger = logging.getLogger(__name__)
 
 
 class RagGraphMutationService:
@@ -51,28 +54,46 @@ class RagGraphMutationService:
         pipeline_id: UUID,
         operations: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        preview = await self.validate_patch(pipeline_id, operations)
-        if not preview["validation"]["valid"]:
-            raise GraphMutationError(
-                preview["validation"]["errors"]
-                or [{"code": "RAG_GRAPH_VALIDATION_FAILED", "message": "Pipeline graph validation failed"}]
+        phase = "preview_validation"
+        try:
+            preview = await self.validate_patch(pipeline_id, operations)
+            if not preview["validation"]["valid"]:
+                raise GraphMutationError(
+                    preview["validation"]["errors"]
+                    or [{"code": "RAG_GRAPH_VALIDATION_FAILED", "message": "Pipeline graph validation failed"}]
+                )
+
+            phase = "persist_graph"
+            pipeline = await self._get_pipeline(pipeline_id)
+            pipeline.nodes = list(preview["graph_definition"].get("nodes") or [])
+            pipeline.edges = list(preview["graph_definition"].get("edges") or [])
+            if pipeline.is_published:
+                pipeline.version = int(pipeline.version or 0) + 1
+                pipeline.is_published = False
+            pipeline.updated_at = datetime.utcnow()
+            await self.db.commit()
+            await self.db.refresh(pipeline)
+
+            phase = "post_write_validation"
+            compile_result = self._compile_preview(pipeline, preview["graph_definition"])
+            return self._build_result(
+                pipeline=pipeline,
+                graph_definition=preview["graph_definition"],
+                mutation=preview["mutation"],
+                compile_result=compile_result,
             )
-        pipeline = await self._get_pipeline(pipeline_id)
-        pipeline.nodes = list(preview["graph_definition"].get("nodes") or [])
-        pipeline.edges = list(preview["graph_definition"].get("edges") or [])
-        if pipeline.is_published:
-            pipeline.version = int(pipeline.version or 0) + 1
-            pipeline.is_published = False
-        pipeline.updated_at = datetime.utcnow()
-        await self.db.commit()
-        await self.db.refresh(pipeline)
-        compile_result = self._compile_preview(pipeline, preview["graph_definition"])
-        return self._build_result(
-            pipeline=pipeline,
-            graph_definition=preview["graph_definition"],
-            mutation=preview["mutation"],
-            compile_result=compile_result,
-        )
+        except Exception as exc:
+            setattr(exc, "graph_mutation_phase", phase)
+            logger.exception(
+                "RAG graph patch failed",
+                extra={
+                    "pipeline_id": str(pipeline_id),
+                    "tenant_id": str(getattr(self, "tenant_id", "") or ""),
+                    "phase": phase,
+                    "operation_count": len(operations or []),
+                },
+            )
+            raise
 
     async def attach_knowledge_store_to_node(
         self,

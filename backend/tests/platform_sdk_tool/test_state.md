@@ -1,6 +1,6 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-07
+Last Updated: 2026-03-08
 
 Scope:
 - Platform SDK tool action dispatch, explicit-action behavior, and strict canonical input enforcement.
@@ -19,6 +19,7 @@ Test files present:
 Key scenarios covered:
 - Missing action fails fast with structured validation errors (`MISSING_REQUIRED_FIELD`).
 - Wrapped tool input in `value`/`query`/`text` is rejected with `NON_CANONICAL_PLATFORM_SDK_INPUT`.
+- Unsupported invented RAG actions like `rag.nodes.catalog` return explicit structured `unknown_action` errors.
 - Deprecated planner-centric actions (`validate_plan`, `execute_plan`) fail with explicit `deprecated_action` validation errors.
 - Legacy action aliases normalize to canonical domain action IDs.
 - Additional architect-safety aliases now map common non-canonical planner outputs to canonical IDs (e.g. `create_agent` -> `agents.create`) to prevent avoidable scope mismatch failures.
@@ -36,6 +37,8 @@ Key scenarios covered:
   - `catalog.*`, `rag.*`, `artifacts.*`, `tools.*`, `agents.*`, `models.*`, `credentials.*`, `knowledge_stores.*`, `auth.*`, `workload_security.*`, and `orchestration.*`.
 - Canonical `agents.run_tests` action parity is covered explicitly (not only legacy alias path).
 - Coverage markers include newly dispatched canonical architect/domain actions:
+  - `rag.operators.catalog`
+  - `rag.operators.schema`
   - `rag.list_visual_pipelines`
   - `rag.create_visual_pipeline`
   - `rag.update_visual_pipeline`
@@ -73,9 +76,9 @@ Key scenarios covered:
   - `agents.resume_run` (error-path parity on nonexistent run)
   These validate persisted-state equivalence across UI HTTP path, SDK path, and tool-action path.
 
-Last run command: `cd backend && pytest -q tests/platform_sdk_tool/test_platform_sdk_actions.py tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py tests/platform_architect_runtime/test_architect_seeding.py tests/platform_architect_runtime/test_platform_architect_runtime.py tests/graph_mutation_agents tests/graph_mutation_rag`
-Last run date/time: 2026-03-07
-Last run result: pass (`94 passed, 5 warnings`)
+Last run command: `cd backend && pytest -q tests/platform_sdk_tool/test_platform_sdk_actions.py tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py tests/platform_architect_runtime/test_architect_seeding.py tests/platform_architect_runtime/test_platform_architect_runtime.py`
+Last run date/time: 2026-03-08
+Last run result: passed (`94 passed, 1 warning`)
 
 Known gaps / follow-ups:
 - Promote env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.

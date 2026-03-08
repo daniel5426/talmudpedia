@@ -18,6 +18,18 @@ class RagAPI:
     def get_operator_catalog(self, tenant_slug: Optional[str] = None) -> ResponseEnvelope:
         return self._client.request("GET", "/admin/pipelines/catalog", params=_tenant_params(tenant_slug))
 
+    def get_operator_schemas(
+        self,
+        operator_ids: list[str],
+        tenant_slug: Optional[str] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            "/admin/pipelines/operators/schema",
+            params=_tenant_params(tenant_slug),
+            json_body={"operator_ids": list(operator_ids or [])},
+        )
+
     def list_visual_pipelines(self, tenant_slug: Optional[str] = None) -> ResponseEnvelope:
         return self._client.request("GET", "/admin/pipelines/visual-pipelines", params=_tenant_params(tenant_slug))
 

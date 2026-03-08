@@ -10,6 +10,8 @@ from artifacts.builtin.platform_sdk import handler
 
 # Coverage marker for dispatch parity guard (string presence is intentional).
 _ADDITIONAL_DISPATCH_COVERAGE = [
+    "rag.operators.catalog",
+    "rag.operators.schema",
     "rag.list_visual_pipelines",
     "rag.create_visual_pipeline",
     "rag.update_visual_pipeline",
@@ -88,6 +90,15 @@ def _patch_auth(monkeypatch):
         ("catalog.list_rag_operators", {}, "catalog", "list_rag_operators", None, None),
         ("catalog.get_rag_operator", {"operator_id": "op-1"}, "catalog", "get_rag_operator", "op-1", None),
         ("catalog.list_agent_operators", {}, "catalog", "list_agent_operators", None, None),
+        ("rag.operators.catalog", {}, "rag", "get_operator_catalog", None, None),
+        (
+            "rag.operators.schema",
+            {"operator_ids": ["query_input", "knowledge_store_lookup"]},
+            "rag",
+            "get_operator_schemas",
+            ["query_input", "knowledge_store_lookup"],
+            None,
+        ),
         ("rag.list_pipelines", {}, "rag", "list_visual_pipelines", None, None),
         (
             "rag.create_or_update_pipeline",

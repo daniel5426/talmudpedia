@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-07
+Last Updated: 2026-03-08
 
 ## Purpose
 This is the single authoritative spec for the Platform Architect.
@@ -66,6 +66,17 @@ The architect can discover and validate agent graph structure through `platform-
 
 Validation is compile-grade and returns structured `errors[]` and `warnings[]`.
 
+The architect can discover RAG operator contracts through `platform-rag`:
+- `rag.operators.catalog`
+- `rag.operators.schema`
+
+RAG discovery must not use `agents.nodes.*`.
+`rag.operators.schema` should be treated as the source of truth for:
+- operator config fields
+- runtime-bindable config value shapes
+- exact visual pipeline node wrapper shape
+- shared create-pipeline edge/top-level contract hints
+
 ## Domain Tool Surface
 
 ### Tool boundaries
@@ -89,6 +100,7 @@ Current architect-facing policy:
 - architect should not ask the user for mutation metadata that runtime can derive
 - architect should prefer graph helper actions before generic graph patch actions
 - architect should validate after mutations instead of claiming success from mutation responses alone
+- architect should use `agents.nodes.*` only for agent graphs and `rag.operators.*` only for RAG pipelines
 
 ## Safety, Auth, and Mutation Rules
 
@@ -145,6 +157,10 @@ Agent mutation failures should preserve structured backend validation details th
 - `details`
 - `validation_errors`
 
+RAG pipeline creation failures should preserve field-level backend validation details through:
+- `details`
+- `validation_errors`
+
 ## Current Known Gaps
 
 ### P0 gaps
@@ -161,6 +177,9 @@ Agent mutation failures should preserve structured backend validation details th
 ### P1/P2 ergonomics gaps
 4. Graph mutation helper coverage can still expand.
 - The current helper set covers common agent and RAG edits but not every high-frequency mutation intent yet.
+
+5. RAG creation still uses `rag.create_visual_pipeline`.
+- This is acceptable in V1.2, but architect reliability depends on catalog/schema discovery before create.
 
 ## Testing and Verification
 
@@ -229,6 +248,7 @@ When iterating on Platform Architect, these checks should remain true:
 5. Architect prompt/config should stay plain-text oriented; no forced architect-only JSON response contract.
 6. Every architect run should expose an ordered execution-event log that is sufficient to reconstruct tool calls, lifecycle phases, and terminal failure context.
 7. Repeated identical graph mutation failures should stop the run with `architect.repair_blocked` / `architect.progress_stalled` events.
+8. Unsupported RAG actions and non-canonical Platform SDK input should not cause architect retry loops.
 
 ## Future Direction (V2)
 

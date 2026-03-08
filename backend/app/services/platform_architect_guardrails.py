@@ -13,6 +13,8 @@ _BLOCK_IMMEDIATELY_CODES = {
     "NON_CANONICAL_PLATFORM_SDK_INPUT",
     "INVALID_JSON",
 }
+_REPLAN_ONCE_ERROR_NAMES = {"unknown_action"}
+_MAX_REPEATED_FAILURE_ATTEMPTS = 5
 _MUTATION_ACTION_PREFIXES = (
     "agents.graph.",
     "rag.graph.",
@@ -71,10 +73,16 @@ def enforce_platform_architect_guardrails(
             _record_success(run_id, action)
         return
 
-    if not _is_mutation_action(action):
+    normalized_code = _normalized_error_code(errors)
+    error_name = _normalized_error_name(errors)
+    should_guard = (
+        _is_mutation_action(action)
+        or normalized_code in _BLOCK_IMMEDIATELY_CODES
+        or error_name in _REPLAN_ONCE_ERROR_NAMES
+    )
+    if not should_guard:
         return
 
-    normalized_code = _normalized_error_code(errors)
     fingerprint = _failure_fingerprint(action, errors)
     blocker = _record_failure(run_id, action, fingerprint)
     blocker.update(
@@ -100,7 +108,10 @@ def enforce_platform_architect_guardrails(
             category="architect",
         )
 
-    if normalized_code in _BLOCK_IMMEDIATELY_CODES or blocker["attempt_count"] >= 2:
+    if (
+        normalized_code in _BLOCK_IMMEDIATELY_CODES
+        or blocker["attempt_count"] >= _MAX_REPEATED_FAILURE_ATTEMPTS
+    ):
         blocker["message"] = (
             "Platform architect stopped after repeated mutation failure. "
             f"action={action} code={normalized_code} target={blocker['target_resource']}"
@@ -177,6 +188,14 @@ def _normalized_error_code(errors: list[dict[str, Any]]) -> str:
     return "UNKNOWN_ERROR"
 
 
+def _normalized_error_name(errors: list[dict[str, Any]]) -> str:
+    for error in errors:
+        name = error.get("error")
+        if name:
+            return str(name)
+    return ""
+
+
 def _validation_details(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     details: list[dict[str, Any]] = []
     for error in errors:
@@ -186,6 +205,9 @@ def _validation_details(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raw_details = error.get("details")
         if isinstance(raw_details, dict) and isinstance(raw_details.get("errors"), list):
             details.extend(item for item in raw_details["errors"] if isinstance(item, dict))
+            continue
+        if isinstance(raw_details, dict) and isinstance(raw_details.get("detail"), list):
+            details.extend(item for item in raw_details["detail"] if isinstance(item, dict))
     return details
 
 
@@ -216,12 +238,20 @@ def _target_resource(input_data: dict[str, Any]) -> str:
             value = payload.get(key)
             if value:
                 return f"{key}:{value}"
+        for key in ("name", "display_name", "slug"):
+            value = payload.get(key)
+            if value:
+                return f"{key}:{value}"
     return "unknown"
 
 
 def _recommended_next_repair_action(action: str) -> str:
+    if action.startswith("rag.operators.") or action.startswith("rag.nodes."):
+        return "Consult the advertised platform-rag action schema, use rag.operators.catalog/schema only, and stop if the same unsupported action repeats."
     if action.startswith("agents.graph.") or action == "agents.update":
         return "Read the current agent graph, validate one corrected mutation, and stop if the same error repeats."
     if action.startswith("rag.graph.") or action == "rag.update_visual_pipeline":
         return "Read the current pipeline graph, validate one corrected mutation, and stop if the same error repeats."
+    if action == "rag.create_visual_pipeline":
+        return "Discover valid RAG operators first, build one canonical create payload, and stop if the same error repeats."
     return "Inspect persisted state, apply one corrected mutation, then validate."

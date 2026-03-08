@@ -134,6 +134,18 @@ def test_execute_rejects_deprecated_plan_actions():
     assert any(err.get("error") == "deprecated_action" for err in out["context"]["errors"])
 
 
+def test_execute_reports_unknown_rag_action_explicitly():
+    out = handler.execute(
+        state={},
+        config={},
+        context={"inputs": {"action": "rag.nodes.catalog", "tenant_id": "tenant-1", "token": "t"}},
+    )
+
+    assert out["context"]["action"] == "rag.nodes.catalog"
+    assert out["context"]["result"]["message"] == "Unknown action 'rag.nodes.catalog'."
+    assert any(err.get("error") == "unknown_action" for err in out["context"]["errors"])
+
+
 def test_execute_maps_legacy_alias_to_canonical_action(monkeypatch):
     monkeypatch.setattr(
         handler,

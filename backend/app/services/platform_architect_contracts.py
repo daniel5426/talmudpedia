@@ -34,6 +34,35 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "failure_codes": ["UNAUTHORIZED", "TENANT_MISMATCH"],
                 },
             },
+            "rag.operators.catalog": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={"tenant_slug": {"type": "string"}},
+                ),
+                "contract": {
+                    "summary": "List available RAG operators with categories, summaries, and required fields.",
+                    "required_fields": [],
+                    "example_payload": {"tenant_slug": "acme"},
+                    "failure_codes": ["UNAUTHORIZED", "TENANT_MISMATCH"],
+                },
+            },
+            "rag.operators.schema": {
+                "mutation": False,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "tenant_slug": {"type": "string"},
+                        "operator_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                    required=["operator_ids"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Resolve schemas/contracts for multiple RAG operators in one call, including config schema and exact visual-node/create contract shape.",
+                    "required_fields": ["operator_ids"],
+                    "example_payload": {"tenant_slug": "acme", "operator_ids": ["query_input", "knowledge_store_lookup"]},
+                    "failure_codes": ["UNAUTHORIZED", "TENANT_MISMATCH", "VALIDATION_ERROR"],
+                },
+            },
             "rag.create_visual_pipeline": {
                 "mutation": True,
                 "payload_schema": _payload_schema(
@@ -64,6 +93,10 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
                     },
                     "failure_codes": ["VALIDATION_ERROR", "SENSITIVE_ACTION_APPROVAL_REQUIRED"],
+                    "notes": [
+                        "Before constructing unfamiliar RAG operators, call rag.operators.catalog then rag.operators.schema.",
+                        "For new pipelines, every node must include category, operator, and position; edges must include stable ids.",
+                    ],
                 },
             },
             "rag.update_visual_pipeline": {
@@ -822,16 +855,21 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "rag.graph.set_pipeline_node_config). Use agents.graph.apply_patch or rag.graph.apply_patch only when a helper "
         "does not cover the requested mutation. "
         "For rag.create_visual_pipeline, pass nodes/edges at payload top-level (graph_definition is backward-compatible only). "
+        "For agent graph discovery use agents.nodes.catalog and agents.nodes.schema only. "
+        "For RAG pipeline operator discovery use rag.operators.catalog and rag.operators.schema only. "
+        "Never use agents.nodes.* to discover RAG operators and never invent unsupported actions like rag.nodes.catalog. "
         "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
         "For agents.create specifically, graph_definition must include exactly one start node, at least one end node, "
         "and at least one control edge from start to a downstream node. "
-        "Before introducing unfamiliar node types, call agents.nodes.catalog first. "
-        "For any node set you plan to add/update, call agents.nodes.schema once with all node types in node_types[]. "
+        "Before introducing unfamiliar agent node types, call agents.nodes.catalog first and agents.nodes.schema for all node_types[] in one call. "
+        "Before introducing unfamiliar RAG operators, call rag.operators.catalog first and rag.operators.schema for all operator_ids[] in one call. "
         "After each draft graph mutation, call agents.nodes.validate on the target agent id and repair based on "
         "returned structured errors/warnings. "
+        "For RAG pipeline creation, first discover supported operators, then build one canonical rag.create_visual_pipeline payload from advertised operator contracts, inspect the response, and stop immediately on repeated contract-shape failures. "
         "If the same mutation action fails twice with the same normalized error, stop mutating, summarize the blocker, "
         "and report the target resource, attempted action, normalized failure code, last validation details, whether any "
         "mutation succeeded, and the recommended next repair action. "
+        "If a Platform SDK call fails due to non-canonical input or unsupported action, do not keep retrying the same malformed branch. "
         "If a node you are creating/updating requires model_id (for example agent/llm/classify) and model_id is "
         "missing or rejected, call platform-assets with action models.list first, select a valid active chat-capable "
         "model id from the response, and retry the mutation. Do not ask the user for model_id unless models.list "

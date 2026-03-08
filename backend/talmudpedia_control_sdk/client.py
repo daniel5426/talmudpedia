@@ -265,6 +265,8 @@ class ControlPlaneClient:
         code = "UPSTREAM_ERROR" if response.status_code >= 500 else "INVALID_ARGUMENT"
         retryable = response.status_code in {408, 425, 429, 500, 502, 503, 504}
         details: Dict[str, Any] = {}
+        request_id = str(response.headers.get("X-Request-ID") or "").strip()
+        trace_id = str(response.headers.get("X-Trace-ID") or "").strip()
         try:
             body = response.json()
             if isinstance(body, dict):
@@ -288,6 +290,10 @@ class ControlPlaneClient:
                     retryable = bool(body.get("retryable"))
         except Exception:
             pass
+        if request_id and "request_id" not in details:
+            details["request_id"] = request_id
+        if trace_id and "trace_id" not in details:
+            details["trace_id"] = trace_id
         return ControlPlaneSDKError(
             code=code,
             message=message,

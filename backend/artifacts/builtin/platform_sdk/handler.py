@@ -860,6 +860,8 @@ def _dispatch_action(
         "catalog.list_rag_operators": lambda: _catalog_list_rag_operators(client, payload),
         "catalog.get_rag_operator": lambda: _catalog_get_rag_operator(client, payload),
         "catalog.list_agent_operators": lambda: _catalog_list_agent_operators(client),
+        "rag.operators.catalog": lambda: rag_actions.operators_catalog(client, payload, control_client_factory=_control_client),
+        "rag.operators.schema": lambda: rag_actions.operators_schema(client, payload, control_client_factory=_control_client),
         "rag.list_pipelines": lambda: rag_actions.list_pipelines(client, payload, control_client_factory=_control_client),
         "rag.list_visual_pipelines": lambda: rag_actions.list_pipelines(client, payload, control_client_factory=_control_client),
         "rag.create_or_update_pipeline": lambda: rag_actions.create_or_update_pipeline(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
