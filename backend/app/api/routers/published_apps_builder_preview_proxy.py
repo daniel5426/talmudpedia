@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
@@ -20,6 +21,8 @@ router = APIRouter(tags=["published-apps-builder-preview-proxy"])
 
 PREVIEW_COOKIE_NAME = "published_app_preview_token"
 PREVIEW_PROXY_HEADER = "e2b-traffic-access-token"
+_PREVIEW_WEBSOCKET_OPEN_TIMEOUT_SECONDS = 20.0
+_PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS = 3
 
 
 def _extract_preview_token(*, request: Request | None = None, websocket: WebSocket | None = None) -> str | None:
@@ -114,6 +117,35 @@ def _proxy_headers(request: Request, *, target: dict[str, str]) -> dict[str, str
     if target["traffic_access_token"]:
         headers[PREVIEW_PROXY_HEADER] = target["traffic_access_token"]
     return headers
+
+
+def _websocket_proxy_connect_options(
+    websocket: WebSocket,
+    *,
+    target: dict[str, str],
+) -> tuple[list[tuple[str, str]], list[str]]:
+    additional_headers: list[tuple[str, str]] = []
+    traffic_access_token = str(target.get("traffic_access_token") or "").strip()
+    if traffic_access_token:
+        additional_headers.append((PREVIEW_PROXY_HEADER, traffic_access_token))
+
+    origin = str(websocket.headers.get("origin") or "").strip()
+    if origin:
+        additional_headers.append(("origin", origin))
+
+    user_agent = str(websocket.headers.get("user-agent") or "").strip()
+    if user_agent:
+        additional_headers.append(("user-agent", user_agent))
+
+    raw_protocol_headers = websocket.headers.getlist("sec-websocket-protocol")
+    subprotocols: list[str] = []
+    for header in raw_protocol_headers:
+        for item in str(header or "").split(","):
+            protocol = item.strip()
+            if protocol and protocol not in subprotocols:
+                subprotocols.append(protocol)
+
+    return additional_headers, subprotocols
 
 
 def _set_preview_cookie(response: Response, *, request: Request, token: str) -> None:
@@ -226,13 +258,45 @@ async def proxy_builder_preview_websocket(
     parsed = urlparse(upstream_url)
     ws_scheme = "wss" if parsed.scheme == "https" else "ws"
     ws_url = urlunparse(parsed._replace(scheme=ws_scheme))
-    extra_headers: list[tuple[str, str]] = []
-    if target["traffic_access_token"]:
-        extra_headers.append((PREVIEW_PROXY_HEADER, target["traffic_access_token"]))
-
-    await websocket.accept()
+    extra_headers, subprotocols = _websocket_proxy_connect_options(websocket, target=target)
+    upstream = None
     try:
-        async with websockets.connect(ws_url, additional_headers=extra_headers) as upstream:
+        last_exc: Exception | None = None
+        for attempt in range(1, _PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS + 1):
+            try:
+                upstream = await websockets.connect(
+                    ws_url,
+                    additional_headers=extra_headers,
+                    subprotocols=subprotocols or None,
+                    open_timeout=_PREVIEW_WEBSOCKET_OPEN_TIMEOUT_SECONDS,
+                    close_timeout=5.0,
+                    ping_interval=20.0,
+                    ping_timeout=20.0,
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                apps_builder_trace(
+                    "preview.proxy.websocket_retry",
+                    domain="preview.proxy",
+                    session_id=str(session.id),
+                    app_id=str(session.published_app_id),
+                    revision_id=str(session.revision_id or ""),
+                    sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+                    path=path,
+                    attempt=attempt,
+                    max_attempts=_PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                )
+                if attempt >= _PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS:
+                    raise
+                await asyncio.sleep(min(0.5 * attempt, 1.0))
+        if upstream is None:
+            raise RuntimeError(str(last_exc or "Failed to connect upstream preview websocket"))
+
+        await websocket.accept(subprotocol=getattr(upstream, "subprotocol", None))
+        try:
             async def _client_to_upstream() -> None:
                 while True:
                     message = await websocket.receive()
@@ -250,8 +314,6 @@ async def proxy_builder_preview_websocket(
                     else:
                         await websocket.send_text(message)
 
-            import asyncio
-
             client_task = asyncio.create_task(_client_to_upstream())
             upstream_task = asyncio.create_task(_upstream_to_client())
             done, pending = await asyncio.wait(
@@ -264,6 +326,8 @@ async def proxy_builder_preview_websocket(
                 exc = task.exception()
                 if exc and not isinstance(exc, WebSocketDisconnect):
                     raise exc
+        finally:
+            await upstream.close()
     except WebSocketDisconnect:
         apps_builder_trace(
             "preview.proxy.websocket_closed",
@@ -288,7 +352,8 @@ async def proxy_builder_preview_websocket(
             error=str(exc),
             error_type=exc.__class__.__name__,
         )
-        await websocket.close(code=1011)
+        if websocket.client_state.name != "DISCONNECTED":
+            await websocket.close(code=1011)
     else:
         apps_builder_trace(
             "preview.proxy.websocket_closed",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -55,6 +56,27 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
                 "E2B backend is configured but the `e2b` package is unavailable."
             )
 
+    @staticmethod
+    def _is_transient_connect_error(exc: Exception) -> bool:
+        message = str(exc or "").lower()
+        return any(
+            token in message
+            for token in (
+                "timeout",
+                "timed out",
+                "readtimeout",
+                "connecttimeout",
+                "temporarily unavailable",
+                "connection reset",
+                "connection aborted",
+                "remoteprotocolerror",
+                "server disconnected",
+                "502",
+                "503",
+                "504",
+            )
+        )
+
     def _sandbox_envs(self) -> dict[str, str] | None:
         envs: dict[str, str] = {}
         for name in self._FORWARDED_SANDBOX_ENV_NAMES:
@@ -95,13 +117,29 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
 
     async def _connect_sandbox(self, *, sandbox_id: str):
         self._require_sdk()
-        try:
-            return await AsyncSandbox.connect(
-                sandbox_id=sandbox_id,
-                timeout=max(60, int(self.config.e2b_timeout_seconds)),
-            )
-        except Exception as exc:
-            raise PublishedAppSandboxBackendError(f"Failed to connect to E2B sandbox `{sandbox_id}`: {exc}") from exc
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                return await AsyncSandbox.connect(
+                    sandbox_id=sandbox_id,
+                    timeout=max(60, int(self.config.e2b_timeout_seconds)),
+                )
+            except Exception as exc:
+                last_exc = exc
+                if not self._is_transient_connect_error(exc) or attempt >= 3:
+                    break
+                apps_builder_trace(
+                    "sandbox.connect.retry",
+                    domain="sandbox.e2b",
+                    sandbox_id=sandbox_id,
+                    attempt=attempt,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                )
+                await asyncio.sleep(0.35 * attempt)
+        raise PublishedAppSandboxBackendError(
+            f"Failed to connect to E2B sandbox `{sandbox_id}`: {last_exc}"
+        ) from last_exc
 
     async def _start_preview_process(self, sandbox, *, sandbox_id: str, workspace_root: str, preview_base_path: str) -> None:
         state = _E2B_PROCESS_STATE.setdefault(sandbox_id, _E2BProcessState())

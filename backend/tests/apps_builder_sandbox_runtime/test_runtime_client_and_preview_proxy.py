@@ -220,3 +220,25 @@ async def test_builder_preview_proxy_rewrites_asset_request_to_upstream_preview_
 
     assert response.status_code == 200
     assert captured["url"] == "https://sandbox-host.example/public/apps-builder/draft-dev/sessions/session-1/preview/src/main.tsx"
+
+
+def test_builder_preview_websocket_connect_options_forward_origin_user_agent_and_protocols():
+    websocket = SimpleNamespace(
+        headers=SimpleNamespace(
+            get=lambda key, default=None: {
+                "origin": "http://localhost:3000",
+                "user-agent": "pytest-agent",
+            }.get(key, default),
+            getlist=lambda key: ["vite-hmr, custom-protocol"] if key == "sec-websocket-protocol" else [],
+        )
+    )
+
+    headers, subprotocols = preview_proxy_router._websocket_proxy_connect_options(
+        websocket,
+        target={"traffic_access_token": "traffic-secret"},
+    )
+
+    assert (preview_proxy_router.PREVIEW_PROXY_HEADER, "traffic-secret") in headers
+    assert ("origin", "http://localhost:3000") in headers
+    assert ("user-agent", "pytest-agent") in headers
+    assert subprotocols == ["vite-hmr", "custom-protocol"]

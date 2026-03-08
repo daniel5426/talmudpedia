@@ -323,6 +323,96 @@ async def test_heartbeat_does_not_mark_running_without_sandbox_id(client, db_ses
 
 
 @pytest.mark.asyncio
+async def test_transient_heartbeat_error_does_not_force_new_sandbox_on_next_ensure(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    start_calls: list[str] = []
+    sync_calls: list[str] = []
+    heartbeat_calls = 0
+
+    class _FakeRuntimeClient:
+        backend_name = "e2b"
+
+        async def start_session(self, **kwargs):
+            start_calls.append(str(kwargs["session_id"]))
+            return {
+                "sandbox_id": "sandbox-1",
+                "status": "serving",
+                "runtime_backend": "e2b",
+                "backend_metadata": {
+                    "preview": {
+                        "upstream_base_url": "https://sandbox-1.example",
+                        "base_path": kwargs["preview_base_path"],
+                    }
+                },
+            }
+
+        async def sync_session(self, **kwargs):
+            sync_calls.append(str(kwargs["sandbox_id"]))
+            return {
+                "sandbox_id": kwargs["sandbox_id"],
+                "status": "serving",
+                "runtime_backend": "e2b",
+                "backend_metadata": {},
+            }
+
+        async def heartbeat_session(self, **kwargs):
+            nonlocal heartbeat_calls
+            heartbeat_calls += 1
+            raise PublishedAppDraftDevRuntimeClientError("ReadTimeout while contacting E2B sandbox")
+
+        async def stop_session(self, **kwargs):
+            return {"status": "stopped", "sandbox_id": kwargs["sandbox_id"], "runtime_backend": "e2b"}
+
+        async def reconcile_session_scope(self, **kwargs):
+            _ = kwargs
+            return {"removed_sandbox_ids": []}
+
+        async def sweep_remote_sessions(self, **kwargs):
+            _ = kwargs
+            return {"checked": 0, "removed_sandbox_ids": []}
+
+        def build_preview_proxy_path(self, session_id: str) -> str:
+            return f"/public/apps-builder/draft-dev/sessions/{session_id}/preview/"
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: _FakeRuntimeClient()),
+    )
+
+    app_id = await _create_builder_app(client, headers, str(agent.id), name="Sandbox Transient Heartbeat App")
+
+    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
+    assert ensure_resp.status_code == 200
+    payload = ensure_resp.json()
+    assert payload["status"] == "serving"
+
+    heartbeat_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/heartbeat", headers=headers)
+    assert heartbeat_resp.status_code == 200
+    heartbeat_payload = heartbeat_resp.json()
+    assert heartbeat_payload["status"] == "serving"
+    assert "readtimeout" in str(heartbeat_payload.get("last_error") or "").lower()
+
+    second_ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
+    assert second_ensure_resp.status_code == 200
+    second_payload = second_ensure_resp.json()
+    assert second_payload["status"] == "serving"
+
+    session_row = await db_session.get(PublishedAppDraftDevSession, UUID(second_payload["session_id"]))
+    assert session_row is not None
+    assert session_row.sandbox_id == "sandbox-1"
+    assert len(start_calls) == 1
+    assert sync_calls == ["sandbox-1"]
+    assert heartbeat_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_restart_increments_runtime_generation_and_reconciles_remote_scope(client, db_session, monkeypatch: pytest.MonkeyPatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))

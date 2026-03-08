@@ -19,10 +19,12 @@ Last Updated: 2026-03-08
 - The preview proxy enforces preview token validation before forwarding to the upstream sandbox host.
 - The preview proxy strips `runtime_token` from upstream requests, forwards the sandbox traffic access token header, and sets the preview auth cookie on successful bootstrap.
 - The preview proxy rewrites asset requests against the sandbox preview base path rather than the backend API route path.
+- The preview websocket proxy now forwards traffic token, browser origin, user-agent, and requested subprotocols into the upstream sandbox websocket handshake.
 - A failed initial sandbox start does not persist a placeholder sandbox id in the draft-dev session row.
 - A stale sandbox id error during `ensure` triggers a clean restart path and updates the session to the new sandbox id.
 - Stopping a draft-dev session and re-entering the app starts a fresh runtime cleanly.
 - Heartbeat no longer upgrades a draft-dev session to `running` when its `sandbox_id` is missing.
+- Transient remote heartbeat timeouts no longer degrade the draft-dev session into a forced sandbox restart on the next `ensure`.
 - Runtime restart now increments `runtime_generation`, reconciles remote ownership, and sweeps stale E2B sandboxes against DB-owned sessions.
 - Draft-dev session API/runtime state now distinguishes `building`, `serving`, `degraded`, and `stopping` instead of collapsing everything into `running`.
 - E2B workspace listing preserves leading-dot filenames, which fixes the coding-agent stage-prepare path that depends on `.draft-dev-dependency-hash`.
@@ -33,9 +35,9 @@ Last Updated: 2026-03-08
 - The gated live E2B smoke test now covers create -> ensure -> preview HTML -> proxied Vite asset -> out-of-band kill -> recover -> remote sandbox collapse -> stop -> zero remaining provider sandboxes for the session.
 
 ## Last run command + date/time + result
-- Command: `cd backend && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py tests/apps_builder_sandbox_runtime/test_e2b_workspace_paths.py tests/apps_builder_sandbox_runtime/test_e2b_backend_config.py`
-- Date: 2026-03-08 23:15 EET
-- Result: PASS
+- Command: `pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
+- Date: 2026-03-08 21:42 EET
+- Result: PASS (11 passed, 6 warnings)
 
 ## Live provider run
 - Command: `cd backend && TEST_E2B_LIVE=1 PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_e2b_live_smoke.py -s`

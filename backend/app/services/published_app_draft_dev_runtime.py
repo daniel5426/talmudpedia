@@ -140,6 +140,23 @@ class PublishedAppDraftDevRuntimeService:
         message = str(exc).lower()
         return "readtimeout" in message or "timed out" in message
 
+    @classmethod
+    def _is_transient_remote_error(cls, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return cls._is_timeout_error(exc) or any(
+            token in message
+            for token in (
+                "connecttimeout",
+                "temporarily unavailable",
+                "connection reset",
+                "connection aborted",
+                "server disconnected",
+                "502",
+                "503",
+                "504",
+            )
+        )
+
     @staticmethod
     def _mark_session_error(session: PublishedAppDraftDevSession, exc: Exception) -> PublishedAppDraftDevSession:
         session.status = PublishedAppDraftDevSessionStatus.error
@@ -416,6 +433,10 @@ class PublishedAppDraftDevRuntimeService:
             user_id=str(user_id),
             existing_session_id=str(getattr(session, "id", "") or "") or None,
             existing_sandbox_id=str(getattr(session, "sandbox_id", "") or "") or None,
+            existing_status=(
+                str(getattr(getattr(session, "status", None), "value", getattr(session, "status", None)) or "")
+                or None
+            ),
             backend_name=self.client.backend_name,
             dependency_hash=dependency_hash,
             file_count=len(files_payload),
@@ -476,6 +497,16 @@ class PublishedAppDraftDevRuntimeService:
         session.preview_url = self.client.build_preview_proxy_path(str(session.id))
 
         if must_start:
+            apps_builder_trace(
+                "session.ensure.start_required",
+                domain="draft_dev.runtime",
+                app_id=str(app.id),
+                revision_id=str(revision.id),
+                session_id=str(session.id),
+                user_id=str(user_id),
+                existing_sandbox_id=str(session.sandbox_id or ""),
+                existing_status=str(getattr(session.status, "value", session.status) or ""),
+            )
             try:
                 return await self._start_session_runtime(
                     app=app,
@@ -737,6 +768,19 @@ class PublishedAppDraftDevRuntimeService:
             except PublishedAppDraftDevRuntimeClientError as exc:
                 if self._is_runtime_not_running_error(exc):
                     session.status = PublishedAppDraftDevSessionStatus.error
+                    session.last_error = str(exc)
+                    return session
+                if self._is_transient_remote_error(exc):
+                    apps_builder_trace(
+                        "session.heartbeat.transient_error_ignored",
+                        domain="draft_dev.runtime",
+                        app_id=str(session.published_app_id),
+                        revision_id=str(session.revision_id or ""),
+                        session_id=str(session.id),
+                        sandbox_id=str(session.sandbox_id or ""),
+                        error=str(exc),
+                    )
+                    session.status = PublishedAppDraftDevSessionStatus.serving
                     session.last_error = str(exc)
                     return session
                 return self._mark_session_degraded(session, exc)
