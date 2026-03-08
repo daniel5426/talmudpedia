@@ -109,9 +109,9 @@ class E2BSandboxWorkspaceMixin:
         quoted_command = shlex.quote(command)
         quoted_log = shlex.quote(log_path)
         shell = (
-            "sh -lc "
+            "bash -lc "
             + shlex.quote(
-                f"nohup sh -lc {quoted_command} >> {quoted_log} 2>&1 < /dev/null & echo $!"
+                f"nohup bash -lc {quoted_command} >> {quoted_log} 2>&1 < /dev/null & echo $!"
             )
         )
         result = await self._run_shell(

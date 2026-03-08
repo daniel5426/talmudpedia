@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decode_published_app_preview_token
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSession
 from app.db.postgres.session import get_db
+from app.services.apps_builder_trace import apps_builder_trace
 
 
 router = APIRouter(tags=["published-apps-builder-preview-proxy"])
@@ -148,6 +149,17 @@ async def proxy_builder_preview(
         query_params=request.query_params,
         target=target,
     )
+    apps_builder_trace(
+        "preview.proxy.requested",
+        domain="preview.proxy",
+        session_id=str(session.id),
+        app_id=str(session.published_app_id),
+        revision_id=str(session.revision_id or ""),
+        sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+        method=request.method,
+        path=path,
+        upstream_url=upstream_url,
+    )
     body = await request.body()
     async with httpx.AsyncClient(follow_redirects=False, timeout=60.0) as client:
         upstream = await client.request(
@@ -168,6 +180,17 @@ async def proxy_builder_preview(
         response.headers[key] = value
     if request.query_params.get("runtime_token"):
         _set_preview_cookie(response, request=request, token=token)
+    apps_builder_trace(
+        "preview.proxy.completed",
+        domain="preview.proxy",
+        session_id=str(session.id),
+        app_id=str(session.published_app_id),
+        revision_id=str(session.revision_id or ""),
+        sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+        method=request.method,
+        path=path,
+        status_code=upstream.status_code,
+    )
     return response
 
 
@@ -186,6 +209,15 @@ async def proxy_builder_preview_websocket(
     payload = _validate_preview_token(token)
     _assert_preview_scope_matches_session(payload, session)
     target = _resolve_preview_target(session)
+    apps_builder_trace(
+        "preview.proxy.websocket_open",
+        domain="preview.proxy",
+        session_id=str(session.id),
+        app_id=str(session.published_app_id),
+        revision_id=str(session.revision_id or ""),
+        sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+        path=path,
+    )
     upstream_url = _upstream_url(
         path=path,
         query_params=websocket.query_params,
@@ -233,6 +265,38 @@ async def proxy_builder_preview_websocket(
                 if exc and not isinstance(exc, WebSocketDisconnect):
                     raise exc
     except WebSocketDisconnect:
+        apps_builder_trace(
+            "preview.proxy.websocket_closed",
+            domain="preview.proxy",
+            session_id=str(session.id),
+            app_id=str(session.published_app_id),
+            revision_id=str(session.revision_id or ""),
+            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+            path=path,
+            reason="client_disconnect",
+        )
         return
-    except Exception:
+    except Exception as exc:
+        apps_builder_trace(
+            "preview.proxy.websocket_failed",
+            domain="preview.proxy",
+            session_id=str(session.id),
+            app_id=str(session.published_app_id),
+            revision_id=str(session.revision_id or ""),
+            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+            path=path,
+            error=str(exc),
+            error_type=exc.__class__.__name__,
+        )
         await websocket.close(code=1011)
+    else:
+        apps_builder_trace(
+            "preview.proxy.websocket_closed",
+            domain="preview.proxy",
+            session_id=str(session.id),
+            app_id=str(session.published_app_id),
+            revision_id=str(session.revision_id or ""),
+            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+            path=path,
+            reason="completed",
+        )

@@ -28,6 +28,8 @@ Last Updated: 2026-03-08
 - E2B workspace listing preserves leading-dot filenames, which fixes the coding-agent stage-prepare path that depends on `.draft-dev-dependency-hash`.
 - E2B backend startup validation now requires both `E2B_API_KEY` and an explicit `APPS_E2B_TEMPLATE` unless the default-template bypass is deliberately enabled.
 - E2B backend config now resolves `APPS_E2B_TEMPLATE` plus `APPS_E2B_TEMPLATE_TAG` into a concrete tagged template reference so sandbox creation targets a specific built template revision.
+- E2B backend now forwards only non-empty provider env vars into the sandbox and the dedicated template is built from the `opencode` base template.
+- OpenCode sandbox startup now creates the `.opencode` log directory first and launches through `bash -lc`, which matches the OpenCode binary path layout inside the E2B template.
 - The gated live E2B smoke test now covers create -> ensure -> preview HTML -> proxied Vite asset -> out-of-band kill -> recover -> remote sandbox collapse -> stop -> zero remaining provider sandboxes for the session.
 
 ## Last run command + date/time + result
@@ -45,3 +47,4 @@ Last Updated: 2026-03-08
 - Add contract tests for the real E2B backend once a deterministic fake sandbox harness is available.
 - Add a second live E2B scenario that asserts proxied asset fetches and HMR websocket behavior, not only initial HTML preview health.
 - Add an explicit scheduled sweeper entrypoint so orphan cleanup does not rely only on request-driven best-effort sweeps.
+- Add a live coding-agent/OpenCode test that goes beyond server startup and verifies a real run lifecycle against the E2B sandbox backend.

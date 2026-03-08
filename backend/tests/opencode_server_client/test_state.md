@@ -1,4 +1,4 @@
-Last Updated: 2026-02-25
+Last Updated: 2026-03-08
 
 ## Scope
 - OpenCode server client transport compatibility for coding-agent engine runs.
@@ -17,6 +17,8 @@ Last Updated: 2026-02-25
 - Volatile contract metadata (`generated_at`) is ignored in context hashing so no-op runs do not rewrite context files.
 - Contract context seeding refreshes only when selected-agent contract content changes.
 - Sandbox-controller mode seeds custom tools via sandbox file APIs before OpenCode start and fails closed on seed-write failures.
+- E2B-backed draft-dev sessions auto-select sandbox-mode OpenCode startup even without a controller URL, so sandbox workspace bootstrap never falls back to host filesystem paths like `/workspace/...`.
+- The inner E2B OpenCode HTTP client skips host filesystem bootstrap entirely; the outer sandbox layer remains the only bootstrap writer for `/workspace/.talmudpedia/...`.
 - Host mode fails closed when `workspace_path` is missing/invalid for custom-tool bootstrap.
 - Global event stream translation emits incremental `assistant.delta` tokens and tool lifecycle events (`tool.started` / `tool.completed` / `tool.failed`).
 - Incremental tool mapping refreshes `tool.started` when `pending -> running` introduces real tool input (for accurate edit-path UI labels).
@@ -37,6 +39,16 @@ Last Updated: 2026-02-25
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k "sandbox_mode_seeds_custom_tools_before_start or e2b_backend_auto_selects_sandbox_mode_without_controller_url or sandbox_mode_refreshes_context_when_contract_changes or sandbox_mode_fails_closed_when_seed_write_fails"`
+- Date/Time: 2026-03-08
+- Result: Pass (4 passed, 32 deselected, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k "host_mode_can_skip_workspace_bootstrap or sandbox_mode_seeds_custom_tools_before_start or e2b_backend_auto_selects_sandbox_mode_without_controller_url"`
+- Date/Time: 2026-03-08
+- Result: Pass (3 passed, 34 deselected, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py -k "answer_question_endpoint"`
+- Date/Time: 2026-03-08
+- Result: Pass (1 passed, 6 deselected, 6 warnings)
+
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k "extract_incremental_tool_events_refreshes_started_after_pending_with_real_input or extract_incremental_tool_events_completed_payload_includes_input or official_mode_global_event_stream_emits_tool_events_and_incremental_text"`
 - Date/Time: 2026-02-25
 - Result: Pass (3 passed, 32 deselected, 1 warning)

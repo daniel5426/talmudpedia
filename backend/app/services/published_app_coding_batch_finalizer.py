@@ -17,6 +17,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionKind,
 )
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
+from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_revision_build_dispatch import (
     enqueue_revision_build,
@@ -109,7 +110,14 @@ class PublishedAppCodingBatchFinalizer:
         files = snapshot.get("files")
         if not isinstance(files, dict):
             raise RuntimeError("Shared stage workspace snapshot did not return files")
-        return _filter_builder_snapshot_files(files)
+        filtered = _filter_builder_snapshot_files(files)
+        apps_builder_trace(
+            "batch_finalizer.stage_snapshot",
+            domain="coding_agent.finalizer",
+            sandbox_id=sandbox_id,
+            file_count=len(filtered),
+        )
+        return filtered
 
     async def _snapshot_live_files(
         self,
@@ -124,7 +132,14 @@ class PublishedAppCodingBatchFinalizer:
         files = snapshot.get("files")
         if not isinstance(files, dict):
             raise RuntimeError("Live workspace snapshot did not return files")
-        return _filter_builder_snapshot_files(files)
+        filtered = _filter_builder_snapshot_files(files)
+        apps_builder_trace(
+            "batch_finalizer.live_snapshot",
+            domain="coding_agent.finalizer",
+            sandbox_id=sandbox_id,
+            file_count=len(filtered),
+        )
+        return filtered
 
     async def _prepare_finalized_live_snapshot(
         self,
@@ -155,9 +170,26 @@ class PublishedAppCodingBatchFinalizer:
             sandbox_id=sandbox_id,
         )
         if stage_files == dict(current.files or {}):
+            apps_builder_trace(
+                "batch_finalizer.noop",
+                domain="coding_agent.finalizer",
+                app_id=str(app_id),
+                actor_id=str(actor_id),
+                sandbox_id=sandbox_id,
+                reason="stage_matches_current_revision",
+                current_revision_id=str(current.id),
+            )
             return app, current, None
 
         await runtime_service.client.promote_stage_workspace(sandbox_id=sandbox_id)
+        apps_builder_trace(
+            "batch_finalizer.promote_stage",
+            domain="coding_agent.finalizer",
+            app_id=str(app_id),
+            actor_id=str(actor_id),
+            sandbox_id=sandbox_id,
+            current_revision_id=str(current.id),
+        )
         live_files = await self._snapshot_live_files(
             runtime_service=runtime_service,
             sandbox_id=sandbox_id,
@@ -166,6 +198,13 @@ class PublishedAppCodingBatchFinalizer:
 
     async def finalize_for_terminal_run(self, *, run_id: UUID) -> dict[str, Any]:
         run = await self.db.get(AgentRun, run_id)
+        apps_builder_trace(
+            "batch_finalizer.requested",
+            domain="coding_agent.finalizer",
+            run_id=str(run_id),
+            app_id=str(getattr(run, "published_app_id", "") or "") or None,
+            actor_id=str((getattr(run, "initiator_user_id", None) or getattr(run, "user_id", None)) or "") or None,
+        )
         if run is None:
             return {"status": "run_not_found"}
         if str(run.surface or "") != CODING_AGENT_SURFACE:
@@ -188,6 +227,14 @@ class PublishedAppCodingBatchFinalizer:
 
             active_count = await self._count_active_runs(app_id=app_id, actor_id=actor_id)
             if active_count > 0:
+                apps_builder_trace(
+                    "batch_finalizer.deferred",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    actor_id=str(actor_id),
+                    active_count=active_count,
+                )
                 return {"status": "active_runs_remaining", "active_count": active_count}
 
             completed_candidates = await self._load_unfinalized_completed_runs(app_id=app_id, actor_id=actor_id)
@@ -206,6 +253,15 @@ class PublishedAppCodingBatchFinalizer:
 
             if live_files is not None:
                 _validate_builder_project_or_raise(live_files, current.entry_file)
+                apps_builder_trace(
+                    "batch_finalizer.live_files_ready",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    actor_id=str(actor_id),
+                    file_count=len(live_files),
+                    current_revision_id=str(current.id),
+                )
 
             latest_revision = current
             for candidate in completed_candidates:
@@ -240,9 +296,19 @@ class PublishedAppCodingBatchFinalizer:
                     build_seq=_next_build_seq(latest_revision),
                     template_runtime="vite_static",
                 )
+                source_revision_id = str(latest_revision.id)
                 latest_revision = revision
                 app.current_draft_revision_id = revision.id
                 candidate.result_revision_id = revision.id
+                apps_builder_trace(
+                    "batch_finalizer.revision_created",
+                    domain="coding_agent.finalizer",
+                    run_id=str(candidate.id),
+                    app_id=str(app_id),
+                    actor_id=str(actor_id),
+                    revision_id=str(revision.id),
+                    source_revision_id=source_revision_id,
+                )
                 created_by_run[str(candidate.id)] = str(revision.id)
                 enqueue_error = enqueue_revision_build(
                     revision=revision,
@@ -262,6 +328,16 @@ class PublishedAppCodingBatchFinalizer:
                     build_enqueue_by_run[str(candidate.id)] = {"ok": True}
 
             await self.db.commit()
+            apps_builder_trace(
+                "batch_finalizer.completed",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                actor_id=str(actor_id),
+                candidate_count=len(completed_candidates),
+                latest_revision_id=str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
+                live_files_present=live_files is not None,
+            )
             return {
                 "status": "finalized",
                 "candidate_count": len(completed_candidates),

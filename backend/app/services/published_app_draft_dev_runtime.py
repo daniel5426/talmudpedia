@@ -24,6 +24,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppPublishJobStatus,
     PublishedAppRevision,
 )
+from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientError,
@@ -258,7 +259,15 @@ class PublishedAppDraftDevRuntimeService:
         _LAST_REMOTE_SWEEP_MONOTONIC = now_monotonic
         try:
             active_sessions = await self._build_active_remote_session_map()
-            await self.client.sweep_remote_sessions(active_sessions=active_sessions)
+            result = await self.client.sweep_remote_sessions(active_sessions=active_sessions)
+            apps_builder_trace(
+                "sandbox.remote_sweep",
+                domain="draft_dev.runtime",
+                force=bool(force),
+                active_session_count=len(active_sessions),
+                result=result,
+                backend_name=self.client.backend_name,
+            )
         except PublishedAppDraftDevRuntimeClientError:
             return
 
@@ -273,6 +282,18 @@ class PublishedAppDraftDevRuntimeService:
         entry_value: str,
         dependency_hash: str,
     ) -> PublishedAppDraftDevSession:
+        apps_builder_trace(
+            "sandbox.start.requested",
+            domain="draft_dev.runtime",
+            app_id=str(app.id),
+            revision_id=str(revision.id),
+            session_id=str(session.id),
+            user_id=str(user_id),
+            runtime_generation=self._runtime_generation_value(session) + 1,
+            backend_name=self.client.backend_name,
+            file_count=len(files_payload),
+            dependency_hash=dependency_hash,
+        )
         session.runtime_generation = self._runtime_generation_value(session) + 1
         session.status = PublishedAppDraftDevSessionStatus.building
         session.last_error = None
@@ -327,6 +348,19 @@ class PublishedAppDraftDevRuntimeService:
         session.status = PublishedAppDraftDevSessionStatus.serving
         session.dependency_hash = dependency_hash
         session.last_error = None
+        apps_builder_trace(
+            "sandbox.start.confirmed",
+            domain="draft_dev.runtime",
+            app_id=str(app.id),
+            revision_id=str(revision.id),
+            session_id=str(session.id),
+            user_id=str(user_id),
+            sandbox_id=str(session.sandbox_id or ""),
+            runtime_generation=self._runtime_generation_value(session),
+            backend_name=session.runtime_backend,
+            status=str(session.status.value if hasattr(session.status, "value") else session.status),
+            backend_metadata=session.backend_metadata,
+        )
         await self._reconcile_remote_scope_best_effort(session=session)
         return session
 
@@ -374,6 +408,18 @@ class PublishedAppDraftDevRuntimeService:
         entry_value = entry_file or revision.entry_file
         dependency_hash = self._dependency_hash(files_payload)
         session = await self.get_session(app_id=app.id, user_id=user_id)
+        apps_builder_trace(
+            "session.ensure.requested",
+            domain="draft_dev.runtime",
+            app_id=str(app.id),
+            revision_id=str(revision.id),
+            user_id=str(user_id),
+            existing_session_id=str(getattr(session, "id", "") or "") or None,
+            existing_sandbox_id=str(getattr(session, "sandbox_id", "") or "") or None,
+            backend_name=self.client.backend_name,
+            dependency_hash=dependency_hash,
+            file_count=len(files_payload),
+        )
 
         if session is None:
             candidate_session = PublishedAppDraftDevSession(
@@ -397,6 +443,15 @@ class PublishedAppDraftDevRuntimeService:
                     self.db.add(candidate_session)
                     await self.db.flush()
                 session = candidate_session
+                apps_builder_trace(
+                    "session.ensure.created_row",
+                    domain="draft_dev.runtime",
+                    app_id=str(app.id),
+                    revision_id=str(revision.id),
+                    user_id=str(user_id),
+                    session_id=str(candidate_session.id),
+                    backend_name=self.client.backend_name,
+                )
             except IntegrityError:
                 session = await self.get_session(app_id=app.id, user_id=user_id)
                 if session is None:
@@ -432,6 +487,15 @@ class PublishedAppDraftDevRuntimeService:
                     dependency_hash=dependency_hash,
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
+                apps_builder_trace(
+                    "session.ensure.start_failed",
+                    domain="draft_dev.runtime",
+                    app_id=str(app.id),
+                    revision_id=str(revision.id),
+                    session_id=str(session.id),
+                    user_id=str(user_id),
+                    error=str(exc),
+                )
                 return self._mark_session_error(session, exc)
 
         install_dependencies = dependency_hash != (session.dependency_hash or "")
@@ -466,6 +530,16 @@ class PublishedAppDraftDevRuntimeService:
             )
         except PublishedAppDraftDevRuntimeClientError as exc:
             if not self._is_runtime_not_running_error(exc):
+                apps_builder_trace(
+                    "session.ensure.sync_degraded",
+                    domain="draft_dev.runtime",
+                    app_id=str(app.id),
+                    revision_id=str(revision.id),
+                    session_id=str(session.id),
+                    user_id=str(user_id),
+                    sandbox_id=str(session.sandbox_id or ""),
+                    error=str(exc),
+                )
                 return self._mark_session_degraded(session, exc)
             try:
                 return await self._start_session_runtime(
@@ -478,6 +552,16 @@ class PublishedAppDraftDevRuntimeService:
                     dependency_hash=dependency_hash,
                 )
             except PublishedAppDraftDevRuntimeClientError as restart_exc:
+                apps_builder_trace(
+                    "session.ensure.restart_failed",
+                    domain="draft_dev.runtime",
+                    app_id=str(app.id),
+                    revision_id=str(revision.id),
+                    session_id=str(session.id),
+                    user_id=str(user_id),
+                    sandbox_id=str(session.sandbox_id or ""),
+                    error=str(restart_exc),
+                )
                 return self._mark_session_error(session, restart_exc)
 
         session.status = PublishedAppDraftDevSessionStatus.serving
@@ -486,6 +570,18 @@ class PublishedAppDraftDevRuntimeService:
             session.backend_metadata = dict(sync_result.get("backend_metadata") or {})
         session.dependency_hash = dependency_hash
         session.last_error = None
+        apps_builder_trace(
+            "session.ensure.synced",
+            domain="draft_dev.runtime",
+            app_id=str(app.id),
+            revision_id=str(revision.id),
+            session_id=str(session.id),
+            user_id=str(user_id),
+            sandbox_id=str(session.sandbox_id or ""),
+            backend_name=session.runtime_backend,
+            install_dependencies=bool(install_dependencies),
+            sync_result=sync_result,
+        )
         await self._reconcile_remote_scope_best_effort(session=session)
         return session
 
@@ -527,6 +623,15 @@ class PublishedAppDraftDevRuntimeService:
             must_start = True
 
         if must_start:
+            apps_builder_trace(
+                "session.ensure_active.restart_required",
+                domain="draft_dev.runtime",
+                app_id=str(app.id),
+                revision_id=str(revision.id),
+                user_id=str(user_id),
+                existing_session_id=str(getattr(session, "id", "") or "") or None,
+                existing_sandbox_id=str(getattr(session, "sandbox_id", "") or "") or None,
+            )
             return await self.ensure_session(
                 app=app,
                 revision=revision,
@@ -549,6 +654,16 @@ class PublishedAppDraftDevRuntimeService:
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
                 if self._is_runtime_not_running_error(exc):
+                    apps_builder_trace(
+                        "session.ensure_active.heartbeat_restart",
+                        domain="draft_dev.runtime",
+                        app_id=str(app.id),
+                        revision_id=str(revision.id),
+                        session_id=str(session.id),
+                        user_id=str(user_id),
+                        sandbox_id=str(session.sandbox_id or ""),
+                        error=str(exc),
+                    )
                     return await self.ensure_session(
                         app=app,
                         revision=revision,
@@ -556,6 +671,16 @@ class PublishedAppDraftDevRuntimeService:
                         files=dict(revision.files or {}),
                         entry_file=revision.entry_file,
                     )
+                apps_builder_trace(
+                    "session.ensure_active.heartbeat_degraded",
+                    domain="draft_dev.runtime",
+                    app_id=str(app.id),
+                    revision_id=str(revision.id),
+                    session_id=str(session.id),
+                    user_id=str(user_id),
+                    sandbox_id=str(session.sandbox_id or ""),
+                    error=str(exc),
+                )
                 return self._mark_session_degraded(session, exc)
 
         if not session.sandbox_id:
@@ -565,6 +690,17 @@ class PublishedAppDraftDevRuntimeService:
 
         session.status = PublishedAppDraftDevSessionStatus.serving
         session.last_error = None
+        apps_builder_trace(
+            "session.ensure_active.ready",
+            domain="draft_dev.runtime",
+            app_id=str(app.id),
+            revision_id=str(revision.id),
+            session_id=str(session.id),
+            user_id=str(user_id),
+            sandbox_id=str(session.sandbox_id or ""),
+            backend_name=session.runtime_backend,
+            status=str(session.status.value if hasattr(session.status, "value") else session.status),
+        )
         await self._reconcile_remote_scope_best_effort(session=session)
         return session
 
@@ -636,6 +772,16 @@ class PublishedAppDraftDevRuntimeService:
         session: PublishedAppDraftDevSession,
         reason: PublishedAppDraftDevSessionStatus = PublishedAppDraftDevSessionStatus.stopped,
     ) -> PublishedAppDraftDevSession:
+        apps_builder_trace(
+            "session.stop.requested",
+            domain="draft_dev.runtime",
+            app_id=str(session.published_app_id),
+            session_id=str(session.id),
+            user_id=str(session.user_id),
+            sandbox_id=str(session.sandbox_id or ""),
+            reason=str(reason.value if hasattr(reason, "value") else reason),
+            backend_name=str(session.runtime_backend or self.client.backend_name),
+        )
         session.status = PublishedAppDraftDevSessionStatus.stopping
         if session.sandbox_id:
             try:
@@ -643,11 +789,28 @@ class PublishedAppDraftDevRuntimeService:
             except PublishedAppDraftDevRuntimeClientError as exc:
                 session.status = PublishedAppDraftDevSessionStatus.error
                 session.last_error = str(exc)
+                apps_builder_trace(
+                    "session.stop.failed",
+                    domain="draft_dev.runtime",
+                    app_id=str(session.published_app_id),
+                    session_id=str(session.id),
+                    user_id=str(session.user_id),
+                    sandbox_id=str(session.sandbox_id or ""),
+                    error=str(exc),
+                )
                 return session
         session.sandbox_id = None
         session.backend_metadata = {}
         session.status = reason
         session.expires_at = self._now()
+        apps_builder_trace(
+            "session.stop.completed",
+            domain="draft_dev.runtime",
+            app_id=str(session.published_app_id),
+            session_id=str(session.id),
+            user_id=str(session.user_id),
+            reason=str(reason.value if hasattr(reason, "value") else reason),
+        )
         await self._reconcile_remote_scope_best_effort(session=session)
         return session
 
@@ -701,4 +864,12 @@ class PublishedAppDraftDevRuntimeService:
                 continue
             await self.stop_session(session=row, reason=PublishedAppDraftDevSessionStatus.expired)
             expired_count += 1
+        if expired_count:
+            apps_builder_trace(
+                "session.expire.completed",
+                domain="draft_dev.runtime",
+                app_id=str(app_id) if app_id else None,
+                user_id=str(user_id) if user_id else None,
+                expired_count=expired_count,
+            )
         return expired_count

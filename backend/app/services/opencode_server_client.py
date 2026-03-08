@@ -51,6 +51,7 @@ class OpenCodeServerClientConfig:
     health_cache_seconds: int
     sandbox_controller_mode_override: bool | None = None
     extra_headers: dict[str, str] | None = None
+    skip_workspace_bootstrap: bool = False
 
 
 class OpenCodeServerClient:
@@ -97,19 +98,20 @@ class OpenCodeServerClient:
 
     @property
     def is_enabled(self) -> bool:
-        if self._sandbox_controller_mode_enabled():
+        if self._sandbox_runtime_mode_enabled():
             return True
         if not self._config.enabled:
             return False
         return bool(self._config.base_url)
 
-    def _sandbox_controller_mode_enabled(self) -> bool:
+    def _sandbox_runtime_mode_enabled(self) -> bool:
         if self._config.sandbox_controller_mode_override is not None:
             return bool(self._config.sandbox_controller_mode_override)
         explicit = (os.getenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER") or "").strip().lower()
         if explicit:
             return explicit in {"1", "true", "yes", "on"}
-        if self._sandbox_runtime_client.is_remote_enabled:
+        backend_name = str(getattr(self._sandbox_runtime_client, "backend_name", "") or "").strip().lower()
+        if backend_name in {"local", "controller", "e2b"}:
             return True
         return bool((os.getenv("APPS_SANDBOX_CONTROLLER_URL") or "").strip())
 
@@ -121,10 +123,10 @@ class OpenCodeServerClient:
                 "or set APPS_CODING_AGENT_OPENCODE_ENABLED=1 with "
                 "APPS_CODING_AGENT_OPENCODE_BASE_URL for host mode."
             )
-        if self._sandbox_controller_mode_enabled():
-            if not self._sandbox_runtime_client.is_remote_enabled:
+        if self._sandbox_runtime_mode_enabled():
+            if not str(getattr(self._sandbox_runtime_client, "backend_name", "") or "").strip():
                 raise OpenCodeServerClientError(
-                    "OpenCode sandbox mode is enabled but sandbox controller URL is unavailable."
+                    "OpenCode sandbox mode is enabled but no draft-dev sandbox backend is configured."
                 )
             self._health_checked_at = datetime.now(timezone.utc)
             self._health_ok = True
@@ -163,9 +165,20 @@ class OpenCodeServerClient:
             sandbox_id=sandbox_id or None,
             workspace_path=workspace_path,
             model_id=model_id,
-            mode="sandbox" if self._sandbox_controller_mode_enabled() else "host",
+            mode="sandbox" if self._sandbox_runtime_mode_enabled() else "host",
         )
-        if self._sandbox_controller_mode_enabled():
+        logger.info(
+            "OPENCODE_START mode=%s run_id=%s app_id=%s sandbox_id=%s workspace_path=%s backend_name=%s override=%s base_url=%s",
+            "sandbox" if self._sandbox_runtime_mode_enabled() else "host",
+            run_id,
+            app_id,
+            sandbox_id or "",
+            workspace_path,
+            str(getattr(self._sandbox_runtime_client, "backend_name", "") or ""),
+            self._config.sandbox_controller_mode_override,
+            str(self._config.base_url or ""),
+        )
+        if self._sandbox_runtime_mode_enabled():
             if not sandbox_id:
                 raise OpenCodeServerClientError("OpenCode sandbox mode requires sandbox_id.")
             await self._seed_custom_tools_and_context(
@@ -267,9 +280,9 @@ class OpenCodeServerClient:
             "opencode.cancel.requested",
             run_ref=str(run_ref),
             sandbox_id=resolved_sandbox_id,
-            mode="sandbox" if self._sandbox_controller_mode_enabled() and resolved_sandbox_id else "host",
+            mode="sandbox" if self._sandbox_runtime_mode_enabled() and resolved_sandbox_id else "host",
         )
-        if self._sandbox_controller_mode_enabled() and resolved_sandbox_id:
+        if self._sandbox_runtime_mode_enabled() and resolved_sandbox_id:
             try:
                 response = await self._sandbox_runtime_client.cancel_opencode_run(
                     sandbox_id=resolved_sandbox_id,
@@ -346,9 +359,9 @@ class OpenCodeServerClient:
             question_id=request_id,
             answer_groups=len(normalized_answers),
             sandbox_id=resolved_sandbox_id,
-            mode="sandbox" if self._sandbox_controller_mode_enabled() and resolved_sandbox_id else "host",
+            mode="sandbox" if self._sandbox_runtime_mode_enabled() and resolved_sandbox_id else "host",
         )
-        if self._sandbox_controller_mode_enabled() and resolved_sandbox_id:
+        if self._sandbox_runtime_mode_enabled() and resolved_sandbox_id:
             try:
                 response = await self._sandbox_runtime_client.answer_opencode_question(
                     sandbox_id=resolved_sandbox_id,
@@ -1789,6 +1802,15 @@ class OpenCodeServerClient:
         workspace_path: str,
         selected_agent_contract: dict[str, Any] | None,
     ) -> None:
+        if self._config.skip_workspace_bootstrap:
+            logger.info(
+                "OPENCODE_BOOTSTRAP_SKIPPED run_id=%s app_id=%s sandbox_id=%s workspace_path=%s reason=skip_workspace_bootstrap",
+                run_id,
+                app_id,
+                sandbox_id or "",
+                workspace_path,
+            )
+            return
         try:
             bootstrap_files = build_opencode_bootstrap_files()
         except Exception as exc:
@@ -1804,8 +1826,19 @@ class OpenCodeServerClient:
         bootstrap_hash = self._files_hash(bootstrap_files)
         context_hash = self._content_hash(context_content)
         seed_bootstrap_files = self._seed_bootstrap_files_on_run_start()
+        logger.info(
+            "OPENCODE_BOOTSTRAP mode=%s run_id=%s app_id=%s sandbox_id=%s workspace_path=%s seed_bootstrap=%s backend_name=%s override=%s",
+            "sandbox" if self._sandbox_runtime_mode_enabled() else "host",
+            run_id,
+            app_id,
+            sandbox_id or "",
+            workspace_path,
+            seed_bootstrap_files,
+            str(getattr(self._sandbox_runtime_client, "backend_name", "") or ""),
+            self._config.sandbox_controller_mode_override,
+        )
 
-        if self._sandbox_controller_mode_enabled():
+        if self._sandbox_runtime_mode_enabled():
             if not sandbox_id:
                 raise OpenCodeServerClientError(
                     "OpenCode sandbox mode requires sandbox_id for custom-tool bootstrap."
@@ -1867,6 +1900,14 @@ class OpenCodeServerClient:
             if should_seed_context:
                 await _sandbox_write_if_changed(OPENCODE_BOOTSTRAP_CONTEXT_PATH, context_content)
                 self._sandbox_context_hash[sandbox_key] = context_hash
+            logger.info(
+                "OPENCODE_BOOTSTRAP_SANDBOX seeded_bootstrap=%s seeded_context=%s run_id=%s sandbox_id=%s workspace_path=%s",
+                should_seed_bootstrap,
+                should_seed_context,
+                run_id,
+                sandbox_id,
+                workspace_path,
+            )
             return
 
         workspace_root_raw = str(workspace_path or "").strip()
@@ -1883,6 +1924,13 @@ class OpenCodeServerClient:
             workspace_root_path.mkdir(parents=True, exist_ok=True)
             workspace_root = workspace_root_path.resolve()
         except Exception as exc:
+            logger.exception(
+                "OPENCODE_BOOTSTRAP_HOST_INIT_FAILED run_id=%s app_id=%s sandbox_id=%s workspace_path=%s",
+                run_id,
+                app_id,
+                sandbox_id or "",
+                workspace_root_raw,
+            )
             raise OpenCodeServerClientError(
                 f"Failed to initialize OpenCode workspace path `{workspace_root_raw}`: {exc}"
             ) from exc

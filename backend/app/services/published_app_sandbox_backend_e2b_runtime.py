@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from typing import Any, Dict
 
@@ -28,9 +29,20 @@ class _E2BSandboxRecord:
 
 
 _E2B_PROCESS_STATE: dict[str, _E2BProcessState] = {}
+logger = logging.getLogger(__name__)
 
 
 class E2BSandboxRuntimeMixin:
+    async def _read_log_excerpt(self, sandbox, *, log_path: str, max_chars: int = 1600) -> str:
+        try:
+            content = await sandbox.files.read(log_path)
+        except Exception:
+            return ""
+        text = str(content or "").strip()
+        if len(text) > max(200, int(max_chars or 1600)):
+            text = text[-int(max_chars or 1600):]
+        return text
+
     @staticmethod
     def _metadata_generation(metadata: dict[str, Any] | None) -> int:
         try:
@@ -168,6 +180,13 @@ class E2BSandboxRuntimeMixin:
         from app.services.opencode_server_client import OpenCodeServerClient, OpenCodeServerClientConfig
 
         base_url = self._normalize_upstream_base_url(sandbox.get_host(self.config.e2b_opencode_port))
+        logger.info(
+            "E2B_OPENCODE_CLIENT_BUILD sandbox_id=%s base_url=%s port=%s override=%s",
+            str(getattr(sandbox, "sandbox_id", "") or ""),
+            base_url,
+            self.config.e2b_opencode_port,
+            False,
+        )
         return OpenCodeServerClient(
             OpenCodeServerClientConfig(
                 enabled=True,
@@ -178,6 +197,7 @@ class E2BSandboxRuntimeMixin:
                 health_cache_seconds=5,
                 sandbox_controller_mode_override=False,
                 extra_headers=self._opencode_headers(sandbox),
+                skip_workspace_bootstrap=True,
             )
         )
 
@@ -192,24 +212,43 @@ class E2BSandboxRuntimeMixin:
                 pass
             state.opencode_pid = None
 
-        explicit = ""
-        if not explicit:
-            explicit = (os.getenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_SERVER_COMMAND") or "").strip()
+        log_dir = f"{workspace_path}/.opencode"
+        log_path = f"{log_dir}/server.log"
+        await self._ensure_directory(sandbox, log_dir)
+
+        explicit = (os.getenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_SERVER_COMMAND") or "").strip()
         if not explicit:
             explicit = (os.getenv("APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND") or "").strip()
-        template = explicit or "opencode serve --hostname {host} --port {port}"
-        command = template.format(host="0.0.0.0", port=self.config.e2b_opencode_port)
-        pid = await self._spawn_detached_shell(
-            sandbox,
-            command,
-            cwd=workspace_path,
-            log_path=f"{workspace_path}/.opencode/server.log",
+        fallback_command = (
+            "if command -v opencode >/dev/null 2>&1; then "
+            "opencode serve --hostname {host} --port {port}; "
+            "elif command -v npx >/dev/null 2>&1; then "
+            "npx -y opencode-ai serve --hostname {host} --port {port}; "
+            "else "
+            "echo 'OpenCode executable is unavailable in sandbox' >&2; exit 1; "
+            "fi"
         )
-        state.opencode_pid = int(pid)
-        await self._wait_for_port(sandbox, self.config.e2b_opencode_port, timeout_seconds=60)
-        client = self._build_opencode_client(sandbox)
-        await client.ensure_healthy(force=True)
-        return client
+        template = explicit or fallback_command
+        command = template.format(host="0.0.0.0", port=self.config.e2b_opencode_port)
+        try:
+            pid = await self._spawn_detached_shell(
+                sandbox,
+                command,
+                cwd=workspace_path,
+                log_path=log_path,
+            )
+            state.opencode_pid = int(pid)
+            await self._wait_for_port(sandbox, self.config.e2b_opencode_port, timeout_seconds=60)
+            client = self._build_opencode_client(sandbox)
+            await client.ensure_healthy(force=True)
+            return client
+        except Exception as exc:
+            log_excerpt = await self._read_log_excerpt(sandbox, log_path=log_path)
+            if log_excerpt:
+                raise PublishedAppSandboxBackendError(
+                    f"OpenCode server failed to start on port {self.config.e2b_opencode_port}: {log_excerpt}"
+                ) from exc
+            raise
 
     async def start_opencode_run(
         self,
@@ -224,6 +263,14 @@ class E2BSandboxRuntimeMixin:
     ) -> Dict[str, Any]:
         sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
         resolved_workspace = await self._resolve_workspace_path(sandbox, workspace_path)
+        logger.info(
+            "E2B_OPENCODE_START sandbox_id=%s run_id=%s app_id=%s requested_workspace=%s resolved_workspace=%s",
+            sandbox_id,
+            run_id,
+            app_id,
+            workspace_path,
+            resolved_workspace,
+        )
         client = await self._ensure_opencode_server(
             sandbox,
             sandbox_id=sandbox_id,

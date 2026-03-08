@@ -27,6 +27,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppStatus,
 )
 from app.db.postgres.session import sessionmaker
+from app.services.apps_builder_trace import apps_builder_trace
 from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
 from app.services.published_app_bundle_storage import PublishedAppBundleStorage
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
@@ -66,6 +67,11 @@ def dispatch_sandbox_publish_job(*, job_id: UUID | str) -> Optional[str]:
 
     async def _runner() -> None:
         try:
+            apps_builder_trace(
+                "publish.dispatch.started",
+                domain="publish.runtime",
+                job_id=str(job_id),
+            )
             await run_sandbox_publish_job(job_id=str(job_id))
         except Exception:
             logger.exception("sandbox publish job crashed", extra={"publish_job_id": str(job_id)})
@@ -78,6 +84,11 @@ def dispatch_sandbox_publish_job(*, job_id: UUID | str) -> Optional[str]:
 
 async def run_sandbox_publish_job(*, job_id: str) -> None:
     job_uuid = UUID(str(job_id))
+    apps_builder_trace(
+        "publish.job.started",
+        domain="publish.runtime",
+        job_id=str(job_uuid),
+    )
     async with sessionmaker() as db:
         runtime_service = PublishedAppDraftDevRuntimeService(db)
         job, app = await _load_job_and_app_or_fail(db=db, job_id=job_uuid)
@@ -98,6 +109,15 @@ async def run_sandbox_publish_job(*, job_id: str) -> None:
             return
 
         await _set_job_running(db, job, stage="snapshot")
+        apps_builder_trace(
+            "publish.job.running",
+            domain="publish.runtime",
+            job_id=str(job.id),
+            app_id=str(app.id),
+            requested_by=str(job.requested_by),
+            sandbox_id=str(session.sandbox_id or ""),
+            stage="snapshot",
+        )
 
     try:
         snapshot = await _prepare_publish_snapshot(job_id=job_uuid)
@@ -111,6 +131,13 @@ async def run_sandbox_publish_job(*, job_id: str) -> None:
             checkpoint_revision_id=checkpoint_revision_id,
         )
     except Exception as exc:
+        apps_builder_trace(
+            "publish.job.failed",
+            domain="publish.runtime",
+            job_id=str(job_uuid),
+            error=str(exc),
+            error_type=exc.__class__.__name__,
+        )
         async with sessionmaker() as db:
             result = await db.execute(
                 select(PublishedAppPublishJob).where(PublishedAppPublishJob.id == job_uuid).limit(1)
@@ -154,6 +181,13 @@ async def _prepare_publish_snapshot(*, job_id: UUID) -> _PublishSnapshot:
             raise RuntimeError("Active draft-dev session is required for publish")
 
         await _heartbeat_publish_scope(db=db, job=job, session=session, runtime_service=runtime_service, stage="snapshot")
+        apps_builder_trace(
+            "publish.snapshot.requested",
+            domain="publish.runtime",
+            job_id=str(job.id),
+            app_id=str(app.id),
+            sandbox_id=str(session.sandbox_id or ""),
+        )
         payload = await runtime_service.client.prepare_publish_workspace(sandbox_id=str(session.sandbox_id))
         files = {
             str(path): str(content if isinstance(content, str) else str(content))
@@ -165,6 +199,16 @@ async def _prepare_publish_snapshot(*, job_id: UUID) -> _PublishSnapshot:
             raise RuntimeError("Sandbox publish workspace path is missing")
         if not isinstance(files, dict):
             raise RuntimeError("Sandbox publish snapshot files are missing")
+        apps_builder_trace(
+            "publish.snapshot.completed",
+            domain="publish.runtime",
+            job_id=str(job.id),
+            app_id=str(app.id),
+            sandbox_id=str(session.sandbox_id or ""),
+            publish_workspace_path=publish_workspace_path,
+            live_workspace_path=live_workspace_path,
+            file_count=len(files),
+        )
         return _PublishSnapshot(
             files=files,
             publish_workspace_path=publish_workspace_path,
@@ -210,6 +254,14 @@ async def _create_checkpoint_from_snapshot(*, job_id: UUID, snapshot: _PublishSn
         job.saved_draft_revision_id = checkpoint.id
         await _set_job_stage(job=job, stage="install")
         await db.commit()
+        apps_builder_trace(
+            "publish.checkpoint.created",
+            domain="publish.runtime",
+            job_id=str(job.id),
+            app_id=str(app.id),
+            checkpoint_revision_id=str(checkpoint.id),
+            file_count=len(snapshot.files),
+        )
         return checkpoint.id
 
 
@@ -254,6 +306,15 @@ async def _build_upload_and_finalize(
         diagnostics = validate_builder_dependency_policy(build_files)
         if diagnostics:
             raise RuntimeError("; ".join(item.get("message", "Build policy violation") for item in diagnostics))
+        apps_builder_trace(
+            "publish.build.prepared",
+            domain="publish.runtime",
+            job_id=str(job.id),
+            app_id=str(app.id),
+            sandbox_id=str(session.sandbox_id or ""),
+            checkpoint_revision_id=str(checkpoint_revision.id),
+            file_count=len(build_files),
+        )
 
         await _heartbeat_publish_scope(db=db, job=job, session=session, runtime_service=runtime_service, stage="install")
         await runtime_service.client.sync_workspace_files(
@@ -300,10 +361,27 @@ async def _build_upload_and_finalize(
                     "sandbox publish dependency reuse prep failed; falling back to install",
                     extra={"publish_job_id": str(job_id), "sandbox_id": str(session.sandbox_id)},
                 )
+            apps_builder_trace(
+                "publish.dependencies.prepared",
+                domain="publish.runtime",
+                job_id=str(job.id),
+                app_id=str(app.id),
+                sandbox_id=str(session.sandbox_id or ""),
+                dependency_prepare=dependency_prepare,
+            )
 
             should_install = str(dependency_prepare.get("status") or "").strip().lower() != "reused"
             if should_install:
                 install_command = _resolve_npm_install_command(build_files)
+                apps_builder_trace(
+                    "publish.install.requested",
+                    domain="publish.runtime",
+                    job_id=str(job.id),
+                    app_id=str(app.id),
+                    sandbox_id=str(session.sandbox_id or ""),
+                    command=install_command,
+                    workspace_path=snapshot.publish_workspace_path,
+                )
                 install_result = await runtime_service.client.run_command(
                     sandbox_id=str(session.sandbox_id),
                     command=install_command,
@@ -317,8 +395,25 @@ async def _build_upload_and_finalize(
                 )
                 if install_code != 0:
                     raise RuntimeError(_format_command_failure(" ".join(install_command), install_result))
+                apps_builder_trace(
+                    "publish.install.completed",
+                    domain="publish.runtime",
+                    job_id=str(job.id),
+                    app_id=str(app.id),
+                    sandbox_id=str(session.sandbox_id or ""),
+                    command=install_command,
+                    result=install_result,
+                )
 
             await _heartbeat_publish_scope(db=db, job=job, session=session, runtime_service=runtime_service, stage="build")
+            apps_builder_trace(
+                "publish.build.requested",
+                domain="publish.runtime",
+                job_id=str(job.id),
+                app_id=str(app.id),
+                sandbox_id=str(session.sandbox_id or ""),
+                workspace_path=snapshot.publish_workspace_path,
+            )
             build_result = await runtime_service.client.run_command(
                 sandbox_id=str(session.sandbox_id),
                 command=["npm", "run", "build"],
@@ -329,6 +424,14 @@ async def _build_upload_and_finalize(
             build_code = _extract_command_exit_code(build_result, command_name="npm run build")
             if build_code != 0:
                 raise RuntimeError(_format_command_failure("npm run build", build_result))
+            apps_builder_trace(
+                "publish.build.completed",
+                domain="publish.runtime",
+                job_id=str(job.id),
+                app_id=str(app.id),
+                sandbox_id=str(session.sandbox_id or ""),
+                result=build_result,
+            )
 
             dist_workspace = f"{snapshot.publish_workspace_path.rstrip('/')}/dist"
             await _heartbeat_publish_scope(db=db, job=job, session=session, runtime_service=runtime_service, stage="upload")
@@ -378,6 +481,15 @@ async def _build_upload_and_finalize(
                     uploaded += 1
                 dist_manifest["uploaded_assets"] = uploaded
                 build_finished_at = datetime.now(timezone.utc)
+                apps_builder_trace(
+                    "publish.upload.completed",
+                    domain="publish.runtime",
+                    job_id=str(job.id),
+                    app_id=str(app.id),
+                    sandbox_id=str(session.sandbox_id or ""),
+                    uploaded_assets=uploaded,
+                    dist_storage_prefix=dist_storage_prefix,
+                )
 
         await _heartbeat_publish_scope(db=db, job=job, session=session, runtime_service=runtime_service, stage="finalize")
         published_revision = await create_app_version(
@@ -414,6 +526,14 @@ async def _build_upload_and_finalize(
         job.finished_at = datetime.now(timezone.utc)
         job.last_heartbeat_at = datetime.now(timezone.utc)
         await db.commit()
+        apps_builder_trace(
+            "publish.job.completed",
+            domain="publish.runtime",
+            job_id=str(job.id),
+            app_id=str(app.id),
+            published_revision_id=str(published_revision.id),
+            dist_storage_prefix=dist_storage_prefix,
+        )
 
 
 async def _set_job_running(db, job: PublishedAppPublishJob, *, stage: str) -> None:

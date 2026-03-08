@@ -3,11 +3,13 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import tarfile
 from typing import Any, Dict
 
 import httpx
 
+from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_draft_dev_patching import apply_unified_patch_transaction, hash_text
 from app.services.published_app_sandbox_backend import (
     PublishedAppSandboxBackend,
@@ -30,12 +32,45 @@ except Exception:  # pragma: no cover - import failure is handled at runtime
 class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, PublishedAppSandboxBackend):
     backend_name = "e2b"
     is_remote = True
+    _FORWARDED_SANDBOX_ENV_NAMES = (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "COHERE_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "TOGETHER_API_KEY",
+        "HUGGINGFACE_API_KEY",
+        "AZURE_OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "XAI_API_KEY",
+        "APPS_CODING_AGENT_OPENCODE_DEFAULT_MODEL",
+    )
 
     def _require_sdk(self) -> None:
         if AsyncSandbox is None or SandboxQuery is None:
             raise PublishedAppSandboxBackendError(
                 "E2B backend is configured but the `e2b` package is unavailable."
             )
+
+    def _sandbox_envs(self) -> dict[str, str] | None:
+        envs: dict[str, str] = {}
+        for name in self._FORWARDED_SANDBOX_ENV_NAMES:
+            value = str(os.getenv(name) or "").strip()
+            if value:
+                envs[name] = value
+        extra_names = [
+            part.strip()
+            for part in str(os.getenv("APPS_E2B_FORWARD_ENV_NAMES") or "").split(",")
+            if part.strip()
+        ]
+        for name in extra_names:
+            value = str(os.getenv(name) or "").strip()
+            if value:
+                envs[name] = value
+        return envs or None
 
     async def _create_sandbox(self, *, metadata: dict[str, str], idle_timeout_seconds: int):
         self._require_sdk()
@@ -50,6 +85,7 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
                 template=self.config.e2b_template or None,
                 timeout=max(int(idle_timeout_seconds), int(self.config.e2b_timeout_seconds)),
                 metadata=metadata,
+                envs=self._sandbox_envs(),
                 secure=bool(self.config.e2b_secure),
                 allow_internet_access=bool(self.config.e2b_allow_internet_access),
                 lifecycle=lifecycle,
@@ -178,6 +214,18 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             "session_id": session_id,
             "runtime_generation": str(int(runtime_generation or 0)),
         }
+        apps_builder_trace(
+            "sandbox.start.requested",
+            domain="sandbox.e2b",
+            session_id=session_id,
+            app_id=app_id,
+            user_id=user_id,
+            revision_id=revision_id,
+            runtime_generation=int(runtime_generation or 0),
+            workspace_root=workspace_root,
+            preview_base_path=preview_base_path,
+            file_count=len(files),
+        )
         sandbox = await self._create_sandbox(metadata=metadata, idle_timeout_seconds=idle_timeout_seconds)
         await self._ensure_directory(sandbox, workspace_root)
         await self._sync_workspace_tree(sandbox, workspace_root, files)
@@ -191,16 +239,32 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             preview_base_path=preview_base_path,
         )
         removed = await self._kill_session_sandboxes(session_id=session_id, exclude_sandbox_id=str(sandbox.sandbox_id))
+        apps_builder_trace(
+            "sandbox.start.completed",
+            domain="sandbox.e2b",
+            session_id=session_id,
+            app_id=app_id,
+            user_id=user_id,
+            revision_id=revision_id,
+            sandbox_id=str(sandbox.sandbox_id),
+            runtime_generation=int(runtime_generation or 0),
+            removed_sandbox_ids=removed,
+            backend_metadata=await self._build_backend_metadata(
+                sandbox,
+                preview_base_path=preview_base_path,
+            ),
+        )
+        backend_metadata = await self._build_backend_metadata(
+            sandbox,
+            preview_base_path=preview_base_path,
+        )
         return {
             "sandbox_id": str(sandbox.sandbox_id),
             "status": "serving",
             "workspace_path": workspace_root,
             "runtime_backend": self.backend_name,
             "removed_sandbox_ids": removed,
-            "backend_metadata": await self._build_backend_metadata(
-                sandbox,
-                preview_base_path=preview_base_path,
-            ),
+            "backend_metadata": backend_metadata,
         }
 
     async def sync_session(
@@ -231,6 +295,15 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             workspace_root=workspace_root,
             preview_base_path=effective_preview_base_path,
         )
+        apps_builder_trace(
+            "sandbox.sync.completed",
+            domain="sandbox.e2b",
+            sandbox_id=sandbox_id,
+            workspace_root=workspace_root,
+            preview_base_path=effective_preview_base_path,
+            install_dependencies=bool(install_dependencies),
+            file_count=len(files),
+        )
         return {
             "status": "serving",
             "sandbox_id": sandbox_id,
@@ -251,9 +324,21 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             workspace_root=self._workspace_root(self.config.e2b_workspace_path),
             preview_base_path=preview_base_path,
         )
+        apps_builder_trace(
+            "sandbox.heartbeat.completed",
+            domain="sandbox.e2b",
+            sandbox_id=sandbox_id,
+            preview_base_path=preview_base_path,
+            idle_timeout_seconds=int(idle_timeout_seconds),
+        )
         return {"status": "serving", "sandbox_id": sandbox_id, "runtime_backend": self.backend_name}
 
     async def stop_session(self, *, sandbox_id: str) -> Dict[str, Any]:
+        apps_builder_trace(
+            "sandbox.stop.requested",
+            domain="sandbox.e2b",
+            sandbox_id=sandbox_id,
+        )
         sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
         state = _E2B_PROCESS_STATE.pop(sandbox_id, None)
         if state is not None:
@@ -263,6 +348,11 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             await sandbox.kill()
         except Exception as exc:
             raise PublishedAppSandboxBackendError(f"Failed to kill E2B sandbox `{sandbox_id}`: {exc}") from exc
+        apps_builder_trace(
+            "sandbox.stop.completed",
+            domain="sandbox.e2b",
+            sandbox_id=sandbox_id,
+        )
         return {"status": "stopped", "sandbox_id": sandbox_id, "runtime_backend": self.backend_name}
 
     async def list_files(self, *, sandbox_id: str, limit: int = 500) -> Dict[str, Any]:
@@ -506,6 +596,15 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             live_files = await self._collect_workspace_files_from_root(sandbox, workspace_root)
             await self._ensure_directory(sandbox, stage_workspace)
             await self._sync_workspace_tree(sandbox, stage_workspace, live_files)
+        apps_builder_trace(
+            "workspace.stage.prepared",
+            domain="sandbox.e2b",
+            sandbox_id=sandbox_id,
+            reset=bool(reset),
+            live_workspace_path=workspace_root,
+            stage_workspace_path=stage_workspace,
+            file_count=len(live_files),
+        )
         return {
             "sandbox_id": sandbox_id,
             "reset": bool(reset),
@@ -526,6 +625,14 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
         elif workspace_key != "live":
             raise PublishedAppSandboxBackendError(f"Unsupported workspace scope: {workspace}")
         files = await self._collect_workspace_files_from_root(sandbox, workspace_root)
+        apps_builder_trace(
+            "workspace.snapshot.completed",
+            domain="sandbox.e2b",
+            sandbox_id=sandbox_id,
+            workspace=workspace_key,
+            workspace_path=workspace_root,
+            file_count=len(files),
+        )
         return {
             "sandbox_id": sandbox_id,
             "workspace": workspace_key,
@@ -541,6 +648,14 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             raise PublishedAppSandboxBackendError("Stage workspace is not prepared")
         stage_files = await self._collect_workspace_files_from_root(sandbox, stage_workspace)
         await self._sync_workspace_tree(sandbox, self._workspace_root(self.config.e2b_workspace_path), stage_files)
+        apps_builder_trace(
+            "workspace.stage.promoted",
+            domain="sandbox.e2b",
+            sandbox_id=sandbox_id,
+            stage_workspace_path=stage_workspace,
+            live_workspace_path=self._workspace_root(self.config.e2b_workspace_path),
+            file_count=len(stage_files),
+        )
         return {
             "sandbox_id": sandbox_id,
             "live_workspace_path": self._workspace_root(self.config.e2b_workspace_path),
@@ -557,6 +672,14 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
         publish_workspace = self._publish_workspace_dir()
         await self._ensure_directory(sandbox, publish_workspace)
         await self._sync_workspace_tree(sandbox, publish_workspace, live_files)
+        apps_builder_trace(
+            "workspace.publish.prepared",
+            domain="sandbox.e2b",
+            sandbox_id=sandbox_id,
+            live_workspace_path=self._workspace_root(self.config.e2b_workspace_path),
+            publish_workspace_path=publish_workspace,
+            file_count=len(live_files),
+        )
         return {
             "sandbox_id": sandbox_id,
             "workspace": "publish",
@@ -575,7 +698,7 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
         publish_package_json_exists = await sandbox.files.exists(f"{publish_workspace}/package.json")
         live_package_json_exists = await sandbox.files.exists(f"{live_workspace}/package.json")
         if not publish_package_json_exists:
-            return {
+            result = {
                 "sandbox_id": sandbox_id,
                 "workspace_path": publish_workspace,
                 "live_workspace_path": live_workspace,
@@ -583,8 +706,10 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
                 "strategy": "none",
                 "reason": "publish workspace has no package.json",
             }
+            apps_builder_trace("workspace.publish.dependencies", domain="sandbox.e2b", **result)
+            return result
         if not live_package_json_exists:
-            return {
+            result = {
                 "sandbox_id": sandbox_id,
                 "workspace_path": publish_workspace,
                 "live_workspace_path": live_workspace,
@@ -592,10 +717,12 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
                 "strategy": "none",
                 "reason": "live workspace has no package.json",
             }
+            apps_builder_trace("workspace.publish.dependencies", domain="sandbox.e2b", **result)
+            return result
         live_package_json = await sandbox.files.read(f"{live_workspace}/package.json")
         publish_package_json = await sandbox.files.read(f"{publish_workspace}/package.json")
         if str(live_package_json) != str(publish_package_json):
-            return {
+            result = {
                 "sandbox_id": sandbox_id,
                 "workspace_path": publish_workspace,
                 "live_workspace_path": live_workspace,
@@ -603,9 +730,11 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
                 "strategy": "none",
                 "reason": "package.json differs between live and publish workspaces",
             }
+            apps_builder_trace("workspace.publish.dependencies", domain="sandbox.e2b", **result)
+            return result
         live_node_modules = f"{live_workspace}/node_modules"
         if not await sandbox.files.exists(live_node_modules):
-            return {
+            result = {
                 "sandbox_id": sandbox_id,
                 "workspace_path": publish_workspace,
                 "live_workspace_path": live_workspace,
@@ -613,6 +742,8 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
                 "strategy": "none",
                 "reason": "live workspace node_modules is missing",
             }
+            apps_builder_trace("workspace.publish.dependencies", domain="sandbox.e2b", **result)
+            return result
         publish_node_modules = f"{publish_workspace}/node_modules"
         command = (
             f"rm -rf {shlex.quote(publish_node_modules)} && "
@@ -620,7 +751,7 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
         )
         result = await self._run_shell(sandbox, command, timeout_seconds=30)
         if int(result.exit_code or 0) == 0:
-            return {
+            payload = {
                 "sandbox_id": sandbox_id,
                 "workspace_path": publish_workspace,
                 "live_workspace_path": live_workspace,
@@ -628,13 +759,15 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
                 "strategy": "symlink",
                 "reason": "reused live workspace node_modules via symlink",
             }
+            apps_builder_trace("workspace.publish.dependencies", domain="sandbox.e2b", **payload)
+            return payload
         copy_result = await self._run_shell(
             sandbox,
             f"rm -rf {shlex.quote(publish_node_modules)} && cp -a {shlex.quote(live_node_modules)} {shlex.quote(publish_node_modules)}",
             timeout_seconds=120,
         )
         if int(copy_result.exit_code or 0) == 0:
-            return {
+            payload = {
                 "sandbox_id": sandbox_id,
                 "workspace_path": publish_workspace,
                 "live_workspace_path": live_workspace,
@@ -642,7 +775,9 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
                 "strategy": "copy",
                 "reason": "reused live workspace node_modules via copy fallback",
             }
-        return {
+            apps_builder_trace("workspace.publish.dependencies", domain="sandbox.e2b", **payload)
+            return payload
+        payload = {
             "sandbox_id": sandbox_id,
             "workspace_path": publish_workspace,
             "live_workspace_path": live_workspace,
@@ -650,6 +785,8 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             "strategy": "none",
             "reason": "dependency reuse unavailable for publish workspace",
         }
+        apps_builder_trace("workspace.publish.dependencies", domain="sandbox.e2b", **payload)
+        return payload
 
     async def run_command(
         self,

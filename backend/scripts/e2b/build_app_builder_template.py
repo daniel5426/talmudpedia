@@ -36,14 +36,19 @@ def _build_template() -> dict[str, object]:
     _require_env("E2B_API_KEY")
 
     alias = (os.getenv("APPS_E2B_TEMPLATE_ALIAS") or "").strip() or "talmudpedia-app-builder-dev"
+    primary_tag = (os.getenv("APPS_E2B_TEMPLATE_TAG") or "").strip() or "apps-builder"
     tags_raw = (os.getenv("APPS_E2B_TEMPLATE_TAGS") or "").strip()
-    tags = [part.strip() for part in tags_raw.split(",") if part.strip()] or ["apps-builder", "talmudpedia"]
+    configured_tags = [part.strip() for part in tags_raw.split(",") if part.strip()]
+    tags: list[str] = []
+    for tag in [primary_tag, *configured_tags, "talmudpedia"]:
+        if tag and tag not in tags:
+            tags.append(tag)
     cpu_count = max(1, int(os.getenv("APPS_E2B_TEMPLATE_CPU_COUNT", "2")))
     memory_mb = max(512, int(os.getenv("APPS_E2B_TEMPLATE_MEMORY_MB", "2048")))
     skip_cache = _is_truthy(os.getenv("APPS_E2B_TEMPLATE_SKIP_CACHE", "0"), default=False)
 
     template = Template()
-    builder = template.from_node_image("20")
+    builder = template.from_template("opencode")
 
     build = Template.build(
         builder,

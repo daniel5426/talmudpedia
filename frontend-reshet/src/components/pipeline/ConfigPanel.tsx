@@ -13,7 +13,8 @@ import { Button } from "@/components/ui/button"
 import {
   PipelineNodeData,
   OperatorSpec,
-  CATEGORY_COLORS
+  CATEGORY_COLORS,
+  ConfigFieldSpec,
 } from "./types"
 import { ConfigFieldInput } from "./ConfigFieldInput"
 
@@ -49,6 +50,61 @@ export function ConfigPanel({
     ...(operatorSpec?.required_config || []),
     ...(operatorSpec?.optional_config || []),
   ]
+
+  const fieldsByName = new Map(allFields.map((field) => [field.name, field]))
+  const webCrawlerFieldRows = [
+    ["max_depth", "max_pages", "page_timeout_ms"],
+    ["respect_robots_txt", "scan_full_page"],
+    ["content_preference", "wait_until"],
+  ]
+  const webCrawlerGroupedFieldNames = new Set(webCrawlerFieldRows.flat())
+  const shouldUseWebCrawlerLayout = data.operator === "web_crawler"
+
+  const renderField = (field: ConfigFieldSpec) => (
+    <div key={field.name} className="space-y-1.5 px-0.5">
+      <Label className="flex items-center justify-between">
+        <span className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">
+          {field.name}
+        </span>
+        {field.required && (
+          <span className="text-[9px] font-medium text-foreground/30 px-1 border border-foreground/10 rounded uppercase tracking-wider">
+            Required
+          </span>
+        )}
+      </Label>
+      <ConfigFieldInput
+        field={field}
+        value={data.config[field.name]}
+        onChange={(value) => handleFieldChange(field.name, value)}
+      />
+      {field.description && (
+        <p className="text-[10px] text-muted-foreground/60 leading-tight px-1">{field.description}</p>
+      )}
+    </div>
+  )
+
+  const renderFieldRow = (fieldNames: string[]) => {
+    const rowFields = fieldNames
+      .map((fieldName) => fieldsByName.get(fieldName))
+      .filter((field): field is ConfigFieldSpec => Boolean(field))
+
+    if (rowFields.length === 0) {
+      return null
+    }
+
+    return (
+      <div
+        key={fieldNames.join("-")}
+        className={`grid gap-3 ${rowFields.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}
+      >
+        {rowFields.map((field) => renderField(field))}
+      </div>
+    )
+  }
+
+  const ungroupedFields = shouldUseWebCrawlerLayout
+    ? allFields.filter((field) => !webCrawlerGroupedFieldNames.has(field.name))
+    : allFields
 
   const color = CATEGORY_COLORS[data.category]
   const Icon = CATEGORY_ICONS[data.category] || Hash
@@ -86,28 +142,10 @@ export function ConfigPanel({
             <p className="text-[11px] text-muted-foreground font-medium">No parameters to configure</p>
           </div>
         ) : (
-          allFields.map((field) => (
-            <div key={field.name} className="space-y-1.5 px-0.5">
-              <Label className="flex items-center justify-between">
-                <span className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">
-                  {field.name}
-                </span>
-                {field.required && (
-                  <span className="text-[9px] font-medium text-foreground/30 px-1 border border-foreground/10 rounded uppercase tracking-wider">
-                    Required
-                  </span>
-                )}
-              </Label>
-              <ConfigFieldInput
-                field={field}
-                value={data.config[field.name]}
-                onChange={(value) => handleFieldChange(field.name, value)}
-              />
-              {field.description && (
-                <p className="text-[10px] text-muted-foreground/60 leading-tight px-1">{field.description}</p>
-              )}
-            </div>
-          ))
+          <>
+            {ungroupedFields.map((field) => renderField(field))}
+            {shouldUseWebCrawlerLayout && webCrawlerFieldRows.map((row) => renderFieldRow(row))}
+          </>
         )}
       </div>
 

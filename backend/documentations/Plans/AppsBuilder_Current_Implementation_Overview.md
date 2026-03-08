@@ -1,6 +1,6 @@
 # Apps Builder Current Implementation Overview
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-08
 
 ## Purpose
 This document is the current-state overview of the Apps Builder system (not a future implementation plan). It summarizes how the builder works today across backend, frontend, runtime, coding-agent, revision persistence, and publish/runtime delivery.
@@ -44,6 +44,9 @@ Core implementation choices in current state:
   - `backend/app/services/published_app_revision_store.py`
   - `backend/app/services/published_app_templates.py`
   - `backend/app/services/published_app_bundle_storage.py`
+- Shared lifecycle tracing:
+  - `backend/app/services/apps_builder_trace.py`
+  - `backend/app/services/published_app_coding_pipeline_trace.py`
 
 ### Frontend Core Areas
 - Builder workspace shell:
@@ -91,6 +94,7 @@ Important runtime behavior:
   - `runtime_mode=builder-preview`
   - `runtime_base_path={resolved_runtime_api_base}/public/apps/preview/revisions/{revision_id}`
 - Builder sends preview auth to iframe runtime via `window.postMessage` (`talmudpedia.preview-auth.v1`), and runtime SDK uses bearer auth headers for preview chat stream calls.
+- Draft-dev sandbox, preview proxy, coding-agent, and publish flows now emit shared structured lifecycle events to the app-builder trace stream for operational debugging.
 
 ## Coding-Agent Runtime (Current)
 ### Single-Sandbox, Stage/Live Model

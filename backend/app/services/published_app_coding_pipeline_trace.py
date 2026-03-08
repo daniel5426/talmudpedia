@@ -6,6 +6,8 @@ import os
 import threading
 from typing import Any
 
+from app.services.apps_builder_trace import apps_builder_trace
+
 _DEFAULT_TRACE_FILE = "/tmp/talmudpedia-coding-agent-pipeline-trace.jsonl"
 _WRITE_LOCK = threading.Lock()
 
@@ -29,6 +31,12 @@ def pipeline_trace_file_path() -> str:
 def pipeline_trace(event: str, *, pipeline: str, **fields: Any) -> None:
     if not pipeline_trace_enabled():
         return
+
+    apps_builder_trace(
+        event,
+        domain=f"coding_agent.{str(pipeline or '').strip() or 'unknown'}",
+        **fields,
+    )
 
     payload: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(),

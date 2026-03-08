@@ -149,6 +149,53 @@ async def test_official_mode_start_run_buffers_assistant_events(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
+async def test_host_mode_can_skip_workspace_bootstrap(monkeypatch: pytest.MonkeyPatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": "sess-skip-bootstrap"}})
+        if request.url.path == "/session/sess-skip-bootstrap/message":
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {
+                        "info": {"id": "msg-skip-bootstrap"},
+                        "parts": [{"type": "text", "text": "OK"}],
+                    },
+                },
+            )
+        raise AssertionError(f"Unexpected request path: {request.url.path}")
+
+    _patch_async_client(monkeypatch, handler)
+    client = OpenCodeServerClient(
+        OpenCodeServerClientConfig(
+            enabled=True,
+            base_url="http://opencode.local",
+            api_key=None,
+            request_timeout_seconds=10.0,
+            connect_timeout_seconds=2.0,
+            health_cache_seconds=5,
+            sandbox_controller_mode_override=False,
+            skip_workspace_bootstrap=True,
+        )
+    )
+
+    run_ref = await client.start_run(
+        run_id="run-skip-bootstrap",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/workspace/.talmudpedia/stage/shared/workspace",
+        model_id="",
+        prompt="reply",
+        messages=[{"role": "user", "content": "reply"}],
+    )
+
+    assert run_ref == "sess-skip-bootstrap"
+
+
+@pytest.mark.asyncio
 async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.MonkeyPatch):
     class SandboxClientStub:
         is_remote_enabled = True
@@ -166,6 +213,7 @@ async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.
             return {"run_ref": "sandbox-run-1"}
 
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "1")
     stub = SandboxClientStub()
     client = _client(sandbox_controller_mode_override=True)
     client._sandbox_runtime_client = stub
@@ -203,6 +251,49 @@ async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
+async def test_e2b_backend_auto_selects_sandbox_mode_without_controller_url(monkeypatch: pytest.MonkeyPatch):
+    class SandboxClientStub:
+        backend_name = "e2b"
+        is_remote_enabled = False
+
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, str]] = []
+            self.start_calls = 0
+
+        async def write_file(self, *, sandbox_id: str, path: str, content: str):
+            self.writes.append((path, content))
+            return {"sandbox_id": sandbox_id, "path": path, "status": "written"}
+
+        async def start_opencode_run(self, **kwargs):
+            self.start_calls += 1
+            return {"run_ref": "sandbox-run-e2b"}
+
+    monkeypatch.delenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", raising=False)
+    monkeypatch.delenv("APPS_SANDBOX_CONTROLLER_URL", raising=False)
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "1")
+    stub = SandboxClientStub()
+    client = _client(sandbox_controller_mode_override=None)
+    client._sandbox_runtime_client = stub
+
+    run_ref = await client.start_run(
+        run_id="run-e2b-auto",
+        app_id="app-1",
+        sandbox_id="sandbox-e2b",
+        workspace_path="/workspace/.talmudpedia/stage/shared/workspace",
+        model_id="",
+        prompt="seed",
+        messages=[{"role": "user", "content": "seed"}],
+        selected_agent_contract={"agent": {"id": "agent-1"}},
+    )
+
+    assert run_ref == "sandbox-run-e2b"
+    assert stub.start_calls == 1
+    seeded_paths = {path for path, _ in stub.writes}
+    assert ".opencode/package.json" in seeded_paths
+    assert OPENCODE_BOOTSTRAP_CONTEXT_PATH in seeded_paths
+
+
+@pytest.mark.asyncio
 async def test_sandbox_mode_refreshes_context_when_contract_changes(monkeypatch: pytest.MonkeyPatch):
     class SandboxClientStub:
         is_remote_enabled = True
@@ -218,6 +309,7 @@ async def test_sandbox_mode_refreshes_context_when_contract_changes(monkeypatch:
             return {"run_ref": "sandbox-run-1"}
 
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "1")
     stub = SandboxClientStub()
     client = _client(sandbox_controller_mode_override=True)
     client._sandbox_runtime_client = stub

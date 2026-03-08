@@ -28,6 +28,7 @@ The current implementation lives primarily in:
 - [backend/app/services/published_app_sandbox_backend_e2b.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b.py)
 - [backend/app/services/published_app_sandbox_backend_e2b_runtime.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b_runtime.py)
 - [backend/app/services/published_app_sandbox_backend_e2b_workspace.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b_workspace.py)
+- [backend/app/services/apps_builder_trace.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/apps_builder_trace.py)
 - [backend/app/services/published_app_draft_dev_runtime.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_draft_dev_runtime.py)
 - [backend/app/services/published_app_draft_dev_runtime_client.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_draft_dev_runtime_client.py)
 - [backend/app/api/routers/published_apps_builder_preview_proxy.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_builder_preview_proxy.py)
@@ -250,6 +251,40 @@ Current E2B-related runtime env vars:
 - `APPS_E2B_ALLOW_INTERNET_ACCESS`
 - `APPS_E2B_AUTO_PAUSE`
 
+## Shared Tracing
+
+The app-builder stack now emits a shared lifecycle trace stream instead of relying only on scattered `logger.info` lines.
+
+Primary trace helper:
+- [backend/app/services/apps_builder_trace.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/apps_builder_trace.py)
+
+Current trace domains include:
+- `draft_dev.runtime`
+- `sandbox.e2b`
+- `preview.proxy`
+- `coding_agent.runtime`
+- `coding_agent.monitor`
+- `coding_agent.finalizer`
+- `coding_agent.opencode_client`
+- `publish.runtime`
+
+Important implementation detail:
+- the existing coding-agent `pipeline_trace(...)` path now mirrors into the shared app-builder trace file, so coding-agent runs and sandbox lifecycle events can be correlated in one stream
+
+Current trace env vars:
+- `APPS_BUILDER_TRACE_ENABLED`
+- `APPS_BUILDER_TRACE_FILE`
+- existing coding-agent trace env vars still work for the legacy per-pipeline file, but they now also feed the shared app-builder trace stream
+
+Current coverage includes:
+- draft-dev session ensure/start/sync/heartbeat/stop/expiry
+- E2B sandbox start/sync/heartbeat/stop
+- stage workspace prepare/snapshot/promote
+- preview proxy HTTP/websocket lifecycle
+- coding-agent pipeline events via bridge
+- batch finalization and revision creation
+- sandbox publish snapshot/install/build/upload/finalize lifecycle
+
 Startup rule:
 - if `APPS_SANDBOX_BACKEND=e2b`, the backend process must have `E2B_API_KEY`
 - startup now fails fast with a clear error if that key is missing
@@ -265,6 +300,7 @@ The repo now includes a repeatable E2B template build helper:
 
 Purpose:
 - create a named app-builder template alias with explicit CPU and memory sizing
+- build from E2B's `opencode` base template so the sandbox already contains the OpenCode binary/runtime
 - stop local/dev/prod environments from silently falling back to the low-memory provider default
 
 Current intended flow:
@@ -307,6 +343,7 @@ Current responsibilities:
 Important implementation note:
 - workspace listing must preserve leading-dot filenames
 - this is required so hidden runtime markers like `.draft-dev-dependency-hash` round-trip correctly for the coding-agent stage workspace flow
+- OpenCode startup now ensures `/workspace/.opencode/` exists before redirecting logs there
 
 ### Process Model
 
@@ -438,6 +475,12 @@ Current reasons:
 - stage/live flows can operate on the same edited workspace
 
 `OpenCodeServerClient` was updated to support extra headers, which helps transport/auth integration when routing through the new backend/proxy flow.
+
+Current E2B/OpenCode runtime assumptions:
+- the app-builder template is built from the `opencode` base template
+- sandbox creation forwards only non-empty provider env vars such as `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, and similar provider credentials
+- missing provider env vars do not block sandbox creation; OpenCode can still rely on its own fallback/free model behavior when available
+- detached OpenCode startup uses `bash -lc`, not `sh -lc`, because the OpenCode binary is placed on the bash-initialized path in the E2B template
 
 ### Local Preview Base Path Support
 
