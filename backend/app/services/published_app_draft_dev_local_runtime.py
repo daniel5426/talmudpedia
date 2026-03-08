@@ -53,6 +53,7 @@ class _SessionProcess:
     port: int
     process: subprocess.Popen
     dependency_hash: str
+    preview_base_path: str = "/"
     revision_seq: int = 1
 
 
@@ -90,6 +91,7 @@ class LocalDraftDevRuntimeManager:
         files: Dict[str, str],
         dependency_hash: str,
         draft_dev_token: str,
+        preview_base_path: str = "/",
     ) -> Dict[str, str]:
         async with self._lock:
             self.bootstrap()
@@ -115,13 +117,14 @@ class LocalDraftDevRuntimeManager:
                 await self._stop_session_locked(session_id)
 
             port = _pick_free_port()
-            process = await self._spawn_vite_process_locked(project_dir, port)
+            process = await self._spawn_vite_process_locked(project_dir, port, preview_base_path=preview_base_path)
             self._state[session_id] = _SessionProcess(
                 sandbox_id=session_id,
                 project_dir=project_dir,
                 port=port,
                 process=process,
                 dependency_hash=dependency_hash,
+                preview_base_path=preview_base_path,
                 revision_seq=1,
             )
             return {
@@ -151,13 +154,18 @@ class LocalDraftDevRuntimeManager:
                 await self._run_install_locked(state.project_dir)
                 self._write_dependency_hash_marker(state.project_dir, dependency_hash)
                 await self._stop_process_locked(state.process)
-                restarted = await self._spawn_vite_process_locked(state.project_dir, state.port)
+                restarted = await self._spawn_vite_process_locked(
+                    state.project_dir,
+                    state.port,
+                    preview_base_path=state.preview_base_path,
+                )
                 self._state[sandbox_id] = _SessionProcess(
                     sandbox_id=sandbox_id,
                     project_dir=state.project_dir,
                     port=state.port,
                     process=restarted,
                     dependency_hash=dependency_hash,
+                    preview_base_path=state.preview_base_path,
                     revision_seq=max(1, int(state.revision_seq)) + 1,
                 )
             else:
@@ -1016,8 +1024,14 @@ class LocalDraftDevRuntimeManager:
             self._terminate_process_group(process.pid, sig=signal.SIGKILL)
             await asyncio.to_thread(process.wait)
 
-    async def _spawn_vite_process_locked(self, project_dir: Path, port: int) -> subprocess.Popen:
-        command = self._resolve_dev_command(port)
+    async def _spawn_vite_process_locked(
+        self,
+        project_dir: Path,
+        port: int,
+        *,
+        preview_base_path: str = "/",
+    ) -> subprocess.Popen:
+        command = self._resolve_dev_command(port, preview_base_path=preview_base_path)
         log_path = project_dir / ".draft-dev.log"
         with log_path.open("ab") as log_file:
             process = subprocess.Popen(
@@ -1038,10 +1052,10 @@ class LocalDraftDevRuntimeManager:
         self._write_process_metadata(project_dir=project_dir, pid=process.pid, port=port)
         return process
 
-    def _resolve_dev_command(self, port: int) -> list[str]:
+    def _resolve_dev_command(self, port: int, *, preview_base_path: str = "/") -> list[str]:
         template = (os.getenv("APPS_DRAFT_DEV_DEV_COMMAND") or "").strip()
         if template:
-            return shlex.split(template.format(host=self._host, port=port))
+            return shlex.split(template.format(host=self._host, port=port, base=preview_base_path))
         return [
             "npm",
             "run",
@@ -1052,6 +1066,8 @@ class LocalDraftDevRuntimeManager:
             "--port",
             str(port),
             "--strictPort",
+            "--base",
+            preview_base_path,
         ]
 
     async def _must_install_dependencies_locked(self, project_dir: Path, dependency_hash: str) -> bool:

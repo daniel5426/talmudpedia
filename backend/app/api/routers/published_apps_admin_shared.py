@@ -344,6 +344,7 @@ class DraftDevSessionResponse(BaseModel):
     app_id: str
     revision_id: Optional[str] = None
     status: str
+    runtime_backend: Optional[str] = None
     has_active_coding_runs: bool
     active_coding_run_count: int
     preview_url: Optional[str] = None
@@ -708,6 +709,7 @@ def _draft_dev_session_to_response(
         app_id=str(session.published_app_id),
         revision_id=str(session.revision_id) if session.revision_id else None,
         status=session.status.value if hasattr(session.status, "value") else str(session.status),
+        runtime_backend=str(session.runtime_backend) if getattr(session, "runtime_backend", None) else None,
         has_active_coding_runs=normalized_active_count > 0,
         active_coding_run_count=normalized_active_count,
         preview_url=session.preview_url,

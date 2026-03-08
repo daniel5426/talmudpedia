@@ -50,6 +50,7 @@ class OpenCodeServerClientConfig:
     connect_timeout_seconds: float
     health_cache_seconds: int
     sandbox_controller_mode_override: bool | None = None
+    extra_headers: dict[str, str] | None = None
 
 
 class OpenCodeServerClient:
@@ -2476,6 +2477,8 @@ class OpenCodeServerClient:
         }
         if self._config.api_key:
             headers["Authorization"] = f"Bearer {self._config.api_key}"
+        if isinstance(self._config.extra_headers, dict):
+            headers.update({str(key): str(value) for key, value in self._config.extra_headers.items() if str(value).strip()})
         return headers
 
     def _timeout(self) -> httpx.Timeout:

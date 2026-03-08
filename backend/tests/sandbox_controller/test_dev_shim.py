@@ -13,7 +13,7 @@ async def test_dev_shim_session_lifecycle_and_file_routes(client, monkeypatch):
     monkeypatch.setenv("APPS_SANDBOX_CONTROLLER_TOKEN", "dev-token")
 
     class _FakeManager:
-        async def start_session(self, *, session_id, files, dependency_hash, draft_dev_token):
+        async def start_session(self, *, session_id, files, dependency_hash, draft_dev_token, preview_base_path="/"):
             return {
                 "sandbox_id": session_id,
                 "preview_url": "http://127.0.0.1:5173/sandbox/test",

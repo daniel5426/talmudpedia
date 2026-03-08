@@ -19,6 +19,7 @@ motor
 google-cloud-speech
 elasticsearch
 websockets
+e2b>=2.15.1
 google-auth
 
 # RAG Pipeline Dependencies

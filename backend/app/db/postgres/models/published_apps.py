@@ -524,6 +524,8 @@ class PublishedAppDraftDevSession(Base):
         default=PublishedAppDraftDevSessionStatus.starting,
     )
     sandbox_id = Column(String(128), nullable=True)
+    runtime_backend = Column(String(32), nullable=True)
+    backend_metadata = Column(JSONB, nullable=False, default=dict)
     preview_url = Column(String, nullable=True)
     idle_timeout_seconds = Column(Integer, nullable=False, default=180)
     expires_at = Column(DateTime(timezone=True), nullable=True, index=True)

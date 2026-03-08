@@ -688,10 +688,23 @@ def start_livekit_worker():
         print("Voice mode will not be available, but the API will continue to work.")
 
 
+def _validate_sandbox_backend_env() -> None:
+    backend = (os.getenv("APPS_SANDBOX_BACKEND") or "").strip().lower()
+    if backend != "e2b":
+        return
+    api_key = (os.getenv("E2B_API_KEY") or "").strip()
+    if api_key:
+        return
+    raise RuntimeError(
+        "APPS_SANDBOX_BACKEND=e2b requires E2B_API_KEY to be set in the backend environment."
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Bootstraps shared services for the FastAPI lifecycle."""
     _bootstrap_local_infra_once()
+    _validate_sandbox_backend_env()
 
     await MongoDatabase.connect()
     app.state.vector_store = VectorStore()
@@ -838,6 +851,7 @@ from app.api.routers import workload_security as workload_security_router
 from app.api.routers import published_apps_admin as published_apps_admin_router
 from app.api.routers import published_apps_public as published_apps_public_router
 from app.api.routers import published_apps_host_runtime as published_apps_host_runtime_router
+from app.api.routers import published_apps_builder_preview_proxy as published_apps_builder_preview_proxy_router
 from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -860,6 +874,7 @@ app.include_router(orchestration_internal_router.router)
 app.include_router(published_apps_admin_router.router)
 app.include_router(published_apps_public_router.router)
 app.include_router(published_apps_host_runtime_router.router)
+app.include_router(published_apps_builder_preview_proxy_router.router)
 app.include_router(sandbox_controller_dev_shim_router.router)
 
 from app.api.routers import knowledge_stores as knowledge_stores_router

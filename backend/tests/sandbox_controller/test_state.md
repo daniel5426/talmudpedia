@@ -34,6 +34,9 @@ Last Updated: 2026-02-24
 - Draft-dev runtime client draft-preview `start_session` and `sync_session` now use dedicated controller timeout overrides (`APPS_DRAFT_DEV_CONTROLLER_START_TIMEOUT_SECONDS`, `APPS_DRAFT_DEV_CONTROLLER_SYNC_TIMEOUT_SECONDS`) to prevent cold-bootstrap ReadTimeout failures.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/sandbox_controller/test_draft_dev_runtime_client_stream.py tests/sandbox_controller/test_dev_shim.py`
+- Date: 2026-03-08 16:19:45 EET
+- Result: PASS (16 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/sandbox_controller/test_draft_dev_runtime_client_stream.py::test_start_session_uses_dedicated_start_timeout tests/sandbox_controller/test_draft_dev_runtime_client_stream.py::test_sync_session_uses_dedicated_sync_timeout tests/published_apps/test_builder_revisions.py::test_draft_dev_session_preview_url_includes_runtime_context`
 - Date: 2026-02-24
 - Result: PASS (3 passed, 6 warnings)

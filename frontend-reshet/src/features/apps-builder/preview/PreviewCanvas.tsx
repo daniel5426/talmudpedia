@@ -26,6 +26,19 @@ const PREVIEW_REVEAL_DELAY_MS = 350;
 const PREVIEW_MAX_HIDDEN_MS = 8_000;
 const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 
+function appendRuntimeTokenToUrl(url: string, token?: string | null): string {
+  const trimmedToken = String(token || "").trim();
+  if (!trimmedToken) return url;
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("runtime_token", trimmedToken);
+    return parsed.toString();
+  } catch {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}runtime_token=${encodeURIComponent(trimmedToken)}`;
+  }
+}
+
 export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
   function PreviewCanvas(
     { previewUrl, previewAuthToken, forceReady = false, devStatus, devError, lifecyclePhase, loadingMessage, canRetry = false, onRetry = null },
@@ -54,6 +67,9 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
     const hasSessionError = Boolean(devError);
     const canLoadFrame = (forceReady || devStatus === "running") && Boolean(previewUrl) && !hasFailed && !hasSessionError;
     const warmupMessage = String(loadingMessage || "").trim() || (isPending ? "Starting draft preview..." : "Warming preview sandbox...");
+    const previewSrc = canLoadFrame
+      ? appendRuntimeTokenToUrl(String(previewUrl || ""), previewAuthToken)
+      : null;
 
     const setFrameRef = useCallback(
       (node: HTMLIFrameElement | null) => {
@@ -131,7 +147,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
               isFrameVisible ? "opacity-100" : "pointer-events-none opacity-0",
             )}
             sandbox="allow-same-origin allow-scripts allow-forms"
-            src={previewUrl || "about:blank"}
+            src={previewSrc || "about:blank"}
             onLoad={handleFrameLoad}
           />
         ) : null}

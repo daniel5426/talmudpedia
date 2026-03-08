@@ -246,6 +246,8 @@ async def _get_draft_dev_session_for_scope(
                 PublishedAppDraftDevSession.revision_id,
                 PublishedAppDraftDevSession.status,
                 PublishedAppDraftDevSession.sandbox_id,
+                PublishedAppDraftDevSession.runtime_backend,
+                PublishedAppDraftDevSession.backend_metadata,
                 PublishedAppDraftDevSession.preview_url,
                 PublishedAppDraftDevSession.idle_timeout_seconds,
                 PublishedAppDraftDevSession.expires_at,

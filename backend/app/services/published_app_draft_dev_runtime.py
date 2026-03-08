@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -85,9 +85,32 @@ class PublishedAppDraftDevRuntimeService:
         serialized = json.dumps(dependency_files, sort_keys=True)
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _scope_lock_key(*, app_id: UUID, user_id: UUID) -> int:
+        digest = hashlib.sha256(f"draft-dev:{app_id}:{user_id}".encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
+
+    async def _acquire_scope_lock(self, *, app_id: UUID, user_id: UUID) -> None:
+        bind = self.db.get_bind()
+        dialect_name = str(getattr(getattr(bind, "dialect", None), "name", "") or "").lower()
+        if dialect_name == "sqlite":
+            return
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": self._scope_lock_key(app_id=app_id, user_id=user_id)},
+        )
+
     def _expires_at(self, now: Optional[datetime] = None) -> datetime:
         base = now or self._now()
         return base + timedelta(seconds=self.settings.idle_timeout_seconds)
+
+    @staticmethod
+    def _normalize_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     @staticmethod
     def _scope_error() -> PublishedAppDraftDevRuntimeError:
@@ -102,6 +125,9 @@ class PublishedAppDraftDevRuntimeService:
                 "sandbox is not running",
                 "draft dev sandbox is not running",
                 "session not found",
+                "sandbox wasn't found",
+                "sandbox was not found",
+                "failed to connect to e2b sandbox",
             )
         )
 
@@ -125,6 +151,8 @@ class PublishedAppDraftDevRuntimeService:
             PublishedAppDraftDevSession.revision_id,
             PublishedAppDraftDevSession.status,
             PublishedAppDraftDevSession.sandbox_id,
+            PublishedAppDraftDevSession.runtime_backend,
+            PublishedAppDraftDevSession.backend_metadata,
             PublishedAppDraftDevSession.preview_url,
             PublishedAppDraftDevSession.idle_timeout_seconds,
             PublishedAppDraftDevSession.expires_at,
@@ -148,7 +176,9 @@ class PublishedAppDraftDevRuntimeService:
     ) -> PublishedAppDraftDevSession:
         session.status = PublishedAppDraftDevSessionStatus.starting
         session.last_error = None
-        session.sandbox_id = str(session.id)
+        session.sandbox_id = None
+        session.backend_metadata = {}
+        session.runtime_backend = self.client.backend_name
         token = create_published_app_draft_dev_token(
             subject=str(user_id),
             tenant_id=str(app.tenant_id),
@@ -156,6 +186,7 @@ class PublishedAppDraftDevRuntimeService:
             user_id=str(user_id),
             session_id=str(session.id),
         )
+        preview_base_path = self.client.build_preview_proxy_path(str(session.id))
         last_exc: PublishedAppDraftDevRuntimeClientError | None = None
         started: dict[str, object] | None = None
         for attempt in range(2):
@@ -171,6 +202,7 @@ class PublishedAppDraftDevRuntimeService:
                     idle_timeout_seconds=self.settings.idle_timeout_seconds,
                     dependency_hash=dependency_hash,
                     draft_dev_token=token,
+                    preview_base_path=preview_base_path,
                 )
                 break
             except PublishedAppDraftDevRuntimeClientError as exc:
@@ -184,7 +216,9 @@ class PublishedAppDraftDevRuntimeService:
                 raise last_exc
             raise PublishedAppDraftDevRuntimeClientError("Failed to start draft dev session")
         session.sandbox_id = str(started.get("sandbox_id") or session.id)
-        session.preview_url = str(started.get("preview_url") or "")
+        session.runtime_backend = str(started.get("runtime_backend") or self.client.backend_name)
+        session.backend_metadata = dict(started.get("backend_metadata") or {})
+        session.preview_url = preview_base_path
         session.status = PublishedAppDraftDevSessionStatus.running
         session.dependency_hash = dependency_hash
         session.last_error = None
@@ -218,6 +252,7 @@ class PublishedAppDraftDevRuntimeService:
         if not user_id:
             raise self._scope_error()
 
+        await self._acquire_scope_lock(app_id=app.id, user_id=user_id)
         now = self._now()
         await self.expire_idle_sessions(app_id=app.id, user_id=user_id)
         runtime_context = TemplateRuntimeContext(
@@ -240,6 +275,8 @@ class PublishedAppDraftDevRuntimeService:
                 user_id=user_id,
                 revision_id=revision.id,
                 status=PublishedAppDraftDevSessionStatus.starting,
+                runtime_backend=self.client.backend_name,
+                backend_metadata={},
                 idle_timeout_seconds=self.settings.idle_timeout_seconds,
                 last_activity_at=now,
                 expires_at=self._expires_at(now),
@@ -262,7 +299,8 @@ class PublishedAppDraftDevRuntimeService:
             PublishedAppDraftDevSessionStatus.expired,
             PublishedAppDraftDevSessionStatus.error,
         }
-        if session.expires_at and session.expires_at <= now:
+        session_expires_at = self._normalize_utc(session.expires_at)
+        if session_expires_at and session_expires_at <= now:
             must_start = True
             session.status = PublishedAppDraftDevSessionStatus.expired
 
@@ -270,6 +308,7 @@ class PublishedAppDraftDevRuntimeService:
         session.idle_timeout_seconds = self.settings.idle_timeout_seconds
         session.last_activity_at = now
         session.expires_at = self._expires_at(now)
+        session.preview_url = self.client.build_preview_proxy_path(str(session.id))
 
         if must_start:
             try:
@@ -301,13 +340,14 @@ class PublishedAppDraftDevRuntimeService:
                 return self._mark_session_error(session, exc)
 
         try:
-            await self.client.sync_session(
+            sync_result = await self.client.sync_session(
                 sandbox_id=session.sandbox_id,
                 entry_file=entry_value,
                 files=files_payload,
                 idle_timeout_seconds=self.settings.idle_timeout_seconds,
                 dependency_hash=dependency_hash,
                 install_dependencies=install_dependencies,
+                preview_base_path=session.preview_url or self.client.build_preview_proxy_path(str(session.id)),
             )
         except PublishedAppDraftDevRuntimeClientError as exc:
             if not self._is_runtime_not_running_error(exc):
@@ -326,6 +366,9 @@ class PublishedAppDraftDevRuntimeService:
                 return self._mark_session_error(session, restart_exc)
 
         session.status = PublishedAppDraftDevSessionStatus.running
+        session.runtime_backend = str(sync_result.get("runtime_backend") or session.runtime_backend or self.client.backend_name)
+        if isinstance(sync_result.get("backend_metadata"), dict):
+            session.backend_metadata = dict(sync_result.get("backend_metadata") or {})
         session.dependency_hash = dependency_hash
         session.last_error = None
         return session
@@ -378,6 +421,7 @@ class PublishedAppDraftDevRuntimeService:
         session.idle_timeout_seconds = self.settings.idle_timeout_seconds
         session.last_activity_at = now
         session.expires_at = self._expires_at(now)
+        session.preview_url = self.client.build_preview_proxy_path(str(session.id))
 
         if session.sandbox_id:
             try:

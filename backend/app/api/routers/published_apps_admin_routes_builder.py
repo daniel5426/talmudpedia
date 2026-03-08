@@ -125,6 +125,8 @@ async def _decorate_draft_dev_session_response(
     preview_url = (response.preview_url or "").strip()
     if not preview_url:
         return response
+    if preview_url.startswith("/"):
+        preview_url = f"{_resolve_runtime_api_base_url(request)}{preview_url}"
 
     effective_revision_id = revision_id or session.revision_id
     if effective_revision_id is None:

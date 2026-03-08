@@ -79,6 +79,7 @@ class StartSessionRequest(BaseModel):
     idle_timeout_seconds: int = 180
     dependency_hash: str = ""
     draft_dev_token: str = ""
+    preview_base_path: str = "/"
 
 
 class SyncSessionRequest(BaseModel):
@@ -591,6 +592,7 @@ async def start_session(payload: StartSessionRequest) -> dict[str, Any]:
             files=payload.files,
             dependency_hash=payload.dependency_hash,
             draft_dev_token=payload.draft_dev_token,
+            preview_base_path=payload.preview_base_path,
         )
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc

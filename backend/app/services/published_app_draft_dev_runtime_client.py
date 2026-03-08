@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import base64
-import json
-import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
-from urllib.parse import urlencode
 
-import httpx
-
-from app.services.published_app_draft_dev_local_runtime import (
-    LocalDraftDevRuntimeError,
-    get_local_draft_dev_runtime_manager,
+from app.services.published_app_sandbox_backend import PublishedAppSandboxBackendError
+from app.services.published_app_sandbox_backend_factory import (
+    build_published_app_sandbox_backend,
+    load_published_app_sandbox_backend_config,
 )
 
 
@@ -26,79 +22,78 @@ class PublishedAppDraftDevRuntimeClientConfig:
     request_timeout_seconds: int
     local_preview_base_url: str
     embedded_local_enabled: bool
+    backend: Optional[str] = None
+    preview_proxy_base_path: str = "/public/apps-builder/draft-dev/sessions"
+    e2b_template: Optional[str] = None
+    e2b_timeout_seconds: int = 1800
+    e2b_workspace_path: str = "/workspace"
+    e2b_preview_port: int = 4173
+    e2b_opencode_port: int = 4141
+    e2b_secure: bool = True
+    e2b_allow_internet_access: bool = True
+    e2b_auto_pause: bool = False
 
 
 class PublishedAppDraftDevRuntimeClient:
     def __init__(self, config: PublishedAppDraftDevRuntimeClientConfig):
         self._config = config
+        backend_config = load_published_app_sandbox_backend_config()
+        resolved_backend = config.backend
+        if resolved_backend is None and not config.controller_url:
+            resolved_backend = backend_config.backend
+        merged = backend_config.__class__(
+            backend=resolved_backend,
+            controller_url=config.controller_url,
+            controller_token=config.controller_token,
+            request_timeout_seconds=config.request_timeout_seconds,
+            local_preview_base_url=config.local_preview_base_url,
+            embedded_local_enabled=config.embedded_local_enabled,
+            preview_proxy_base_path=config.preview_proxy_base_path,
+            e2b_template=config.e2b_template,
+            e2b_timeout_seconds=config.e2b_timeout_seconds,
+            e2b_workspace_path=config.e2b_workspace_path,
+            e2b_preview_port=config.e2b_preview_port,
+            e2b_opencode_port=config.e2b_opencode_port,
+            e2b_secure=config.e2b_secure,
+            e2b_allow_internet_access=config.e2b_allow_internet_access,
+            e2b_auto_pause=config.e2b_auto_pause,
+        )
+        self._backend = build_published_app_sandbox_backend(merged)
 
     @classmethod
     def from_env(cls) -> "PublishedAppDraftDevRuntimeClient":
-        timeout_seconds = int(os.getenv("APPS_DRAFT_DEV_CONTROLLER_TIMEOUT_SECONDS", "15"))
-        controller_url = (
-            (os.getenv("APPS_SANDBOX_CONTROLLER_URL") or "").strip()
-            or (os.getenv("APPS_DRAFT_DEV_CONTROLLER_URL") or "").strip()
-            or None
-        )
-        controller_token = (
-            (os.getenv("APPS_SANDBOX_CONTROLLER_TOKEN") or "").strip()
-            or (os.getenv("APPS_DRAFT_DEV_CONTROLLER_TOKEN") or "").strip()
-            or None
-        )
+        backend_config = load_published_app_sandbox_backend_config()
         return cls(
             PublishedAppDraftDevRuntimeClientConfig(
-                controller_url=controller_url,
-                controller_token=controller_token,
-                request_timeout_seconds=max(3, timeout_seconds),
-                local_preview_base_url=(os.getenv("APPS_DRAFT_DEV_PREVIEW_BASE_URL") or "http://127.0.0.1:5173").strip(),
-                embedded_local_enabled=(os.getenv("APPS_DRAFT_DEV_EMBEDDED_LOCAL_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}),
+                controller_url=backend_config.controller_url,
+                controller_token=backend_config.controller_token,
+                request_timeout_seconds=backend_config.request_timeout_seconds,
+                local_preview_base_url=backend_config.local_preview_base_url,
+                embedded_local_enabled=backend_config.embedded_local_enabled,
+                backend=backend_config.backend,
+                preview_proxy_base_path=backend_config.preview_proxy_base_path,
+                e2b_template=backend_config.e2b_template,
+                e2b_timeout_seconds=backend_config.e2b_timeout_seconds,
+                e2b_workspace_path=backend_config.e2b_workspace_path,
+                e2b_preview_port=backend_config.e2b_preview_port,
+                e2b_opencode_port=backend_config.e2b_opencode_port,
+                e2b_secure=backend_config.e2b_secure,
+                e2b_allow_internet_access=backend_config.e2b_allow_internet_access,
+                e2b_auto_pause=backend_config.e2b_auto_pause,
             )
         )
-
-    def _local_preview_url(self, sandbox_id: str, draft_dev_token: str) -> str:
-        base = self._config.local_preview_base_url.rstrip("/")
-        query = urlencode({"draft_dev_token": draft_dev_token})
-        return f"{base}/sandbox/{sandbox_id}/?{query}"
-
-    async def _assert_local_preview_reachable(self) -> None:
-        base = self._config.local_preview_base_url.rstrip("/")
-        if not base:
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Draft dev preview base URL is not configured. "
-                "Set APPS_DRAFT_DEV_PREVIEW_BASE_URL or APPS_DRAFT_DEV_CONTROLLER_URL."
-            )
-        timeout = httpx.Timeout(min(self._config.request_timeout_seconds, 5))
-        probe_url = f"{base}/"
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(probe_url)
-        except Exception as exc:
-            raise PublishedAppDraftDevRuntimeClientError(
-                f"Draft dev local preview endpoint is unreachable at {probe_url}. "
-                "Start the draft dev sandbox/controller or configure APPS_DRAFT_DEV_CONTROLLER_URL. "
-                f"Connection error: {exc}"
-            ) from exc
-        if response.status_code >= 500:
-            raise PublishedAppDraftDevRuntimeClientError(
-                f"Draft dev local preview endpoint is unhealthy at {probe_url} "
-                f"(status {response.status_code})."
-            )
 
     @property
     def is_remote_enabled(self) -> bool:
-        return bool(self._config.controller_url)
+        return bool(self._backend.is_remote)
 
-    @staticmethod
-    def _operation_timeout_seconds(env_name: str, fallback_seconds: float) -> float:
-        raw = (os.getenv(env_name) or "").strip()
-        if raw:
-            try:
-                parsed = float(raw)
-                if parsed > 0:
-                    return parsed
-            except Exception:
-                pass
-        return float(fallback_seconds)
+    @property
+    def backend_name(self) -> str:
+        return str(self._backend.backend_name)
+
+    def build_preview_proxy_path(self, session_id: str) -> str:
+        base = str(self._config.preview_proxy_base_path or "").rstrip("/")
+        return f"{base}/{session_id}/preview/"
 
     async def start_session(
         self,
@@ -113,58 +108,24 @@ class PublishedAppDraftDevRuntimeClient:
         idle_timeout_seconds: int,
         dependency_hash: str,
         draft_dev_token: str,
+        preview_base_path: str | None = None,
     ) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.start_session(
-                        session_id=session_id,
-                        files=files,
-                        dependency_hash=dependency_hash,
-                        draft_dev_token=draft_dev_token,
-                    )
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-
-            await self._assert_local_preview_reachable()
-            return {
-                "sandbox_id": session_id,
-                "preview_url": self._local_preview_url(session_id, draft_dev_token),
-                "status": "running",
-            }
-
-        payload: Dict[str, Any] = {
-            "session_id": session_id,
-            "tenant_id": tenant_id,
-            "app_id": app_id,
-            "user_id": user_id,
-            "revision_id": revision_id,
-            "entry_file": entry_file,
-            "files": files,
-            "idle_timeout_seconds": idle_timeout_seconds,
-            "dependency_hash": dependency_hash,
-            "draft_dev_token": draft_dev_token,
-        }
-        start_timeout_seconds = self._operation_timeout_seconds(
-            "APPS_DRAFT_DEV_CONTROLLER_START_TIMEOUT_SECONDS",
-            max(float(self._config.request_timeout_seconds), 120.0),
-        )
-        response = await self._request(
-            "POST",
-            "/sessions/start",
-            json=payload,
-            timeout_seconds=start_timeout_seconds,
-        )
-        workspace_path = str(response.get("workspace_path") or "").strip()
-        result: Dict[str, Any] = {
-            "sandbox_id": str(response.get("sandbox_id") or session_id),
-            "preview_url": str(response.get("preview_url") or self._local_preview_url(session_id, draft_dev_token)),
-            "status": str(response.get("status") or "running"),
-        }
-        if workspace_path:
-            result["workspace_path"] = workspace_path
-        return result
+        try:
+            return await self._backend.start_session(
+                session_id=session_id,
+                tenant_id=tenant_id,
+                app_id=app_id,
+                user_id=user_id,
+                revision_id=revision_id,
+                entry_file=entry_file,
+                files=files,
+                idle_timeout_seconds=idle_timeout_seconds,
+                dependency_hash=dependency_hash,
+                draft_dev_token=draft_dev_token,
+                preview_base_path=preview_base_path or self.build_preview_proxy_path(session_id),
+            )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def sync_session(
         self,
@@ -175,102 +136,47 @@ class PublishedAppDraftDevRuntimeClient:
         idle_timeout_seconds: int,
         dependency_hash: str,
         install_dependencies: bool,
+        preview_base_path: str | None = None,
     ) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.sync_session(
-                        sandbox_id=sandbox_id,
-                        files=files,
-                        dependency_hash=dependency_hash,
-                        install_dependencies=install_dependencies,
-                    )
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            return {"status": "running", "sandbox_id": sandbox_id}
+        try:
+            return await self._backend.sync_session(
+                sandbox_id=sandbox_id,
+                entry_file=entry_file,
+                files=files,
+                idle_timeout_seconds=idle_timeout_seconds,
+                dependency_hash=dependency_hash,
+                install_dependencies=install_dependencies,
+                preview_base_path=preview_base_path,
+            )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
-        payload: Dict[str, Any] = {
-            "entry_file": entry_file,
-            "files": files,
-            "idle_timeout_seconds": idle_timeout_seconds,
-            "dependency_hash": dependency_hash,
-            "install_dependencies": install_dependencies,
-        }
-        sync_timeout_seconds = self._operation_timeout_seconds(
-            "APPS_DRAFT_DEV_CONTROLLER_SYNC_TIMEOUT_SECONDS",
-            max(float(self._config.request_timeout_seconds), 90.0),
-        )
-        response = await self._request(
-            "PATCH",
-            f"/sessions/{sandbox_id}/sync",
-            json=payload,
-            timeout_seconds=sync_timeout_seconds,
-        )
-        return {
-            "status": str(response.get("status") or "running"),
-            "sandbox_id": str(response.get("sandbox_id") or sandbox_id),
-        }
-
-    async def heartbeat_session(
-        self,
-        *,
-        sandbox_id: str,
-        idle_timeout_seconds: int,
-    ) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.heartbeat_session(sandbox_id=sandbox_id)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            return {"status": "running", "sandbox_id": sandbox_id}
-
-        payload = {"idle_timeout_seconds": idle_timeout_seconds}
-        response = await self._request("POST", f"/sessions/{sandbox_id}/heartbeat", json=payload)
-        return {
-            "status": str(response.get("status") or "running"),
-            "sandbox_id": str(response.get("sandbox_id") or sandbox_id),
-        }
+    async def heartbeat_session(self, *, sandbox_id: str, idle_timeout_seconds: int) -> Dict[str, Any]:
+        try:
+            return await self._backend.heartbeat_session(
+                sandbox_id=sandbox_id,
+                idle_timeout_seconds=idle_timeout_seconds,
+            )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def stop_session(self, *, sandbox_id: str) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.stop_session(sandbox_id=sandbox_id)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            return {"status": "stopped", "sandbox_id": sandbox_id}
-        response = await self._request("POST", f"/sessions/{sandbox_id}/stop", json={})
-        return {
-            "status": str(response.get("status") or "stopped"),
-            "sandbox_id": str(response.get("sandbox_id") or sandbox_id),
-        }
+        try:
+            return await self._backend.stop_session(sandbox_id=sandbox_id)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def list_files(self, *, sandbox_id: str, limit: int = 500) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.list_files(sandbox_id=sandbox_id, limit=limit)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError("Sandbox file listing requires embedded runtime or remote controller")
-        response = await self._request("GET", f"/sessions/{sandbox_id}/files", json={"limit": int(limit)})
-        return response
+        try:
+            return await self._backend.list_files(sandbox_id=sandbox_id, limit=limit)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def read_file(self, *, sandbox_id: str, path: str) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.read_file(sandbox_id=sandbox_id, path=path)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError("Sandbox file reads require embedded runtime or remote controller")
-        return await self._request("POST", f"/sessions/{sandbox_id}/files/read", json={"path": path})
+        try:
+            return await self._backend.read_file(sandbox_id=sandbox_id, path=path)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def read_file_range(
         self,
@@ -284,44 +190,25 @@ class PublishedAppDraftDevRuntimeClient:
         max_bytes: int = 12000,
         with_line_numbers: bool = False,
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "path": path,
-            "context_before": int(context_before or 0),
-            "context_after": int(context_after or 0),
-            "max_bytes": int(max_bytes or 12000),
-            "with_line_numbers": bool(with_line_numbers),
-        }
-        if start_line is not None:
-            payload["start_line"] = int(start_line)
-        if end_line is not None:
-            payload["end_line"] = int(end_line)
-
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.read_file_range(sandbox_id=sandbox_id, **payload)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox file range reads require embedded runtime or remote controller"
+        try:
+            return await self._backend.read_file_range(
+                sandbox_id=sandbox_id,
+                path=path,
+                start_line=start_line,
+                end_line=end_line,
+                context_before=context_before,
+                context_after=context_after,
+                max_bytes=max_bytes,
+                with_line_numbers=with_line_numbers,
             )
-        return await self._request("POST", f"/sessions/{sandbox_id}/files/read-range", json=payload)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def search_code(self, *, sandbox_id: str, query: str, max_results: int = 30) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.search_code(sandbox_id=sandbox_id, query=query, max_results=max_results)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError("Sandbox search requires embedded runtime or remote controller")
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/files/search",
-            json={"query": query, "max_results": int(max_results)},
-        )
+        try:
+            return await self._backend.search_code(sandbox_id=sandbox_id, query=query, max_results=max_results)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def workspace_index(
         self,
@@ -331,22 +218,15 @@ class PublishedAppDraftDevRuntimeClient:
         query: str | None = None,
         max_symbols_per_file: int = 16,
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "limit": int(limit),
-            "query": query,
-            "max_symbols_per_file": int(max_symbols_per_file),
-        }
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.workspace_index(sandbox_id=sandbox_id, **payload)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox workspace index requires embedded runtime or remote controller"
+        try:
+            return await self._backend.workspace_index(
+                sandbox_id=sandbox_id,
+                limit=limit,
+                query=query,
+                max_symbols_per_file=max_symbols_per_file,
             )
-        return await self._request("POST", f"/sessions/{sandbox_id}/files/workspace-index", json=payload)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def apply_patch(
         self,
@@ -356,165 +236,76 @@ class PublishedAppDraftDevRuntimeClient:
         options: dict[str, Any] | None = None,
         preconditions: dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "patch": patch,
-            "options": options or {},
-            "preconditions": preconditions or {},
-        }
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.apply_patch(
-                        sandbox_id=sandbox_id,
-                        patch=patch,
-                        options=options or {},
-                        preconditions=preconditions or {},
-                    )
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox patch apply requires embedded runtime or remote controller"
+        try:
+            return await self._backend.apply_patch(
+                sandbox_id=sandbox_id,
+                patch=patch,
+                options=options or {},
+                preconditions=preconditions or {},
             )
-        return await self._request("POST", f"/sessions/{sandbox_id}/files/apply-patch", json=payload)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def write_file(self, *, sandbox_id: str, path: str, content: str) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.write_file(sandbox_id=sandbox_id, path=path, content=content)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError("Sandbox file writes require embedded runtime or remote controller")
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/files/write",
-            json={"path": path, "content": content},
-        )
+        try:
+            return await self._backend.write_file(sandbox_id=sandbox_id, path=path, content=content)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def delete_file(self, *, sandbox_id: str, path: str) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.delete_file(sandbox_id=sandbox_id, path=path)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError("Sandbox file deletion requires embedded runtime or remote controller")
-        return await self._request("POST", f"/sessions/{sandbox_id}/files/delete", json={"path": path})
+        try:
+            return await self._backend.delete_file(sandbox_id=sandbox_id, path=path)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def rename_file(self, *, sandbox_id: str, from_path: str, to_path: str) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.rename_file(sandbox_id=sandbox_id, from_path=from_path, to_path=to_path)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError("Sandbox file rename requires embedded runtime or remote controller")
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/files/rename",
-            json={"from_path": from_path, "to_path": to_path},
-        )
+        try:
+            return await self._backend.rename_file(
+                sandbox_id=sandbox_id,
+                from_path=from_path,
+                to_path=to_path,
+            )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def snapshot_files(self, *, sandbox_id: str) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.snapshot_files(sandbox_id=sandbox_id)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError("Sandbox snapshot requires embedded runtime or remote controller")
-        return await self._request("GET", f"/sessions/{sandbox_id}/files/snapshot", json={})
+        try:
+            return await self._backend.snapshot_files(sandbox_id=sandbox_id)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def prepare_stage_workspace(self, *, sandbox_id: str, reset: bool) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"reset": bool(reset)}
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.prepare_stage_workspace(sandbox_id=sandbox_id, reset=bool(reset))
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox stage preparation requires embedded runtime or remote controller"
-            )
-        return await self._request("POST", f"/sessions/{sandbox_id}/stage/prepare", json=payload)
+        try:
+            return await self._backend.prepare_stage_workspace(sandbox_id=sandbox_id, reset=reset)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
-    async def snapshot_workspace(
-        self,
-        *,
-        sandbox_id: str,
-        workspace: str = "live",
-    ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"workspace": str(workspace or "live")}
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.snapshot_workspace(
-                        sandbox_id=sandbox_id,
-                        workspace=str(workspace or "live"),
-                    )
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox workspace snapshot requires embedded runtime or remote controller"
-            )
-        return await self._request("POST", f"/sessions/{sandbox_id}/stage/snapshot", json=payload)
+    async def snapshot_workspace(self, *, sandbox_id: str, workspace: str = "live") -> Dict[str, Any]:
+        try:
+            return await self._backend.snapshot_workspace(sandbox_id=sandbox_id, workspace=workspace)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def promote_stage_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {}
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.promote_stage_workspace(sandbox_id=sandbox_id)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox stage promotion requires embedded runtime or remote controller"
-            )
-        return await self._request("POST", f"/sessions/{sandbox_id}/stage/promote", json=payload)
+        try:
+            return await self._backend.promote_stage_workspace(sandbox_id=sandbox_id)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def prepare_publish_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {}
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.prepare_publish_workspace(sandbox_id=sandbox_id)
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox publish workspace preparation requires embedded runtime or remote controller"
-            )
-        return await self._request("POST", f"/sessions/{sandbox_id}/publish/prepare", json=payload)
+        try:
+            return await self._backend.prepare_publish_workspace(sandbox_id=sandbox_id)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
-    async def prepare_publish_dependencies(
-        self,
-        *,
-        sandbox_id: str,
-        workspace_path: str,
-    ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"workspace_path": workspace_path}
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.prepare_publish_dependencies(
-                        sandbox_id=sandbox_id,
-                        workspace_path=workspace_path,
-                    )
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox publish dependency preparation requires embedded runtime or remote controller"
+    async def prepare_publish_dependencies(self, *, sandbox_id: str, workspace_path: str) -> Dict[str, Any]:
+        try:
+            return await self._backend.prepare_publish_dependencies(
+                sandbox_id=sandbox_id,
+                workspace_path=workspace_path,
             )
-        return await self._request("POST", f"/sessions/{sandbox_id}/publish/dependencies/prepare", json=payload)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def run_command(
         self,
@@ -525,30 +316,16 @@ class PublishedAppDraftDevRuntimeClient:
         max_output_bytes: int = 12000,
         workspace_path: str | None = None,
     ) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.run_command(
-                        sandbox_id=sandbox_id,
-                        command=command,
-                        timeout_seconds=timeout_seconds,
-                        max_output_bytes=max_output_bytes,
-                        workspace_path=workspace_path,
-                    )
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError("Sandbox command execution requires embedded runtime or remote controller")
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/commands/run",
-            json={
-                "command": command,
-                "timeout_seconds": int(timeout_seconds),
-                "max_output_bytes": int(max_output_bytes),
-                "workspace_path": str(workspace_path).strip() if workspace_path else None,
-            },
-        )
+        try:
+            return await self._backend.run_command(
+                sandbox_id=sandbox_id,
+                command=command,
+                timeout_seconds=timeout_seconds,
+                max_output_bytes=max_output_bytes,
+                workspace_path=workspace_path,
+            )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def export_workspace_archive(
         self,
@@ -557,25 +334,14 @@ class PublishedAppDraftDevRuntimeClient:
         workspace_path: str,
         format: str = "tar.gz",
     ) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.export_workspace_archive(
-                        sandbox_id=sandbox_id,
-                        workspace_path=workspace_path,
-                        format=format,
-                    )
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox workspace archive export requires embedded runtime or remote controller"
+        try:
+            return await self._backend.export_workspace_archive(
+                sandbox_id=sandbox_id,
+                workspace_path=workspace_path,
+                format=format,
             )
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/workspace/archive",
-            json={"workspace_path": workspace_path, "format": format},
-        )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def sync_workspace_files(
         self,
@@ -584,25 +350,14 @@ class PublishedAppDraftDevRuntimeClient:
         workspace_path: str,
         files: Dict[str, str],
     ) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            if self._config.embedded_local_enabled:
-                manager = get_local_draft_dev_runtime_manager()
-                try:
-                    return await manager.sync_workspace_files(
-                        sandbox_id=sandbox_id,
-                        workspace_path=workspace_path,
-                        files=files,
-                    )
-                except LocalDraftDevRuntimeError as exc:
-                    raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Sandbox workspace sync requires embedded runtime or remote controller"
+        try:
+            return await self._backend.sync_workspace_files(
+                sandbox_id=sandbox_id,
+                workspace_path=workspace_path,
+                files=files,
             )
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/workspace/sync",
-            json={"workspace_path": workspace_path, "files": files},
-        )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     @staticmethod
     def decode_archive_payload(response: Dict[str, Any]) -> bytes:
@@ -615,10 +370,10 @@ class PublishedAppDraftDevRuntimeClient:
             raise PublishedAppDraftDevRuntimeClientError("Sandbox archive response contains invalid base64 payload") from exc
 
     async def resolve_local_workspace_path(self, *, sandbox_id: str) -> str | None:
-        if self.is_remote_enabled or not self._config.embedded_local_enabled:
-            return None
-        manager = get_local_draft_dev_runtime_manager()
-        return await manager.resolve_project_dir(sandbox_id=sandbox_id)
+        try:
+            return await self._backend.resolve_workspace_path(sandbox_id=sandbox_id)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def start_opencode_run(
         self,
@@ -631,100 +386,31 @@ class PublishedAppDraftDevRuntimeClient:
         prompt: str,
         messages: list[dict[str, str]],
     ) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            raise PublishedAppDraftDevRuntimeClientError(
-                "OpenCode sandbox run requires APPS_SANDBOX_CONTROLLER_URL or APPS_DRAFT_DEV_CONTROLLER_URL"
-            )
-        start_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_START_TIMEOUT_SECONDS") or "").strip()
-        start_timeout_seconds: float | None = None
-        if start_timeout_raw:
-            try:
-                parsed = float(start_timeout_raw)
-                if parsed > 0:
-                    start_timeout_seconds = parsed
-            except Exception:
-                start_timeout_seconds = None
-        if start_timeout_seconds is None:
-            start_timeout_seconds = max(float(self._config.request_timeout_seconds), 30.0)
-        payload = {
-            "run_id": run_id,
-            "app_id": app_id,
-            "workspace_path": workspace_path,
-            "model_id": model_id,
-            "prompt": prompt,
-            "messages": messages,
-        }
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/opencode/start",
-            json=payload,
-            timeout_seconds=start_timeout_seconds,
-        )
-
-    async def stream_opencode_events(
-        self,
-        *,
-        sandbox_id: str,
-        run_ref: str,
-    ):
-        if not self._config.controller_url:
-            raise PublishedAppDraftDevRuntimeClientError("Draft dev controller URL is not configured")
-        url = f"{self._config.controller_url.rstrip('/')}/sessions/{sandbox_id}/opencode/events"
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if self._config.controller_token:
-            headers["Authorization"] = f"Bearer {self._config.controller_token}"
-        stream_read_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_STREAM_READ_TIMEOUT_SECONDS") or "").strip()
-        stream_read_timeout_seconds: float | None = None
-        if stream_read_timeout_raw:
-            try:
-                parsed = float(stream_read_timeout_raw)
-                stream_read_timeout_seconds = parsed if parsed > 0 else None
-            except Exception:
-                stream_read_timeout_seconds = None
-        timeout = httpx.Timeout(
-            connect=max(1.0, float(self._config.request_timeout_seconds)),
-            write=max(1.0, float(self._config.request_timeout_seconds)),
-            pool=max(1.0, float(self._config.request_timeout_seconds)),
-            read=stream_read_timeout_seconds,
-        )
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream("GET", url, headers=headers, params={"run_ref": run_ref}) as response:
-                    if response.status_code >= 400:
-                        body = (await response.aread()).decode("utf-8", errors="replace").strip()
-                        raise PublishedAppDraftDevRuntimeClientError(
-                            f"Draft dev controller stream request failed ({response.status_code}): "
-                            f"{body or response.reason_phrase}"
-                        )
-                    async for line in response.aiter_lines():
-                        raw = (line or "").strip()
-                        if not raw or raw.startswith(":"):
-                            continue
-                        if raw.startswith("data:"):
-                            raw = raw[5:].strip()
-                        if not raw or raw == "[DONE]":
-                            continue
-                        try:
-                            parsed = json.loads(raw)
-                        except Exception as exc:
-                            raise PublishedAppDraftDevRuntimeClientError(
-                                f"Draft dev controller event stream returned invalid JSON: {raw}"
-                            ) from exc
-                        if isinstance(parsed, dict):
-                            yield parsed
-        except PublishedAppDraftDevRuntimeClientError:
-            raise
-        except Exception as exc:
-            detail = str(exc).strip() or exc.__class__.__name__
-            raise PublishedAppDraftDevRuntimeClientError(f"Draft dev controller stream request failed: {detail}") from exc
+            return await self._backend.start_opencode_run(
+                sandbox_id=sandbox_id,
+                run_id=run_id,
+                app_id=app_id,
+                workspace_path=workspace_path,
+                model_id=model_id,
+                prompt=prompt,
+                messages=messages,
+            )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+
+    async def stream_opencode_events(self, *, sandbox_id: str, run_ref: str):
+        try:
+            async for item in self._backend.stream_opencode_events(sandbox_id=sandbox_id, run_ref=run_ref):
+                yield item
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            raise PublishedAppDraftDevRuntimeClientError(
-                "OpenCode sandbox run requires APPS_SANDBOX_CONTROLLER_URL or APPS_DRAFT_DEV_CONTROLLER_URL"
-            )
-        payload = {"run_ref": run_ref}
-        return await self._request("POST", f"/sessions/{sandbox_id}/opencode/cancel", json=payload)
+        try:
+            return await self._backend.cancel_opencode_run(sandbox_id=sandbox_id, run_ref=run_ref)
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
     async def answer_opencode_question(
         self,
@@ -734,73 +420,12 @@ class PublishedAppDraftDevRuntimeClient:
         question_id: str,
         answers: list[list[str]],
     ) -> Dict[str, Any]:
-        if not self.is_remote_enabled:
-            raise PublishedAppDraftDevRuntimeClientError(
-                "OpenCode sandbox question response requires APPS_SANDBOX_CONTROLLER_URL or APPS_DRAFT_DEV_CONTROLLER_URL"
-            )
-        question_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_QUESTION_TIMEOUT_SECONDS") or "").strip()
-        question_timeout_seconds: float | None = None
-        if question_timeout_raw:
-            try:
-                parsed = float(question_timeout_raw)
-                if parsed > 0:
-                    question_timeout_seconds = parsed
-            except Exception:
-                question_timeout_seconds = None
-        if question_timeout_seconds is None:
-            question_timeout_seconds = max(float(self._config.request_timeout_seconds), 45.0)
-        payload = {
-            "run_ref": run_ref,
-            "question_id": question_id,
-            "answers": answers,
-        }
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/opencode/question-answer",
-            json=payload,
-            timeout_seconds=question_timeout_seconds,
-        )
-
-    async def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        json: Dict[str, Any],
-        timeout_seconds: float | None = None,
-    ) -> Dict[str, Any]:
-        if not self._config.controller_url:
-            raise PublishedAppDraftDevRuntimeClientError("Draft dev controller URL is not configured")
-        base_url = self._config.controller_url.rstrip("/")
-        url = f"{base_url}{path}"
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if self._config.controller_token:
-            headers["Authorization"] = f"Bearer {self._config.controller_token}"
-
-        effective_timeout = float(timeout_seconds) if timeout_seconds is not None else float(self._config.request_timeout_seconds)
-        if effective_timeout <= 0:
-            effective_timeout = float(self._config.request_timeout_seconds)
-        timeout = httpx.Timeout(effective_timeout)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.request(method, url, headers=headers, json=json)
-        except Exception as exc:
-            detail = str(exc).strip()
-            if not detail:
-                detail = exc.__class__.__name__
-            raise PublishedAppDraftDevRuntimeClientError(f"Draft dev controller request failed: {detail}") from exc
-
-        if response.status_code >= 400:
-            body = response.text.strip()
-            raise PublishedAppDraftDevRuntimeClientError(
-                f"Draft dev controller request failed ({response.status_code}): {body or response.reason_phrase}"
+            return await self._backend.answer_opencode_question(
+                sandbox_id=sandbox_id,
+                run_ref=run_ref,
+                question_id=question_id,
+                answers=answers,
             )
-
-        try:
-            payload = response.json()
-        except Exception as exc:
-            raise PublishedAppDraftDevRuntimeClientError("Draft dev controller returned invalid JSON") from exc
-
-        if not isinstance(payload, dict):
-            raise PublishedAppDraftDevRuntimeClientError("Draft dev controller returned invalid payload")
-        return payload
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
