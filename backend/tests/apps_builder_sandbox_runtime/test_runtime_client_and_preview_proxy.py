@@ -429,6 +429,178 @@ async def test_builder_preview_proxy_retries_transient_warmup_errors(monkeypatch
     assert attempts["count"] == 3
 
 
+@pytest.mark.asyncio
+async def test_builder_preview_proxy_refreshes_stale_upstream_target_after_connect_error(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+):
+    workspace = SimpleNamespace(
+        backend_metadata={
+            "preview": {
+                "upstream_base_url": "https://stale-sprite-host.example",
+                "base_path": "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+                "upstream_path": "/",
+            }
+        }
+    )
+    session = SimpleNamespace(
+        id="session-1",
+        published_app_id="app-1",
+        revision_id="revision-1",
+        sandbox_id="sprite-app-1",
+        backend_metadata={},
+        draft_workspace=workspace,
+    )
+
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return session
+
+    def _fake_decode(token: str):
+        assert token == "preview-token-1"
+        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
+
+    class _FakeRuntimeClient:
+        def build_preview_proxy_path(self, session_id: str) -> str:
+            return f"/public/apps-builder/draft-dev/sessions/{session_id}/preview/"
+
+        async def heartbeat_session(self, *, sandbox_id: str, idle_timeout_seconds: int):
+            assert sandbox_id == "sprite-app-1"
+            assert idle_timeout_seconds == 0
+            return {
+                "sandbox_id": sandbox_id,
+                "status": "serving",
+                "runtime_backend": "sprite",
+                "backend_metadata": {
+                    "preview": {
+                        "upstream_base_url": "https://fresh-sprite-host.example",
+                        "base_path": "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+                        "upstream_path": "/",
+                    }
+                },
+            }
+
+    attempts: list[str] = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, content=None):
+            _ = method, headers, content
+            attempts.append(url)
+            if "stale-sprite-host.example" in url:
+                raise httpx.ConnectError(
+                    "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch"
+                )
+            return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}, text="<html>ok</html>")
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
+    monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        preview_proxy_router.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: _FakeRuntimeClient()),
+    )
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token=preview-token-1",
+    )
+
+    assert response.status_code == 200
+    assert attempts[0] == "https://stale-sprite-host.example/"
+    assert attempts[1] == "https://fresh-sprite-host.example/"
+    assert session.draft_workspace.backend_metadata["preview"]["upstream_base_url"] == "https://fresh-sprite-host.example"
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_proxy_uses_sprite_tunnel_target_when_sprite_metadata_present(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+):
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return SimpleNamespace(
+            id="session-1",
+            published_app_id="app-1",
+            revision_id="revision-1",
+            sandbox_id="sprite-app-1",
+            backend_metadata={},
+            draft_workspace=SimpleNamespace(
+                backend_metadata={
+                    "provider": "sprite",
+                    "preview": {
+                        "upstream_base_url": "https://bad-provider-host.example",
+                        "base_path": "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+                        "upstream_path": "/",
+                    },
+                    "workspace": {
+                        "sprite_name": "sprite-app-1",
+                    },
+                    "services": {
+                        "preview_port": 8080,
+                    },
+                }
+            ),
+        )
+
+    def _fake_decode(token: str):
+        assert token == "preview-token-1"
+        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/html; charset=utf-8"}
+        content = b"<html>ok</html>"
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, content=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            captured["content"] = content
+            return _FakeResponse()
+
+    class _FakeTunnelManager:
+        async def ensure_tunnel(self, *, api_base_url: str, api_token: str, sprite_name: str, remote_host: str, remote_port: int):
+            assert sprite_name == "sprite-app-1"
+            assert remote_host == "127.0.0.1"
+            assert remote_port == 8080
+            return "http://127.0.0.1:45678"
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
+    monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(preview_proxy_router, "get_sprite_proxy_tunnel_manager", lambda: _FakeTunnelManager())
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-secret")
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token=preview-token-1",
+    )
+
+    assert response.status_code == 200
+    assert captured["url"] == "http://127.0.0.1:45678/"
+    assert "Authorization" not in captured["headers"]
+
+
 def test_builder_preview_websocket_connect_options_forward_sprite_headers():
     websocket = SimpleNamespace(
         headers=SimpleNamespace(

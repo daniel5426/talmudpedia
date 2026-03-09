@@ -46,16 +46,6 @@ async def test_dev_shim_session_lifecycle_and_file_routes(client, monkeypatch):
                 "workspace_path": workspace_path,
             }
 
-        async def prepare_publish_workspace(self, *, sandbox_id):
-            return {
-                "sandbox_id": sandbox_id,
-                "workspace_path": f"/tmp/talmudpedia-draft-dev/{sandbox_id}/.talmudpedia/publish/current/workspace",
-                "publish_workspace_path": f"/tmp/talmudpedia-draft-dev/{sandbox_id}/.talmudpedia/publish/current/workspace",
-                "live_workspace_path": f"/tmp/talmudpedia-draft-dev/{sandbox_id}",
-                "files": {"src/main.tsx": "export {}"},
-                "file_count": 1,
-            }
-
         async def export_workspace_archive(self, *, sandbox_id, workspace_path, format="tar.gz"):
             return {
                 "sandbox_id": sandbox_id,
@@ -140,19 +130,11 @@ async def test_dev_shim_session_lifecycle_and_file_routes(client, monkeypatch):
     assert command_response.status_code == 200
     assert command_response.json()["code"] == 0
 
-    publish_prepare_response = await client.post(
-        "/internal/sandbox-controller/sessions/sandbox-1/publish/prepare",
-        headers=headers,
-        json={},
-    )
-    assert publish_prepare_response.status_code == 200
-    assert publish_prepare_response.json()["file_count"] == 1
-
     workspace_sync_response = await client.post(
         "/internal/sandbox-controller/sessions/sandbox-1/workspace/sync",
         headers=headers,
         json={
-            "workspace_path": "/workspace/.talmudpedia/publish/current/workspace",
+            "workspace_path": "/workspace/live",
             "files": {"src/main.tsx": "export {}"},
         },
     )
@@ -161,7 +143,7 @@ async def test_dev_shim_session_lifecycle_and_file_routes(client, monkeypatch):
     archive_response = await client.post(
         "/internal/sandbox-controller/sessions/sandbox-1/workspace/archive",
         headers=headers,
-        json={"workspace_path": "/workspace/.talmudpedia/publish/current/workspace/dist", "format": "tar.gz"},
+        json={"workspace_path": "/workspace/live/dist", "format": "tar.gz"},
     )
     assert archive_response.status_code == 200
     assert archive_response.json()["format"] == "tar.gz"

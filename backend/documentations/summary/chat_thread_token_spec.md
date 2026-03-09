@@ -1,9 +1,17 @@
 # Unified Execution + Quota Enforcement V2 Implementation Summary
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-09
 
 ## Objective
 Implement a reuse-first unification of non-coding agent execution on `AgentExecutorService`, enforce one V2 stream envelope across internal/public runtime surfaces, remove legacy workspace chat backend entrypoints, and add fast pre-run quota enforcement with reservation/counter settlement.
+
+## Follow-Up Note (2026-03-09)
+Published-host-runtime thread ownership is now app-account scoped.
+For published app surfaces, canonical thread authorization is:
+- `published_app_id`
+- `published_app_account_id`
+
+The historical `published_app_id + user_id` ownership model no longer applies to published-app auth/runtime flows.
 
 ## Scope Implemented
 

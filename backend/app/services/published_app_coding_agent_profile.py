@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.services.published_app_coding_agent_tools import ensure_coding_agent_tools
+from app.services.workload_provisioning_service import WorkloadProvisioningService
 
 CODING_AGENT_PROFILE_SLUG = "published-app-coding-agent"
 CODING_AGENT_PROFILE_NAME = "Published App Coding Agent"
@@ -101,7 +102,7 @@ async def resolve_coding_agent_chat_model_id(db: AsyncSession, tenant_id) -> str
     return resolve_coding_agent_profile_model_id()
 
 
-async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
+async def ensure_coding_agent_profile(db: AsyncSession, tenant_id, *, actor_user_id=None) -> Agent:
     # Import side-effect ensures function tools are registered in registry.
     import app.services.published_app_coding_agent_tools  # noqa: F401
 
@@ -132,6 +133,10 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
         )
         db.add(agent)
         await db.flush()
+        await WorkloadProvisioningService(db).provision_agent_policy(
+            agent=agent,
+            actor_user_id=actor_user_id,
+        )
         return agent
 
     graph_definition = _build_coding_agent_graph(model_id, tool_ids)
@@ -145,4 +150,8 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id) -> Agent:
     agent.is_active = True
     agent.is_public = False
     await db.flush()
+    await WorkloadProvisioningService(db).provision_agent_policy(
+        agent=agent,
+        actor_user_id=actor_user_id,
+    )
     return agent

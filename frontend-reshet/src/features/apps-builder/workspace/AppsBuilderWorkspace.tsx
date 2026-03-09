@@ -539,14 +539,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [appId, state]);
 
   const toggleUserBlocked = useCallback(async (user: PublishedAppUser) => {
-    setPendingUserUpdateId(user.user_id);
+    setPendingUserUpdateId(user.app_account_id);
     setError(null);
     try {
-      const nextStatus = user.membership_status === "blocked" ? "active" : "blocked";
-      const updated = await publishedAppsService.updateUser(appId, user.user_id, {
+      const nextStatus = user.account_status === "blocked" ? "active" : "blocked";
+      const updated = await publishedAppsService.updateUser(appId, user.app_account_id, {
         membership_status: nextStatus,
       });
-      setUsers((prev) => prev.map((item) => (item.user_id === updated.user_id ? updated : item)));
+      setUsers((prev) => prev.map((item) => (item.app_account_id === updated.app_account_id ? updated : item)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update user membership");
     } finally {
@@ -1343,7 +1343,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                         {isUsersLoading && users.length === 0 ? <UsersListSkeleton /> : null}
                         <div className={cn("space-y-2", isUsersLoading && users.length === 0 ? "hidden" : "")}>
                           {users.map((user) => (
-                            <div key={user.user_id} className="flex items-center gap-3 rounded-md border border-border/60 px-4 py-3 transition-colors hover:bg-muted/30">
+                            <div key={user.app_account_id} className="flex items-center gap-3 rounded-md border border-border/60 px-4 py-3 transition-colors hover:bg-muted/30">
                               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs font-semibold text-primary">
                                 {(user.full_name || user.email).charAt(0).toUpperCase()}
                               </div>
@@ -1357,23 +1357,23 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                                     variant="secondary"
                                     className={cn(
                                       "text-[10px]",
-                                      user.membership_status === "active" && "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
-                                      user.membership_status === "blocked" && "bg-red-500/15 text-red-600 border-red-500/20",
+                                      user.account_status === "active" && "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
+                                      user.account_status === "blocked" && "bg-red-500/15 text-red-600 border-red-500/20",
                                     )}
                                   >
-                                    {user.membership_status}
+                                    {user.account_status}
                                   </Badge>
                                 </div>
                               </div>
                               <Button
                                 size="sm"
-                                variant={user.membership_status === "blocked" ? "default" : "outline"}
+                                variant={user.account_status === "blocked" ? "default" : "outline"}
                                 className="shrink-0 rounded-lg"
                                 onClick={() => toggleUserBlocked(user)}
-                                disabled={pendingUserUpdateId === user.user_id}
+                                disabled={pendingUserUpdateId === user.app_account_id}
                               >
-                                {pendingUserUpdateId === user.user_id ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
-                                {user.membership_status === "blocked" ? "Unblock" : "Block"}
+                                {pendingUserUpdateId === user.app_account_id ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
+                                {user.account_status === "blocked" ? "Unblock" : "Block"}
                               </Button>
                             </div>
                           ))}

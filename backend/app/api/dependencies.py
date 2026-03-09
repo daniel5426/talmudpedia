@@ -9,9 +9,9 @@ from app.db.postgres.models.rbac import RoleAssignment, RolePermission
 from app.db.postgres.models.security import ApprovalDecision, ApprovalStatus
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppAccount,
+    PublishedAppAccountStatus,
     PublishedAppSession,
-    PublishedAppUserMembership,
-    PublishedAppUserMembershipStatus,
 )
 from app.db.postgres.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -275,7 +275,7 @@ async def get_optional_published_app_principal(
         payload = decode_published_app_session_token(token)
         session_id = UUID(str(payload["session_id"]))
         app_id = UUID(str(payload["app_id"]))
-        user_id = UUID(str(payload["sub"]))
+        app_account_id = UUID(str(payload["app_account_id"]))
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid published app session token")
 
@@ -285,7 +285,7 @@ async def get_optional_published_app_principal(
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=401, detail="Published app session not found")
-    if str(session.published_app_id) != str(app_id) or str(session.user_id) != str(user_id):
+    if str(session.published_app_id) != str(app_id) or str(session.app_account_id) != str(app_account_id):
         raise HTTPException(status_code=401, detail="Published app session mismatch")
     if session.revoked_at is not None:
         raise HTTPException(status_code=401, detail="Published app session revoked")
@@ -300,24 +300,19 @@ async def get_optional_published_app_principal(
     if app is None:
         raise HTTPException(status_code=401, detail="Published app not found")
 
-    user_result = await db.execute(select(User).where(User.id == user_id).limit(1))
-    user = user_result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    membership_result = await db.execute(
-        select(PublishedAppUserMembership).where(
+    account_result = await db.execute(
+        select(PublishedAppAccount).where(
             and_(
-                PublishedAppUserMembership.published_app_id == app_id,
-                PublishedAppUserMembership.user_id == user_id,
+                PublishedAppAccount.id == app_account_id,
+                PublishedAppAccount.published_app_id == app_id,
             )
         ).limit(1)
     )
-    membership = membership_result.scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(status_code=401, detail="Published app membership not found")
-    if membership.status == PublishedAppUserMembershipStatus.blocked:
-        raise HTTPException(status_code=403, detail="Published app membership is blocked")
+    account = account_result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=401, detail="Published app account not found")
+    if account.status == PublishedAppAccountStatus.blocked:
+        raise HTTPException(status_code=403, detail="Published app account is blocked")
 
     return {
         "type": "published_app_user",
@@ -325,10 +320,11 @@ async def get_optional_published_app_principal(
         "app_id": str(app.id),
         "app_slug": app.slug,
         "session_id": str(session.id),
-        "user_id": str(user.id),
-        "user": user,
+        "app_account_id": str(account.id),
+        "global_user_id": str(account.global_user_id) if account.global_user_id else None,
+        "user": account,
         "provider": payload.get("provider", "password"),
-        "membership_status": membership.status.value if hasattr(membership.status, "value") else str(membership.status),
+        "account_status": account.status.value if hasattr(account.status, "value") else str(account.status),
         "scopes": payload.get("scope", []),
         "auth_token": token,
     }

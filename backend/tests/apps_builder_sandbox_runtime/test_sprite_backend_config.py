@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -44,11 +46,10 @@ def test_load_backend_config_defaults_to_sprite(monkeypatch: pytest.MonkeyPatch)
     assert config.sprite_name_prefix == "talmudpedia-builder"
     assert config.sprite_workspace_path == "/home/sprite/app"
     assert config.sprite_stage_workspace_path == "/home/sprite/.talmudpedia/stage/current/workspace"
-    assert config.sprite_publish_workspace_path == "/home/sprite/.talmudpedia/publish/current/workspace"
     assert config.sprite_preview_service_name == "builder-preview"
 
 
-def test_sprite_backend_default_stage_and_publish_paths_live_outside_live_workspace(monkeypatch: pytest.MonkeyPatch):
+def test_sprite_backend_default_stage_path_lives_outside_live_workspace(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
     config = load_published_app_sandbox_backend_config()
 
@@ -57,7 +58,6 @@ def test_sprite_backend_default_stage_and_publish_paths_live_outside_live_worksp
 
     assert backend._live_workspace_path() == "/home/sprite/app"
     assert backend._stage_workspace_path() == "/home/sprite/.talmudpedia/stage/current/workspace"
-    assert backend._publish_workspace_path() == "/home/sprite/.talmudpedia/publish/current/workspace"
     assert "node_modules/" in backend_module._SYNC_IGNORE_PREFIXES
 
 
@@ -87,25 +87,31 @@ async def test_sprite_heartbeat_waits_for_preview_without_restarting_services(mo
 
     waited = {"called": False}
 
-    async def _fake_sprite_exists(*, sprite_name: str) -> bool:
+    async def _fake_get_sprite(*, sprite_name: str):
         assert sprite_name == "sprite-app-1"
-        return True
+        return {"url": "https://fresh-sprite-host.example"}
 
     async def _fake_wait_for_preview_ready(*, sprite_name: str) -> None:
         assert sprite_name == "sprite-app-1"
         waited["called"] = True
 
+    async def _fake_read_revision_token(**kwargs) -> str:
+        _ = kwargs
+        return "revision-token-1"
+
     async def _fail_ensure_services(*, sprite_name: str) -> None:
         raise AssertionError(f"heartbeat should not restart services for {sprite_name}")
 
-    monkeypatch.setattr(backend, "_sprite_exists", _fake_sprite_exists)
+    monkeypatch.setattr(backend, "_get_sprite", _fake_get_sprite)
     monkeypatch.setattr(backend, "_wait_for_preview_ready", _fake_wait_for_preview_ready)
     monkeypatch.setattr(backend, "_ensure_services", _fail_ensure_services)
+    monkeypatch.setattr(backend, "_read_revision_token", _fake_read_revision_token)
 
     result = await backend.heartbeat_session(sandbox_id="sprite-app-1", idle_timeout_seconds=180)
 
     assert result["status"] == "serving"
     assert waited["called"] is True
+    assert result["backend_metadata"]["preview"]["upstream_base_url"] == "https://fresh-sprite-host.example"
 
 
 @pytest.mark.asyncio
@@ -193,3 +199,56 @@ async def test_sprite_start_repairs_dependencies_when_preview_readiness_initiall
     assert install_calls == [False, True]
     assert ensure_calls["count"] == 2
     assert ready_attempts["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_sprite_snapshot_workspace_filters_generated_paths_before_serializing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
+    backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
+    assert isinstance(backend, SpriteSandboxBackend)
+
+    workspace = tmp_path / "workspace"
+    (workspace / "src").mkdir(parents=True, exist_ok=True)
+    (workspace / "node_modules" / "pkg").mkdir(parents=True, exist_ok=True)
+    (workspace / ".cache" / "opencode").mkdir(parents=True, exist_ok=True)
+    (workspace / "dist").mkdir(parents=True, exist_ok=True)
+    (workspace / ".talmudpedia").mkdir(parents=True, exist_ok=True)
+    (workspace / "src" / "App.tsx").write_text("export default function App() { return null; }\n", encoding="utf-8")
+    (workspace / "node_modules" / "pkg" / "index.js").write_text("module.exports = 1;\n", encoding="utf-8")
+    (workspace / ".cache" / "opencode" / "selected_agent_contract.json").write_text("{}", encoding="utf-8")
+    (workspace / "dist" / "index.html").write_text("<html></html>\n", encoding="utf-8")
+    (workspace / ".talmudpedia" / "runtime-revision-token").write_text("rev-1", encoding="utf-8")
+
+    async def _run_script_locally(
+        *,
+        sprite_name: str,
+        command: list[str],
+        stdin_text: str,
+        cwd: str | None = None,
+        timeout_seconds: int,
+        max_output_bytes: int,
+        allow_nonzero: bool = False,
+    ):
+        _ = sprite_name, command, cwd, timeout_seconds, max_output_bytes, allow_nonzero
+        completed = subprocess.run(
+            ["python3", "-"],
+            input=stdin_text,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        return completed.stdout, 0
+
+    monkeypatch.setattr(backend, "_exec_with_stdin", _run_script_locally)
+
+    snapshot = await backend._snapshot_workspace_files(  # noqa: SLF001
+        sprite_name="sprite-app-1",
+        workspace_path=str(workspace),
+    )
+
+    assert snapshot["file_count"] == 1
+    assert snapshot["files"] == {"src/App.tsx": "export default function App() { return null; }\n"}
+    assert snapshot["revision_token"] == "rev-1"

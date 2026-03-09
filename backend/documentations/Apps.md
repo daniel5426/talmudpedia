@@ -1,9 +1,11 @@
 # Apps Feature (Published Client Web Apps)
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-09
 
 ## Purpose
 `Apps` lets each tenant publish a production app bound to one of their published agents, with a builder flow for custom UI templates, revisions, and published snapshots.
+
+Detailed published-app auth and user-scope behavior now lives in `backend/documentations/auth/40_auth_published_apps_unified_gate_and_user_scope.md`.
 
 ## Product Scope (Current)
 - Add an admin control plane under `/admin/apps` to create/manage apps.

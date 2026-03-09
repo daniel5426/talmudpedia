@@ -29,6 +29,7 @@ from app.db.postgres.models.published_apps import (
 from app.db.postgres.session import sessionmaker
 from app.services.apps_builder_trace import apps_builder_trace
 from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
+from app.services.published_app_builder_snapshot_filter import filter_builder_snapshot_files
 from app.services.published_app_bundle_storage import PublishedAppBundleStorage
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import (
@@ -49,7 +50,6 @@ _NPM_CI_COMMAND = ["npm", "ci"]
 @dataclass(frozen=True)
 class _PublishSnapshot:
     files: Dict[str, str]
-    publish_workspace_path: str
     live_workspace_path: str
     revision_token: str | None
 
@@ -188,32 +188,80 @@ async def _prepare_publish_snapshot(*, job_id: UUID) -> _PublishSnapshot:
             app_id=str(app.id),
             sandbox_id=str(session.sandbox_id or ""),
         )
-        payload = await runtime_service.client.prepare_publish_workspace(sandbox_id=str(session.sandbox_id))
-        files = {
+        payload = await runtime_service.client.snapshot_workspace(
+            sandbox_id=str(session.sandbox_id),
+            workspace="live",
+        )
+        raw_files = {
             str(path): str(content if isinstance(content, str) else str(content))
             for path, content in dict(payload.get("files") or {}).items()
         }
-        publish_workspace_path = str(payload.get("publish_workspace_path") or payload.get("workspace_path") or "").strip()
-        live_workspace_path = str(payload.get("live_workspace_path") or "").strip()
-        if not publish_workspace_path:
-            raise RuntimeError("Sandbox publish workspace path is missing")
-        if not isinstance(files, dict):
+        if not isinstance(raw_files, dict):
             raise RuntimeError("Sandbox publish snapshot files are missing")
+        live_workspace_path = str(
+            payload.get("live_workspace_path") or payload.get("workspace_path") or ""
+        ).strip()
+        if not live_workspace_path:
+            live_workspace_path = str(
+                await runtime_service.client.resolve_local_workspace_path(sandbox_id=str(session.sandbox_id)) or ""
+            ).strip()
+        if not live_workspace_path:
+            raise RuntimeError("Sandbox live workspace path is missing")
+
+        build_files = apply_runtime_bootstrap_overlay(
+            filter_builder_snapshot_files(raw_files),
+            runtime_context=TemplateRuntimeContext(
+                app_id=str(app.id),
+                app_slug=str(app.slug or ""),
+                agent_id=str(app.agent_id or ""),
+            ),
+        )
+        await _write_publish_bootstrap_overlay_to_live_workspace(
+            runtime_service=runtime_service,
+            sandbox_id=str(session.sandbox_id),
+            current_files=raw_files,
+            overlay_files=build_files,
+        )
         apps_builder_trace(
             "publish.snapshot.completed",
             domain="publish.runtime",
             job_id=str(job.id),
             app_id=str(app.id),
             sandbox_id=str(session.sandbox_id or ""),
-            publish_workspace_path=publish_workspace_path,
             live_workspace_path=live_workspace_path,
-            file_count=len(files),
+            file_count=len(build_files),
         )
         return _PublishSnapshot(
-            files=files,
-            publish_workspace_path=publish_workspace_path,
+            files=build_files,
             live_workspace_path=live_workspace_path,
             revision_token=str(payload.get("revision_token") or "").strip() or None,
+        )
+
+
+async def _write_publish_bootstrap_overlay_to_live_workspace(
+    *,
+    runtime_service: PublishedAppDraftDevRuntimeService,
+    sandbox_id: str,
+    current_files: Dict[str, str],
+    overlay_files: Dict[str, str],
+) -> None:
+    changed_paths = [
+        path
+        for path, content in overlay_files.items()
+        if current_files.get(path) != content
+    ]
+    for path in changed_paths:
+        await runtime_service.client.write_file(
+            sandbox_id=sandbox_id,
+            path=path,
+            content=overlay_files[path],
+        )
+    if changed_paths:
+        apps_builder_trace(
+            "publish.live_overlay_applied",
+            domain="publish.runtime",
+            sandbox_id=sandbox_id,
+            updated_path_count=len(changed_paths),
         )
 
 
@@ -295,14 +343,7 @@ async def _build_upload_and_finalize(
         if checkpoint_revision is None:
             raise RuntimeError("Publish checkpoint revision was not found")
 
-        build_files = apply_runtime_bootstrap_overlay(
-            dict(snapshot.files),
-            runtime_context=TemplateRuntimeContext(
-                app_id=str(app.id),
-                app_slug=str(app.slug or ""),
-                agent_id=str(app.agent_id or ""),
-            ),
-        )
+        build_files = dict(snapshot.files)
         diagnostics = validate_builder_dependency_policy(build_files)
         if diagnostics:
             raise RuntimeError("; ".join(item.get("message", "Build policy violation") for item in diagnostics))
@@ -317,11 +358,6 @@ async def _build_upload_and_finalize(
         )
 
         await _heartbeat_publish_scope(db=db, job=job, session=session, runtime_service=runtime_service, stage="install")
-        await runtime_service.client.sync_workspace_files(
-            sandbox_id=str(session.sandbox_id),
-            workspace_path=snapshot.publish_workspace_path,
-            files=build_files,
-        )
         if _publish_mock_mode_enabled():
             dist_storage_prefix = PublishedAppBundleStorage.build_revision_dist_prefix(
                 tenant_id=str(app.tenant_id),
@@ -349,7 +385,7 @@ async def _build_upload_and_finalize(
             try:
                 dependency_prepare = await runtime_service.client.prepare_publish_dependencies(
                     sandbox_id=str(session.sandbox_id),
-                    workspace_path=snapshot.publish_workspace_path,
+                    workspace_path=snapshot.live_workspace_path,
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
                 dependency_prepare = {
@@ -380,14 +416,14 @@ async def _build_upload_and_finalize(
                     app_id=str(app.id),
                     sandbox_id=str(session.sandbox_id or ""),
                     command=install_command,
-                    workspace_path=snapshot.publish_workspace_path,
+                    workspace_path=snapshot.live_workspace_path,
                 )
                 install_result = await runtime_service.client.run_command(
                     sandbox_id=str(session.sandbox_id),
                     command=install_command,
                     timeout_seconds=npm_install_timeout,
                     max_output_bytes=command_max_output,
-                    workspace_path=snapshot.publish_workspace_path,
+                    workspace_path=snapshot.live_workspace_path,
                 )
                 install_code = _extract_command_exit_code(
                     install_result,
@@ -412,14 +448,14 @@ async def _build_upload_and_finalize(
                 job_id=str(job.id),
                 app_id=str(app.id),
                 sandbox_id=str(session.sandbox_id or ""),
-                workspace_path=snapshot.publish_workspace_path,
+                workspace_path=snapshot.live_workspace_path,
             )
             build_result = await runtime_service.client.run_command(
                 sandbox_id=str(session.sandbox_id),
                 command=["npm", "run", "build"],
                 timeout_seconds=npm_build_timeout,
                 max_output_bytes=command_max_output,
-                workspace_path=snapshot.publish_workspace_path,
+                workspace_path=snapshot.live_workspace_path,
             )
             build_code = _extract_command_exit_code(build_result, command_name="npm run build")
             if build_code != 0:
@@ -433,7 +469,7 @@ async def _build_upload_and_finalize(
                 result=build_result,
             )
 
-            dist_workspace = f"{snapshot.publish_workspace_path.rstrip('/')}/dist"
+            dist_workspace = f"{snapshot.live_workspace_path.rstrip('/')}/dist"
             await _heartbeat_publish_scope(db=db, job=job, session=session, runtime_service=runtime_service, stage="upload")
             archive_response = await runtime_service.client.export_workspace_archive(
                 sandbox_id=str(session.sandbox_id),

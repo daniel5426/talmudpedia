@@ -26,14 +26,13 @@ from app.api.routers.published_apps_public import (
 )
 from app.core.security import decode_published_app_session_token
 from app.db.postgres.engine import sessionmaker
-from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppAccount,
+    PublishedAppAccountStatus,
     PublishedAppRevision,
     PublishedAppSession,
     PublishedAppStatus,
-    PublishedAppUserMembership,
-    PublishedAppUserMembershipStatus,
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
@@ -258,7 +257,7 @@ async def _resolve_optional_principal_from_cookie(
         payload = decode_published_app_session_token(token)
         session_id = UUID(str(payload["session_id"]))
         app_id = UUID(str(payload["app_id"]))
-        user_id = UUID(str(payload["sub"]))
+        app_account_id = UUID(str(payload["app_account_id"]))
     except Exception:
         return None, True
 
@@ -269,7 +268,7 @@ async def _resolve_optional_principal_from_cookie(
     session = result.scalar_one_or_none()
     if session is None:
         return None, True
-    if str(session.published_app_id) != str(app_id) or str(session.user_id) != str(user_id):
+    if str(session.published_app_id) != str(app_id) or str(session.app_account_id) != str(app_account_id):
         return None, True
     if session.revoked_at is not None:
         return None, True
@@ -286,23 +285,18 @@ async def _resolve_optional_principal_from_cookie(
     if app is None:
         return None, True
 
-    user_result = await db.execute(select(User).where(User.id == user_id).limit(1))
-    user = user_result.scalar_one_or_none()
-    if user is None:
-        return None, True
-
-    membership_result = await db.execute(
-        select(PublishedAppUserMembership).where(
+    account_result = await db.execute(
+        select(PublishedAppAccount).where(
             and_(
-                PublishedAppUserMembership.published_app_id == app_id,
-                PublishedAppUserMembership.user_id == user_id,
+                PublishedAppAccount.published_app_id == app_id,
+                PublishedAppAccount.id == app_account_id,
             )
         ).limit(1)
     )
-    membership = membership_result.scalar_one_or_none()
-    if membership is None:
+    account = account_result.scalar_one_or_none()
+    if account is None:
         return None, True
-    if membership.status == PublishedAppUserMembershipStatus.blocked:
+    if account.status == PublishedAppAccountStatus.blocked:
         return None, True
 
     return (
@@ -312,22 +306,24 @@ async def _resolve_optional_principal_from_cookie(
             "app_id": str(app.id),
             "app_slug": app.slug,
             "session_id": str(session.id),
-            "user_id": str(user.id),
-            "user": user,
+            "app_account_id": str(account.id),
+            "global_user_id": str(account.global_user_id) if account.global_user_id else None,
+            "user": account,
             "provider": payload.get("provider", "password"),
-            "membership_status": membership.status.value if hasattr(membership.status, "value") else str(membership.status),
+            "account_status": account.status.value if hasattr(account.status, "value") else str(account.status),
             "scopes": payload.get("scope", []),
         },
         False,
     )
 
 
-def _user_payload(user: User) -> dict[str, Any]:
+def _user_payload(account: PublishedAppAccount) -> dict[str, Any]:
     return {
-        "id": str(user.id),
-        "email": user.email,
-        "full_name": user.full_name,
-        "avatar": user.avatar,
+        "id": str(account.id),
+        "email": account.email,
+        "full_name": account.full_name,
+        "avatar": account.avatar,
+        "account_status": account.status.value if hasattr(account.status, "value") else str(account.status),
     }
 
 
@@ -501,7 +497,7 @@ async def host_signup(
         )
     except PublishedAppAuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    response = JSONResponse({"status": "ok", "user": _user_payload(result.user)})
+    response = JSONResponse({"status": "ok", "user": _user_payload(result.account)})
     _set_session_cookie(response=response, request=request, token=result.token)
     return response
 
@@ -526,7 +522,7 @@ async def host_login(
         )
     except PublishedAppAuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    response = JSONResponse({"status": "ok", "user": _user_payload(result.user)})
+    response = JSONResponse({"status": "ok", "user": _user_payload(result.account)})
     _set_session_cookie(response=response, request=request, token=result.token)
     return response
 
@@ -545,7 +541,7 @@ async def host_exchange_auth_token(
         result = await auth_service.exchange_external_oidc(app=app, token=payload.token)
     except PublishedAppAuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    response = JSONResponse({"status": "ok", "user": _user_payload(result.user)})
+    response = JSONResponse({"status": "ok", "user": _user_payload(result.account)})
     _set_session_cookie(response=response, request=request, token=result.token)
     return response
 
@@ -561,7 +557,7 @@ async def host_logout(
         service = PublishedAppAuthService(db)
         await service.revoke_session(
             session_id=UUID(principal["session_id"]),
-            user_id=UUID(principal["user_id"]),
+            app_account_id=UUID(principal["app_account_id"]),
             app_id=UUID(principal["app_id"]),
         )
     response = JSONResponse({"status": "logged_out"})
@@ -640,7 +636,8 @@ async def host_google_callback(
             token_value=token_response["id_token"],
             client_id=client_id,
         )
-        user = await auth_service.get_or_create_google_user(
+        account = await auth_service.get_or_create_google_account(
+            app=app,
             email=str(profile.get("email", "")).lower(),
             google_id=str(profile.get("sub")),
             full_name=profile.get("name"),
@@ -648,7 +645,7 @@ async def host_google_callback(
         )
         result = await auth_service.issue_auth_result(
             app=app,
-            user=user,
+            account=account,
             provider="google",
             metadata={"google_sub": str(profile.get("sub"))},
         )
@@ -703,7 +700,7 @@ async def host_chat_stream(
         principal=principal,
         enforce_app_auth=True,
         allow_chat_persistence=True,
-        request_user_id=str(principal["user_id"]) if principal else None,
+        request_user_id=str(principal["app_account_id"]) if principal else None,
     )
     if stale_cookie:
         _clear_session_cookie(response=stream_response, request=request)
@@ -728,7 +725,7 @@ async def host_list_threads(
     service = ThreadService(db)
     threads, total = await service.list_threads(
         tenant_id=app.tenant_id,
-        user_id=UUID(principal["user_id"]),
+        app_account_id=UUID(principal["app_account_id"]),
         published_app_id=app.id,
         skip=skip,
         limit=limit,
@@ -763,7 +760,7 @@ async def host_get_thread(
     thread = await service.get_thread_with_turns(
         tenant_id=app.tenant_id,
         thread_id=thread_id,
-        user_id=UUID(principal["user_id"]),
+        app_account_id=UUID(principal["app_account_id"]),
         published_app_id=app.id,
     )
     if thread is None:

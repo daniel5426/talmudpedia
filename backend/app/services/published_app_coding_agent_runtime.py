@@ -235,7 +235,12 @@ class PublishedAppCodingAgentRuntimeService(
             ttl = 120.0
         return max(0.0, ttl)
 
-    async def _resolve_cached_coding_agent_profile(self, *, tenant_id: UUID) -> tuple[Agent, bool]:
+    async def _resolve_cached_coding_agent_profile(
+        self,
+        *,
+        tenant_id: UUID,
+        actor_user_id: UUID | None,
+    ) -> tuple[Agent, bool]:
         cache_ttl = self._profile_cache_ttl_seconds()
         tenant_key = str(tenant_id)
         if cache_ttl > 0:
@@ -258,7 +263,11 @@ class PublishedAppCodingAgentRuntimeService(
                             return cached_profile, True
                 self._profile_cache_by_tenant.pop(tenant_key, None)
 
-        profile = await ensure_coding_agent_profile(self.db, tenant_id)
+        profile = await ensure_coding_agent_profile(
+            self.db,
+            tenant_id,
+            actor_user_id=actor_user_id,
+        )
         if cache_ttl > 0 and profile is not None and profile.id is not None:
             self._profile_cache_by_tenant[tenant_key] = (
                 str(profile.id),
@@ -391,7 +400,10 @@ class PublishedAppCodingAgentRuntimeService(
         _record_create_run_phase_metric("create_run_model_resolve", resolve_model_started_at)
         create_run_phase_metrics["create_run_opencode_model_resolve"] = create_run_phase_metrics["create_run_model_resolve"]
         ensure_profile_started_at = time.monotonic()
-        profile, profile_cache_hit = await self._resolve_cached_coding_agent_profile(tenant_id=app.tenant_id)
+        profile, profile_cache_hit = await self._resolve_cached_coding_agent_profile(
+            tenant_id=app.tenant_id,
+            actor_user_id=actor_id,
+        )
         _record_create_run_phase_metric("create_run_profile_resolve", ensure_profile_started_at)
         create_run_phase_metrics["create_run_profile_cache_hit"] = 1 if profile_cache_hit else 0
 

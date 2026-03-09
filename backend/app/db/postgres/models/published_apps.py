@@ -87,6 +87,11 @@ class PublishedAppUserMembershipStatus(str, enum.Enum):
     blocked = "blocked"
 
 
+class PublishedAppAccountStatus(str, enum.Enum):
+    active = "active"
+    blocked = "blocked"
+
+
 class PublishedAppCustomDomainStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
@@ -133,6 +138,7 @@ class PublishedApp(Base):
     tenant = relationship("Tenant")
     agent = relationship("Agent")
     creator = relationship("User")
+    app_accounts = relationship("PublishedAppAccount", back_populates="published_app", cascade="all, delete-orphan")
     memberships = relationship("PublishedAppUserMembership", back_populates="published_app", cascade="all, delete-orphan")
     sessions = relationship("PublishedAppSession", back_populates="published_app", cascade="all, delete-orphan")
     external_identities = relationship(
@@ -201,6 +207,40 @@ class PublishedAppUserMembership(Base):
     )
 
 
+class PublishedAppAccount(Base):
+    __tablename__ = "published_app_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="CASCADE"), nullable=False, index=True)
+    global_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    email = Column(String, nullable=False)
+    full_name = Column(String, nullable=True)
+    avatar = Column(String, nullable=True)
+    hashed_password = Column(String, nullable=True)
+    status = Column(
+        SQLEnum(PublishedAppAccountStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppAccountStatus.active,
+    )
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    metadata_ = Column(JSONB, nullable=False, default=dict, name="metadata")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="app_accounts")
+    global_user = relationship("User")
+    sessions = relationship("PublishedAppSession", back_populates="app_account", cascade="all, delete-orphan")
+    external_identities = relationship(
+        "PublishedAppExternalIdentity",
+        back_populates="app_account",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("published_app_id", "email", name="uq_published_app_account_email"),
+    )
+
+
 class PublishedAppCustomDomain(Base):
     __tablename__ = "published_app_custom_domains"
 
@@ -236,7 +276,8 @@ class PublishedAppSession(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="CASCADE"), nullable=True, index=True)
 
     jti = Column(String, nullable=False, unique=True, index=True)
     provider = Column(String, nullable=False)
@@ -248,9 +289,11 @@ class PublishedAppSession(Base):
 
     published_app = relationship("PublishedApp", back_populates="sessions")
     user = relationship("User")
+    app_account = relationship("PublishedAppAccount", back_populates="sessions")
 
     __table_args__ = (
         Index("ix_published_app_sessions_app_user", "published_app_id", "user_id"),
+        Index("ix_published_app_sessions_app_account", "published_app_id", "app_account_id"),
     )
 
 
@@ -267,7 +310,13 @@ class PublishedAppExternalIdentity(Base):
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        index=True,
+    )
+    app_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_accounts.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     provider = Column(String, nullable=False, default="oidc")
@@ -280,6 +329,7 @@ class PublishedAppExternalIdentity(Base):
 
     published_app = relationship("PublishedApp", back_populates="external_identities")
     user = relationship("User")
+    app_account = relationship("PublishedAppAccount", back_populates="external_identities")
 
     __table_args__ = (
         UniqueConstraint(

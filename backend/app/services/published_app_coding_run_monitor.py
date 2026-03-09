@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, a
 from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp
+from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_batch_finalizer import PublishedAppCodingBatchFinalizer
 from app.services.published_app_coding_run_monitor_config import (
@@ -222,6 +223,12 @@ class PublishedAppCodingRunMonitor:
     @classmethod
     async def _finalize_terminal_scope_detached(cls, *, app_id: UUID, run_id: UUID) -> None:
         try:
+            apps_builder_trace(
+                "monitor.batch_finalize_begin",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+            )
             async with cls._session_factory() as db:
                 finalizer = PublishedAppCodingBatchFinalizer(db)
                 cls._trace(
@@ -236,6 +243,13 @@ class PublishedAppCodingRunMonitor:
                     app_id=str(app_id),
                     result=result,
                 )
+                apps_builder_trace(
+                    "monitor.batch_finalize_done",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    result=result,
+                )
         except Exception as exc:
             logger.exception(
                 "CODING_AGENT_MONITOR batch_finalize_failed run_id=%s app_id=%s",
@@ -244,6 +258,14 @@ class PublishedAppCodingRunMonitor:
             )
             cls._trace(
                 "monitor.batch_finalize_failed",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
+            apps_builder_trace(
+                "monitor.batch_finalize_failed",
+                domain="coding_agent.finalizer",
                 run_id=str(run_id),
                 app_id=str(app_id),
                 error=str(exc),

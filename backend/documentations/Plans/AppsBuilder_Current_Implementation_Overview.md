@@ -211,6 +211,7 @@ Publish job observability (current additions):
 Recent publish correctness fixes reflected in code:
 - Fixed false `npm install` failure on success (`exit code 0`) in sandbox publish command result handling.
 - Sandbox publish no longer regresses/reverts preview state by syncing stale frontend payload files into the live sandbox before snapshot.
+- Sandbox publish now builds directly from the live workspace instead of cloning into a separate publish workspace.
 - Sandbox publish route no longer rejects with `REVISION_CONFLICT` solely because a newer draft revision was created while the live sandbox snapshot is still the intended publish source.
 
 ## Public Runtime Delivery

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import pytest
@@ -141,10 +142,15 @@ class _FakeSpriteRuntimeClient:
             raise PublishedAppDraftDevRuntimeClientError(
                 f"Sprite request failed (404) for /v1/sprites/{kwargs['sandbox_id']}: not found"
             )
+        sandbox_id = str(kwargs["sandbox_id"])
         return {
-            "sandbox_id": kwargs["sandbox_id"],
+            "sandbox_id": sandbox_id,
             "status": "serving",
             "runtime_backend": "sprite",
+            "backend_metadata": self._metadata(
+                sandbox_id=sandbox_id,
+                preview_base_path="/public/apps-builder/draft-dev/sessions/heartbeat/preview/",
+            ),
         }
 
     async def stop_session(self, **kwargs):
@@ -207,6 +213,106 @@ async def test_shared_workspace_is_reused_across_users(client, db_session, monke
     )
     assert workspace is not None
     assert workspace.sandbox_id == first_session.sandbox_id
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session, monkeypatch: pytest.MonkeyPatch):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    fake_client = _FakeSpriteRuntimeClient()
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Refresh App")
+
+    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
+    assert ensure_resp.status_code == 200
+    session_id = UUID(str(ensure_resp.json()["session_id"]))
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+    workspace.backend_metadata = {
+        "preview": {
+            "upstream_base_url": "https://stale-sprite-host.example",
+            "base_path": "/public/apps-builder/draft-dev/sessions/stale/preview/",
+            "upstream_path": "/",
+        }
+    }
+    await db_session.commit()
+
+    heartbeat_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/heartbeat", headers=headers)
+    assert heartbeat_resp.status_code == 200
+
+    await db_session.refresh(workspace)
+    await db_session.refresh(session)
+    assert workspace.backend_metadata["preview"]["upstream_base_url"].startswith("https://sprite-")
+    assert session.backend_metadata["preview"]["upstream_base_url"] == workspace.backend_metadata["preview"]["upstream_base_url"]
+    assert workspace.backend_metadata["preview"]["base_path"] == str(session.preview_url)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_preserves_existing_preview_base_path_when_refresh_returns_root(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    fake_client = _FakeSpriteRuntimeClient()
+
+    async def _heartbeat_root_base_path(**kwargs):
+        sandbox_id = str(kwargs["sandbox_id"])
+        return {
+            "sandbox_id": sandbox_id,
+            "status": "serving",
+            "runtime_backend": "sprite",
+            "backend_metadata": {
+                "preview": {
+                    "upstream_base_url": f"https://{sandbox_id}.sprites.app",
+                    "base_path": "/",
+                    "upstream_path": "/",
+                },
+                "workspace": {
+                    "sprite_name": sandbox_id,
+                },
+                "services": {
+                    "preview_port": 8080,
+                },
+            },
+        }
+
+    fake_client.heartbeat_session = _heartbeat_root_base_path
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Base Path Preserve App")
+
+    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
+    assert ensure_resp.status_code == 200
+    payload = ensure_resp.json()
+    session_id = UUID(str(payload["session_id"]))
+    expected_base_path = urlparse(str(payload["preview_url"])).path
+
+    heartbeat_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/heartbeat", headers=headers)
+    assert heartbeat_resp.status_code == 200
+
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+    assert workspace.backend_metadata["preview"]["base_path"] == expected_base_path
+    assert session.backend_metadata["preview"]["base_path"] == expected_base_path
 
 
 @pytest.mark.asyncio

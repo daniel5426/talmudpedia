@@ -5,6 +5,13 @@ from typing import Dict, List, Optional
 from fastapi import HTTPException
 
 from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
+from app.services.published_app_builder_snapshot_filter import (
+    BUILDER_SNAPSHOT_IGNORED_FILE_NAMES,
+    BUILDER_SNAPSHOT_IGNORED_SUFFIXES,
+    filter_builder_snapshot_files,
+    is_builder_snapshot_artifact_path,
+    normalize_builder_snapshot_path,
+)
 
 from .published_apps_admin_builder_core import _builder_compile_error, _builder_policy_error
 from .published_apps_admin_shared import (
@@ -23,30 +30,8 @@ from .published_apps_admin_shared import (
     IMPORT_RE,
 )
 
-BUILDER_SNAPSHOT_IGNORED_FILE_NAMES = {
-    ".eslintcache",
-    ".stylelintcache",
-}
-BUILDER_SNAPSHOT_IGNORED_SUFFIXES = (
-    ".tsbuildinfo",
-)
-
-
 def _normalize_builder_path(path: str) -> str:
-    raw = (path or "").replace("\\", "/").strip()
-    if not raw:
-        raise _builder_policy_error("File path is required", field="path")
-    if raw.startswith("/"):
-        raise _builder_policy_error("Absolute paths are not allowed", field="path")
-
-    parts: List[str] = []
-    for part in raw.split("/"):
-        if not part or part == ".":
-            continue
-        if part == "..":
-            raise _builder_policy_error("Path traversal is not allowed", field="path")
-        parts.append(part)
-    normalized = "/".join(parts)
+    normalized = normalize_builder_snapshot_path(path)
     if not normalized:
         raise _builder_policy_error("File path is required", field="path")
     return normalized
@@ -101,51 +86,19 @@ def _assert_builder_path_allowed(path: str, *, field: str = "path") -> None:
 
 
 def _is_builder_snapshot_artifact_path(path: str) -> bool:
-    lowered = path.lower()
-    segments = [segment for segment in lowered.split("/") if segment]
-    if "node_modules" in segments:
-        return True
-    if lowered.startswith(".opencode/.bun/") or lowered == ".opencode/.bun":
-        return True
-    blocked_prefix = next(
-        (
-            prefix
-            for prefix in BUILDER_BLOCKED_DIR_PREFIXES
-            if lowered == prefix.rstrip("/") or lowered.startswith(prefix)
-        ),
-        None,
-    )
-    if blocked_prefix:
-        return True
-
-    filename = PurePosixPath(lowered).name
-    if filename in BUILDER_SNAPSHOT_IGNORED_FILE_NAMES:
-        return True
-    if any(filename.endswith(suffix) for suffix in BUILDER_SNAPSHOT_IGNORED_SUFFIXES):
-        return True
-    return False
+    return is_builder_snapshot_artifact_path(path)
 
 
 def _filter_builder_snapshot_files(files: Dict[str, object]) -> Dict[str, str]:
-    filtered: Dict[str, str] = {}
-    for raw_path, raw_content in files.items():
-        if not isinstance(raw_path, str):
-            continue
-        try:
-            normalized_path = _normalize_builder_path(raw_path)
-        except HTTPException:
-            continue
-
-        if _is_builder_snapshot_artifact_path(normalized_path):
-            continue
-
+    filtered = filter_builder_snapshot_files(files)
+    validated: Dict[str, str] = {}
+    for normalized_path, content in filtered.items():
         try:
             _assert_builder_path_allowed(normalized_path, field="files")
         except HTTPException:
             continue
-
-        filtered[normalized_path] = raw_content if isinstance(raw_content, str) else str(raw_content)
-    return filtered
+        validated[normalized_path] = content
+    return validated
 
 
 def _resolve_local_project_import(import_path: str, importer_path: str, files: Dict[str, str]) -> Optional[str]:

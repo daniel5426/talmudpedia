@@ -18,10 +18,10 @@ from app.core.security import create_published_app_session_token, get_password_h
 from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppAccount,
+    PublishedAppAccountStatus,
     PublishedAppExternalIdentity,
     PublishedAppSession,
-    PublishedAppUserMembership,
-    PublishedAppUserMembershipStatus,
 )
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 
@@ -39,7 +39,7 @@ class PublishedAppAuthError(Exception):
 @dataclass
 class AuthResult:
     token: str
-    user: User
+    account: PublishedAppAccount
     session: PublishedAppSession
 
 
@@ -58,37 +58,124 @@ class PublishedAppAuthService:
         )
         return result.scalar_one_or_none()
 
-    async def ensure_membership(self, app: PublishedApp, user: User) -> PublishedAppUserMembership:
+    @staticmethod
+    def _default_avatar(seed: str) -> str:
+        return f"https://api.dicebear.com/7.x/initials/svg?seed={seed}"
+
+    async def _touch_account(
+        self,
+        *,
+        account: PublishedAppAccount,
+        full_name: Optional[str] = None,
+        avatar: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> PublishedAppAccount:
+        if account.status == PublishedAppAccountStatus.blocked:
+            raise PublishedAppAuthError("User is blocked for this app")
+        if full_name:
+            account.full_name = full_name
+        if avatar:
+            account.avatar = avatar
+        account.status = PublishedAppAccountStatus.active
+        account.last_login_at = datetime.now(timezone.utc)
+        if metadata:
+            merged = dict(account.metadata_ or {})
+            merged.update(metadata)
+            account.metadata_ = merged
+        await self.db.flush()
+        return account
+
+    async def _create_account(
+        self,
+        *,
+        app: PublishedApp,
+        email: str,
+        full_name: Optional[str] = None,
+        avatar: Optional[str] = None,
+        hashed_password: Optional[str] = None,
+        global_user_id: Optional[UUID] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> PublishedAppAccount:
+        account = PublishedAppAccount(
+            published_app_id=app.id,
+            global_user_id=global_user_id,
+            email=email.strip().lower(),
+            full_name=full_name,
+            avatar=avatar or self._default_avatar(full_name or email),
+            hashed_password=hashed_password,
+            status=PublishedAppAccountStatus.active,
+            last_login_at=datetime.now(timezone.utc),
+            metadata_=dict(metadata or {}),
+        )
+        self.db.add(account)
+        await self.db.flush()
+        return account
+
+    async def _get_account_by_email(self, *, app_id: UUID, email: str) -> Optional[PublishedAppAccount]:
         result = await self.db.execute(
-            select(PublishedAppUserMembership).where(
-                PublishedAppUserMembership.published_app_id == app.id,
-                PublishedAppUserMembership.user_id == user.id,
+            select(PublishedAppAccount).where(
+                and_(
+                    PublishedAppAccount.published_app_id == app_id,
+                    PublishedAppAccount.email == email.strip().lower(),
+                )
             ).limit(1)
         )
-        membership = result.scalar_one_or_none()
-        if membership is None:
-            membership = PublishedAppUserMembership(
-                published_app_id=app.id,
-                user_id=user.id,
-                status=PublishedAppUserMembershipStatus.active,
-                last_login_at=datetime.now(timezone.utc),
+        return result.scalar_one_or_none()
+
+    async def _get_or_create_global_human(
+        self,
+        *,
+        email: Optional[str],
+        full_name: Optional[str],
+        avatar: Optional[str],
+        google_id: Optional[str] = None,
+    ) -> Optional[User]:
+        normalized_email = (email or "").strip().lower()
+        if not normalized_email and not google_id:
+            return None
+        result = await self.db.execute(
+            select(User).where(
+                (User.google_id == google_id) if google_id and not normalized_email else (
+                    (User.google_id == google_id) | (User.email == normalized_email)
+                    if google_id and normalized_email
+                    else (User.email == normalized_email)
+                )
+            ).limit(1)
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            synthetic_email = normalized_email or f"published-app-{uuid4().hex}@external.local"
+            user = User(
+                email=synthetic_email,
+                google_id=google_id,
+                full_name=full_name,
+                avatar=avatar or self._default_avatar(full_name or synthetic_email),
+                role="user",
             )
-            self.db.add(membership)
+            self.db.add(user)
             await self.db.flush()
-            return membership
+            return user
 
-        if membership.status == PublishedAppUserMembershipStatus.blocked:
-            raise PublishedAppAuthError("User is blocked for this app")
-
-        membership.status = PublishedAppUserMembershipStatus.active
-        membership.last_login_at = datetime.now(timezone.utc)
+        if google_id and not user.google_id:
+            user.google_id = google_id
+        if full_name and not user.full_name:
+            user.full_name = full_name
+        if avatar and not user.avatar:
+            user.avatar = avatar
         await self.db.flush()
-        return membership
+        return user
 
-    async def create_session(self, app: PublishedApp, user: User, provider: str, metadata: Optional[dict[str, Any]] = None) -> PublishedAppSession:
+    async def create_session(
+        self,
+        app: PublishedApp,
+        account: PublishedAppAccount,
+        provider: str,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> PublishedAppSession:
         session = PublishedAppSession(
             published_app_id=app.id,
-            user_id=user.id,
+            user_id=account.global_user_id,
+            app_account_id=account.id,
             jti=str(uuid4()),
             provider=provider,
             metadata_=metadata or {},
@@ -98,20 +185,28 @@ class PublishedAppAuthService:
         await self.db.flush()
         return session
 
-    async def issue_auth_result(self, app: PublishedApp, user: User, provider: str, metadata: Optional[dict[str, Any]] = None) -> AuthResult:
-        await self.ensure_membership(app, user)
-        session = await self.create_session(app, user, provider, metadata=metadata)
+    async def issue_auth_result(
+        self,
+        *,
+        app: PublishedApp,
+        account: PublishedAppAccount,
+        provider: str,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> AuthResult:
+        account = await self._touch_account(account=account, metadata=metadata)
+        session = await self.create_session(app, account, provider, metadata=metadata)
         token = create_published_app_session_token(
-            subject=str(user.id),
+            subject=str(account.id),
             tenant_id=str(app.tenant_id),
             app_id=str(app.id),
+            app_account_id=str(account.id),
             session_id=str(session.id),
             provider=provider,
             scopes=["public.chat", "public.chats.read"],
             expires_delta=timedelta(days=SESSION_TTL_DAYS),
         )
         await self.db.commit()
-        return AuthResult(token=token, user=user, session=session)
+        return AuthResult(token=token, account=account, session=session)
 
     def verify_external_oidc_token(self, *, token: str, config: dict[str, Any]) -> dict[str, Any]:
         issuer = str(config.get("issuer") or "").strip().rstrip("/")
@@ -142,7 +237,7 @@ class PublishedAppAuthService:
         except Exception as exc:
             raise PublishedAppAuthError(f"Failed to verify external OIDC token: {exc}") from exc
 
-    async def _get_or_create_external_identity_user(
+    async def _get_or_create_external_identity_account(
         self,
         *,
         app: PublishedApp,
@@ -151,8 +246,9 @@ class PublishedAppAuthService:
         subject: str,
         email: Optional[str],
         full_name: Optional[str],
+        avatar: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
-    ) -> User:
+    ) -> PublishedAppAccount:
         result = await self.db.execute(
             select(PublishedAppExternalIdentity).where(
                 and_(
@@ -165,45 +261,55 @@ class PublishedAppAuthService:
         )
         identity = result.scalar_one_or_none()
         if identity is not None:
-            user = await self.db.get(User, identity.user_id)
-            if user is None:
-                raise PublishedAppAuthError("External identity is linked to a missing user")
+            if identity.app_account_id is None:
+                raise PublishedAppAuthError("External identity is linked to a missing app account")
+            account = await self.db.get(PublishedAppAccount, identity.app_account_id)
+            if account is None:
+                raise PublishedAppAuthError("External identity is linked to a missing app account")
             if email:
+                account.email = email
                 identity.email = email
             if metadata:
                 identity.metadata_ = dict(metadata)
-            await self.db.flush()
-            return user
+            await self._touch_account(account=account, full_name=full_name, avatar=avatar, metadata=metadata)
+            return account
 
-        resolved_email = (email or "").strip().lower()
-        user: Optional[User] = None
-        if resolved_email:
-            user_result = await self.db.execute(select(User).where(User.email == resolved_email).limit(1))
-            user = user_result.scalar_one_or_none()
-
-        if user is None:
-            synthetic_email = resolved_email or f"oidc-{uuid4().hex}@external.local"
-            user = User(
-                email=synthetic_email,
+        normalized_email = (email or "").strip().lower()
+        account = None
+        if normalized_email:
+            account = await self._get_account_by_email(app_id=app.id, email=normalized_email)
+        global_user = await self._get_or_create_global_human(
+            email=normalized_email or None,
+            full_name=full_name,
+            avatar=avatar,
+        )
+        if account is None:
+            account = await self._create_account(
+                app=app,
+                email=normalized_email or f"oidc-{uuid4().hex}@external.local",
                 full_name=full_name,
-                role="user",
-                avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or synthetic_email}",
+                avatar=avatar,
+                global_user_id=global_user.id if global_user else None,
+                metadata=metadata,
             )
-            self.db.add(user)
-            await self.db.flush()
+        else:
+            if global_user and account.global_user_id is None:
+                account.global_user_id = global_user.id
+            await self._touch_account(account=account, full_name=full_name, avatar=avatar, metadata=metadata)
 
         identity = PublishedAppExternalIdentity(
             published_app_id=app.id,
-            user_id=user.id,
+            user_id=global_user.id if global_user else None,
+            app_account_id=account.id,
             provider=provider,
             issuer=issuer,
             subject=subject,
-            email=resolved_email or None,
+            email=normalized_email or None,
             metadata_=dict(metadata or {}),
         )
         self.db.add(identity)
         await self.db.flush()
-        return user
+        return account
 
     async def exchange_external_oidc(self, *, app: PublishedApp, token: str) -> AuthResult:
         config = app.external_auth_oidc or {}
@@ -231,7 +337,7 @@ class PublishedAppAuthService:
             "name_claim": name_claim,
         }
 
-        user = await self._get_or_create_external_identity_user(
+        account = await self._get_or_create_external_identity_account(
             app=app,
             provider="oidc",
             issuer=issuer,
@@ -242,72 +348,111 @@ class PublishedAppAuthService:
         )
         return await self.issue_auth_result(
             app=app,
-            user=user,
+            account=account,
             provider="oidc",
             metadata=identity_metadata,
         )
 
-    async def signup_with_password(self, app: PublishedApp, email: str, password: str, full_name: Optional[str] = None) -> AuthResult:
+    async def signup_with_password(
+        self,
+        app: PublishedApp,
+        email: str,
+        password: str,
+        full_name: Optional[str] = None,
+    ) -> AuthResult:
+        normalized_email = email.strip().lower()
         if len(password) < 6:
             raise PublishedAppAuthError("Password must be at least 6 characters")
 
-        result = await self.db.execute(select(User).where(User.email == email).limit(1))
-        existing_user = result.scalar_one_or_none()
-        if existing_user is not None:
-            raise PublishedAppAuthError("A user with this email already exists")
+        existing_account = await self._get_account_by_email(app_id=app.id, email=normalized_email)
+        if existing_account is not None:
+            raise PublishedAppAuthError("A user with this email already exists for this app")
 
-        user = User(
-            email=email,
+        global_user = await self._get_or_create_global_human(
+            email=normalized_email,
+            full_name=full_name,
+            avatar=self._default_avatar(full_name or normalized_email),
+        )
+        account = await self._create_account(
+            app=app,
+            email=normalized_email,
             full_name=full_name,
             hashed_password=get_password_hash(password),
-            role="user",
-            avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or email}",
+            global_user_id=global_user.id if global_user else None,
         )
-        self.db.add(user)
-        await self.db.flush()
-        return await self.issue_auth_result(app=app, user=user, provider="password")
+        return await self.issue_auth_result(app=app, account=account, provider="password")
 
     async def login_with_password(self, app: PublishedApp, email: str, password: str) -> AuthResult:
-        result = await self.db.execute(select(User).where(User.email == email).limit(1))
-        user = result.scalar_one_or_none()
-        if user is None or not user.hashed_password or not verify_password(password, user.hashed_password):
+        account = await self._get_account_by_email(app_id=app.id, email=email)
+        if account is None or not account.hashed_password or not verify_password(password, account.hashed_password):
             raise PublishedAppAuthError("Invalid email or password")
-        return await self.issue_auth_result(app=app, user=user, provider="password")
+        if account.status == PublishedAppAccountStatus.blocked:
+            raise PublishedAppAuthError("User is blocked for this app")
+        return await self.issue_auth_result(app=app, account=account, provider="password")
 
-    async def get_or_create_google_user(
+    async def get_or_create_google_account(
         self,
         *,
+        app: PublishedApp,
         email: str,
         google_id: str,
         full_name: Optional[str],
         avatar: Optional[str],
-    ) -> User:
+    ) -> PublishedAppAccount:
+        global_user = await self._get_or_create_global_human(
+            email=email,
+            full_name=full_name,
+            avatar=avatar,
+            google_id=google_id,
+        )
         result = await self.db.execute(
-            select(User).where(
-                (User.google_id == google_id) | (User.email == email)
+            select(PublishedAppExternalIdentity).where(
+                and_(
+                    PublishedAppExternalIdentity.published_app_id == app.id,
+                    PublishedAppExternalIdentity.provider == "google",
+                    PublishedAppExternalIdentity.issuer == "google",
+                    PublishedAppExternalIdentity.subject == google_id,
+                )
             ).limit(1)
         )
-        user = result.scalar_one_or_none()
-        if user is None:
-            user = User(
+        identity = result.scalar_one_or_none()
+        if identity is not None and identity.app_account_id:
+            account = await self.db.get(PublishedAppAccount, identity.app_account_id)
+            if account is None:
+                raise PublishedAppAuthError("Google identity is linked to a missing app account")
+            if global_user and account.global_user_id is None:
+                account.global_user_id = global_user.id
+            await self._touch_account(account=account, full_name=full_name, avatar=avatar)
+            return account
+
+        account = await self._get_account_by_email(app_id=app.id, email=email)
+        if account is None:
+            account = await self._create_account(
+                app=app,
                 email=email,
-                google_id=google_id,
                 full_name=full_name,
                 avatar=avatar,
-                role="user",
+                global_user_id=global_user.id if global_user else None,
+                metadata={"provider": "google"},
             )
-            self.db.add(user)
-            await self.db.flush()
-            return user
+        else:
+            if global_user and account.global_user_id is None:
+                account.global_user_id = global_user.id
+            await self._touch_account(account=account, full_name=full_name, avatar=avatar)
 
-        if not user.google_id:
-            user.google_id = google_id
-        if full_name and not user.full_name:
-            user.full_name = full_name
-        if avatar and not user.avatar:
-            user.avatar = avatar
+        identity = PublishedAppExternalIdentity(
+            published_app_id=app.id,
+            user_id=global_user.id if global_user else None,
+            app_account_id=account.id,
+            provider="google",
+            issuer="google",
+            subject=google_id,
+            email=email,
+            metadata_={"provider": "google"},
+        )
+        self.db.add(identity)
         await self.db.flush()
-        return user
+        return account
 
     def build_google_auth_url(self, *, client_id: str, redirect_uri: str, app_slug: str, return_to: str) -> str:
         state_payload = {
@@ -377,12 +522,12 @@ class PublishedAppAuthService:
         except Exception as exc:
             raise PublishedAppAuthError(f"Invalid Google ID token: {exc}") from exc
 
-    async def revoke_session(self, session_id: UUID, user_id: UUID, app_id: UUID) -> bool:
+    async def revoke_session(self, session_id: UUID, app_account_id: UUID, app_id: UUID) -> bool:
         result = await self.db.execute(
             select(PublishedAppSession).where(
                 and_(
                     PublishedAppSession.id == session_id,
-                    PublishedAppSession.user_id == user_id,
+                    PublishedAppSession.app_account_id == app_account_id,
                     PublishedAppSession.published_app_id == app_id,
                 )
             ).limit(1)

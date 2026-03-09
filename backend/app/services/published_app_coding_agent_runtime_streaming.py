@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp
+from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.services.published_app_coding_agent_engines.base import EngineRunContext
 from app.services.published_app_coding_pipeline_trace import pipeline_trace
@@ -510,6 +511,23 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     assistant_delta_events=assistant_delta_events,
                     saw_write_tool_event=saw_write_tool_event,
                     revision_created=bool(run.result_revision_id),
+                )
+                input_context = run.input_params.get("context") if isinstance(run.input_params, dict) else {}
+                sandbox_id = None
+                if isinstance(input_context, dict):
+                    sandbox_id = str(input_context.get("preview_sandbox_id") or "") or None
+                apps_builder_trace(
+                    "runtime_stream.run_completed_emitted",
+                    domain="coding_agent.runtime",
+                    run_id=str(run.id),
+                    app_id=str(app.id),
+                    actor_id=str(run.initiator_user_id or run.user_id or "") or None,
+                    sandbox_id=sandbox_id,
+                    has_workspace_writes=bool(run.has_workspace_writes),
+                    result_revision_id=str(run.result_revision_id) if run.result_revision_id else None,
+                    batch_finalized_at=run.batch_finalized_at.isoformat() if isinstance(run.batch_finalized_at, datetime) else None,
+                    completed_at=run.completed_at.isoformat() if isinstance(run.completed_at, datetime) else None,
+                    note="terminal run event emitted before detached batch finalizer may finish",
                 )
                 await release_run_lock()
                 trace_stream(

@@ -34,6 +34,7 @@ class AgentThread(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
     surface = Column(SQLEnum(AgentThreadSurface), nullable=False, default=AgentThreadSurface.internal, index=True)
@@ -46,6 +47,7 @@ class AgentThread(Base):
 
     tenant = relationship("Tenant")
     user = relationship("User")
+    app_account = relationship("PublishedAppAccount")
     agent = relationship("Agent")
     published_app = relationship("PublishedApp")
     last_run = relationship("AgentRun", foreign_keys=[last_run_id])
@@ -58,6 +60,7 @@ class AgentThread(Base):
 
     __table_args__ = (
         Index("ix_agent_threads_scope_activity", "tenant_id", "user_id", "last_activity_at"),
+        Index("ix_agent_threads_app_account_activity", "tenant_id", "app_account_id", "last_activity_at"),
     )
 
 

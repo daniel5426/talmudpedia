@@ -1,0 +1,22 @@
+{
+  "app_id": "79ae3dda-7719-449b-9637-54ca33e85f5b",
+  "current_draft_revision_id": "5341e85f-af7c-47cf-9e84-78eb7c03fec9",
+  "event_count": 10,
+  "events_path": "/Users/danielbenassaya/Code/personal/talmudpedia/backend/artifacts/e2e/apps_builder/20260309T183240Z-coding-run-live-coding-e2e-18de77e3db.events.jsonl",
+  "final_version_count": 1,
+  "generated_at": "2026-03-09T18:33:53.412679+00:00",
+  "initial_revision_id": "5341e85f-af7c-47cf-9e84-78eb7c03fec9",
+  "initial_version_count": 1,
+  "latest_version_build_status": "queued",
+  "latest_version_id": "5341e85f-af7c-47cf-9e84-78eb7c03fec9",
+  "latest_version_origin_run_id": null,
+  "latest_version_preview_asset_status": null,
+  "marker": "LIVE-CODING-E2E-18de77e3db",
+  "observer_tick_count": 4,
+  "preview_contains_marker": false,
+  "run_id": "0479d7d6-4f3a-4bef-a149-6e32bf5bd1be",
+  "run_result_revision_id": null,
+  "run_status": "failed",
+  "stream_event_count": 1,
+  "trace_path": "/Users/danielbenassaya/Code/personal/talmudpedia/backend/artifacts/e2e/apps_builder/20260309T183240Z-coding-run-live-coding-e2e-18de77e3db.trace.jsonl"
+}

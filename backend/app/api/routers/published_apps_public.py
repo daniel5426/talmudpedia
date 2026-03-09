@@ -430,22 +430,23 @@ async def _stream_chat_for_app(
             raise HTTPException(status_code=403, detail="Token does not belong to this app")
 
     user_uuid: Optional[UUID] = None
+    app_account_uuid: Optional[UUID] = None
     run_messages: List[dict[str, Any]] = []
     can_persist_thread = (
         allow_chat_persistence
         and app.auth_enabled
         and principal is not None
-        and bool(principal.get("user_id"))
+        and bool(principal.get("app_account_id"))
     )
     if can_persist_thread:
-        user_uuid = UUID(str(principal["user_id"]))
+        app_account_uuid = UUID(str(principal["app_account_id"]))
 
     if payload.thread_id:
         thread_service = ThreadService(db)
         existing_thread = await thread_service.get_thread_with_turns(
             tenant_id=app.tenant_id,
             thread_id=payload.thread_id,
-            user_id=user_uuid,
+            app_account_id=app_account_uuid,
             published_app_id=app.id,
         )
         if existing_thread is None:
@@ -459,7 +460,11 @@ async def _stream_chat_for_app(
     executor = AgentExecutorService(db=db)
     request_context = dict(payload.context or {})
     request_context.setdefault("tenant_id", str(app.tenant_id))
-    request_context.setdefault("user_id", str(user_uuid) if user_uuid else _normalize_optional_user_id(request_user_id))
+    request_context.setdefault(
+        "user_id",
+        str(user_uuid) if user_uuid else (None if principal is not None else _normalize_optional_user_id(request_user_id)),
+    )
+    request_context.setdefault("published_app_account_id", str(app_account_uuid) if app_account_uuid else None)
     request_context.setdefault("published_app_id", str(app.id))
     request_context.setdefault("published_app_slug", app.slug)
     request_context.setdefault("thread_id", str(payload.thread_id) if payload.thread_id else None)

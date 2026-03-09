@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import shlex
@@ -11,6 +12,10 @@ from urllib.parse import urlencode
 
 import httpx
 
+from app.services.published_app_builder_snapshot_filter import (
+    BUILDER_SNAPSHOT_IGNORED_FILE_NAMES,
+    BUILDER_SNAPSHOT_IGNORED_SUFFIXES,
+)
 from app.services.published_app_sandbox_backend import (
     PublishedAppSandboxBackend,
     PublishedAppSandboxBackendError,
@@ -18,6 +23,7 @@ from app.services.published_app_sandbox_backend import (
 from app.services.published_app_sprite_proxy_tunnel import get_sprite_proxy_tunnel_manager
 
 
+logger = logging.getLogger(__name__)
 _EXIT_MARKER = "__CODEX_EXIT_CODE__="
 _REVISION_FILE = ".talmudpedia/runtime-revision-token"
 _DEPENDENCY_HASH_FILE = ".talmudpedia/dependency-hash"
@@ -27,6 +33,23 @@ _EXEC_CONTROL_TRANSLATION = {
     for codepoint in range(32)
     if chr(codepoint) not in {"\n", "\r", "\t"}
 }
+_SNAPSHOT_IGNORE_PREFIXES = (
+    ".talmudpedia/",
+    ".cache/",
+    ".git/",
+    ".next/",
+    ".npm/",
+    ".opencode/.bun/",
+    ".parcel-cache/",
+    ".pnpm-store/",
+    ".turbo/",
+    ".vite/",
+    ".yarn/",
+    "__pycache__/",
+    "build/",
+    "coverage/",
+    "dist/",
+)
 
 
 class SpriteSandboxBackend(PublishedAppSandboxBackend):
@@ -71,12 +94,6 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         if explicit:
             return explicit.rstrip("/")
         return "/home/sprite/.talmudpedia/stage/current/workspace"
-
-    def _publish_workspace_path(self) -> str:
-        explicit = str(self.config.sprite_publish_workspace_path or "").strip()
-        if explicit:
-            return explicit.rstrip("/")
-        return "/home/sprite/.talmudpedia/publish/current/workspace"
 
     def _preview_service_name(self) -> str:
         return str(self.config.sprite_preview_service_name or "builder-preview").strip() or "builder-preview"
@@ -177,13 +194,14 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
 
     async def _ensure_services(self, *, sprite_name: str) -> None:
         live_workspace_path = self._live_workspace_path()
+        stage_workspace_path = self._stage_workspace_path()
         preview_script = (
             f"cd {shlex.quote(live_workspace_path)} && "
             f"npm run dev -- --host 0.0.0.0 --port {self._preview_port()}"
         )
         opencode_command = str(
             self.config.sprite_opencode_command
-            or f"cd {shlex.quote(live_workspace_path)} && "
+            or f"cd {shlex.quote(stage_workspace_path)} && "
             f"(opencode serve --hostname 0.0.0.0 --port {self._opencode_port()} "
             f"|| npx -y opencode-ai serve --hostname 0.0.0.0 --port {self._opencode_port()})"
         ).strip()
@@ -459,7 +477,6 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
                 "-p",
                 self._live_workspace_path(),
                 self._stage_workspace_path(),
-                self._publish_workspace_path(),
                 os.path.dirname(f"{self._live_workspace_path()}/{_REVISION_FILE}"),
             ],
             timeout_seconds=60,
@@ -640,7 +657,6 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
                 "sprite_name": sprite_name,
                 "live_workspace_path": self._live_workspace_path(),
                 "stage_workspace_path": self._stage_workspace_path(),
-                "publish_workspace_path": self._publish_workspace_path(),
                 "revision_token": revision_token,
             },
             "services": {
@@ -652,6 +668,21 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
             },
         }
 
+    async def _heartbeat_metadata(self, *, sprite_name: str) -> dict[str, Any]:
+        sprite = await self._get_sprite(sprite_name=sprite_name)
+        if sprite is None:
+            raise PublishedAppSandboxBackendError(f"Sprite request failed (404) for /v1/sprites/{sprite_name}: not found")
+        sprite_url = str(sprite.get("url") or "").strip() or f"https://{sprite_name}.sprites.app"
+        return self._backend_metadata(
+            sprite_name=sprite_name,
+            sprite_url=sprite_url,
+            preview_base_path="/",
+            revision_token=await self._read_revision_token(
+                sprite_name=sprite_name,
+                workspace_path=self._live_workspace_path(),
+            ),
+        )
+
     async def _snapshot_workspace_files(self, *, sprite_name: str, workspace_path: str) -> dict[str, Any]:
         script = f"""
 import hashlib
@@ -660,10 +691,24 @@ import pathlib
 
 root = pathlib.Path({json.dumps(workspace_path)})
 files = {{}}
+ignore_prefixes = tuple({json.dumps(list(_SNAPSHOT_IGNORE_PREFIXES))})
+ignore_file_names = set({json.dumps(sorted(BUILDER_SNAPSHOT_IGNORED_FILE_NAMES))})
+ignore_suffixes = tuple({json.dumps(list(BUILDER_SNAPSHOT_IGNORED_SUFFIXES))})
 for path in sorted(root.rglob("*")):
     if not path.is_file():
         continue
     rel = path.relative_to(root).as_posix()
+    lowered = rel.lower()
+    if any(lowered == prefix.rstrip("/") or lowered.startswith(prefix) for prefix in ignore_prefixes):
+        continue
+    segments = [segment for segment in lowered.split("/") if segment]
+    if "node_modules" in segments:
+        continue
+    name = path.name.lower()
+    if name in ignore_file_names:
+        continue
+    if any(name.endswith(suffix) for suffix in ignore_suffixes):
+        continue
     files[rel] = path.read_text(encoding="utf-8", errors="replace")
 revision_token_path = root / {json.dumps(_REVISION_FILE)}
 revision_token = revision_token_path.read_text(encoding="utf-8", errors="replace").strip() if revision_token_path.exists() else ""
@@ -734,7 +779,6 @@ print(json.dumps({{
             "workspace_path": self._live_workspace_path(),
             "live_workspace_path": self._live_workspace_path(),
             "stage_workspace_path": self._stage_workspace_path(),
-            "publish_workspace_path": self._publish_workspace_path(),
             "preview_service_name": self._preview_service_name(),
             "opencode_service_name": self._opencode_service_name(),
             "preview_url": preview_base_path,
@@ -795,13 +839,13 @@ print(json.dumps({{
     async def heartbeat_session(self, *, sandbox_id: str, idle_timeout_seconds: int) -> Dict[str, Any]:
         _ = idle_timeout_seconds
         sprite_name = str(sandbox_id or "").strip()
-        if not await self._sprite_exists(sprite_name=sprite_name):
-            raise PublishedAppSandboxBackendError(f"Sprite request failed (404) for /v1/sprites/{sprite_name}: not found")
+        metadata = await self._heartbeat_metadata(sprite_name=sprite_name)
         await self._wait_for_preview_ready(sprite_name=sprite_name)
         return {
             "sandbox_id": sprite_name,
             "status": "serving",
             "runtime_backend": self.backend_name,
+            "backend_metadata": metadata,
         }
 
     async def stop_session(self, *, sandbox_id: str) -> Dict[str, Any]:
@@ -1150,26 +1194,6 @@ print(json.dumps({{
             "stage_workspace_path": self._stage_workspace_path(),
         }
 
-    async def prepare_publish_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
-        await self._exec(
-            sprite_name=sandbox_id,
-            command=[
-                "bash",
-                "-lc",
-                f"rm -rf {shlex.quote(self._publish_workspace_path())} && "
-                f"mkdir -p {shlex.quote(self._publish_workspace_path())} && "
-                f"cp -a {shlex.quote(self._live_workspace_path())}/. {shlex.quote(self._publish_workspace_path())}/",
-            ],
-            timeout_seconds=120,
-            max_output_bytes=12_000,
-        )
-        payload = await self._snapshot_workspace_files(sprite_name=sandbox_id, workspace_path=self._publish_workspace_path())
-        payload["sandbox_id"] = sandbox_id
-        payload["workspace_path"] = self._publish_workspace_path()
-        payload["publish_workspace_path"] = self._publish_workspace_path()
-        payload["live_workspace_path"] = self._live_workspace_path()
-        return payload
-
     async def prepare_publish_dependencies(self, *, sandbox_id: str, workspace_path: str) -> Dict[str, Any]:
         await self._exec(
             sprite_name=sandbox_id,
@@ -1298,6 +1322,13 @@ print(json.dumps({{
         messages: list[dict[str, str]],
     ) -> Dict[str, Any]:
         client = await self._build_opencode_client(sandbox_id=sandbox_id)
+        logger.info(
+            "SPRITE_OPENCODE_START sandbox_id=%s run_id=%s app_id=%s requested_workspace=%s",
+            sandbox_id,
+            run_id,
+            app_id,
+            workspace_path,
+        )
         run_ref = await client.start_run(
             run_id=run_id,
             app_id=app_id,

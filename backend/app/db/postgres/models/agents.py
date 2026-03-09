@@ -132,6 +132,7 @@ class AgentRun(Base):
     initiator_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     surface = Column(String, nullable=True, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
+    published_app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="SET NULL"), nullable=True, index=True)
     base_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
     result_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -160,6 +161,7 @@ class AgentRun(Base):
     user = relationship("User", foreign_keys=[user_id])
     initiator_user = relationship("User", foreign_keys=[initiator_user_id])
     published_app = relationship("PublishedApp", foreign_keys=[published_app_id])
+    published_app_account = relationship("PublishedAppAccount", foreign_keys=[published_app_account_id])
     thread = relationship("AgentThread", foreign_keys=[thread_id])
     base_revision = relationship("PublishedAppRevision", foreign_keys=[base_revision_id])
     result_revision = relationship("PublishedAppRevision", foreign_keys=[result_revision_id])
@@ -180,6 +182,7 @@ class AgentRun(Base):
             "ix_agent_runs_coding_scope_status_created_at",
             "surface",
             "published_app_id",
+            "published_app_account_id",
             "initiator_user_id",
             "status",
             "created_at",

@@ -56,6 +56,7 @@ def create_published_app_session_token(
     subject: Union[str, Any],
     tenant_id: str,
     app_id: str,
+    app_account_id: str,
     session_id: str,
     provider: str,
     scopes: Optional[list[str]] = None,
@@ -69,6 +70,7 @@ def create_published_app_session_token(
         "sub": str(subject),
         "tenant_id": str(tenant_id),
         "app_id": str(app_id),
+        "app_account_id": str(app_account_id),
         "session_id": str(session_id),
         "provider": str(provider),
         "token_use": PUBLISHED_APP_TOKEN_USE,
@@ -82,7 +84,7 @@ def decode_published_app_session_token(token: str) -> dict[str, Any]:
     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     if payload.get("token_use") != PUBLISHED_APP_TOKEN_USE:
         raise jwt.InvalidTokenError("Invalid token_use")
-    if not payload.get("tenant_id") or not payload.get("app_id") or not payload.get("session_id"):
+    if not payload.get("tenant_id") or not payload.get("app_id") or not payload.get("app_account_id") or not payload.get("session_id"):
         raise jwt.InvalidTokenError("Invalid published app token claims")
     return payload
 

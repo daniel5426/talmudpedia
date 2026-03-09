@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.services.published_app_draft_dev_patching import apply_unified_patch_transaction, hash_text
+from app.services.published_app_builder_snapshot_filter import is_builder_snapshot_artifact_path
 
 
 logger = logging.getLogger(__name__)
@@ -568,23 +569,6 @@ class LocalDraftDevRuntimeManager:
                 "revision_token": self._bump_revision_token(state),
             }
 
-    async def prepare_publish_workspace(self, *, sandbox_id: str) -> Dict[str, object]:
-        async with self._lock:
-            state = self._require_running_session_locked(sandbox_id)
-            publish_workspace = self._publish_workspace_dir(project_dir=state.project_dir)
-            live_files = self._collect_workspace_files_from_root(state.project_dir)
-            await self._sync_files_locked(publish_workspace, live_files)
-            return {
-                "sandbox_id": sandbox_id,
-                "workspace": "publish",
-                "live_workspace_path": str(state.project_dir),
-                "publish_workspace_path": str(publish_workspace),
-                "workspace_path": str(publish_workspace),
-                "files": live_files,
-                "file_count": len(live_files),
-                "revision_token": self._current_revision_token(state),
-            }
-
     async def prepare_publish_dependencies(
         self,
         *,
@@ -600,6 +584,7 @@ class LocalDraftDevRuntimeManager:
                 require_dir=True,
             )
             live_workspace = state.project_dir
+            is_live_workspace = publish_workspace.resolve(strict=False) == live_workspace.resolve(strict=False)
 
             publish_package_json = publish_workspace / "package.json"
             live_package_json = live_workspace / "package.json"
@@ -611,6 +596,27 @@ class LocalDraftDevRuntimeManager:
                     "status": "no_package_json",
                     "strategy": "none",
                     "reason": "publish workspace has no package.json",
+                    "revision_token": self._current_revision_token(state),
+                }
+            if is_live_workspace:
+                live_node_modules = live_workspace / "node_modules"
+                if live_node_modules.exists() and live_node_modules.is_dir():
+                    return {
+                        "sandbox_id": sandbox_id,
+                        "workspace_path": str(publish_workspace),
+                        "live_workspace_path": str(live_workspace),
+                        "status": "reused",
+                        "strategy": "live",
+                        "reason": "building directly from live workspace with existing node_modules",
+                        "revision_token": self._current_revision_token(state),
+                    }
+                return {
+                    "sandbox_id": sandbox_id,
+                    "workspace_path": str(publish_workspace),
+                    "live_workspace_path": str(live_workspace),
+                    "status": "missing_live_node_modules",
+                    "strategy": "none",
+                    "reason": "live workspace node_modules is missing",
                     "revision_token": self._current_revision_token(state),
                 }
             if not live_package_json.exists():
@@ -827,9 +833,6 @@ class LocalDraftDevRuntimeManager:
     def _stage_workspace_dir(self, *, project_dir: Path) -> Path:
         return project_dir / ".talmudpedia" / "stage" / "shared" / "workspace"
 
-    def _publish_workspace_dir(self, *, project_dir: Path) -> Path:
-        return project_dir / ".talmudpedia" / "publish" / "current" / "workspace"
-
     def _resolve_workspace_path_locked(
         self,
         *,
@@ -908,14 +911,7 @@ class LocalDraftDevRuntimeManager:
             return True
         if normalized in {".draft-dev.log", ".draft-dev-dependency-hash"}:
             return True
-        if normalized.startswith(".talmudpedia/") or normalized == ".talmudpedia":
-            return True
-        segments = [segment for segment in normalized.split("/") if segment]
-        if "node_modules" in segments:
-            return True
-        if normalized.startswith(".opencode/.bun/") or normalized == ".opencode/.bun":
-            return True
-        return False
+        return is_builder_snapshot_artifact_path(normalized)
 
     def _collect_project_files(self, project_dir: Path) -> list[str]:
         paths: list[str] = []

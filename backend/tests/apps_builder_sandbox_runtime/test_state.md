@@ -12,6 +12,7 @@ Last Updated: 2026-03-09
 - `backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_sprite_live_smoke.py`
+- `backend/tests/apps_builder_sandbox_runtime/test_live_coding_run_e2e.py`
 
 ## Key scenarios covered
 - The draft-dev runtime client delegates `start_session` to the selected Sprite backend and injects the stable preview proxy base path.
@@ -20,10 +21,14 @@ Last Updated: 2026-03-09
 - The preview proxy rewrites Vite dev HTML so `@vite/client`, `@react-refresh`, and `/src/...` requests stay under the draft-dev preview proxy path instead of escaping to the backend root.
 - The preview proxy rewrites Vite JS module imports like `/src/...` and `/node_modules/.vite/...`, and disables stale conditional caching for rewritten preview assets.
 - The preview proxy retries transient `404/5xx/timeout` warmup failures for GET/HEAD preview assets so Sprite wake/service warmup does not immediately white-screen the iframe.
+- For Sprite-backed draft-dev sessions, the preview proxy resolves a local Sprite control-plane tunnel and proxies preview traffic through that tunnel instead of dialing the provider HTTPS hostname directly.
+- The preview proxy now refreshes stale Sprite preview metadata on connect/TLS failures and retries once against the refreshed upstream URL.
 - The preview proxy rewrites asset requests against the Sprite upstream path instead of the backend API route path.
 - The preview websocket proxy forwards auth headers, browser origin, user-agent, and requested subprotocols into the upstream websocket handshake.
 - Sprite heartbeat waits for preview readiness without restarting the services on every reopen.
+- Sprite heartbeat returns refreshed backend preview metadata, and the draft-dev runtime persists that refreshed metadata on session heartbeat.
 - Stage-to-live promotion now mirrors files into the existing live workspace instead of deleting the live root and restarting preview services.
+- Sprite workspace snapshots filter generated/high-noise paths before serializing payloads back to the backend.
 - Sprite live sync preserves `node_modules/` across no-op file syncs, and start/sync can force a dependency repair plus Vite cache rebuild when preview readiness fails.
 - Shared app-level draft workspaces are reused across multiple editors on the same app.
 - Session stop detaches one editor without destroying the shared Sprite while another editor remains attached.
@@ -31,8 +36,12 @@ Last Updated: 2026-03-09
 - App delete destroys the shared Sprite and removes workspace metadata.
 - Sprite backend env validation requires a Sprite token and hard-rejects archived E2B backend selection.
 - The live Sprite smoke covers create -> ensure -> preview HTML -> proxied Vite asset -> second editor attach -> direct filesystem write/read -> detach/reattach -> provider-side Sprite delete -> recovery ensure -> preview recovery -> app delete -> provider cleanup.
+- The live coding-run e2e covers create -> ensure draft-dev preview -> submit a real coding-agent prompt -> stream the live run -> poll preview/version/run state every second -> send recurring draft-dev heartbeats during long waits -> verify preview source updates without publish -> verify a new draft revision/version is created automatically -> drive the queued revision build in-test when no worker is present -> verify the built preview asset becomes reachable.
 
 ## Last run command + date/time + result
+- Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py tests/coding_agent_api/test_batch_finalizer.py tests/app_versions/test_coding_run_versions.py tests/apps_publish_sandbox/test_local_publish_dependency_reuse.py tests/apps_publish_sandbox/test_publish_runtime_helpers.py tests/sandbox_controller/test_dev_shim.py`
+- Date: 2026-03-09 19:03 EET
+- Result: PASS (29 passed, 6 warnings)
 - Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
 - Date: 2026-03-09 02:07 EET
 - Result: PASS (17 passed, 6 warnings)
@@ -45,8 +54,18 @@ Last Updated: 2026-03-09
 - Command: `cd backend && set -a; source .env >/dev/null 2>&1; PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py tests/apps_builder_sandbox_runtime/test_sprite_live_smoke.py tests/coding_agent_api/test_batch_finalizer.py tests/app_versions/test_coding_run_versions.py`
 - Date: 2026-03-09 00:23 EET
 - Result: PASS (20 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_live_coding_run_e2e.py`
+- Date: 2026-03-09 19:40 EET
+- Result: SKIPPED by default unless `APPS_BUILDER_LIVE_CODING_E2E=1`
+- Command: `APPS_BUILDER_LIVE_CODING_E2E=1 PYTHONPATH=. pytest -q backend/tests/apps_builder_sandbox_runtime/test_live_coding_run_e2e.py -s`
+- Date: 2026-03-09 21:26 EET
+- Result: PASS (1 passed, 423 warnings, 163.30s)
+- Command: `PYTHONPATH=. pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
+- Date: 2026-03-09 22:19 EET
+- Result: PASS (25 passed, 6 warnings)
 
 ## Known gaps or follow-ups
 - Add live websocket/HMR coverage against the Sprite preview path.
-- Add a live coding-agent/OpenCode run test against the Sprite-backed shared workspace once the end-to-end OpenCode path is exercised in CI.
+- Run the live coding-run e2e regularly in an environment with Sprite + OpenCode credentials so timing regressions are caught before manual QA.
+- The live coding-run e2e currently drives the queued revision build itself because the pytest process does not run a background worker.
 - Add an explicit scheduled sweeper entrypoint so orphan cleanup does not rely only on request-driven best-effort sweeps.

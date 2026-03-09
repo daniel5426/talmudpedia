@@ -69,6 +69,8 @@ from .published_apps import (
     PublishedAppRevisionBlob,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
+    PublishedAppAccount,
+    PublishedAppAccountStatus,
     PublishedAppSession,
     PublishedAppStatus,
     PublishedAppVisibility,

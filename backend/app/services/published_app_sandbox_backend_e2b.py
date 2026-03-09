@@ -701,33 +701,6 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
             "promoted_file_count": len(stage_files),
         }
 
-    async def prepare_publish_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
-        sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
-        live_files = await self._collect_workspace_files_from_root(
-            sandbox,
-            self._workspace_root(self.config.e2b_workspace_path),
-        )
-        publish_workspace = self._publish_workspace_dir()
-        await self._ensure_directory(sandbox, publish_workspace)
-        await self._sync_workspace_tree(sandbox, publish_workspace, live_files)
-        apps_builder_trace(
-            "workspace.publish.prepared",
-            domain="sandbox.e2b",
-            sandbox_id=sandbox_id,
-            live_workspace_path=self._workspace_root(self.config.e2b_workspace_path),
-            publish_workspace_path=publish_workspace,
-            file_count=len(live_files),
-        )
-        return {
-            "sandbox_id": sandbox_id,
-            "workspace": "publish",
-            "live_workspace_path": self._workspace_root(self.config.e2b_workspace_path),
-            "publish_workspace_path": publish_workspace,
-            "workspace_path": publish_workspace,
-            "files": live_files,
-            "file_count": len(live_files),
-        }
-
     async def prepare_publish_dependencies(self, *, sandbox_id: str, workspace_path: str) -> Dict[str, Any]:
         sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
         publish_workspace = await self._resolve_workspace_path(sandbox, workspace_path)

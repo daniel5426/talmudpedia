@@ -112,7 +112,6 @@ It includes:
   - `prepare_stage_workspace`
   - `snapshot_workspace`
   - `promote_stage_workspace`
-  - `prepare_publish_workspace`
   - `prepare_publish_dependencies`
   - `export_workspace_archive`
   - `sync_workspace_files`
@@ -176,7 +175,7 @@ The app-builder runtime semantics above the backend abstraction were preserved:
 - mutable live workspace
 - separate stage workspace
 - stage promotion into live workspace
-- publish workspace preparation from live workspace
+- publish build runs directly against the live workspace
 - OpenCode runs tied to the same sandbox/workspace as the preview session
 
 The backend abstraction changes the runtime substrate, not the higher-level app-builder lifecycle.
@@ -490,11 +489,19 @@ The backend interface preserves the existing app-builder workspace lifecycle:
 - prepare stage workspace
 - snapshot stage or live workspace
 - promote stage workspace into live
-- prepare publish workspace
 - prepare publish dependencies
 - archive workspace
 
 This means the sandbox layer is not just “run preview”; it also supports the app-builder’s internal workspace transitions.
+
+### Snapshot Filtering
+
+Snapshot filtering now happens at the sandbox producer boundary instead of only after the backend receives the payload.
+
+Current hard-cut behavior:
+- Sprite snapshot walks skip generated and high-noise paths before serializing the response
+- the backend still keeps late filtering as a defensive second layer
+- this prevents coding-agent finalization and publish flows from exploding on `node_modules`, cache trees, dist output, or other non-source artifacts
 
 ### OpenCode Integration
 

@@ -30,45 +30,38 @@ def _session_state(project_dir: Path) -> _SessionProcess:
 
 
 @pytest.mark.asyncio
-async def test_prepare_publish_dependencies_reuses_live_node_modules(tmp_path: Path) -> None:
+async def test_prepare_publish_dependencies_reuses_live_workspace_node_modules(tmp_path: Path) -> None:
     manager = LocalDraftDevRuntimeManager()
     project_dir = tmp_path / "sandbox"
-    publish_dir = project_dir / ".talmudpedia" / "publish" / "current" / "workspace"
 
     _write_text(project_dir / "package.json", '{"name":"demo"}')
     _write_text(project_dir / "package-lock.json", '{"lockfileVersion":3}')
     _write_text(project_dir / "node_modules" / "dep" / "index.js", "module.exports = 1;")
-    _write_text(publish_dir / "package.json", '{"name":"demo"}')
-    _write_text(publish_dir / "package-lock.json", '{"lockfileVersion":3}')
 
     manager._state["sandbox-1"] = _session_state(project_dir)  # noqa: SLF001
 
     result = await manager.prepare_publish_dependencies(
         sandbox_id="sandbox-1",
-        workspace_path=str(publish_dir),
+        workspace_path=str(project_dir),
     )
 
     assert result["status"] == "reused"
-    assert result["strategy"] in {"symlink", "copy"}
-    publish_node_modules = publish_dir / "node_modules"
-    assert publish_node_modules.exists()
-    assert (publish_node_modules / "dep" / "index.js").exists()
+    assert result["strategy"] == "live"
+    assert (project_dir / "node_modules" / "dep" / "index.js").exists()
 
 
 @pytest.mark.asyncio
 async def test_prepare_publish_dependencies_falls_back_when_live_modules_missing(tmp_path: Path) -> None:
     manager = LocalDraftDevRuntimeManager()
     project_dir = tmp_path / "sandbox"
-    publish_dir = project_dir / ".talmudpedia" / "publish" / "current" / "workspace"
 
     _write_text(project_dir / "package.json", '{"name":"demo"}')
-    _write_text(publish_dir / "package.json", '{"name":"demo"}')
 
     manager._state["sandbox-1"] = _session_state(project_dir)  # noqa: SLF001
 
     result = await manager.prepare_publish_dependencies(
         sandbox_id="sandbox-1",
-        workspace_path=str(publish_dir),
+        workspace_path=str(project_dir),
     )
 
     assert result["status"] == "missing_live_node_modules"

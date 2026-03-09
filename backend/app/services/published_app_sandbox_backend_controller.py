@@ -312,9 +312,6 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
     async def promote_stage_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
         return await self._request("POST", f"/sessions/{sandbox_id}/stage/promote", json_payload={})
 
-    async def prepare_publish_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
-        return await self._request("POST", f"/sessions/{sandbox_id}/publish/prepare", json_payload={})
-
     async def prepare_publish_dependencies(self, *, sandbox_id: str, workspace_path: str) -> Dict[str, Any]:
         return await self._request(
             "POST",

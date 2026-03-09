@@ -200,10 +200,13 @@ class PublishedAppAuthTemplateResponse(BaseModel):
 
 
 class PublishedAppUserResponse(BaseModel):
+    app_account_id: str
     user_id: str
+    global_user_id: Optional[str] = None
     email: str
     full_name: Optional[str] = None
     avatar: Optional[str] = None
+    account_status: str
     membership_status: str
     last_login_at: Optional[datetime] = None
     created_at: datetime

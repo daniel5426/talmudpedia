@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 
 from app.db.postgres.models.agent_threads import AgentThread
 from app.db.postgres.models.identity import User
-from app.db.postgres.models.published_apps import PublishedAppRevision, PublishedAppRevisionKind
+from app.db.postgres.models.published_apps import PublishedAppAccount, PublishedAppRevision, PublishedAppRevisionKind
 from app.services.security_bootstrap_service import SecurityBootstrapService
 from tests.published_apps._helpers import seed_admin_tenant_and_agent, seed_published_app
 
@@ -62,6 +62,57 @@ async def test_host_signup_sets_cookie_and_auth_state(client, db_session):
     assert payload["authenticated"] is True
     assert payload["app"]["slug"] == app.slug
     assert payload["user"]["email"] == "same-url-user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_host_same_email_across_apps_creates_distinct_app_accounts(client, db_session):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app_a = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="same-email-app-a",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+    app_b = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="same-email-app-b",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    email = "shared-human@example.com"
+    resp_a = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app_a.slug),
+        json={"email": email, "password": "secret123"},
+    )
+    assert resp_a.status_code == 200
+
+    await client.post("/_talmudpedia/auth/logout", headers=_host_headers(app_a.slug))
+
+    resp_b = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app_b.slug),
+        json={"email": email, "password": "secret123"},
+    )
+    assert resp_b.status_code == 200
+
+    accounts = (
+        await db_session.execute(
+            select(PublishedAppAccount).where(PublishedAppAccount.email == email).order_by(PublishedAppAccount.published_app_id)
+        )
+    ).scalars().all()
+    assert len(accounts) == 2
+    assert str(accounts[0].id) != str(accounts[1].id)
+    assert str(accounts[0].published_app_id) != str(accounts[1].published_app_id)
+    assert accounts[0].global_user_id is not None
+    assert accounts[0].global_user_id == accounts[1].global_user_id
 
 
 @pytest.mark.asyncio
@@ -141,6 +192,73 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
         select(func.count(AgentThread.id)).where(AgentThread.published_app_id == app.id)
     )
     assert thread_count == 1
+
+
+@pytest.mark.asyncio
+async def test_host_thread_detail_is_scoped_to_app_account(client, db_session, monkeypatch):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="thread-scope-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    signup_resp = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app.slug),
+        json={"email": "owner-one@example.com", "password": "secret123"},
+    )
+    assert signup_resp.status_code == 200
+    signup_user = (
+        await db_session.execute(
+            select(User).where(User.email == "owner-one@example.com")
+        )
+    ).scalar_one()
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_member_assignment(
+        tenant_id=tenant.id,
+        user_id=signup_user.id,
+        assigned_by=owner.id,
+    )
+    await db_session.commit()
+
+    async def fake_run_and_stream(self, *args, **kwargs):
+        yield {
+            "event": "token",
+            "data": {"content": "Thread scoped response"},
+            "visibility": "client_safe",
+        }
+
+    monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
+
+    stream_resp = await client.post(
+        "/_talmudpedia/chat/stream",
+        headers=_host_headers(app.slug),
+        json={"input": "private thread"},
+    )
+    assert stream_resp.status_code == 200
+    thread_id = stream_resp.headers.get("X-Thread-ID")
+    assert thread_id
+
+    await client.post("/_talmudpedia/auth/logout", headers=_host_headers(app.slug))
+
+    second_signup = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app.slug),
+        json={"email": "owner-two@example.com", "password": "secret123"},
+    )
+    assert second_signup.status_code == 200
+
+    thread_resp = await client.get(
+        f"/_talmudpedia/threads/{thread_id}",
+        headers=_host_headers(app.slug),
+    )
+    assert thread_resp.status_code == 404
 
 
 @pytest.mark.asyncio

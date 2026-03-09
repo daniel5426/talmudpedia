@@ -8,17 +8,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
-from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppAccount,
+    PublishedAppAccountStatus,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
     PublishedAppSession,
     PublishedAppStatus,
-    PublishedAppUserMembership,
-    PublishedAppUserMembershipStatus,
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
@@ -212,46 +211,48 @@ async def list_published_app_users(
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
 
     result = await db.execute(
-        select(PublishedAppUserMembership, User)
-        .join(User, User.id == PublishedAppUserMembership.user_id)
-        .where(PublishedAppUserMembership.published_app_id == app.id)
-        .order_by(PublishedAppUserMembership.updated_at.desc())
+        select(PublishedAppAccount)
+        .where(PublishedAppAccount.published_app_id == app.id)
+        .order_by(PublishedAppAccount.updated_at.desc())
     )
-    rows = result.all()
+    rows = list(result.scalars().all())
 
     active_counts: Dict[str, int] = {}
     if rows:
-        user_ids = [row[1].id for row in rows]
+        account_ids = [row.id for row in rows]
         counts_result = await db.execute(
             select(
-                PublishedAppSession.user_id,
+                PublishedAppSession.app_account_id,
                 func.count(PublishedAppSession.id),
             )
             .where(
                 and_(
                     PublishedAppSession.published_app_id == app.id,
-                    PublishedAppSession.user_id.in_(user_ids),
+                    PublishedAppSession.app_account_id.in_(account_ids),
                     PublishedAppSession.revoked_at.is_(None),
                     PublishedAppSession.expires_at > datetime.now(timezone.utc),
                 )
             )
-            .group_by(PublishedAppSession.user_id)
+            .group_by(PublishedAppSession.app_account_id)
         )
-        active_counts = {str(user_id): int(count or 0) for user_id, count in counts_result.all()}
+        active_counts = {str(account_id): int(count or 0) for account_id, count in counts_result.all()}
 
     return [
         PublishedAppUserResponse(
-            user_id=str(user.id),
-            email=user.email,
-            full_name=user.full_name,
-            avatar=user.avatar,
-            membership_status=membership.status.value if hasattr(membership.status, "value") else str(membership.status),
-            last_login_at=membership.last_login_at,
-            created_at=membership.created_at,
-            updated_at=membership.updated_at,
-            active_sessions=active_counts.get(str(user.id), 0),
+            app_account_id=str(account.id),
+            user_id=str(account.id),
+            global_user_id=str(account.global_user_id) if account.global_user_id else None,
+            email=account.email,
+            full_name=account.full_name,
+            avatar=account.avatar,
+            account_status=account.status.value if hasattr(account.status, "value") else str(account.status),
+            membership_status=account.status.value if hasattr(account.status, "value") else str(account.status),
+            last_login_at=account.last_login_at,
+            created_at=account.created_at,
+            updated_at=account.updated_at,
+            active_sessions=active_counts.get(str(account.id), 0),
         )
-        for membership, user in rows
+        for account in rows
     ]
 
 
@@ -270,32 +271,32 @@ async def update_published_app_user_membership(
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
 
     try:
-        next_status = PublishedAppUserMembershipStatus(payload.membership_status.strip().lower())
+        next_status = PublishedAppAccountStatus(payload.membership_status.strip().lower())
     except Exception:
         raise HTTPException(status_code=400, detail="Unsupported membership_status value")
 
-    membership_result = await db.execute(
-        select(PublishedAppUserMembership)
+    account_result = await db.execute(
+        select(PublishedAppAccount)
         .where(
             and_(
-                PublishedAppUserMembership.published_app_id == app.id,
-                PublishedAppUserMembership.user_id == user_id,
+                PublishedAppAccount.published_app_id == app.id,
+                PublishedAppAccount.id == user_id,
             )
         )
         .limit(1)
     )
-    membership = membership_result.scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(status_code=404, detail="Published app user membership not found")
+    account = account_result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Published app account not found")
 
-    membership.status = next_status
-    membership.updated_at = datetime.now(timezone.utc)
-    if next_status == PublishedAppUserMembershipStatus.blocked:
+    account.status = next_status
+    account.updated_at = datetime.now(timezone.utc)
+    if next_status == PublishedAppAccountStatus.blocked:
         sessions_result = await db.execute(
             select(PublishedAppSession).where(
                 and_(
                     PublishedAppSession.published_app_id == app.id,
-                    PublishedAppSession.user_id == user_id,
+                    PublishedAppSession.app_account_id == user_id,
                     PublishedAppSession.revoked_at.is_(None),
                 )
             )
@@ -304,17 +305,13 @@ async def update_published_app_user_membership(
             session.revoked_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(membership)
-    user_result = await db.execute(select(User).where(User.id == user_id).limit(1))
-    user = user_result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+    await db.refresh(account)
 
     active_sessions_result = await db.execute(
         select(func.count(PublishedAppSession.id)).where(
             and_(
                 PublishedAppSession.published_app_id == app.id,
-                PublishedAppSession.user_id == user_id,
+                PublishedAppSession.app_account_id == user_id,
                 PublishedAppSession.revoked_at.is_(None),
                 PublishedAppSession.expires_at > datetime.now(timezone.utc),
             )
@@ -322,14 +319,17 @@ async def update_published_app_user_membership(
     )
     active_sessions = int(active_sessions_result.scalar() or 0)
     return PublishedAppUserResponse(
-        user_id=str(user.id),
-        email=user.email,
-        full_name=user.full_name,
-        avatar=user.avatar,
-        membership_status=membership.status.value if hasattr(membership.status, "value") else str(membership.status),
-        last_login_at=membership.last_login_at,
-        created_at=membership.created_at,
-        updated_at=membership.updated_at,
+        app_account_id=str(account.id),
+        user_id=str(account.id),
+        global_user_id=str(account.global_user_id) if account.global_user_id else None,
+        email=account.email,
+        full_name=account.full_name,
+        avatar=account.avatar,
+        account_status=account.status.value if hasattr(account.status, "value") else str(account.status),
+        membership_status=account.status.value if hasattr(account.status, "value") else str(account.status),
+        last_login_at=account.last_login_at,
+        created_at=account.created_at,
+        updated_at=account.updated_at,
         active_sessions=active_sessions,
     )
 

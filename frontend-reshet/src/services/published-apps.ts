@@ -49,10 +49,13 @@ export interface PublishedAppAuthTemplate {
 }
 
 export interface PublishedAppUser {
+  app_account_id: string;
   user_id: string;
+  global_user_id?: string | null;
   email: string;
   full_name?: string | null;
   avatar?: string | null;
+  account_status: "active" | "blocked";
   membership_status: "active" | "blocked";
   last_login_at?: string | null;
   created_at: string;

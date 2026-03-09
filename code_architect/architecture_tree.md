@@ -132,6 +132,7 @@ backend/app/services/orchestration_lineage_service.py
 backend/app/services/mcp_client.py
 backend/app/services/web_search.py
 backend/app/services/apps_builder_trace.py
+backend/app/services/published_app_builder_snapshot_filter.py
 backend/app/services/published_app_auth_service.py
 backend/app/services/published_app_auth_shell_renderer.py
 backend/app/services/published_app_bundle_storage.py

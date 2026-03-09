@@ -19,6 +19,9 @@ from app.core.security import decode_published_app_preview_token
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSession
 from app.db.postgres.session import get_db
 from app.services.apps_builder_trace import apps_builder_trace
+from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClient
+from app.services.published_app_sandbox_backend_factory import load_published_app_sandbox_backend_config
+from app.services.published_app_sprite_proxy_tunnel import get_sprite_proxy_tunnel_manager
 
 
 router = APIRouter(tags=["published-apps-builder-preview-proxy"])
@@ -80,7 +83,7 @@ async def _load_session(*, db: AsyncSession, session_id: str) -> PublishedAppDra
     return session
 
 
-def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[str, str]:
+async def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[str, str]:
     workspace = getattr(session, "draft_workspace", None)
     workspace_metadata = getattr(workspace, "backend_metadata", None)
     metadata = (
@@ -91,6 +94,29 @@ def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[str, s
         else {}
     )
     preview = metadata.get("preview") if isinstance(metadata.get("preview"), dict) else {}
+    workspace_state = metadata.get("workspace") if isinstance(metadata.get("workspace"), dict) else {}
+    services = metadata.get("services") if isinstance(metadata.get("services"), dict) else {}
+    provider = str(metadata.get("provider") or "").strip().lower()
+    sprite_name = str(workspace_state.get("sprite_name") or "").strip()
+    preview_port = services.get("preview_port")
+    if provider == "sprite" and sprite_name and preview_port:
+        config = load_published_app_sandbox_backend_config()
+        tunnel_base_url = await get_sprite_proxy_tunnel_manager().ensure_tunnel(
+            api_base_url=config.sprite_api_base_url,
+            api_token=str(config.sprite_api_token or "").strip(),
+            sprite_name=sprite_name,
+            remote_host="127.0.0.1",
+            remote_port=int(preview_port),
+        )
+        return {
+            "upstream_base_url": tunnel_base_url.rstrip("/"),
+            "base_path": str(preview.get("base_path") or "").strip() or "/",
+            "upstream_path": "/",
+            "auth_header_name": "Authorization",
+            "auth_token": "",
+            "auth_token_prefix": "",
+            "extra_headers": json.dumps({}, sort_keys=True),
+        }
     upstream_base_url = str(preview.get("upstream_base_url") or "").strip()
     if not upstream_base_url:
         raise HTTPException(status_code=404, detail="Draft dev preview target is unavailable")
@@ -111,6 +137,107 @@ def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[str, s
         "auth_token_prefix": auth_token_prefix,
         "extra_headers": json.dumps(extra_headers, sort_keys=True),
     }
+
+
+def _is_refreshable_preview_error(exc: Exception) -> bool:
+    if isinstance(exc, httpx.ConnectError):
+        return True
+    message = str(exc or "").lower()
+    return "certificate verify failed" in message or "hostname mismatch" in message
+
+
+def _merge_preview_base_path(*, target: dict[str, str], session_id: str) -> str:
+    base_path = str(target.get("base_path") or "").strip()
+    if base_path:
+        return base_path
+    return PublishedAppDraftDevRuntimeClient.from_env().build_preview_proxy_path(session_id)
+
+
+async def _refresh_preview_target(
+    *,
+    db: AsyncSession,
+    session: PublishedAppDraftDevSession,
+    current_target: dict[str, str],
+) -> dict[str, str] | None:
+    sandbox_id = str(getattr(session, "sandbox_id", "") or "").strip()
+    if not sandbox_id:
+        return None
+    client = PublishedAppDraftDevRuntimeClient.from_env()
+    try:
+        refreshed = await client.heartbeat_session(sandbox_id=sandbox_id, idle_timeout_seconds=0)
+    except Exception as exc:
+        apps_builder_trace(
+            "preview.proxy.refresh_failed",
+            domain="preview.proxy",
+            session_id=str(session.id),
+            app_id=str(session.published_app_id),
+            revision_id=str(session.revision_id or ""),
+            sandbox_id=sandbox_id,
+            error=str(exc),
+            error_type=exc.__class__.__name__,
+        )
+        return None
+    metadata = refreshed.get("backend_metadata") if isinstance(refreshed, dict) else None
+    if not isinstance(metadata, dict):
+        return None
+    preview = metadata.get("preview") if isinstance(metadata.get("preview"), dict) else None
+    if not isinstance(preview, dict):
+        return None
+    preview["base_path"] = _merge_preview_base_path(target=current_target, session_id=str(session.id))
+    workspace = getattr(session, "draft_workspace", None)
+    if workspace is not None:
+        workspace.backend_metadata = dict(metadata)
+    session.backend_metadata = dict(metadata)
+    await db.commit()
+    apps_builder_trace(
+        "preview.proxy.refreshed",
+        domain="preview.proxy",
+        session_id=str(session.id),
+        app_id=str(session.published_app_id),
+        revision_id=str(session.revision_id or ""),
+        sandbox_id=sandbox_id,
+        upstream_base_url=str(preview.get("upstream_base_url") or ""),
+    )
+    return await _resolve_preview_target(session)
+
+
+async def _request_preview_upstream(
+    *,
+    request: Request,
+    upstream_url: str,
+    target: dict[str, str],
+    body: bytes,
+) -> httpx.Response:
+    async with httpx.AsyncClient(follow_redirects=False, timeout=60.0) as client:
+        upstream = None
+        last_error: httpx.HTTPError | None = None
+        for delay in _PREVIEW_HTTP_RETRY_DELAYS_SECONDS:
+            if delay > 0:
+                await asyncio.sleep(delay)
+            try:
+                candidate = await client.request(
+                    request.method,
+                    upstream_url,
+                    headers=_proxy_headers(request, target=target),
+                    content=body if body else None,
+                )
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if _is_refreshable_preview_error(exc):
+                    raise
+                if _should_retry_preview_request(method=request.method, error=exc):
+                    continue
+                raise
+            if _should_retry_preview_request(method=request.method, status_code=candidate.status_code):
+                upstream = candidate
+                continue
+            upstream = candidate
+            break
+        if upstream is None:
+            if last_error is not None:
+                raise last_error
+            raise HTTPException(status_code=502, detail="Draft dev preview upstream request failed")
+        return upstream
 
 
 def _assert_preview_scope_matches_session(payload: dict[str, Any], session: PublishedAppDraftDevSession) -> None:
@@ -281,7 +408,7 @@ async def proxy_builder_preview(
         raise HTTPException(status_code=401, detail="Preview authentication required")
     payload = _validate_preview_token(token)
     _assert_preview_scope_matches_session(payload, session)
-    target = _resolve_preview_target(session)
+    target = await _resolve_preview_target(session)
     upstream_url = _upstream_url(
         path=path,
         query_params=request.query_params,
@@ -300,33 +427,48 @@ async def proxy_builder_preview(
     )
     body = await request.body()
     try:
-        async with httpx.AsyncClient(follow_redirects=False, timeout=60.0) as client:
-            upstream = None
-            last_error: httpx.HTTPError | None = None
-            for delay in _PREVIEW_HTTP_RETRY_DELAYS_SECONDS:
-                if delay > 0:
-                    await asyncio.sleep(delay)
-                try:
-                    candidate = await client.request(
-                        request.method,
-                        upstream_url,
-                        headers=_proxy_headers(request, target=target),
-                        content=body if body else None,
-                    )
-                except httpx.HTTPError as exc:
-                    last_error = exc
-                    if _should_retry_preview_request(method=request.method, error=exc):
-                        continue
-                    raise
-                if _should_retry_preview_request(method=request.method, status_code=candidate.status_code):
-                    upstream = candidate
-                    continue
-                upstream = candidate
-                break
-            if upstream is None:
-                if last_error is not None:
-                    raise last_error
-                raise HTTPException(status_code=502, detail="Draft dev preview upstream request failed")
+        try:
+            upstream = await _request_preview_upstream(
+                request=request,
+                upstream_url=upstream_url,
+                target=target,
+                body=body,
+            )
+        except httpx.HTTPError as exc:
+            if not _is_refreshable_preview_error(exc):
+                raise
+            refreshed_target = await _refresh_preview_target(
+                db=db,
+                session=session,
+                current_target=target,
+            )
+            if refreshed_target is None:
+                raise
+            target = refreshed_target
+            upstream_url = _upstream_url(
+                path=path,
+                query_params=request.query_params,
+                target=target,
+            )
+            apps_builder_trace(
+                "preview.proxy.retrying_after_refresh",
+                domain="preview.proxy",
+                session_id=str(session.id),
+                app_id=str(session.published_app_id),
+                revision_id=str(session.revision_id or ""),
+                sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+                method=request.method,
+                path=path,
+                upstream_url=upstream_url,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
+            upstream = await _request_preview_upstream(
+                request=request,
+                upstream_url=upstream_url,
+                target=target,
+                body=body,
+            )
     except httpx.TimeoutException as exc:
         apps_builder_trace(
             "preview.proxy.failed",
@@ -408,7 +550,7 @@ async def proxy_builder_preview_websocket(
         return
     payload = _validate_preview_token(token)
     _assert_preview_scope_matches_session(payload, session)
-    target = _resolve_preview_target(session)
+    target = await _resolve_preview_target(session)
     apps_builder_trace(
         "preview.proxy.websocket_open",
         domain="preview.proxy",

@@ -5,9 +5,11 @@ import pytest
 from app.core.security import get_password_hash
 from app.db.postgres.models.agents import Agent
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
-from app.db.postgres.models.security import WorkloadPolicyStatus
+from app.db.postgres.models.security import WorkloadPolicyStatus, WorkloadResourceType
 from app.services.delegation_service import DelegationPolicyError, DelegationService
+from app.services.published_app_coding_agent_profile import CODING_AGENT_PROFILE_SLUG, ensure_coding_agent_profile
 from app.services.workload_provisioning_service import WorkloadProvisioningService
+from app.services.workload_identity_service import WorkloadIdentityService
 
 
 async def _seed_tenant_with_user(db_session, *, user_role: str = "user"):
@@ -106,3 +108,28 @@ async def test_runtime_grant_fails_when_agent_principal_not_provisioned(db_sessi
         )
 
     assert exc.value.code == "WORKLOAD_PRINCIPAL_MISSING"
+
+
+@pytest.mark.asyncio
+async def test_coding_agent_profile_ensures_bound_workload_principal(db_session):
+    tenant, admin_user = await _seed_tenant_with_user(db_session, user_role="admin")
+
+    profile = await ensure_coding_agent_profile(
+        db_session,
+        tenant.id,
+        actor_user_id=admin_user.id,
+    )
+    await db_session.commit()
+
+    identity = WorkloadIdentityService(db_session)
+    principal = await identity.get_bound_principal(
+        tenant_id=tenant.id,
+        resource_type=WorkloadResourceType.AGENT,
+        resource_id=str(profile.id),
+    )
+    policy = await identity.get_latest_policy(principal.id) if principal is not None else None
+
+    assert profile.slug == CODING_AGENT_PROFILE_SLUG
+    assert principal is not None
+    assert policy is not None
+    assert policy.status == WorkloadPolicyStatus.APPROVED

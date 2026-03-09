@@ -180,10 +180,6 @@ class PublishedAppSandboxBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def prepare_publish_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
     async def prepare_publish_dependencies(self, *, sandbox_id: str, workspace_path: str) -> Dict[str, Any]:
         raise NotImplementedError
 

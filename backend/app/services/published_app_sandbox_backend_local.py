@@ -218,12 +218,6 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         except LocalDraftDevRuntimeError as exc:
             raise self._translate(exc) from exc
 
-    async def prepare_publish_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
-        try:
-            return await self._manager().prepare_publish_workspace(sandbox_id=sandbox_id)
-        except LocalDraftDevRuntimeError as exc:
-            raise self._translate(exc) from exc
-
     async def prepare_publish_dependencies(self, *, sandbox_id: str, workspace_path: str) -> Dict[str, Any]:
         try:
             return await self._manager().prepare_publish_dependencies(

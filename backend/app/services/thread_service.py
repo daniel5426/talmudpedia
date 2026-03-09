@@ -44,6 +44,7 @@ class ThreadService:
         *,
         tenant_id: UUID,
         user_id: Optional[UUID],
+        app_account_id: Optional[UUID] = None,
         agent_id: Optional[UUID],
         published_app_id: Optional[UUID],
         surface: AgentThreadSurface,
@@ -58,13 +59,17 @@ class ThreadService:
                 raise ThreadAccessError("Thread is archived")
             if published_app_id is not None and thread.published_app_id != published_app_id:
                 raise ThreadAccessError("Thread scope mismatch")
-            if thread.user_id is not None and user_id is not None and thread.user_id != user_id:
+            if published_app_id is not None:
+                if thread.app_account_id is not None and app_account_id is not None and thread.app_account_id != app_account_id:
+                    raise ThreadAccessError("Thread ownership mismatch")
+            elif thread.user_id is not None and user_id is not None and thread.user_id != user_id:
                 raise ThreadAccessError("Thread ownership mismatch")
             return ThreadResolveResult(thread=thread, created=False)
 
         thread = AgentThread(
             tenant_id=tenant_id,
             user_id=user_id,
+            app_account_id=app_account_id,
             agent_id=agent_id,
             published_app_id=published_app_id,
             surface=surface,
@@ -151,6 +156,7 @@ class ThreadService:
         *,
         tenant_id: UUID,
         user_id: Optional[UUID] = None,
+        app_account_id: Optional[UUID] = None,
         published_app_id: Optional[UUID] = None,
         skip: int = 0,
         limit: int = 20,
@@ -158,6 +164,8 @@ class ThreadService:
         base = select(AgentThread).where(AgentThread.tenant_id == tenant_id)
         if user_id is not None:
             base = base.where(AgentThread.user_id == user_id)
+        if app_account_id is not None:
+            base = base.where(AgentThread.app_account_id == app_account_id)
         if published_app_id is not None:
             base = base.where(AgentThread.published_app_id == published_app_id)
         count = (
@@ -180,6 +188,7 @@ class ThreadService:
         tenant_id: UUID,
         thread_id: UUID,
         user_id: Optional[UUID] = None,
+        app_account_id: Optional[UUID] = None,
         published_app_id: Optional[UUID] = None,
     ) -> Optional[AgentThread]:
         query = (
@@ -191,9 +200,12 @@ class ThreadService:
         thread = (await self.db.execute(query)).scalar_one_or_none()
         if thread is None:
             return None
-        if user_id is not None and thread.user_id is not None and thread.user_id != user_id:
-            return None
         if published_app_id is not None and thread.published_app_id != published_app_id:
+            return None
+        if app_account_id is not None:
+            if thread.app_account_id is not None and thread.app_account_id != app_account_id:
+                return None
+        elif user_id is not None and thread.user_id is not None and thread.user_id != user_id:
             return None
         return thread
 

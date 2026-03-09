@@ -211,11 +211,19 @@ class AgentExecutorService:
         except Exception:
             published_app_id = None
 
+        published_app_account_id: Optional[UUID] = None
+        raw_published_app_account_id = runtime_context.get("published_app_account_id")
+        try:
+            published_app_account_id = UUID(str(raw_published_app_account_id)) if raw_published_app_account_id else None
+        except Exception:
+            published_app_account_id = None
+
         thread_service = ThreadService(self.db)
         try:
             thread_result = await thread_service.resolve_or_create_thread(
                 tenant_id=agent.tenant_id,
                 user_id=effective_initiator_id,
+                app_account_id=published_app_account_id,
                 agent_id=agent_id,
                 published_app_id=published_app_id,
                 surface=surface,
@@ -256,6 +264,8 @@ class AgentExecutorService:
             initiator_user_id=effective_initiator_id,
             workload_principal_id=resolved_principal_id,
             delegation_grant_id=resolved_grant_id,
+            published_app_id=published_app_id,
+            published_app_account_id=published_app_account_id,
             input_params=input_params,
             status=RunStatus.queued,
             root_run_id=root_run_id,

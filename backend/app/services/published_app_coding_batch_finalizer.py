@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 from typing import Any
 from uuid import UUID
 
@@ -37,6 +38,19 @@ _TERMINAL_RUN_STATUSES = {
 class PublishedAppCodingBatchFinalizer:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    @staticmethod
+    def _files_fingerprint(files: dict[str, str] | None) -> str | None:
+        if not isinstance(files, dict):
+            return None
+        try:
+            serialized = "\n".join(
+                f"{path}\0{content}"
+                for path, content in sorted((str(path), str(content)) for path, content in files.items())
+            )
+        except Exception:
+            return None
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _scope_filters(*, app_id: UUID) -> list[Any]:
@@ -157,6 +171,16 @@ class PublishedAppCodingBatchFinalizer:
         runtime_service = PublishedAppDraftDevRuntimeService(self.db)
         workspace = await runtime_service.get_workspace(app_id=app_id)
         if workspace is None or not workspace.sandbox_id:
+            apps_builder_trace(
+                "batch_finalizer.workspace_unavailable",
+                domain="coding_agent.finalizer",
+                app_id=str(app_id),
+                actor_id=str(sample_run.initiator_user_id or sample_run.user_id or "") or None,
+                workspace_present=workspace is not None,
+                workspace_id=str(getattr(workspace, "id", "") or "") or None,
+                sandbox_id=str(getattr(workspace, "sandbox_id", "") or "") or None,
+                workspace_status=str(getattr(getattr(workspace, "status", None), "value", getattr(workspace, "status", None)) or "") or None,
+            )
             return app, current, None
         sandbox_id = str(workspace.sandbox_id)
 
@@ -164,7 +188,23 @@ class PublishedAppCodingBatchFinalizer:
             runtime_service=runtime_service,
             sandbox_id=sandbox_id,
         )
-        if stage_files == dict(current.files or {}):
+        current_files = dict(current.files or {})
+        stage_fingerprint = self._files_fingerprint(stage_files)
+        current_fingerprint = self._files_fingerprint(current_files)
+        apps_builder_trace(
+            "batch_finalizer.stage_snapshot_compared",
+            domain="coding_agent.finalizer",
+            app_id=str(app_id),
+            actor_id=str(sample_run.initiator_user_id or sample_run.user_id or "") or None,
+            sandbox_id=sandbox_id,
+            current_revision_id=str(current.id),
+            stage_file_count=len(stage_files),
+            current_file_count=len(current_files),
+            stage_fingerprint=stage_fingerprint,
+            current_fingerprint=current_fingerprint,
+            stage_matches_current=stage_files == current_files,
+        )
+        if stage_files == current_files:
             apps_builder_trace(
                 "batch_finalizer.noop",
                 domain="coding_agent.finalizer",
@@ -189,6 +229,19 @@ class PublishedAppCodingBatchFinalizer:
             runtime_service=runtime_service,
             sandbox_id=sandbox_id,
         )
+        apps_builder_trace(
+            "batch_finalizer.live_snapshot_compared",
+            domain="coding_agent.finalizer",
+            app_id=str(app_id),
+            actor_id=str(sample_run.initiator_user_id or sample_run.user_id or "") or None,
+            sandbox_id=sandbox_id,
+            current_revision_id=str(current.id),
+            live_file_count=len(live_files),
+            current_file_count=len(current_files),
+            live_fingerprint=self._files_fingerprint(live_files),
+            current_fingerprint=current_fingerprint,
+            live_matches_current=live_files == current_files,
+        )
         return app, current, live_files
 
     async def finalize_for_terminal_run(self, *, run_id: UUID) -> dict[str, Any]:
@@ -201,15 +254,46 @@ class PublishedAppCodingBatchFinalizer:
             actor_id=str((getattr(run, "initiator_user_id", None) or getattr(run, "user_id", None)) or "") or None,
         )
         if run is None:
+            apps_builder_trace(
+                "batch_finalizer.skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                reason="run_not_found",
+            )
             return {"status": "run_not_found"}
         if str(run.surface or "") != CODING_AGENT_SURFACE:
+            apps_builder_trace(
+                "batch_finalizer.skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(run.published_app_id or "") or None,
+                actor_id=str(run.initiator_user_id or run.user_id or "") or None,
+                reason="surface_not_supported",
+                surface=str(run.surface or ""),
+            )
             return {"status": "surface_not_supported"}
         status_value = run.status.value if hasattr(run.status, "value") else str(run.status)
         terminal_values = {item.value for item in _TERMINAL_RUN_STATUSES}
         if status_value not in terminal_values:
+            apps_builder_trace(
+                "batch_finalizer.skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(run.published_app_id or "") or None,
+                actor_id=str(run.initiator_user_id or run.user_id or "") or None,
+                reason="run_not_terminal",
+                status=status_value,
+            )
             return {"status": "run_not_terminal"}
         app_id = run.published_app_id
         if app_id is None:
+            apps_builder_trace(
+                "batch_finalizer.skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                actor_id=str(run.initiator_user_id or run.user_id or "") or None,
+                reason="scope_unavailable",
+            )
             return {"status": "scope_unavailable"}
 
         lock_acquired = False
@@ -217,6 +301,14 @@ class PublishedAppCodingBatchFinalizer:
         try:
             lock_acquired, lock_key = await self._try_scope_advisory_lock(app_id=app_id)
             if not lock_acquired:
+                apps_builder_trace(
+                    "batch_finalizer.skipped",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    actor_id=str(run.initiator_user_id or run.user_id or "") or None,
+                    reason="scope_lock_busy",
+                )
                 return {"status": "scope_lock_busy"}
 
             active_count = await self._count_active_runs(app_id=app_id)
@@ -233,6 +325,14 @@ class PublishedAppCodingBatchFinalizer:
 
             completed_candidates = await self._load_unfinalized_completed_runs(app_id=app_id)
             if not completed_candidates:
+                apps_builder_trace(
+                    "batch_finalizer.skipped",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    actor_id=str(run.initiator_user_id or run.user_id or "") or None,
+                    reason="no_unfinalized_completed_runs",
+                )
                 return {"status": "no_unfinalized_completed_runs"}
 
             app, current, live_files = await self._prepare_finalized_live_snapshot(
@@ -303,6 +403,16 @@ class PublishedAppCodingBatchFinalizer:
                 else:
                     build_result = {"ok": True}
             else:
+                apps_builder_trace(
+                    "batch_finalizer.revision_skipped",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    actor_id=str(run.initiator_user_id or run.user_id or "") or None,
+                    reason="live_matches_current_revision" if live_files is not None else "live_snapshot_unavailable",
+                    current_revision_id=str(current.id),
+                    live_files_present=live_files is not None,
+                )
                 build_result = {"ok": True}
 
             for candidate in completed_candidates:

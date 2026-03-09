@@ -1,8 +1,10 @@
 # Authentication Overview
 
-Last Updated: 2026-02-08
+Last Updated: 2026-03-09
 
 This document describes authentication types currently used by the platform.
+
+For navigation and reading order, see `backend/documentations/auth/00_auth_docs_guide.md`.
 
 ## Auth Types at a Glance
 

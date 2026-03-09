@@ -1,6 +1,9 @@
 # Security Unification Refactor Status
 
-Last Updated: 2026-03-05
+Last Updated: 2026-03-09
+
+This file is a status update for one implementation wave, not the canonical auth overview.
+For navigation and reading order, see `backend/documentations/auth/00_auth_docs_guide.md`.
 
 ## Implemented in This Wave
 - Added canonical scope registry at `backend/app/core/scope_registry.py`.

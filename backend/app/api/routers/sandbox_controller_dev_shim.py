@@ -181,10 +181,6 @@ class StagePromoteRequest(BaseModel):
     pass
 
 
-class PublishPrepareRequest(BaseModel):
-    pass
-
-
 class PublishDependenciesPrepareRequest(BaseModel):
     workspace_path: str
 
@@ -797,16 +793,6 @@ async def promote_stage_workspace(sandbox_id: str, payload: StagePromoteRequest)
     try:
         _ = payload
         return await manager.promote_stage_workspace(sandbox_id=sandbox_id)
-    except Exception as exc:
-        raise _translate_runtime_error(exc) from exc
-
-
-@router.post("/sessions/{sandbox_id}/publish/prepare")
-async def prepare_publish_workspace(sandbox_id: str, payload: PublishPrepareRequest) -> dict[str, Any]:
-    manager = get_local_draft_dev_runtime_manager()
-    try:
-        _ = payload
-        return await manager.prepare_publish_workspace(sandbox_id=sandbox_id)
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc
 

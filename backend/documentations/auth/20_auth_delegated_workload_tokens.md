@@ -1,9 +1,11 @@
 # Service and Workload Token Authentication
 
-Last Updated: 2026-02-08
+Last Updated: 2026-03-09
 
 ## Purpose
 The platform now uses **delegated workload tokens** for internal runtime actions (agents, artifacts, tools, workers) that call secured internal APIs.
+
+For navigation and reading order, see `backend/documentations/auth/00_auth_docs_guide.md`.
 
 ## Current Model
 1. A workload principal is defined per tenant workload.

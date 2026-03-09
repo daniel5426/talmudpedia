@@ -171,6 +171,26 @@ class PublishedAppDraftDevRuntimeService:
         return value or None
 
     @staticmethod
+    def _merge_backend_metadata(
+        *,
+        existing_metadata: object,
+        refreshed_metadata: object,
+        preview_base_path: str | None = None,
+    ) -> dict[str, Any]:
+        existing = dict(existing_metadata or {}) if isinstance(existing_metadata, dict) else {}
+        refreshed = dict(refreshed_metadata or {}) if isinstance(refreshed_metadata, dict) else {}
+        if not refreshed:
+            return existing
+        existing_preview = existing.get("preview") if isinstance(existing.get("preview"), dict) else {}
+        refreshed_preview = dict(refreshed.get("preview") or {}) if isinstance(refreshed.get("preview"), dict) else {}
+        preserved_base_path = str(preview_base_path or refreshed_preview.get("base_path") or existing_preview.get("base_path") or "").strip()
+        if preserved_base_path:
+            refreshed_preview["base_path"] = preserved_base_path
+        if refreshed_preview:
+            refreshed["preview"] = refreshed_preview
+        return refreshed
+
+    @staticmethod
     def _session_load_options():
         return load_only(
             PublishedAppDraftDevSession.id,
@@ -615,7 +635,7 @@ class PublishedAppDraftDevRuntimeService:
         workspace.last_activity_at = now
         workspace.detached_at = None
         try:
-            await self.client.heartbeat_session(
+            heartbeat_result = await self.client.heartbeat_session(
                 sandbox_id=str(workspace.sandbox_id),
                 idle_timeout_seconds=self.settings.idle_timeout_seconds,
             )
@@ -679,7 +699,7 @@ class PublishedAppDraftDevRuntimeService:
         workspace.last_activity_at = now
         workspace.detached_at = None
         try:
-            await self.client.heartbeat_session(
+            heartbeat_result = await self.client.heartbeat_session(
                 sandbox_id=str(workspace.sandbox_id),
                 idle_timeout_seconds=self.settings.idle_timeout_seconds,
             )
@@ -693,6 +713,15 @@ class PublishedAppDraftDevRuntimeService:
             self._mark_workspace_error(workspace, exc)
             return self._mark_session_error(session, exc)
 
+        if isinstance(heartbeat_result.get("backend_metadata"), dict):
+            workspace.backend_metadata = self._merge_backend_metadata(
+                existing_metadata=workspace.backend_metadata,
+                refreshed_metadata=heartbeat_result.get("backend_metadata"),
+                preview_base_path=(
+                    str(workspace.preview_url or "").strip()
+                    or str(session.preview_url or "").strip()
+                ),
+            )
         session.status = PublishedAppDraftDevSessionStatus.serving
         session.sandbox_id = self._normalize_runtime_sandbox_id(workspace.sandbox_id)
         session.backend_metadata = dict(workspace.backend_metadata or {})

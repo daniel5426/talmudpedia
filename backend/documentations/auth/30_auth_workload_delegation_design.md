@@ -1,9 +1,11 @@
 # Workload Delegation Auth Design
 
-Last Updated: 2026-02-07
+Last Updated: 2026-03-09
 
 ## Objective
 Provide SaaS-safe authorization for agentic runtimes (agents/artifacts/tools/workers) performing internal privileged API actions.
+
+For navigation and reading order, see `backend/documentations/auth/00_auth_docs_guide.md`.
 
 ## Key Components
 1. `workload_principals`
