@@ -147,3 +147,20 @@ async def test_sandbox_controller_mode_is_enabled_even_when_opencode_flag_off(mo
     assert client.is_enabled is True
 
     await client.ensure_healthy()
+
+
+@pytest.mark.asyncio
+async def test_sprite_backend_forces_sandbox_mode_even_when_legacy_controller_flag_is_off(monkeypatch):
+    monkeypatch.setenv("APPS_SANDBOX_BACKEND", "sprite")
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-test-token")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_ENABLED", "1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "0")
+    monkeypatch.delenv("APPS_SANDBOX_CONTROLLER_URL", raising=False)
+    monkeypatch.delenv("APPS_DRAFT_DEV_CONTROLLER_URL", raising=False)
+    monkeypatch.delenv("APPS_CODING_AGENT_OPENCODE_BASE_URL", raising=False)
+
+    client = OpenCodeServerClient.from_env()
+    assert client.is_enabled is True
+    assert client._sandbox_runtime_mode_enabled() is True
+
+    await client.ensure_healthy()

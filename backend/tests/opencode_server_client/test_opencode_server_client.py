@@ -3,6 +3,8 @@ import json
 import httpx
 import pytest
 
+from app.services.published_app_sandbox_backend import PublishedAppSandboxBackendConfig
+from app.services.published_app_sandbox_backend_sprite import SpriteSandboxBackend
 from app.services.opencode_server_client import (
     OpenCodeServerClient,
     OpenCodeServerClientConfig,
@@ -43,14 +45,17 @@ def _sse_payload(event_type: str, properties: dict[str, object]) -> str:
 def test_build_official_session_permission_rules_includes_workspace_patterns():
     rules = OpenCodeServerClient._build_official_session_permission_rules("/tmp/workspace-a")
     assert rules
-    assert all(item.get("permission") == "external_directory" for item in rules)
-    patterns = {str(item.get("pattern") or "") for item in rules}
+    external_directory_rules = [item for item in rules if item.get("permission") == "external_directory"]
+    assert external_directory_rules
+    assert any(item.get("permission") == "question" and item.get("pattern") == "*" for item in rules)
+    patterns = {str(item.get("pattern") or "") for item in external_directory_rules}
     assert "/tmp/workspace-a" in patterns
     assert "/tmp/workspace-a/*" in patterns
 
 
 @pytest.mark.asyncio
 async def test_official_mode_seeds_custom_tools_before_start(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "1")
     workspace_path = str(tmp_path / "workspace")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -193,6 +198,63 @@ async def test_host_mode_can_skip_workspace_bootstrap(monkeypatch: pytest.Monkey
     )
 
     assert run_ref == "sess-skip-bootstrap"
+
+
+@pytest.mark.asyncio
+async def test_sprite_inner_opencode_client_skips_host_workspace_bootstrap(monkeypatch: pytest.MonkeyPatch):
+    backend = SpriteSandboxBackend(
+        PublishedAppSandboxBackendConfig(
+            backend="sprite",
+            controller_url=None,
+            controller_token=None,
+            request_timeout_seconds=15,
+            local_preview_base_url="http://127.0.0.1:5173",
+            embedded_local_enabled=False,
+            preview_proxy_base_path="/public/apps-builder/draft-dev/sessions",
+            e2b_template=None,
+            e2b_template_tag=None,
+            e2b_timeout_seconds=1800,
+            e2b_workspace_path="/workspace",
+            e2b_preview_port=4173,
+            e2b_opencode_port=4141,
+            e2b_secure=True,
+            e2b_allow_internet_access=True,
+            e2b_auto_pause=False,
+            sprite_api_base_url="https://api.sprites.dev",
+            sprite_api_token="sprite-token",
+            sprite_name_prefix="app-builder",
+            sprite_workspace_path="/home/sprite/app",
+            sprite_stage_workspace_path="/home/sprite/.talmudpedia/stage/current/workspace",
+            sprite_publish_workspace_path="/home/sprite/.talmudpedia/publish/current/workspace",
+            sprite_preview_port=8080,
+            sprite_opencode_port=4141,
+            sprite_preview_service_name="builder-preview",
+            sprite_opencode_service_name="opencode",
+            sprite_opencode_command=None,
+            sprite_command_timeout_seconds=900,
+            sprite_retention_seconds=21600,
+            sprite_network_policy=None,
+        )
+    )
+
+    class _TunnelManagerStub:
+        async def ensure_tunnel(self, *, api_base_url: str, api_token: str, sprite_name: str, remote_host: str, remote_port: int) -> str:
+            assert api_base_url == "https://api.sprites.dev"
+            assert api_token == "sprite-token"
+            assert sprite_name == "sprite-app-1"
+            assert remote_host == "127.0.0.1"
+            assert remote_port == 4141
+            return "http://127.0.0.1:40141"
+
+    from app.services import published_app_sandbox_backend_sprite as sprite_backend_module
+
+    monkeypatch.setattr(sprite_backend_module, "get_sprite_proxy_tunnel_manager", lambda: _TunnelManagerStub())
+
+    client = await backend._build_opencode_client(sandbox_id="sprite-app-1")
+
+    assert client._config.base_url == "http://127.0.0.1:40141"
+    assert client._config.skip_workspace_bootstrap is True
+    assert client._config.sandbox_controller_mode_override is False
 
 
 @pytest.mark.asyncio

@@ -172,7 +172,7 @@ async def _assert_no_active_coding_run_for_scope(
         status_code=409,
         detail={
             "code": "CODING_AGENT_RUN_ACTIVE",
-            "message": "Builder edits are locked while a coding-agent run is active for this session.",
+            "message": "Builder edits are locked while a coding-agent run is active for this app.",
             "active_coding_run_count": active_count,
         },
     )
@@ -635,6 +635,18 @@ async def reset_builder_template(
 
     app.template_key = template_key
     app.current_draft_revision_id = revision.id
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    if actor_id is not None:
+        try:
+            await runtime_service.sync_session(
+                app=app,
+                revision=revision,
+                user_id=actor_id,
+                files=dict(revision.files or {}),
+                entry_file=revision.entry_file,
+            )
+        except PublishedAppDraftDevRuntimeDisabled:
+            pass
 
     await db.commit()
     await db.refresh(revision)

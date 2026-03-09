@@ -61,6 +61,8 @@ from .published_apps import (
     PublishedAppCustomDomainStatus,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
+    PublishedAppDraftWorkspace,
+    PublishedAppDraftWorkspaceStatus,
     PublishedAppPublishJob,
     PublishedAppPublishJobStatus,
     PublishedAppRevision,

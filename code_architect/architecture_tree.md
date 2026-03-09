@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-08
+Last Updated: 2026-03-09
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -139,6 +139,8 @@ backend/app/services/published_app_sandbox_backend.py
 backend/app/services/published_app_sandbox_backend_factory.py
 backend/app/services/published_app_sandbox_backend_local.py
 backend/app/services/published_app_sandbox_backend_controller.py
+backend/app/services/published_app_sandbox_backend_sprite.py
+backend/app/services/published_app_sprite_proxy_tunnel.py
 backend/app/services/published_app_sandbox_backend_e2b_workspace.py
 backend/app/services/published_app_sandbox_backend_e2b_runtime.py
 backend/app/services/published_app_sandbox_backend_e2b.py

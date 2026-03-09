@@ -1,48 +1,31 @@
 Last Updated: 2026-03-08
 
-# Apps Builder E2B Runtime Migration Status
+# Apps Builder E2B Runtime Migration Status (Archived)
 
-## Implemented Base
+## Status
 
-The app-builder draft-dev runtime now has a provider-abstracted sandbox layer under the existing `PublishedAppDraftDevRuntimeClient` contract.
+This doc is now historical only.
 
-Implemented pieces:
-- `PublishedAppSandboxBackend` abstraction for session lifecycle, workspace/file operations, stage/publish flows, commands, and OpenCode calls
-- backend adapters for:
-  - `local`
-  - `controller`
-  - `e2b`
-- backend selection through `APPS_SANDBOX_BACKEND` with `e2b` as the default when no controller override is configured
-- draft-dev session persistence for:
-  - `runtime_backend`
-  - `backend_metadata`
-- a platform-owned preview proxy at `/public/apps-builder/draft-dev/sessions/{session_id}/preview/...`
-- preview auth bootstrap through the existing signed preview token, with cookie promotion for asset/HMR follow-up requests
-- local dev runtime support for preview base paths so proxied Vite sessions work under the platform URL
+App Builder is no longer active on E2B.
 
-## Current Shape
+Current hard-cut state:
+- App Builder draft runtime is Sprite-first.
+- One persistent shared Sprite exists per app.
+- User draft-dev sessions are attachment records to the shared app workspace.
+- Coding-agent batching is app-wide shared-batch scope.
+- E2B backend code remains in-repo but is archived for App Builder runtime selection.
 
-The public app-builder service contracts remain in place:
-- `PublishedAppDraftDevRuntimeService`
-- `PublishedAppDraftDevRuntimeClient`
-- `OpenCodeServerClient` integration points
-- existing publish/stage callers
+## Why This File Still Exists
 
-What changed is the runtime substrate under those entrypoints:
-- the old client transport branching is now delegated to backend adapters
-- the E2B backend provisions sandboxes, syncs `/workspace`, reuses dependency markers, and starts preview/OpenCode processes inside the sandbox
-- preview URLs returned to the frontend are now platform proxy URLs instead of raw sandbox hosts
+It records that E2B was the previous App Builder migration target and is intentionally retained as archived context because the E2B backend implementation still exists in the repo.
 
-## Immediate Follow-ups
+## Current Canonical References
 
-Still needed before calling the migration complete:
-- exercise the E2B backend against a real sandbox/template in an end-to-end environment
-- add websocket-specific preview proxy coverage against live Vite HMR
-- harden E2B reconnect/recovery paths for stale sandbox ids and orphaned processes
-- wire operator-facing rollout controls per environment/tenant
-- extend the same substrate to artifact runtime profiles after the app-builder path is proven
+- `backend/documentations/sandbox_spec.md`
+- `backend/documentations/Plans/AppsBuilder_Current_Implementation_Overview.md`
+- `backend/documentations/summary/CustomCodingAgent.md`
+- `backend/documentations/apps_builder_sprite_hard_cut_status.md`
 
-## Related Docs
+## Legacy Note
 
-- `backend/documentations/artifact_sandbox_architecture.md`
-  - artifact-specific reuse plan on top of the same sandbox substrate
+Artifacts may still use a different substrate later, but that is no longer tied to App Builder draft runtime selection.

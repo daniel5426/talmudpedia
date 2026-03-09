@@ -1,4 +1,4 @@
-Last Updated: 2026-03-08
+Last Updated: 2026-03-09
 
 # Sandbox Spec
 
@@ -8,7 +8,8 @@ This document is the current implementation and architecture reference for the s
 
 It covers:
 - the shared provider-abstracted sandbox base
-- the current E2B integration
+- the current Sprite integration for App Builder
+- the archived E2B integration kept in-repo as legacy code
 - the app-builder specific runtime implementation
 - the planned artifact migration onto the same substrate
 
@@ -25,6 +26,8 @@ The current implementation lives primarily in:
 - [backend/app/services/published_app_sandbox_backend_factory.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_factory.py)
 - [backend/app/services/published_app_sandbox_backend_local.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_local.py)
 - [backend/app/services/published_app_sandbox_backend_controller.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_controller.py)
+- [backend/app/services/published_app_sandbox_backend_sprite.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_sprite.py)
+- [backend/app/services/published_app_sprite_proxy_tunnel.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sprite_proxy_tunnel.py)
 - [backend/app/services/published_app_sandbox_backend_e2b.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b.py)
 - [backend/app/services/published_app_sandbox_backend_e2b_runtime.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b_runtime.py)
 - [backend/app/services/published_app_sandbox_backend_e2b_workspace.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/services/published_app_sandbox_backend_e2b_workspace.py)
@@ -34,6 +37,19 @@ The current implementation lives primarily in:
 - [backend/app/api/routers/published_apps_builder_preview_proxy.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/api/routers/published_apps_builder_preview_proxy.py)
 - [backend/app/db/postgres/models/published_apps.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/app/db/postgres/models/published_apps.py)
 - [backend/alembic/versions/2a4c6e8f1b3d_add_draft_dev_runtime_backend_metadata.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/alembic/versions/2a4c6e8f1b3d_add_draft_dev_runtime_backend_metadata.py)
+- [backend/alembic/versions/6c8b7a2d9e4f_add_published_app_draft_workspaces.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/alembic/versions/6c8b7a2d9e4f_add_published_app_draft_workspaces.py)
+
+## Current App Builder State
+
+App Builder is now hard-cut to Sprites for draft runtime.
+
+Current runtime semantics:
+- one persistent shared Sprite per app
+- one shared live workspace per app
+- one shared stage workspace per app for coding-agent batches
+- user draft-dev sessions act as attachment/auth records pointing to the shared app workspace
+- App Builder preview continues to flow through the backend preview proxy
+- E2B code remains in the repo but is archived for App Builder runtime selection
 
 ## Documentation Overlap
 
@@ -62,7 +78,7 @@ The sandbox platform is split into two layers:
 
 2. Sandbox backend
 - the actual execution provider
-- currently implemented for `local`, `controller`, and `e2b`
+- currently implemented for `local`, `controller`, `sprite`, and archived `e2b`
 - selected explicitly by configuration
 
 The design principle is:
@@ -117,12 +133,13 @@ Backend construction is handled by `build_published_app_sandbox_backend()` in th
 Current backends:
 - `local`
 - `controller`
-- `e2b`
+- `sprite`
+- `e2b` (archived for App Builder)
 
 Selection rules:
 - `APPS_SANDBOX_BACKEND` explicitly selects the backend
-- if no explicit backend is set and a controller URL is configured, use `controller`
-- otherwise default to `e2b`
+- App Builder defaults to `sprite`
+- `e2b` is intentionally rejected for active App Builder runtime construction
 
 Important implementation detail:
 - explicit client config must win over ambient env defaults
@@ -166,6 +183,22 @@ The backend abstraction changes the runtime substrate, not the higher-level app-
 
 ## Supported Backends
 
+### Sprite Backend
+
+`SpriteSandboxBackend` is the active managed provider integration for App Builder.
+
+Characteristics:
+- one persistent shared Sprite per app
+- Sprite services own preview and OpenCode process lifecycle
+- filesystem persists across hibernation, so dependency installs are reused
+- backend metadata stores provider routing/auth details instead of exposing raw provider URLs to the browser
+- backend reaches private OpenCode service ports through the Sprite proxy websocket API, not direct public `:4141` URLs
+- hard-cut default backend for App Builder
+
+Use case:
+- primary managed runtime for App Builder draft development
+- likely base substrate for later artifact work, if that path remains desirable
+
 ### Local Backend
 
 `LocalSandboxBackend` wraps the existing `LocalDraftDevRuntimeManager`.
@@ -193,63 +226,78 @@ Characteristics:
 - preview metadata extracted from returned preview URLs
 
 Use case:
-- compatibility with existing controller-based environments
-- transition path while the E2B path is being proven
+- compatibility with existing controller-based environments that still need it outside the App Builder hard cut
 
-### E2B Backend
+### Archived E2B Backend
 
-`E2BSandboxBackend` is the new primary managed provider integration.
+`E2BSandboxBackend` remains in-repo as archived legacy code.
 
 Characteristics:
-- hosted E2B sandbox provisioning
-- workspace root normalized to `/workspace`
-- preview server and OpenCode run inside the same sandbox
-- backend metadata stores provider connection details instead of exposing raw hosts to the browser
-- intended default backend when no controller override exists
+- no longer selectable for active App Builder runtime construction
+- retained only as implementation history and possible reference for later artifact decisions
 
 Use case:
-- primary managed sandbox substrate for app-builder
-- future shared substrate for artifacts
+- none for active App Builder runtime
 
-## E2B Base Implementation
+## Sprite Base Implementation
 
 ### Purpose
 
-E2B is used as the sandbox provider, not as the full product control plane.
+Sprites provide the persistent managed execution environment for App Builder.
 
 Talmudpedia still owns:
-- session persistence
+- app workspace persistence in Postgres
 - auth
-- preview URL policy
-- workspace semantics
+- preview proxy URL policy
+- shared live/stage workspace semantics
 - backend selection
 - recovery strategy
-- rollout logic
+- publish/version storage
 
-E2B owns:
-- sandbox execution environment
-- filesystem and process isolation
-- sandbox lifecycle primitives
+Sprites own:
+- persistent filesystem
+- exec/session primitives
+- service lifecycle
+- network exposure and URL routing
+
+### Sprite OpenCode Transport
+
+OpenCode is now treated as a private in-Sprite service.
+
+Current transport shape:
+- preview remains the HTTP-facing Sprite service behind the backend preview proxy
+- OpenCode binds inside the Sprite on `127.0.0.1:4141`
+- backend creates a local TCP tunnel through the Sprite proxy websocket API
+- the inner `OpenCodeServerClient` talks to `http://127.0.0.1:<local-tunnel-port>`
+- workspace bootstrap remains owned by the outer Sprite sandbox backend, not by the inner OpenCode HTTP client
+- draft-dev heartbeat waits for preview readiness instead of restarting services on every reattach
+- preview proxy retries transient warmup `404/5xx/timeout` responses for GET/HEAD asset requests during Sprite wake
+- stage promotion mirrors files into the existing live workspace in place so Vite keeps a stable working directory while changes land
+
+Reason for this design:
+- direct `https://<sprite>.sprites.app:4141` access is not a reliable production transport for a private service port
+- the Sprite proxy/control surface is the provider-native way to reach private ports from the backend
+- keeping OpenCode behind a standard localhost HTTP client preserves the existing event and run APIs without another provider-specific protocol layer inside the coding-agent runtime
 
 ### Environment Configuration
 
-Current E2B-related runtime env vars:
-- `E2B_API_KEY`
+Current Sprite-related runtime env vars:
+- `SPRITES_TOKEN`
 - `APPS_SANDBOX_BACKEND`
-- `APPS_E2B_TEMPLATE`
-- `APPS_E2B_TEMPLATE_TAG`
-- `APPS_E2B_ALLOW_DEFAULT_TEMPLATE`
-- `APPS_E2B_TEMPLATE_ALIAS`
-- `APPS_E2B_TEMPLATE_CPU_COUNT`
-- `APPS_E2B_TEMPLATE_MEMORY_MB`
-- `APPS_E2B_TEMPLATE_TAGS`
-- `APPS_E2B_SANDBOX_TIMEOUT_SECONDS`
-- `APPS_E2B_WORKSPACE_PATH`
-- `APPS_E2B_PREVIEW_PORT`
-- `APPS_E2B_OPENCODE_PORT`
-- `APPS_E2B_SECURE`
-- `APPS_E2B_ALLOW_INTERNET_ACCESS`
-- `APPS_E2B_AUTO_PAUSE`
+- `APPS_SPRITE_API_BASE_URL`
+- `APPS_SPRITE_API_TOKEN`
+- `APPS_SPRITE_NAME_PREFIX`
+- `APPS_SPRITE_WORKSPACE_PATH`
+- `APPS_SPRITE_STAGE_WORKSPACE_PATH`
+- `APPS_SPRITE_PUBLISH_WORKSPACE_PATH`
+- `APPS_SPRITE_PREVIEW_PORT`
+- `APPS_SPRITE_OPENCODE_PORT`
+- `APPS_SPRITE_PREVIEW_SERVICE_NAME`
+- `APPS_SPRITE_OPENCODE_SERVICE_NAME`
+- `APPS_SPRITE_OPENCODE_COMMAND`
+- `APPS_SPRITE_COMMAND_TIMEOUT_SECONDS`
+- `APPS_SPRITE_RETENTION_SECONDS`
+- `APPS_SPRITE_NETWORK_POLICY`
 
 ## Shared Tracing
 
@@ -260,7 +308,7 @@ Primary trace helper:
 
 Current trace domains include:
 - `draft_dev.runtime`
-- `sandbox.e2b`
+- `sandbox.sprite`
 - `preview.proxy`
 - `coding_agent.runtime`
 - `coding_agent.monitor`
@@ -278,7 +326,7 @@ Current trace env vars:
 
 Current coverage includes:
 - draft-dev session ensure/start/sync/heartbeat/stop/expiry
-- E2B sandbox start/sync/heartbeat/stop
+- Sprite workspace ensure/sync/heartbeat/stop/destroy
 - stage workspace prepare/snapshot/promote
 - preview proxy HTTP/websocket lifecycle
 - coding-agent pipeline events via bridge
@@ -286,80 +334,45 @@ Current coverage includes:
 - sandbox publish snapshot/install/build/upload/finalize lifecycle
 
 Startup rule:
-- if `APPS_SANDBOX_BACKEND=e2b`, the backend process must have `E2B_API_KEY`
-- startup now fails fast with a clear error if that key is missing
-- startup also now requires `APPS_E2B_TEMPLATE` by default
-- when using custom E2B templates, the runtime should target a concrete tagged reference, not a bare alias
-- the provider default sandbox template is treated as unsafe for app-builder because the observed memory budget was too small for the real Vite dev graph
-- `APPS_E2B_ALLOW_DEFAULT_TEMPLATE=1` exists only as a temporary bypass for debugging
-
-### Dedicated App-Builder Template
-
-The repo now includes a repeatable E2B template build helper:
-- [backend/scripts/e2b/build_app_builder_template.py](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/e2b/build_app_builder_template.py)
-
-Purpose:
-- create a named app-builder template alias with explicit CPU and memory sizing
-- build from E2B's `opencode` base template so the sandbox already contains the OpenCode binary/runtime
-- stop local/dev/prod environments from silently falling back to the low-memory provider default
-
-Current intended flow:
-1. set `E2B_API_KEY`
-2. optionally set:
-   - `APPS_E2B_TEMPLATE_ALIAS`
-   - `APPS_E2B_TEMPLATE_TAG`
-   - `APPS_E2B_TEMPLATE_CPU_COUNT`
-   - `APPS_E2B_TEMPLATE_MEMORY_MB`
-   - `APPS_E2B_TEMPLATE_TAGS`
-3. run:
-   - `python backend/scripts/e2b/build_app_builder_template.py`
-4. set:
-   - `APPS_E2B_TEMPLATE` to the resulting alias
-   - `APPS_E2B_TEMPLATE_TAG` to the chosen build tag
-
-Current default repo convention:
-- alias: `talmudpedia-app-builder-dev`
-- tag: `apps-builder`
-- effective runtime reference: `talmudpedia-app-builder-dev:apps-builder`
-
-Recommended starting size for app-builder:
-- `2 vCPU`
-- `2048 MB`
-
-Reason:
-- live E2B debugging showed the app-builder preview was dying because `esbuild` was being OOM-killed in a roughly `~512 MB` sandbox
-- a minimal Vite app worked fine in E2B, which isolated the issue to the real app-builder template/dependency graph rather than to E2B or Vite itself
+- if `APPS_SANDBOX_BACKEND=sprite`, the backend process must have `APPS_SPRITE_API_TOKEN` or `SPRITES_TOKEN`
+- startup fails fast with a clear error if Sprite auth is missing
+- App Builder defaults to `sprite`
+- `e2b` is intentionally rejected for active App Builder boot
+- no App Builder provider fallback should silently move the user back to E2B or local
 
 ### Workspace Contract
 
-The E2B backend uses `/workspace` as the normalized root.
+The Sprite backend uses stable per-app workspace roots inside the persistent Sprite filesystem.
 
 Current responsibilities:
-- sync incoming project files into the workspace
+- ensure the shared app Sprite exists
+- sync incoming project files into the live workspace
 - preserve dependency marker semantics
-- manage preview/OpenCode background processes in the same sandbox
+- manage preview/OpenCode as named Sprite services
 - expose internal connection data for proxying
 
 Important implementation note:
 - workspace listing must preserve leading-dot filenames
 - this is required so hidden runtime markers like `.draft-dev-dependency-hash` round-trip correctly for the coding-agent stage workspace flow
-- OpenCode startup now ensures `/workspace/.opencode/` exists before redirecting logs there
+- OpenCode startup ensures the workspace-local runtime directories exist before service startup
 
 ### Process Model
 
-Inside the sandbox, the runtime is expected to manage:
-- a Vite preview process
-- optionally an OpenCode server process
+Inside the Sprite, the runtime is expected to manage:
+- a preview service rooted at the shared live workspace
+- an OpenCode service rooted at the shared Sprite environment
 
 The important design choice is:
-- one sandbox per active draft-dev session
-- preview and OpenCode share the same workspace and file state
+- one shared Sprite per app
+- preview and OpenCode share the same persistent app environment
+- stage/live workspaces are directory-level concepts inside that Sprite
+- user sessions attach to the shared workspace instead of owning separate provider instances
 
-That keeps coding-agent edits and preview behavior consistent.
+That keeps coding-agent edits, manual edits, and preview behavior consistent across all editors attached to the app.
 
 ### Security Boundary
 
-Raw E2B preview hosts are not returned to the frontend as product URLs.
+Raw provider preview hosts are not returned to the frontend as product URLs.
 
 Instead:
 - backend stores upstream preview connection details in `backend_metadata`
@@ -384,21 +397,23 @@ Purpose:
 Current preview URL shape:
 - `/public/apps-builder/draft-dev/sessions/{session_id}/preview/...`
 
-The runtime layer now returns proxied preview URLs instead of provider-native browser URLs.
+The runtime layer now returns proxied preview URLs plus provider-neutral upstream metadata instead of provider-native browser URLs.
 
 ## App-Builder Specific Implementation
 
 ### Main Service Roles
 
-`PublishedAppDraftDevRuntimeService` remains the product-facing orchestration layer for draft-dev app sessions.
+`PublishedAppDraftDevRuntimeService` remains the product-facing orchestration layer for draft-dev app sessions and shared app workspaces.
 
 Responsibilities:
-- ensure or reuse the active draft-dev session
+- ensure or reuse the shared draft workspace for the app
+- ensure or reuse the active attachment session for the caller
 - compute dependency hashes
 - decide when dependencies must be reinstalled
-- persist sandbox/session metadata
+- persist workspace/session metadata
 - decorate session responses
 - coordinate preview token behavior
+- sweep dormant shared workspaces when no sessions remain attached
 
 `PublishedAppDraftDevRuntimeClient` is now a thin facade that delegates to the selected backend adapter.
 
@@ -408,23 +423,39 @@ This preserves the previous service contract while swapping the substrate below 
 
 1. User requests or resumes a draft-dev session.
 2. Service loads the app revision and computes dependency hash.
-3. Service ensures a session row exists for `(app_id, user_id)`.
-4. Client selects the configured backend.
-5. Service increments `runtime_generation` when a new sandbox must be created.
-6. Backend starts or syncs the runtime session.
-7. Service reconciles provider state so only the owned `(session_id, runtime_generation, sandbox_id)` remains.
-8. Best-effort provider sweeps collapse orphaned or duplicate E2B sandboxes against DB-owned active sessions.
-6. Service persists:
-   - `sandbox_id`
+3. Service ensures a shared draft workspace row exists for `app_id`.
+4. Service ensures a session row exists for `(app_id, user_id)` and attaches it to that workspace.
+5. Client selects the configured backend.
+6. Service increments `runtime_generation` when a new shared Sprite must be created.
+7. Backend ensures the Sprite exists, ensures preview/OpenCode services exist, and syncs the live workspace.
+8. Service persists:
+   - `draft_workspace_id`
+   - `sandbox_id` as the shared Sprite identity where legacy fields still exist
    - `runtime_generation`
    - `runtime_backend`
    - `backend_metadata`
    - preview and workspace details
 9. Response returns a platform proxy preview URL.
 
+### Shared Workspace State Model
+
+`PublishedAppDraftWorkspace` is the provider-owned app runtime record.
+
+Current responsibilities:
+- own the shared Sprite identity for the app
+- store provider metadata and service routing data
+- track lifecycle/health separate from user attachment rows
+- provide a single concurrency boundary for shared coding-agent batches
+
+Current design choice:
+- one workspace per app
+- many user attachment sessions per workspace
+- destroying a user session does not destroy the Sprite
+- deleting the app or sweeping a dormant unattached workspace destroys the Sprite
+
 ### Runtime State Model
 
-Draft-dev sessions now use explicit health states instead of collapsing almost everything into `running`.
+Draft-dev sessions and workspaces use explicit health states instead of collapsing almost everything into `running`.
 
 Current states:
 - `starting`
@@ -440,18 +471,18 @@ Current states:
 Current interpretation:
 - `serving` is the canonical healthy state for a ready preview
 - `running` is kept as a compatibility state for older rows/clients
-- `building` means the sandbox is provisioning or reinstalling dependencies
-- `degraded` means the session exists but the preview/runtime health check failed and needs restart or recovery
-- `stopping` is transient ownership handoff before the sandbox is killed and the row becomes `stopped` or `expired`
+- `building` means the workspace is provisioning or reinstalling dependencies
+- `degraded` means the workspace exists but the preview/runtime health check failed and needs restart or recovery
+- `stopping` is transient teardown before the row becomes `stopped` or `expired`
 
 ### Dependency Install Reuse
 
 The dependency optimization from the previous runtime was preserved:
 - dependency hash is computed from project dependency manifests
 - installs are skipped when the hash has not changed
-- installs run only when the dependency hash changes or the session is fresh
+- installs run only when the dependency hash changes or the workspace is fresh
 
-This matters for E2B because startup cost would otherwise climb sharply.
+This matters for Sprites because the persistent filesystem should eliminate unnecessary reinstall churn.
 
 ### Stage And Publish Workspace Flows
 
@@ -467,53 +498,65 @@ This means the sandbox layer is not just “run preview”; it also supports the
 
 ### OpenCode Integration
 
-OpenCode runs are tied to the same sandbox and workspace as the preview session.
+OpenCode runs are tied to the same shared Sprite as the preview environment.
 
 Current reasons:
 - agent edits and preview state stay aligned
-- the agent sees the same files the preview server sees
-- stage/live flows can operate on the same edited workspace
+- the agent sees the same filesystem the preview server sees
+- stage/live flows can operate inside the same persistent app environment
+- service restart/recovery is provider-native instead of PID-driven
 
-`OpenCodeServerClient` was updated to support extra headers, which helps transport/auth integration when routing through the new backend/proxy flow.
+`OpenCodeServerClient` now recognizes `sprite` as an active sandbox runtime.
 
-Current E2B/OpenCode runtime assumptions:
-- the app-builder template is built from the `opencode` base template
-- sandbox creation forwards only non-empty provider env vars such as `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, and similar provider credentials
-- missing provider env vars do not block sandbox creation; OpenCode can still rely on its own fallback/free model behavior when available
-- detached OpenCode startup uses `bash -lc`, not `sh -lc`, because the OpenCode binary is placed on the bash-initialized path in the E2B template
+Current Sprite/OpenCode runtime assumptions:
+- OpenCode is exposed through a dedicated Sprite service
+- the service shares the app Sprite filesystem
+- provider auth and routing stay server-side
+- the backend keeps the frontend/browser contract stable while the provider remains an implementation detail
+
+### Shared Coding-Agent Batch Model
+
+The coding-agent batch scope is now app-wide.
+
+Current semantics:
+- one shared stage workspace per app
+- prompts from any attached editor join the same active app batch
+- manual writes to the shared live workspace are blocked while that batch is active
+- finalization promotes stage to live once for the app batch
+- a completed batch produces one revision outcome that is associated back to all finalized runs in that batch
 
 ### Local Preview Base Path Support
 
-The local draft-dev runtime now accepts preview base path configuration.
+The local draft-dev runtime continues to accept preview base path configuration.
 
 Purpose:
 - make proxied preview URLs work even for embedded local runtime
-- keep local and E2B preview behavior aligned at the browser contract layer
+- keep local and Sprite preview behavior aligned at the browser contract layer
 
 ## Current Limitations
 
 The new substrate is in place, but some parts are still intentionally incomplete:
-- live E2B end-to-end validation now exists for create -> preview HTML -> proxied Vite asset -> out-of-band kill -> recover -> cleanup -> stop
 - the remote sweeper is currently request-driven best effort, not a dedicated scheduled background job
 - tenant or environment-specific rollout controls are still to be added
 - artifact runtime migration is not implemented yet
-- the current local backend remains the manual fallback and should not silently replace a failed E2B session
+- Sprite checkpoints are intentionally not used for App Builder version history or coding-agent checkpointing
+- the current local backend remains a manual fallback and should not silently replace a failed Sprite workspace
 
 ## Suggested Operational Defaults
 
 For now, the safest intended operating mode is:
-- default backend: `e2b`
+- default backend: `sprite`
 - explicit manual fallback: `local` or `controller`
-- no silent fallback across backends once a session exists
+- no silent fallback across backends once a workspace exists
 - proxied preview URLs only
-- E2B API key required at startup when E2B is selected
+- Sprite auth required at startup when Sprite is selected
 
 ## Artifact Migration Fit
 
 The current sandbox base was deliberately designed so artifacts can migrate onto it later.
 
 What already fits artifacts well:
-- provider-neutral session identity
+- provider-neutral workspace identity
 - command execution in sandbox
 - workspace/file sync
 - stage/publish workspace primitives
@@ -576,16 +619,16 @@ Recommended migration strategy:
 
 ## Risks And Watchpoints
 
-- E2B-specific runtime assumptions must stay behind the backend interface.
-- Session metadata must be eagerly loaded in async request flows to avoid lazy-load errors.
+- Sprite-specific runtime assumptions must stay behind the backend interface.
+- Session and workspace metadata must be eagerly loaded in async request flows to avoid lazy-load errors.
 - Preview proxy behavior, especially websocket/HMR traffic, needs live validation.
 - If artifact migration later requires stronger isolation policy, the abstraction should add runtime profiles, not split into a second sandbox platform.
 - Documentation overlap already exists; this file should be treated as the canonical spec to reduce drift.
 
 ## Recommended Next Steps
 
-1. Run a real E2B end-to-end app-builder session against a concrete template and capture the exact startup/env requirements.
-2. Add reconnect/recovery semantics for stale E2B sandbox ids.
-3. Add rollout controls by environment and tenant.
-4. Start the artifact migration with sandboxed draft test execution.
-5. Decide whether to collapse the two older sandbox docs into shorter companion notes that reference this spec.
+1. Add a scheduled dormant-workspace sweeper instead of keeping the current request-driven best effort.
+2. Add rollout controls by environment and tenant if App Builder runtime selection becomes dynamic again.
+3. Start the artifact migration with sandboxed draft test execution.
+4. Decide whether artifact runtime remains on E2B or receives a separate Sprite-native design.
+5. Keep the archived E2B notes short and non-canonical so this spec remains the primary source of truth.

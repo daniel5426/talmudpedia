@@ -1,6 +1,6 @@
 # Sandbox Controller Tests
 
-Last Updated: 2026-02-24
+Last Updated: 2026-03-09
 
 ## Scope of the feature
 - Backend-to-sandbox-controller proxy behavior for OpenCode run lifecycle calls.
@@ -17,6 +17,7 @@ Last Updated: 2026-02-24
 - `OpenCodeServerClient.cancel_run` routes cancellation to `POST /sessions/{sandbox_id}/opencode/cancel`.
 - OpenCode sandbox mode is detected when only `APPS_DRAFT_DEV_CONTROLLER_URL` is configured (without requiring `APPS_CODING_AGENT_OPENCODE_BASE_URL`).
 - OpenCode sandbox mode remains enabled when `APPS_CODING_AGENT_OPENCODE_ENABLED=0` as long as controller URL configuration is present.
+- Sprite-backed App Builder runtime forces OpenCode sandbox mode even if the legacy `APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER=0` flag is still present.
 - Dev shim exposes local controller-compatible session/file/command endpoints under `/internal/sandbox-controller/sessions/*`.
 - Dev shim proxies OpenCode lifecycle (`start`, `events`, `cancel`) through controller-compatible endpoints for local testing.
 - Dev shim `POST /sessions/start` returns controller session metadata including `workspace_path`.
@@ -34,6 +35,12 @@ Last Updated: 2026-02-24
 - Draft-dev runtime client draft-preview `start_session` and `sync_session` now use dedicated controller timeout overrides (`APPS_DRAFT_DEV_CONTROLLER_START_TIMEOUT_SECONDS`, `APPS_DRAFT_DEV_CONTROLLER_SYNC_TIMEOUT_SECONDS`) to prevent cold-bootstrap ReadTimeout failures.
 
 ## Last run command + date/time + result
+- Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/sandbox_controller/test_opencode_controller_proxy.py tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
+- Date: 2026-03-09 01:36 EET
+- Result: PASS (12 passed, 1 warning)
+- Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/sandbox_controller/test_opencode_controller_proxy.py tests/opencode_server_client/test_opencode_server_client.py -k 'sprite_backend_forces_sandbox_mode_even_when_legacy_controller_flag_is_off or sandbox_controller_mode_is_enabled_even_when_opencode_flag_off or sandbox_controller_mode_detected_from_draft_dev_controller_url or start_run_routes_via_sandbox_controller or stream_and_cancel_route_via_sandbox_controller'`
+- Date: 2026-03-09 00:26 EET
+- Result: PASS (5 passed, 38 deselected, 1 warning)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/sandbox_controller/test_draft_dev_runtime_client_stream.py tests/sandbox_controller/test_dev_shim.py`
 - Date: 2026-03-08 16:19:45 EET
 - Result: PASS (16 passed, 6 warnings)

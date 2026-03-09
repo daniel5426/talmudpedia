@@ -49,6 +49,16 @@ class PublishedAppDraftDevSessionStatus(str, enum.Enum):
     error = "error"
 
 
+class PublishedAppDraftWorkspaceStatus(str, enum.Enum):
+    starting = "starting"
+    syncing = "syncing"
+    serving = "serving"
+    degraded = "degraded"
+    stopping = "stopping"
+    stopped = "stopped"
+    error = "error"
+
+
 class PublishedAppPublishJobStatus(str, enum.Enum):
     queued = "queued"
     running = "running"
@@ -145,6 +155,12 @@ class PublishedApp(Base):
         "PublishedAppDraftDevSession",
         back_populates="published_app",
         cascade="all, delete-orphan",
+    )
+    draft_workspace = relationship(
+        "PublishedAppDraftWorkspace",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
     publish_jobs = relationship(
         "PublishedAppPublishJob",
@@ -500,6 +516,54 @@ class PublishedAppBuilderConversationTurn(Base):
     )
 
 
+class PublishedAppDraftWorkspace(Base):
+    __tablename__ = "published_app_draft_workspaces"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status = Column(
+        SQLEnum(PublishedAppDraftWorkspaceStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppDraftWorkspaceStatus.stopped,
+    )
+    sprite_name = Column(String(128), nullable=False, unique=True, index=True)
+    sandbox_id = Column(String(128), nullable=True, index=True)
+    runtime_generation = Column(Integer, nullable=False, default=0)
+    runtime_backend = Column(String(32), nullable=True)
+    backend_metadata = Column(JSONB, nullable=False, default=dict)
+    preview_url = Column(String, nullable=True)
+    live_workspace_path = Column(String(512), nullable=True)
+    stage_workspace_path = Column(String(512), nullable=True)
+    publish_workspace_path = Column(String(512), nullable=True)
+    preview_service_name = Column(String(128), nullable=True)
+    opencode_service_name = Column(String(128), nullable=True)
+    dependency_hash = Column(String(64), nullable=True)
+    last_activity_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    detached_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="draft_workspace")
+    revision = relationship("PublishedAppRevision")
+    draft_dev_sessions = relationship("PublishedAppDraftDevSession", back_populates="draft_workspace")
+
+    __table_args__ = (
+        UniqueConstraint("published_app_id", name="uq_published_app_draft_workspace_app"),
+    )
+
+
 class PublishedAppDraftDevSession(Base):
     __tablename__ = "published_app_draft_dev_sessions"
 
@@ -522,6 +586,12 @@ class PublishedAppDraftDevSession(Base):
         nullable=True,
         index=True,
     )
+    draft_workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_draft_workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     status = Column(
         SQLEnum(PublishedAppDraftDevSessionStatus, values_callable=_enum_values),
         nullable=False,
@@ -541,6 +611,7 @@ class PublishedAppDraftDevSession(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     published_app = relationship("PublishedApp", back_populates="draft_dev_sessions")
+    draft_workspace = relationship("PublishedAppDraftWorkspace", back_populates="draft_dev_sessions")
     revision = relationship("PublishedAppRevision")
     user = relationship("User")
 

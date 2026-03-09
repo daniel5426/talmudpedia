@@ -4,6 +4,7 @@ import base64
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from app.services.published_app_sandbox_backend_sprite import SpriteSandboxBackend
 from app.services.published_app_sandbox_backend import PublishedAppSandboxBackendError
 from app.services.published_app_sandbox_backend_factory import (
     build_published_app_sandbox_backend,
@@ -33,6 +34,20 @@ class PublishedAppDraftDevRuntimeClientConfig:
     e2b_secure: bool = True
     e2b_allow_internet_access: bool = True
     e2b_auto_pause: bool = False
+    sprite_api_base_url: str = "https://api.sprites.dev"
+    sprite_api_token: Optional[str] = None
+    sprite_name_prefix: str = "app-builder"
+    sprite_workspace_path: str = "/home/sprite/app"
+    sprite_stage_workspace_path: Optional[str] = None
+    sprite_publish_workspace_path: Optional[str] = None
+    sprite_preview_port: int = 8080
+    sprite_opencode_port: int = 4141
+    sprite_preview_service_name: str = "builder-preview"
+    sprite_opencode_service_name: str = "opencode"
+    sprite_opencode_command: Optional[str] = None
+    sprite_command_timeout_seconds: int = 900
+    sprite_retention_seconds: int = 21600
+    sprite_network_policy: Optional[str] = None
 
 
 class PublishedAppDraftDevRuntimeClient:
@@ -59,6 +74,20 @@ class PublishedAppDraftDevRuntimeClient:
             e2b_secure=config.e2b_secure,
             e2b_allow_internet_access=config.e2b_allow_internet_access,
             e2b_auto_pause=config.e2b_auto_pause,
+            sprite_api_base_url=config.sprite_api_base_url,
+            sprite_api_token=config.sprite_api_token,
+            sprite_name_prefix=config.sprite_name_prefix,
+            sprite_workspace_path=config.sprite_workspace_path,
+            sprite_stage_workspace_path=config.sprite_stage_workspace_path,
+            sprite_publish_workspace_path=config.sprite_publish_workspace_path,
+            sprite_preview_port=config.sprite_preview_port,
+            sprite_opencode_port=config.sprite_opencode_port,
+            sprite_preview_service_name=config.sprite_preview_service_name,
+            sprite_opencode_service_name=config.sprite_opencode_service_name,
+            sprite_opencode_command=config.sprite_opencode_command,
+            sprite_command_timeout_seconds=config.sprite_command_timeout_seconds,
+            sprite_retention_seconds=config.sprite_retention_seconds,
+            sprite_network_policy=config.sprite_network_policy,
         )
         self._backend = build_published_app_sandbox_backend(merged)
 
@@ -83,6 +112,20 @@ class PublishedAppDraftDevRuntimeClient:
                 e2b_secure=backend_config.e2b_secure,
                 e2b_allow_internet_access=backend_config.e2b_allow_internet_access,
                 e2b_auto_pause=backend_config.e2b_auto_pause,
+                sprite_api_base_url=backend_config.sprite_api_base_url,
+                sprite_api_token=backend_config.sprite_api_token,
+                sprite_name_prefix=backend_config.sprite_name_prefix,
+                sprite_workspace_path=backend_config.sprite_workspace_path,
+                sprite_stage_workspace_path=backend_config.sprite_stage_workspace_path,
+                sprite_publish_workspace_path=backend_config.sprite_publish_workspace_path,
+                sprite_preview_port=backend_config.sprite_preview_port,
+                sprite_opencode_port=backend_config.sprite_opencode_port,
+                sprite_preview_service_name=backend_config.sprite_preview_service_name,
+                sprite_opencode_service_name=backend_config.sprite_opencode_service_name,
+                sprite_opencode_command=backend_config.sprite_opencode_command,
+                sprite_command_timeout_seconds=backend_config.sprite_command_timeout_seconds,
+                sprite_retention_seconds=backend_config.sprite_retention_seconds,
+                sprite_network_policy=backend_config.sprite_network_policy,
             )
         )
 
@@ -93,6 +136,14 @@ class PublishedAppDraftDevRuntimeClient:
     @property
     def backend_name(self) -> str:
         return str(self._backend.backend_name)
+
+    def expected_sandbox_id_for_app(self, *, app_id: str) -> str | None:
+        if self.backend_name != "sprite":
+            return None
+        return SpriteSandboxBackend._sprite_name(
+            prefix=self._config.sprite_name_prefix,
+            app_id=app_id,
+        )
 
     def build_preview_proxy_path(self, session_id: str) -> str:
         base = str(self._config.preview_proxy_base_path or "").rstrip("/")

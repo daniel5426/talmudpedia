@@ -33,6 +33,20 @@ class PublishedAppSandboxBackendConfig:
     e2b_secure: bool
     e2b_allow_internet_access: bool
     e2b_auto_pause: bool
+    sprite_api_base_url: str
+    sprite_api_token: Optional[str]
+    sprite_name_prefix: str
+    sprite_workspace_path: str
+    sprite_stage_workspace_path: Optional[str]
+    sprite_publish_workspace_path: Optional[str]
+    sprite_preview_port: int
+    sprite_opencode_port: int
+    sprite_preview_service_name: str
+    sprite_opencode_service_name: str
+    sprite_opencode_command: Optional[str]
+    sprite_command_timeout_seconds: int
+    sprite_retention_seconds: int
+    sprite_network_policy: Optional[str]
 
 
 class PublishedAppSandboxBackend(ABC):

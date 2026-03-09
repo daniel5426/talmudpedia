@@ -10,7 +10,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import (
@@ -68,16 +68,10 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
         actor_id: UUID,
         exclude_run_id: UUID | None = None,
     ) -> int:
+        _ = actor_id
         conditions = [
             AgentRun.surface == CODING_AGENT_SURFACE,
             AgentRun.published_app_id == app_id,
-            or_(
-                AgentRun.initiator_user_id == actor_id,
-                and_(
-                    AgentRun.initiator_user_id.is_(None),
-                    AgentRun.user_id == actor_id,
-                ),
-            ),
             AgentRun.status.in_([RunStatus.queued, RunStatus.running]),
         ]
         if exclude_run_id is not None:

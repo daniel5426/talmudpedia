@@ -107,11 +107,13 @@ class OpenCodeServerClient:
     def _sandbox_runtime_mode_enabled(self) -> bool:
         if self._config.sandbox_controller_mode_override is not None:
             return bool(self._config.sandbox_controller_mode_override)
+        backend_name = str(getattr(self._sandbox_runtime_client, "backend_name", "") or "").strip().lower()
+        if backend_name == "sprite":
+            return True
         explicit = (os.getenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER") or "").strip().lower()
         if explicit:
             return explicit in {"1", "true", "yes", "on"}
-        backend_name = str(getattr(self._sandbox_runtime_client, "backend_name", "") or "").strip().lower()
-        if backend_name in {"local", "controller", "e2b"}:
+        if backend_name in {"local", "controller", "sprite", "e2b"}:
             return True
         return bool((os.getenv("APPS_SANDBOX_CONTROLLER_URL") or "").strip())
 

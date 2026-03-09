@@ -88,15 +88,15 @@ async def test_completed_runs_create_versions_only_when_live_differs_from_base(c
     run_diff = _run(
         tenant_id=tenant.id,
         agent_id=agent.id,
-        user_id=user.id,
+        user_id=UUID("00000000-0000-0000-0000-000000000004"),
         app_id=app_id,
         base_revision_id=draft.id,
     )
     db_session.add_all([run_same, run_diff])
     await db_session.commit()
 
-    async def _fake_prepare(self, *, app_id, actor_id, sample_run):
-        _ = actor_id, sample_run
+    async def _fake_prepare(self, *, app_id, sample_run):
+        _ = sample_run
         loaded_app = await self.db.get(PublishedApp, app_id)
         loaded_current = await self.db.get(PublishedAppRevision, draft.id)
         assert loaded_app is not None
@@ -108,12 +108,14 @@ async def test_completed_runs_create_versions_only_when_live_differs_from_base(c
     service = PublishedAppCodingBatchFinalizer(db_session)
     result = await service.finalize_for_terminal_run(run_id=run_diff.id)
     assert result["status"] == "finalized"
-    assert str(run_same.id) not in result["revision_ids_by_run"]
+    assert str(run_same.id) in result["revision_ids_by_run"]
     assert str(run_diff.id) in result["revision_ids_by_run"]
+    assert result["revision_ids_by_run"][str(run_same.id)] == result["revision_ids_by_run"][str(run_diff.id)]
 
     refreshed_same = await db_session.get(AgentRun, run_same.id)
     refreshed_diff = await db_session.get(AgentRun, run_diff.id)
     assert refreshed_same is not None
     assert refreshed_diff is not None
-    assert refreshed_same.result_revision_id is None
+    assert refreshed_same.result_revision_id is not None
     assert refreshed_diff.result_revision_id is not None
+    assert refreshed_same.result_revision_id == refreshed_diff.result_revision_id

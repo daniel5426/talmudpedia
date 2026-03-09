@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, exists, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -20,6 +18,8 @@ from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
+    PublishedAppDraftWorkspace,
+    PublishedAppDraftWorkspaceStatus,
     PublishedAppPublishJob,
     PublishedAppPublishJobStatus,
     PublishedAppRevision,
@@ -33,8 +33,6 @@ from app.services.published_app_templates import TemplateRuntimeContext, apply_r
 
 
 LOCKFILE_PATHS = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock")
-_REMOTE_SWEEP_INTERVAL_SECONDS = max(30, int(os.getenv("APPS_DRAFT_DEV_REMOTE_SWEEP_INTERVAL_SECONDS", "120")))
-_LAST_REMOTE_SWEEP_MONOTONIC = 0.0
 
 
 @dataclass(frozen=True)
@@ -42,6 +40,7 @@ class DraftDevRuntimeSettings:
     enabled: bool
     idle_timeout_seconds: int
     hard_max_lifetime_seconds: int
+    workspace_retention_seconds: int
 
 
 class PublishedAppDraftDevRuntimeError(Exception):
@@ -63,6 +62,7 @@ class PublishedAppDraftDevRuntimeService:
         enabled_raw = os.getenv("APPS_BUILDER_DRAFT_DEV_ENABLED", "1")
         idle_raw = int(os.getenv("APPS_DRAFT_DEV_IDLE_TIMEOUT_SECONDS", "180"))
         hard_max_raw = int(os.getenv("APPS_DRAFT_DEV_HARD_MAX_LIFETIME_SECONDS", "1800"))
+        retention_raw = int(os.getenv("APPS_SPRITE_RETENTION_SECONDS", "21600"))
         idle_timeout_seconds = min(max(idle_raw, 120), 300)
         hard_max_lifetime_seconds = max(hard_max_raw, idle_timeout_seconds)
         enabled = enabled_raw.strip().lower() not in {"0", "false", "off", "no"}
@@ -70,11 +70,20 @@ class PublishedAppDraftDevRuntimeService:
             enabled=enabled,
             idle_timeout_seconds=idle_timeout_seconds,
             hard_max_lifetime_seconds=hard_max_lifetime_seconds,
+            workspace_retention_seconds=max(retention_raw, idle_timeout_seconds),
         )
 
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _normalize_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     @staticmethod
     def _dependency_hash(files: Dict[str, str]) -> str:
@@ -88,33 +97,6 @@ class PublishedAppDraftDevRuntimeService:
                 dependency_files[lockfile_path] = lockfile
         serialized = json.dumps(dependency_files, sort_keys=True)
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
-    @staticmethod
-    def _scope_lock_key(*, app_id: UUID, user_id: UUID) -> int:
-        digest = hashlib.sha256(f"draft-dev:{app_id}:{user_id}".encode("utf-8")).digest()
-        return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
-
-    async def _acquire_scope_lock(self, *, app_id: UUID, user_id: UUID) -> None:
-        bind = self.db.get_bind()
-        dialect_name = str(getattr(getattr(bind, "dialect", None), "name", "") or "").lower()
-        if dialect_name == "sqlite":
-            return
-        await self.db.execute(
-            text("SELECT pg_advisory_xact_lock(:key)"),
-            {"key": self._scope_lock_key(app_id=app_id, user_id=user_id)},
-        )
-
-    def _expires_at(self, now: Optional[datetime] = None) -> datetime:
-        base = now or self._now()
-        return base + timedelta(seconds=self.settings.idle_timeout_seconds)
-
-    @staticmethod
-    def _normalize_utc(value: datetime | None) -> datetime | None:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
 
     @staticmethod
     def _scope_error() -> PublishedAppDraftDevRuntimeError:
@@ -131,7 +113,7 @@ class PublishedAppDraftDevRuntimeService:
                 "session not found",
                 "sandbox wasn't found",
                 "sandbox was not found",
-                "failed to connect to e2b sandbox",
+                "sprite request failed (404)",
             )
         )
 
@@ -145,37 +127,8 @@ class PublishedAppDraftDevRuntimeService:
         message = str(exc).lower()
         return cls._is_timeout_error(exc) or any(
             token in message
-            for token in (
-                "connecttimeout",
-                "temporarily unavailable",
-                "connection reset",
-                "connection aborted",
-                "server disconnected",
-                "502",
-                "503",
-                "504",
-            )
+            for token in ("connecttimeout", "temporarily unavailable", "connection reset", "502", "503", "504")
         )
-
-    @staticmethod
-    def _mark_session_error(session: PublishedAppDraftDevSession, exc: Exception) -> PublishedAppDraftDevSession:
-        session.status = PublishedAppDraftDevSessionStatus.error
-        session.last_error = str(exc)
-        return session
-
-    @staticmethod
-    def _mark_session_degraded(session: PublishedAppDraftDevSession, exc: Exception) -> PublishedAppDraftDevSession:
-        session.status = PublishedAppDraftDevSessionStatus.degraded
-        session.last_error = str(exc)
-        return session
-
-    @staticmethod
-    def _is_session_serving_status(status: PublishedAppDraftDevSessionStatus | str | None) -> bool:
-        value = str(getattr(status, "value", status) or "").strip().lower()
-        return value in {
-            PublishedAppDraftDevSessionStatus.serving.value,
-            PublishedAppDraftDevSessionStatus.running.value,
-        }
 
     @staticmethod
     def _active_session_statuses() -> tuple[PublishedAppDraftDevSessionStatus, ...]:
@@ -189,9 +142,26 @@ class PublishedAppDraftDevRuntimeService:
         )
 
     @staticmethod
-    def _runtime_generation_value(session: PublishedAppDraftDevSession) -> int:
+    def _workspace_active_statuses() -> tuple[str, ...]:
+        return (
+            PublishedAppDraftWorkspaceStatus.starting.value,
+            PublishedAppDraftWorkspaceStatus.syncing.value,
+            PublishedAppDraftWorkspaceStatus.serving.value,
+            PublishedAppDraftWorkspaceStatus.degraded.value,
+        )
+
+    @staticmethod
+    def _is_session_serving_status(status: PublishedAppDraftDevSessionStatus | str | None) -> bool:
+        value = str(getattr(status, "value", status) or "").strip().lower()
+        return value in {
+            PublishedAppDraftDevSessionStatus.serving.value,
+            PublishedAppDraftDevSessionStatus.running.value,
+        }
+
+    @staticmethod
+    def _runtime_generation_value(entity: object) -> int:
         try:
-            return int(getattr(session, "runtime_generation", 0) or 0)
+            return int(getattr(entity, "runtime_generation", 0) or 0)
         except Exception:
             return 0
 
@@ -201,12 +171,13 @@ class PublishedAppDraftDevRuntimeService:
         return value or None
 
     @staticmethod
-    def _draft_session_load_only_options():
+    def _session_load_options():
         return load_only(
             PublishedAppDraftDevSession.id,
             PublishedAppDraftDevSession.published_app_id,
             PublishedAppDraftDevSession.user_id,
             PublishedAppDraftDevSession.revision_id,
+            PublishedAppDraftDevSession.draft_workspace_id,
             PublishedAppDraftDevSession.status,
             PublishedAppDraftDevSession.sandbox_id,
             PublishedAppDraftDevSession.runtime_generation,
@@ -222,169 +193,56 @@ class PublishedAppDraftDevRuntimeService:
             PublishedAppDraftDevSession.updated_at,
         )
 
-    async def _reconcile_remote_scope_best_effort(self, *, session: PublishedAppDraftDevSession) -> None:
-        session_id = str(getattr(session, "id", "") or "").strip()
-        if not session_id:
-            return
-        try:
-            await self.client.reconcile_session_scope(
-                session_id=session_id,
-                expected_sandbox_id=self._normalize_runtime_sandbox_id(session.sandbox_id),
-                runtime_generation=self._runtime_generation_value(session),
-            )
-        except PublishedAppDraftDevRuntimeClientError:
-            return
+    @staticmethod
+    def _workspace_load_options():
+        return load_only(
+            PublishedAppDraftWorkspace.id,
+            PublishedAppDraftWorkspace.published_app_id,
+            PublishedAppDraftWorkspace.revision_id,
+            PublishedAppDraftWorkspace.status,
+            PublishedAppDraftWorkspace.sprite_name,
+            PublishedAppDraftWorkspace.sandbox_id,
+            PublishedAppDraftWorkspace.runtime_generation,
+            PublishedAppDraftWorkspace.runtime_backend,
+            PublishedAppDraftWorkspace.backend_metadata,
+            PublishedAppDraftWorkspace.preview_url,
+            PublishedAppDraftWorkspace.live_workspace_path,
+            PublishedAppDraftWorkspace.stage_workspace_path,
+            PublishedAppDraftWorkspace.publish_workspace_path,
+            PublishedAppDraftWorkspace.preview_service_name,
+            PublishedAppDraftWorkspace.opencode_service_name,
+            PublishedAppDraftWorkspace.dependency_hash,
+            PublishedAppDraftWorkspace.last_activity_at,
+            PublishedAppDraftWorkspace.detached_at,
+            PublishedAppDraftWorkspace.last_error,
+            PublishedAppDraftWorkspace.created_at,
+            PublishedAppDraftWorkspace.updated_at,
+        )
 
-    async def _build_active_remote_session_map(self) -> dict[str, dict[str, object]]:
-        result = await self.db.execute(
-            select(PublishedAppDraftDevSession)
-            .options(
-                load_only(
-                    PublishedAppDraftDevSession.id,
-                    PublishedAppDraftDevSession.sandbox_id,
-                    PublishedAppDraftDevSession.runtime_generation,
-                    PublishedAppDraftDevSession.runtime_backend,
-                    PublishedAppDraftDevSession.status,
-                )
-            )
-            .where(
-                and_(
-                    PublishedAppDraftDevSession.runtime_backend == self.client.backend_name,
-                    PublishedAppDraftDevSession.status.in_(list(self._active_session_statuses())),
-                )
-            )
-        )
-        active_sessions: dict[str, dict[str, object]] = {}
-        for row in result.scalars().all():
-            session_id = str(getattr(row, "id", "") or "").strip()
-            sandbox_id = self._normalize_runtime_sandbox_id(row.sandbox_id)
-            if not session_id or not sandbox_id:
-                continue
-            active_sessions[session_id] = {
-                "sandbox_id": sandbox_id,
-                "runtime_generation": self._runtime_generation_value(row),
-            }
-        return active_sessions
+    @staticmethod
+    def _workspace_lock_key(*, app_id: UUID) -> int:
+        digest = hashlib.sha256(f"draft-workspace:{app_id}".encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
 
-    async def _sweep_remote_sessions_best_effort(self, *, force: bool = False) -> None:
-        global _LAST_REMOTE_SWEEP_MONOTONIC
-        if not bool(getattr(self.client, "is_remote_enabled", False)):
+    async def _acquire_scope_lock(self, *, app_id: UUID, user_id: UUID) -> None:
+        _ = user_id
+        bind = self.db.get_bind()
+        dialect_name = str(getattr(getattr(bind, "dialect", None), "name", "") or "").lower()
+        if dialect_name == "sqlite":
             return
-        now_monotonic = time.monotonic()
-        if not force and (now_monotonic - _LAST_REMOTE_SWEEP_MONOTONIC) < _REMOTE_SWEEP_INTERVAL_SECONDS:
-            return
-        _LAST_REMOTE_SWEEP_MONOTONIC = now_monotonic
-        try:
-            active_sessions = await self._build_active_remote_session_map()
-            result = await self.client.sweep_remote_sessions(active_sessions=active_sessions)
-            apps_builder_trace(
-                "sandbox.remote_sweep",
-                domain="draft_dev.runtime",
-                force=bool(force),
-                active_session_count=len(active_sessions),
-                result=result,
-                backend_name=self.client.backend_name,
-            )
-        except PublishedAppDraftDevRuntimeClientError:
-            return
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": self._workspace_lock_key(app_id=app_id)},
+        )
 
-    async def _start_session_runtime(
-        self,
-        *,
-        app: PublishedApp,
-        revision: PublishedAppRevision,
-        session: PublishedAppDraftDevSession,
-        user_id: UUID,
-        files_payload: Dict[str, str],
-        entry_value: str,
-        dependency_hash: str,
-    ) -> PublishedAppDraftDevSession:
-        apps_builder_trace(
-            "sandbox.start.requested",
-            domain="draft_dev.runtime",
-            app_id=str(app.id),
-            revision_id=str(revision.id),
-            session_id=str(session.id),
-            user_id=str(user_id),
-            runtime_generation=self._runtime_generation_value(session) + 1,
-            backend_name=self.client.backend_name,
-            file_count=len(files_payload),
-            dependency_hash=dependency_hash,
-        )
-        session.runtime_generation = self._runtime_generation_value(session) + 1
-        session.status = PublishedAppDraftDevSessionStatus.building
-        session.last_error = None
-        session.sandbox_id = None
-        session.backend_metadata = {}
-        session.runtime_backend = self.client.backend_name
-        token = create_published_app_draft_dev_token(
-            subject=str(user_id),
-            tenant_id=str(app.tenant_id),
-            app_id=str(app.id),
-            user_id=str(user_id),
-            session_id=str(session.id),
-        )
-        preview_base_path = self.client.build_preview_proxy_path(str(session.id))
-        last_exc: PublishedAppDraftDevRuntimeClientError | None = None
-        started: dict[str, object] | None = None
-        for attempt in range(2):
-            try:
-                started = await self.client.start_session(
-                    session_id=str(session.id),
-                    runtime_generation=self._runtime_generation_value(session),
-                    tenant_id=str(app.tenant_id),
-                    app_id=str(app.id),
-                    user_id=str(user_id),
-                    revision_id=str(revision.id),
-                    entry_file=entry_value,
-                    files=files_payload,
-                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
-                    dependency_hash=dependency_hash,
-                    draft_dev_token=token,
-                    preview_base_path=preview_base_path,
-                )
-                break
-            except PublishedAppDraftDevRuntimeClientError as exc:
-                last_exc = exc
-                if attempt == 0 and self._is_timeout_error(exc):
-                    await asyncio.sleep(0.25)
-                    continue
-                raise
-        if started is None:
-            if last_exc is not None:
-                raise last_exc
-            raise PublishedAppDraftDevRuntimeClientError("Failed to start draft dev session")
-        session.sandbox_id = self._normalize_runtime_sandbox_id(started.get("sandbox_id"))
-        if not session.sandbox_id:
-            raise PublishedAppDraftDevRuntimeClientError(
-                "Draft dev runtime start returned without a sandbox id."
-            )
-        session.runtime_backend = str(started.get("runtime_backend") or self.client.backend_name)
-        session.backend_metadata = dict(started.get("backend_metadata") or {})
-        session.preview_url = preview_base_path
-        session.status = PublishedAppDraftDevSessionStatus.serving
-        session.dependency_hash = dependency_hash
-        session.last_error = None
-        apps_builder_trace(
-            "sandbox.start.confirmed",
-            domain="draft_dev.runtime",
-            app_id=str(app.id),
-            revision_id=str(revision.id),
-            session_id=str(session.id),
-            user_id=str(user_id),
-            sandbox_id=str(session.sandbox_id or ""),
-            runtime_generation=self._runtime_generation_value(session),
-            backend_name=session.runtime_backend,
-            status=str(session.status.value if hasattr(session.status, "value") else session.status),
-            backend_metadata=session.backend_metadata,
-        )
-        await self._reconcile_remote_scope_best_effort(session=session)
-        return session
+    def _session_expires_at(self, now: Optional[datetime] = None) -> datetime:
+        base = now or self._now()
+        return base + timedelta(seconds=self.settings.idle_timeout_seconds)
 
     async def get_session(self, *, app_id: UUID, user_id: UUID) -> Optional[PublishedAppDraftDevSession]:
         result = await self.db.execute(
             select(PublishedAppDraftDevSession)
-            .options(self._draft_session_load_only_options())
+            .options(self._session_load_options())
             .where(
                 and_(
                     PublishedAppDraftDevSession.published_app_id == app_id,
@@ -394,6 +252,247 @@ class PublishedAppDraftDevRuntimeService:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def get_workspace(self, *, app_id: UUID) -> Optional[PublishedAppDraftWorkspace]:
+        result = await self.db.execute(
+            select(PublishedAppDraftWorkspace)
+            .options(self._workspace_load_options())
+            .where(PublishedAppDraftWorkspace.published_app_id == app_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def _get_or_create_workspace(self, *, app: PublishedApp) -> PublishedAppDraftWorkspace:
+        workspace = await self.get_workspace(app_id=app.id)
+        if workspace is not None:
+            return workspace
+        candidate = PublishedAppDraftWorkspace(
+            id=uuid4(),
+            published_app_id=app.id,
+            sprite_name="",
+            status=PublishedAppDraftWorkspaceStatus.stopped,
+            runtime_backend=self.client.backend_name,
+            backend_metadata={},
+        )
+        candidate.sprite_name = self.client.expected_sandbox_id_for_app(app_id=str(app.id)) or str(app.id)
+        try:
+            async with self.db.begin_nested():
+                self.db.add(candidate)
+                await self.db.flush()
+            return candidate
+        except IntegrityError:
+            workspace = await self.get_workspace(app_id=app.id)
+            if workspace is None:
+                raise
+            return workspace
+
+    async def _get_or_create_session(
+        self,
+        *,
+        app: PublishedApp,
+        user_id: UUID,
+        revision: PublishedAppRevision,
+        dependency_hash: str,
+        now: datetime,
+    ) -> PublishedAppDraftDevSession:
+        session = await self.get_session(app_id=app.id, user_id=user_id)
+        if session is not None:
+            return session
+        candidate = PublishedAppDraftDevSession(
+            id=uuid4(),
+            published_app_id=app.id,
+            user_id=user_id,
+            revision_id=revision.id,
+            status=PublishedAppDraftDevSessionStatus.starting,
+            runtime_backend=self.client.backend_name,
+            backend_metadata={},
+            idle_timeout_seconds=self.settings.idle_timeout_seconds,
+            last_activity_at=now,
+            expires_at=self._session_expires_at(now),
+            dependency_hash=dependency_hash,
+            runtime_generation=0,
+        )
+        try:
+            async with self.db.begin_nested():
+                self.db.add(candidate)
+                await self.db.flush()
+            return candidate
+        except IntegrityError:
+            session = await self.get_session(app_id=app.id, user_id=user_id)
+            if session is None:
+                raise
+            return session
+
+    def _mark_workspace_error(self, workspace: PublishedAppDraftWorkspace, exc: Exception) -> None:
+        workspace.status = PublishedAppDraftWorkspaceStatus.error
+        workspace.last_error = str(exc)
+
+    def _mark_workspace_degraded(self, workspace: PublishedAppDraftWorkspace, exc: Exception) -> None:
+        workspace.status = PublishedAppDraftWorkspaceStatus.degraded
+        workspace.last_error = str(exc)
+
+    def _mark_session_error(self, session: PublishedAppDraftDevSession, exc: Exception) -> PublishedAppDraftDevSession:
+        session.status = PublishedAppDraftDevSessionStatus.error
+        session.last_error = str(exc)
+        return session
+
+    def _mark_session_degraded(self, session: PublishedAppDraftDevSession, exc: Exception) -> PublishedAppDraftDevSession:
+        session.status = PublishedAppDraftDevSessionStatus.degraded
+        session.last_error = str(exc)
+        return session
+
+    async def _reconcile_remote_workspace_best_effort(self, *, workspace: PublishedAppDraftWorkspace) -> None:
+        if not bool(getattr(self.client, "is_remote_enabled", False)):
+            return
+        workspace_id = str(getattr(workspace, "id", "") or "").strip()
+        if not workspace_id:
+            return
+        try:
+            await self.client.reconcile_session_scope(
+                session_id=workspace_id,
+                expected_sandbox_id=self._normalize_runtime_sandbox_id(workspace.sandbox_id),
+                runtime_generation=self._runtime_generation_value(workspace),
+            )
+        except PublishedAppDraftDevRuntimeClientError:
+            return
+
+    async def _sweep_remote_workspaces_best_effort(self) -> None:
+        if not bool(getattr(self.client, "is_remote_enabled", False)):
+            return
+        result = await self.db.execute(
+            select(PublishedAppDraftWorkspace)
+            .options(self._workspace_load_options())
+            .where(
+                and_(
+                    PublishedAppDraftWorkspace.runtime_backend == self.client.backend_name,
+                    PublishedAppDraftWorkspace.status.in_(list(self._workspace_active_statuses())),
+                )
+            )
+        )
+        active_workspaces: dict[str, dict[str, object]] = {}
+        for row in result.scalars().all():
+            workspace_id = str(getattr(row, "id", "") or "").strip()
+            sandbox_id = self._normalize_runtime_sandbox_id(row.sandbox_id)
+            if not workspace_id or not sandbox_id:
+                continue
+            active_workspaces[workspace_id] = {
+                "sandbox_id": sandbox_id,
+                "runtime_generation": self._runtime_generation_value(row),
+            }
+        try:
+            await self.client.sweep_remote_sessions(active_sessions=active_workspaces)
+        except PublishedAppDraftDevRuntimeClientError:
+            return
+
+    def _attach_session(
+        self,
+        *,
+        session: PublishedAppDraftDevSession,
+        workspace: PublishedAppDraftWorkspace,
+        revision: PublishedAppRevision,
+        dependency_hash: str,
+        now: datetime,
+    ) -> PublishedAppDraftDevSession:
+        session.revision_id = revision.id
+        session.draft_workspace_id = workspace.id
+        session.idle_timeout_seconds = self.settings.idle_timeout_seconds
+        session.last_activity_at = now
+        session.expires_at = self._session_expires_at(now)
+        session.preview_url = self.client.build_preview_proxy_path(str(session.id))
+        session.sandbox_id = self._normalize_runtime_sandbox_id(workspace.sandbox_id)
+        session.runtime_generation = self._runtime_generation_value(workspace)
+        session.runtime_backend = str(workspace.runtime_backend or self.client.backend_name)
+        session.backend_metadata = dict(workspace.backend_metadata or {})
+        session.dependency_hash = dependency_hash
+        session.last_error = workspace.last_error if workspace.status == PublishedAppDraftWorkspaceStatus.degraded else None
+        session.status = (
+            PublishedAppDraftDevSessionStatus.degraded
+            if workspace.status == PublishedAppDraftWorkspaceStatus.degraded
+            else PublishedAppDraftDevSessionStatus.serving
+        )
+        return session
+
+    async def _start_or_sync_workspace(
+        self,
+        *,
+        app: PublishedApp,
+        revision: PublishedAppRevision,
+        user_id: UUID,
+        workspace: PublishedAppDraftWorkspace,
+        files_payload: Dict[str, str],
+        entry_value: str,
+        dependency_hash: str,
+        preview_base_path: str,
+        now: datetime,
+    ) -> PublishedAppDraftWorkspace:
+        must_start = workspace.status in {
+            PublishedAppDraftWorkspaceStatus.stopped,
+            PublishedAppDraftWorkspaceStatus.error,
+            PublishedAppDraftWorkspaceStatus.stopping,
+        } or not str(workspace.sandbox_id or "").strip()
+        workspace.last_activity_at = now
+        workspace.detached_at = None
+        workspace.revision_id = revision.id
+        workspace.preview_url = preview_base_path
+        if must_start:
+            workspace.runtime_generation = self._runtime_generation_value(workspace) + 1
+            workspace.status = PublishedAppDraftWorkspaceStatus.syncing
+            workspace.last_error = None
+            started = await self.client.start_session(
+                session_id=str(workspace.id),
+                runtime_generation=workspace.runtime_generation,
+                tenant_id=str(app.tenant_id),
+                app_id=str(app.id),
+                user_id=str(user_id),
+                revision_id=str(revision.id),
+                entry_file=entry_value,
+                files=files_payload,
+                idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                dependency_hash=dependency_hash,
+                draft_dev_token=create_published_app_draft_dev_token(
+                    subject=str(user_id),
+                    tenant_id=str(app.tenant_id),
+                    app_id=str(app.id),
+                    user_id=str(user_id),
+                    session_id=str(workspace.id),
+                ),
+                preview_base_path=preview_base_path,
+            )
+            workspace.sandbox_id = self._normalize_runtime_sandbox_id(started.get("sandbox_id")) or workspace.sprite_name
+            workspace.runtime_backend = str(started.get("runtime_backend") or self.client.backend_name)
+            workspace.backend_metadata = dict(started.get("backend_metadata") or {})
+            metadata_workspace = workspace.backend_metadata.get("workspace") if isinstance(workspace.backend_metadata.get("workspace"), dict) else {}
+            services = workspace.backend_metadata.get("services") if isinstance(workspace.backend_metadata.get("services"), dict) else {}
+            workspace.live_workspace_path = str(started.get("live_workspace_path") or metadata_workspace.get("live_workspace_path") or "")
+            workspace.stage_workspace_path = str(started.get("stage_workspace_path") or metadata_workspace.get("stage_workspace_path") or "")
+            workspace.publish_workspace_path = str(started.get("publish_workspace_path") or metadata_workspace.get("publish_workspace_path") or "")
+            workspace.preview_service_name = str(started.get("preview_service_name") or services.get("preview_service_name") or "")
+            workspace.opencode_service_name = str(started.get("opencode_service_name") or services.get("opencode_service_name") or "")
+            workspace.dependency_hash = dependency_hash
+            workspace.status = PublishedAppDraftWorkspaceStatus.serving
+            workspace.last_error = None
+            await self._reconcile_remote_workspace_best_effort(workspace=workspace)
+            return workspace
+
+        install_dependencies = dependency_hash != str(workspace.dependency_hash or "")
+        workspace.status = PublishedAppDraftWorkspaceStatus.syncing
+        sync_result = await self.client.sync_session(
+            sandbox_id=str(workspace.sandbox_id),
+            entry_file=entry_value,
+            files=files_payload,
+            idle_timeout_seconds=self.settings.idle_timeout_seconds,
+            dependency_hash=dependency_hash,
+            install_dependencies=install_dependencies,
+            preview_base_path=preview_base_path,
+        )
+        workspace.runtime_backend = str(sync_result.get("runtime_backend") or workspace.runtime_backend or self.client.backend_name)
+        if isinstance(sync_result.get("backend_metadata"), dict):
+            workspace.backend_metadata = dict(sync_result.get("backend_metadata") or {})
+        workspace.dependency_hash = dependency_hash
+        workspace.status = PublishedAppDraftWorkspaceStatus.serving
+        workspace.last_error = None
+        await self._reconcile_remote_workspace_best_effort(workspace=workspace)
+        return workspace
 
     async def ensure_session(
         self,
@@ -411,8 +510,10 @@ class PublishedAppDraftDevRuntimeService:
 
         await self._acquire_scope_lock(app_id=app.id, user_id=user_id)
         now = self._now()
-        await self._sweep_remote_sessions_best_effort()
-        await self.expire_idle_sessions(app_id=app.id, user_id=user_id)
+        await self.expire_idle_sessions(app_id=app.id)
+        await self.sweep_dormant_workspaces(app_id=app.id)
+        await self._sweep_remote_workspaces_best_effort()
+
         runtime_context = TemplateRuntimeContext(
             app_id=str(app.id),
             app_slug=str(app.slug or ""),
@@ -424,197 +525,57 @@ class PublishedAppDraftDevRuntimeService:
         )
         entry_value = entry_file or revision.entry_file
         dependency_hash = self._dependency_hash(files_payload)
-        session = await self.get_session(app_id=app.id, user_id=user_id)
+
+        workspace = await self._get_or_create_workspace(app=app)
+        session = await self._get_or_create_session(
+            app=app,
+            user_id=user_id,
+            revision=revision,
+            dependency_hash=dependency_hash,
+            now=now,
+        )
+        preview_base_path = self.client.build_preview_proxy_path(str(session.id))
+
         apps_builder_trace(
-            "session.ensure.requested",
+            "workspace.ensure.requested",
             domain="draft_dev.runtime",
             app_id=str(app.id),
             revision_id=str(revision.id),
             user_id=str(user_id),
-            existing_session_id=str(getattr(session, "id", "") or "") or None,
-            existing_sandbox_id=str(getattr(session, "sandbox_id", "") or "") or None,
-            existing_status=(
-                str(getattr(getattr(session, "status", None), "value", getattr(session, "status", None)) or "")
-                or None
-            ),
-            backend_name=self.client.backend_name,
+            session_id=str(session.id),
+            workspace_id=str(workspace.id),
+            existing_sandbox_id=str(workspace.sandbox_id or "") or None,
+            existing_workspace_status=str(getattr(workspace.status, "value", workspace.status) or ""),
             dependency_hash=dependency_hash,
-            file_count=len(files_payload),
+            backend_name=self.client.backend_name,
         )
-
-        if session is None:
-            candidate_session = PublishedAppDraftDevSession(
-                id=uuid4(),
-                published_app_id=app.id,
-                user_id=user_id,
-                revision_id=revision.id,
-                status=PublishedAppDraftDevSessionStatus.starting,
-                runtime_backend=self.client.backend_name,
-                backend_metadata={},
-                idle_timeout_seconds=self.settings.idle_timeout_seconds,
-                last_activity_at=now,
-                expires_at=self._expires_at(now),
-                dependency_hash=dependency_hash,
-                runtime_generation=0,
-            )
-            try:
-                # Another request can concurrently ensure the same (app_id, user_id)
-                # scope; preserve API stability by reusing the winning row.
-                async with self.db.begin_nested():
-                    self.db.add(candidate_session)
-                    await self.db.flush()
-                session = candidate_session
-                apps_builder_trace(
-                    "session.ensure.created_row",
-                    domain="draft_dev.runtime",
-                    app_id=str(app.id),
-                    revision_id=str(revision.id),
-                    user_id=str(user_id),
-                    session_id=str(candidate_session.id),
-                    backend_name=self.client.backend_name,
-                )
-            except IntegrityError:
-                session = await self.get_session(app_id=app.id, user_id=user_id)
-                if session is None:
-                    raise
-
-        must_start = session.status in {
-            PublishedAppDraftDevSessionStatus.stopped,
-            PublishedAppDraftDevSessionStatus.expired,
-            PublishedAppDraftDevSessionStatus.error,
-            PublishedAppDraftDevSessionStatus.stopping,
-            PublishedAppDraftDevSessionStatus.degraded,
-        }
-        session_expires_at = self._normalize_utc(session.expires_at)
-        if session_expires_at and session_expires_at <= now:
-            must_start = True
-            session.status = PublishedAppDraftDevSessionStatus.expired
-
-        session.revision_id = revision.id
-        session.idle_timeout_seconds = self.settings.idle_timeout_seconds
-        session.last_activity_at = now
-        session.expires_at = self._expires_at(now)
-        session.preview_url = self.client.build_preview_proxy_path(str(session.id))
-
-        if must_start:
-            apps_builder_trace(
-                "session.ensure.start_required",
-                domain="draft_dev.runtime",
-                app_id=str(app.id),
-                revision_id=str(revision.id),
-                session_id=str(session.id),
-                user_id=str(user_id),
-                existing_sandbox_id=str(session.sandbox_id or ""),
-                existing_status=str(getattr(session.status, "value", session.status) or ""),
-            )
-            try:
-                return await self._start_session_runtime(
-                    app=app,
-                    revision=revision,
-                    session=session,
-                    user_id=user_id,
-                    files_payload=files_payload,
-                    entry_value=entry_value,
-                    dependency_hash=dependency_hash,
-                )
-            except PublishedAppDraftDevRuntimeClientError as exc:
-                apps_builder_trace(
-                    "session.ensure.start_failed",
-                    domain="draft_dev.runtime",
-                    app_id=str(app.id),
-                    revision_id=str(revision.id),
-                    session_id=str(session.id),
-                    user_id=str(user_id),
-                    error=str(exc),
-                )
-                return self._mark_session_error(session, exc)
-
-        install_dependencies = dependency_hash != (session.dependency_hash or "")
-        if not session.sandbox_id:
-            try:
-                return await self._start_session_runtime(
-                    app=app,
-                    revision=revision,
-                    session=session,
-                    user_id=user_id,
-                    files_payload=files_payload,
-                    entry_value=entry_value,
-                    dependency_hash=dependency_hash,
-                )
-            except PublishedAppDraftDevRuntimeClientError as exc:
-                return self._mark_session_error(session, exc)
 
         try:
-            session.status = (
-                PublishedAppDraftDevSessionStatus.building
-                if install_dependencies
-                else PublishedAppDraftDevSessionStatus.starting
-            )
-            sync_result = await self.client.sync_session(
-                sandbox_id=session.sandbox_id,
-                entry_file=entry_value,
-                files=files_payload,
-                idle_timeout_seconds=self.settings.idle_timeout_seconds,
+            await self._start_or_sync_workspace(
+                app=app,
+                revision=revision,
+                user_id=user_id,
+                workspace=workspace,
+                files_payload=files_payload,
+                entry_value=entry_value,
                 dependency_hash=dependency_hash,
-                install_dependencies=install_dependencies,
-                preview_base_path=session.preview_url or self.client.build_preview_proxy_path(str(session.id)),
+                preview_base_path=preview_base_path,
+                now=now,
             )
         except PublishedAppDraftDevRuntimeClientError as exc:
-            if not self._is_runtime_not_running_error(exc):
-                apps_builder_trace(
-                    "session.ensure.sync_degraded",
-                    domain="draft_dev.runtime",
-                    app_id=str(app.id),
-                    revision_id=str(revision.id),
-                    session_id=str(session.id),
-                    user_id=str(user_id),
-                    sandbox_id=str(session.sandbox_id or ""),
-                    error=str(exc),
-                )
+            if not must_restartable_error(exc):
+                self._mark_workspace_degraded(workspace, exc)
                 return self._mark_session_degraded(session, exc)
-            try:
-                return await self._start_session_runtime(
-                    app=app,
-                    revision=revision,
-                    session=session,
-                    user_id=user_id,
-                    files_payload=files_payload,
-                    entry_value=entry_value,
-                    dependency_hash=dependency_hash,
-                )
-            except PublishedAppDraftDevRuntimeClientError as restart_exc:
-                apps_builder_trace(
-                    "session.ensure.restart_failed",
-                    domain="draft_dev.runtime",
-                    app_id=str(app.id),
-                    revision_id=str(revision.id),
-                    session_id=str(session.id),
-                    user_id=str(user_id),
-                    sandbox_id=str(session.sandbox_id or ""),
-                    error=str(restart_exc),
-                )
-                return self._mark_session_error(session, restart_exc)
+            self._mark_workspace_error(workspace, exc)
+            return self._mark_session_error(session, exc)
 
-        session.status = PublishedAppDraftDevSessionStatus.serving
-        session.runtime_backend = str(sync_result.get("runtime_backend") or session.runtime_backend or self.client.backend_name)
-        if isinstance(sync_result.get("backend_metadata"), dict):
-            session.backend_metadata = dict(sync_result.get("backend_metadata") or {})
-        session.dependency_hash = dependency_hash
-        session.last_error = None
-        apps_builder_trace(
-            "session.ensure.synced",
-            domain="draft_dev.runtime",
-            app_id=str(app.id),
-            revision_id=str(revision.id),
-            session_id=str(session.id),
-            user_id=str(user_id),
-            sandbox_id=str(session.sandbox_id or ""),
-            backend_name=session.runtime_backend,
-            install_dependencies=bool(install_dependencies),
-            sync_result=sync_result,
+        return self._attach_session(
+            session=session,
+            workspace=workspace,
+            revision=revision,
+            dependency_hash=dependency_hash,
+            now=now,
         )
-        await self._reconcile_remote_scope_best_effort(session=session)
-        return session
 
     async def ensure_active_session(
         self,
@@ -623,46 +584,24 @@ class PublishedAppDraftDevRuntimeService:
         revision: PublishedAppRevision,
         user_id: UUID,
     ) -> PublishedAppDraftDevSession:
-        """
-        Ensure an active sandbox session for tool execution without force-syncing
-        files from DB on every call.
-        """
         if not self.settings.enabled:
             raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
         if not user_id:
             raise self._scope_error()
 
         now = self._now()
-        await self.expire_idle_sessions(app_id=app.id, user_id=user_id)
+        await self.expire_idle_sessions(app_id=app.id)
         session = await self.get_session(app_id=app.id, user_id=user_id)
-        must_start = session is None
-
-        if session is not None and session.expires_at and session.expires_at <= now:
-            must_start = True
-            session.status = PublishedAppDraftDevSessionStatus.expired
-
-        if session is not None and (
-            session.status in {
-                PublishedAppDraftDevSessionStatus.stopped,
-                PublishedAppDraftDevSessionStatus.expired,
-                PublishedAppDraftDevSessionStatus.error,
-                PublishedAppDraftDevSessionStatus.degraded,
-                PublishedAppDraftDevSessionStatus.stopping,
-            }
-            or not session.sandbox_id
+        workspace = await self.get_workspace(app_id=app.id)
+        if (
+            session is None
+            or workspace is None
+            or session.draft_workspace_id != workspace.id
+            or session.revision_id != revision.id
+            or not str(workspace.sandbox_id or "").strip()
+            or str(getattr(workspace.status, "value", workspace.status) or "").strip().lower()
+            not in self._workspace_active_statuses()
         ):
-            must_start = True
-
-        if must_start:
-            apps_builder_trace(
-                "session.ensure_active.restart_required",
-                domain="draft_dev.runtime",
-                app_id=str(app.id),
-                revision_id=str(revision.id),
-                user_id=str(user_id),
-                existing_session_id=str(getattr(session, "id", "") or "") or None,
-                existing_sandbox_id=str(getattr(session, "sandbox_id", "") or "") or None,
-            )
             return await self.ensure_session(
                 app=app,
                 revision=revision,
@@ -671,69 +610,37 @@ class PublishedAppDraftDevRuntimeService:
                 entry_file=revision.entry_file,
             )
 
-        session.revision_id = revision.id
-        session.idle_timeout_seconds = self.settings.idle_timeout_seconds
         session.last_activity_at = now
-        session.expires_at = self._expires_at(now)
-        session.preview_url = self.client.build_preview_proxy_path(str(session.id))
-
-        if session.sandbox_id:
-            try:
-                await self.client.heartbeat_session(
-                    sandbox_id=session.sandbox_id,
-                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
+        session.expires_at = self._session_expires_at(now)
+        workspace.last_activity_at = now
+        workspace.detached_at = None
+        try:
+            await self.client.heartbeat_session(
+                sandbox_id=str(workspace.sandbox_id),
+                idle_timeout_seconds=self.settings.idle_timeout_seconds,
+            )
+        except PublishedAppDraftDevRuntimeClientError as exc:
+            if self._is_runtime_not_running_error(exc):
+                return await self.ensure_session(
+                    app=app,
+                    revision=revision,
+                    user_id=user_id,
+                    files=dict(revision.files or {}),
+                    entry_file=revision.entry_file,
                 )
-            except PublishedAppDraftDevRuntimeClientError as exc:
-                if self._is_runtime_not_running_error(exc):
-                    apps_builder_trace(
-                        "session.ensure_active.heartbeat_restart",
-                        domain="draft_dev.runtime",
-                        app_id=str(app.id),
-                        revision_id=str(revision.id),
-                        session_id=str(session.id),
-                        user_id=str(user_id),
-                        sandbox_id=str(session.sandbox_id or ""),
-                        error=str(exc),
-                    )
-                    return await self.ensure_session(
-                        app=app,
-                        revision=revision,
-                        user_id=user_id,
-                        files=dict(revision.files or {}),
-                        entry_file=revision.entry_file,
-                    )
-                apps_builder_trace(
-                    "session.ensure_active.heartbeat_degraded",
-                    domain="draft_dev.runtime",
-                    app_id=str(app.id),
-                    revision_id=str(revision.id),
-                    session_id=str(session.id),
-                    user_id=str(user_id),
-                    sandbox_id=str(session.sandbox_id or ""),
-                    error=str(exc),
-                )
+            if self._is_transient_remote_error(exc):
+                self._mark_workspace_degraded(workspace, exc)
                 return self._mark_session_degraded(session, exc)
+            self._mark_workspace_error(workspace, exc)
+            return self._mark_session_error(session, exc)
 
-        if not session.sandbox_id:
-            session.status = PublishedAppDraftDevSessionStatus.error
-            session.last_error = "Draft dev session is missing a sandbox id."
-            return session
-
-        session.status = PublishedAppDraftDevSessionStatus.serving
-        session.last_error = None
-        apps_builder_trace(
-            "session.ensure_active.ready",
-            domain="draft_dev.runtime",
-            app_id=str(app.id),
-            revision_id=str(revision.id),
-            session_id=str(session.id),
-            user_id=str(user_id),
-            sandbox_id=str(session.sandbox_id or ""),
-            backend_name=session.runtime_backend,
-            status=str(session.status.value if hasattr(session.status, "value") else session.status),
+        return self._attach_session(
+            session=session,
+            workspace=workspace,
+            revision=revision,
+            dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
+            now=now,
         )
-        await self._reconcile_remote_scope_best_effort(session=session)
-        return session
 
     async def sync_session(
         self,
@@ -744,54 +651,52 @@ class PublishedAppDraftDevRuntimeService:
         files: Dict[str, str],
         entry_file: str,
     ) -> PublishedAppDraftDevSession:
-        session = await self.ensure_session(
+        return await self.ensure_session(
             app=app,
             revision=revision,
             user_id=user_id,
             files=files,
             entry_file=entry_file,
         )
-        return session
 
     async def heartbeat_session(self, *, session: PublishedAppDraftDevSession) -> PublishedAppDraftDevSession:
         if not self.settings.enabled:
             raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
-        now = self._now()
-        session.last_activity_at = now
-        session.expires_at = self._expires_at(now)
-        if session.sandbox_id:
-            try:
-                await self.client.heartbeat_session(
-                    sandbox_id=session.sandbox_id,
-                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
-                )
-            except PublishedAppDraftDevRuntimeClientError as exc:
-                if self._is_runtime_not_running_error(exc):
-                    session.status = PublishedAppDraftDevSessionStatus.error
-                    session.last_error = str(exc)
-                    return session
-                if self._is_transient_remote_error(exc):
-                    apps_builder_trace(
-                        "session.heartbeat.transient_error_ignored",
-                        domain="draft_dev.runtime",
-                        app_id=str(session.published_app_id),
-                        revision_id=str(session.revision_id or ""),
-                        session_id=str(session.id),
-                        sandbox_id=str(session.sandbox_id or ""),
-                        error=str(exc),
-                    )
-                    session.status = PublishedAppDraftDevSessionStatus.serving
-                    session.last_error = str(exc)
-                    return session
-                return self._mark_session_degraded(session, exc)
-        if not session.sandbox_id:
+        if session.draft_workspace_id is None:
             session.status = PublishedAppDraftDevSessionStatus.error
-            session.last_error = "Draft dev session is missing a sandbox id."
+            session.last_error = "Draft dev session is detached from the shared workspace."
             return session
 
+        workspace = await self.db.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+        if workspace is None or not str(workspace.sandbox_id or "").strip():
+            session.status = PublishedAppDraftDevSessionStatus.error
+            session.last_error = "Shared draft workspace is unavailable."
+            return session
+
+        now = self._now()
+        session.last_activity_at = now
+        session.expires_at = self._session_expires_at(now)
+        workspace.last_activity_at = now
+        workspace.detached_at = None
+        try:
+            await self.client.heartbeat_session(
+                sandbox_id=str(workspace.sandbox_id),
+                idle_timeout_seconds=self.settings.idle_timeout_seconds,
+            )
+        except PublishedAppDraftDevRuntimeClientError as exc:
+            if self._is_runtime_not_running_error(exc):
+                self._mark_workspace_error(workspace, exc)
+                return self._mark_session_error(session, exc)
+            if self._is_transient_remote_error(exc):
+                self._mark_workspace_degraded(workspace, exc)
+                return self._mark_session_degraded(session, exc)
+            self._mark_workspace_error(workspace, exc)
+            return self._mark_session_error(session, exc)
+
         session.status = PublishedAppDraftDevSessionStatus.serving
+        session.sandbox_id = self._normalize_runtime_sandbox_id(workspace.sandbox_id)
+        session.backend_metadata = dict(workspace.backend_metadata or {})
         session.last_error = None
-        await self._reconcile_remote_scope_best_effort(session=session)
         return session
 
     async def get_publish_ready_session(
@@ -800,11 +705,9 @@ class PublishedAppDraftDevRuntimeService:
         app_id: UUID,
         user_id: UUID,
     ) -> Optional[PublishedAppDraftDevSession]:
-        await self.expire_idle_sessions(app_id=app_id, user_id=user_id)
+        await self.expire_idle_sessions(app_id=app_id)
         session = await self.get_session(app_id=app_id, user_id=user_id)
-        if session is None:
-            return None
-        if not self._is_session_serving_status(session.status):
+        if session is None or not self._is_session_serving_status(session.status):
             return None
         if not str(session.sandbox_id or "").strip():
             return None
@@ -817,45 +720,37 @@ class PublishedAppDraftDevRuntimeService:
         reason: PublishedAppDraftDevSessionStatus = PublishedAppDraftDevSessionStatus.stopped,
     ) -> PublishedAppDraftDevSession:
         apps_builder_trace(
-            "session.stop.requested",
+            "session.detach.requested",
             domain="draft_dev.runtime",
             app_id=str(session.published_app_id),
             session_id=str(session.id),
             user_id=str(session.user_id),
+            workspace_id=str(session.draft_workspace_id or ""),
             sandbox_id=str(session.sandbox_id or ""),
             reason=str(reason.value if hasattr(reason, "value") else reason),
-            backend_name=str(session.runtime_backend or self.client.backend_name),
         )
-        session.status = PublishedAppDraftDevSessionStatus.stopping
-        if session.sandbox_id:
-            try:
-                await self.client.stop_session(sandbox_id=session.sandbox_id)
-            except PublishedAppDraftDevRuntimeClientError as exc:
-                session.status = PublishedAppDraftDevSessionStatus.error
-                session.last_error = str(exc)
-                apps_builder_trace(
-                    "session.stop.failed",
-                    domain="draft_dev.runtime",
-                    app_id=str(session.published_app_id),
-                    session_id=str(session.id),
-                    user_id=str(session.user_id),
-                    sandbox_id=str(session.sandbox_id or ""),
-                    error=str(exc),
-                )
-                return session
+        workspace_id = session.draft_workspace_id
+        session.status = reason
+        session.draft_workspace_id = None
         session.sandbox_id = None
         session.backend_metadata = {}
-        session.status = reason
+        session.preview_url = None
         session.expires_at = self._now()
-        apps_builder_trace(
-            "session.stop.completed",
-            domain="draft_dev.runtime",
-            app_id=str(session.published_app_id),
-            session_id=str(session.id),
-            user_id=str(session.user_id),
-            reason=str(reason.value if hasattr(reason, "value") else reason),
-        )
-        await self._reconcile_remote_scope_best_effort(session=session)
+        session.last_error = None
+
+        if workspace_id is not None:
+            workspace = await self.db.get(PublishedAppDraftWorkspace, workspace_id)
+            if workspace is not None:
+                active_attachment_result = await self.db.execute(
+                    select(func.count(PublishedAppDraftDevSession.id)).where(
+                        and_(
+                            PublishedAppDraftDevSession.draft_workspace_id == workspace_id,
+                            PublishedAppDraftDevSession.status.in_(list(self._active_session_statuses())),
+                        )
+                    )
+                )
+                if int(active_attachment_result.scalar() or 0) <= 0:
+                    workspace.detached_at = self._now()
         return session
 
     async def expire_idle_sessions(
@@ -865,9 +760,9 @@ class PublishedAppDraftDevRuntimeService:
         user_id: Optional[UUID] = None,
     ) -> int:
         now = self._now()
-        filters = [PublishedAppDraftDevSession.expires_at.is_not(None)]
-        filters.append(PublishedAppDraftDevSession.expires_at <= now)
-        filters.append(
+        filters = [
+            PublishedAppDraftDevSession.expires_at.is_not(None),
+            PublishedAppDraftDevSession.expires_at <= now,
             PublishedAppDraftDevSession.status.in_(
                 [
                     PublishedAppDraftDevSessionStatus.starting,
@@ -876,17 +771,15 @@ class PublishedAppDraftDevRuntimeService:
                     PublishedAppDraftDevSessionStatus.degraded,
                     PublishedAppDraftDevSessionStatus.running,
                 ]
-            )
-        )
+            ),
+        ]
         if app_id:
             filters.append(PublishedAppDraftDevSession.published_app_id == app_id)
         if user_id:
             filters.append(PublishedAppDraftDevSession.user_id == user_id)
 
         result = await self.db.execute(
-            select(PublishedAppDraftDevSession)
-            .options(self._draft_session_load_only_options())
-            .where(and_(*filters))
+            select(PublishedAppDraftDevSession).options(self._session_load_options()).where(and_(*filters))
         )
         rows = list(result.scalars().all())
         expired_count = 0
@@ -896,10 +789,7 @@ class PublishedAppDraftDevRuntimeService:
                     and_(
                         PublishedAppPublishJob.published_app_id == row.published_app_id,
                         PublishedAppPublishJob.status.in_(
-                            [
-                                PublishedAppPublishJobStatus.queued,
-                                PublishedAppPublishJobStatus.running,
-                            ]
+                            [PublishedAppPublishJobStatus.queued, PublishedAppPublishJobStatus.running]
                         ),
                     )
                 )
@@ -908,12 +798,66 @@ class PublishedAppDraftDevRuntimeService:
                 continue
             await self.stop_session(session=row, reason=PublishedAppDraftDevSessionStatus.expired)
             expired_count += 1
-        if expired_count:
-            apps_builder_trace(
-                "session.expire.completed",
-                domain="draft_dev.runtime",
-                app_id=str(app_id) if app_id else None,
-                user_id=str(user_id) if user_id else None,
-                expired_count=expired_count,
-            )
         return expired_count
+
+    async def sweep_dormant_workspaces(self, *, app_id: UUID | None = None) -> int:
+        now = self._now()
+        cutoff = now - timedelta(seconds=self.settings.workspace_retention_seconds)
+        attachment_exists = exists().where(
+            and_(
+                PublishedAppDraftDevSession.draft_workspace_id == PublishedAppDraftWorkspace.id,
+                PublishedAppDraftDevSession.status.in_(list(self._active_session_statuses())),
+            )
+        )
+        filters = [
+            PublishedAppDraftWorkspace.detached_at.is_not(None),
+            PublishedAppDraftWorkspace.detached_at <= cutoff,
+            ~attachment_exists,
+        ]
+        if app_id is not None:
+            filters.append(PublishedAppDraftWorkspace.published_app_id == app_id)
+        result = await self.db.execute(
+            select(PublishedAppDraftWorkspace).options(self._workspace_load_options()).where(and_(*filters))
+        )
+        removed = 0
+        for workspace in result.scalars().all():
+            publish_result = await self.db.execute(
+                select(func.count(PublishedAppPublishJob.id)).where(
+                    and_(
+                        PublishedAppPublishJob.published_app_id == workspace.published_app_id,
+                        PublishedAppPublishJob.status.in_(
+                            [PublishedAppPublishJobStatus.queued, PublishedAppPublishJobStatus.running]
+                        ),
+                    )
+                )
+            )
+            if int(publish_result.scalar() or 0) > 0:
+                continue
+            if str(workspace.sandbox_id or "").strip():
+                try:
+                    await self.client.stop_session(sandbox_id=str(workspace.sandbox_id))
+                except PublishedAppDraftDevRuntimeClientError:
+                    pass
+            workspace.status = PublishedAppDraftWorkspaceStatus.stopped
+            workspace.sandbox_id = None
+            workspace.backend_metadata = {}
+            workspace.preview_url = None
+            workspace.last_error = None
+            removed += 1
+        return removed
+
+    async def destroy_workspace_for_app(self, *, app_id: UUID) -> bool:
+        workspace = await self.get_workspace(app_id=app_id)
+        if workspace is None:
+            return False
+        if str(workspace.sandbox_id or "").strip():
+            try:
+                await self.client.stop_session(sandbox_id=str(workspace.sandbox_id))
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                self._mark_workspace_degraded(workspace, exc)
+        await self.db.delete(workspace)
+        return True
+
+
+def must_restartable_error(exc: Exception) -> bool:
+    return PublishedAppDraftDevRuntimeService._is_runtime_not_running_error(exc)

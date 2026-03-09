@@ -1,4 +1,4 @@
-Last Updated: 2026-03-08
+Last Updated: 2026-03-09
 
 ## Scope
 - OpenCode server client transport compatibility for coding-agent engine runs.
@@ -7,6 +7,7 @@ Last Updated: 2026-03-08
 
 ## Test Files
 - `backend/tests/opencode_server_client/test_opencode_server_client.py`
+- `backend/tests/opencode_server_client/test_sprite_proxy_tunnel.py`
 - `backend/tests/opencode_server_client/test_opencode_server_client_live.py`
 
 ## Key Scenarios Covered
@@ -17,8 +18,10 @@ Last Updated: 2026-03-08
 - Volatile contract metadata (`generated_at`) is ignored in context hashing so no-op runs do not rewrite context files.
 - Contract context seeding refreshes only when selected-agent contract content changes.
 - Sandbox-controller mode seeds custom tools via sandbox file APIs before OpenCode start and fails closed on seed-write failures.
-- E2B-backed draft-dev sessions auto-select sandbox-mode OpenCode startup even without a controller URL, so sandbox workspace bootstrap never falls back to host filesystem paths like `/workspace/...`.
-- The inner E2B OpenCode HTTP client skips host filesystem bootstrap entirely; the outer sandbox layer remains the only bootstrap writer for `/workspace/.talmudpedia/...`.
+- Sprite-backed draft-dev sessions build the inner OpenCode client through a Sprite proxy tunnel to `127.0.0.1:4141` inside the Sprite instead of assuming external `https://<sprite>.sprites.app:4141` reachability.
+- The Sprite proxy tunnel completes the websocket proxy handshake, relays raw bytes, and reuses its local listener for repeated OpenCode requests against the same Sprite/port tuple.
+- Archived E2B-backed draft-dev sessions still auto-select sandbox-mode OpenCode startup even without a controller URL, so sandbox workspace bootstrap never falls back to host filesystem paths like `/workspace/...`.
+- The inner sandbox OpenCode HTTP client skips host filesystem bootstrap entirely; the outer sandbox layer remains the only bootstrap writer for remote `.talmudpedia/...` workspace state.
 - Host mode fails closed when `workspace_path` is missing/invalid for custom-tool bootstrap.
 - Global event stream translation emits incremental `assistant.delta` tokens and tool lifecycle events (`tool.started` / `tool.completed` / `tool.failed`).
 - Incremental tool mapping refreshes `tool.started` when `pending -> running` introduces real tool input (for accurate edit-path UI labels).
@@ -39,6 +42,9 @@ Last Updated: 2026-03-08
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k 'test_build_official_session_permission_rules_includes_workspace_patterns or test_official_mode_seeds_custom_tools_before_start or test_host_mode_can_skip_workspace_bootstrap or test_sprite_inner_opencode_client_skips_host_workspace_bootstrap' tests/opencode_server_client/test_sprite_proxy_tunnel.py`
+- Date/Time: 2026-03-09 01:36 EET
+- Result: Pass (5 passed, 34 deselected, 1 warning)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k "sandbox_mode_seeds_custom_tools_before_start or e2b_backend_auto_selects_sandbox_mode_without_controller_url or sandbox_mode_refreshes_context_when_contract_changes or sandbox_mode_fails_closed_when_seed_write_fails"`
 - Date/Time: 2026-03-08
 - Result: Pass (4 passed, 32 deselected, 1 warning)

@@ -1,6 +1,6 @@
 # Custom Coding Agent
 
-Last Updated: 2026-03-07
+Last Updated: 2026-03-09
 
 ## Current State: Hard Cut v2 (OpenCode-Only)
 
@@ -41,6 +41,22 @@ Local embedded draft-dev/runtime cleanup was hardened for development setups:
 - Draft-dev shutdown now terminates the full spawned process group, not only the parent process, to avoid lingering `vite`/`tsserver`/`esbuild` children.
 - Dev-shim per-sandbox `opencode serve` processes are now tracked with per-sandbox metadata and reclaimed on app boot when stale.
 - Dev-shim OpenCode shutdown now terminates the full spawned process group, reducing orphaned local `opencode` helpers after restarts/crashes.
+
+## Latest Applied Update (2026-03-08)
+
+App Builder runtime assumptions were hard-cut to the shared Sprite model:
+- Draft runtime now uses one shared Sprite per app instead of per-user remote sandboxes.
+- Coding-agent batch scope is now app-wide shared batch, not `(app_id, actor_id)`.
+- Batch finalization creates one revision outcome for the shared app batch and assigns that result across finalized completed runs.
+- Preview/provider routing metadata is now Sprite-oriented.
+
+## Latest Applied Update (2026-03-09)
+
+Sprite-backed OpenCode transport is now provider-native:
+- OpenCode continues to run inside the shared app Sprite as a long-lived service.
+- Backend reaches that private service port through the Sprite proxy websocket API and exposes it locally as a short-lived `127.0.0.1:<port>` tunnel.
+- The inner OpenCode HTTP client stays on standard localhost HTTP semantics, while the outer Sprite sandbox backend remains the only workspace bootstrap owner.
+- This replaced the temporary direct/public-port assumption and improves live event smoothness versus the earlier polling-heavy fallback path.
 
 ## OpenCode Protocol Evidence (2026-02-25 Deep-Dive)
 
@@ -203,9 +219,9 @@ Key updates:
 
 ### 5) Shared Stage Workspace + Idle-Batch Finalization (Current)
 
-Coding-agent runs now use a shared stage workspace per `(published_app_id, initiator_user_id)` scope:
+Coding-agent runs now use a shared stage workspace per `published_app_id` scope:
 - Shared stage path inside sandbox: `.talmudpedia/stage/shared/workspace`
-- All parallel runs in the same scope write into the same stage workspace
+- All parallel runs in the same app scope write into the same stage workspace
 - Stage APIs no longer require `run_id` for snapshot/promote operations
 
 Stage API contract changes:
@@ -220,11 +236,9 @@ Batch finalization behavior:
 - When active run count reaches zero:
   - collect unfinalized completed runs (`batch_finalized_at IS NULL`)
   - if none, exit
-  - promote shared stage once (if diff exists) and create one revision/checkpoint
-  - owner run = latest completed run by `completed_at` (fallback `created_at`)
-  - assign `result_revision_id` and `checkpoint_revision_id` only to owner run
+  - promote shared stage once (if diff exists) and create one revision outcome for the batch
+  - assign `result_revision_id` across finalized completed runs in the batch
   - mark all processed completed runs finalized (`batch_finalized_at=now()`)
-  - set `batch_owner=true` on owner and `false` on others
 - If no stage-vs-live diff exists, runs are still finalized (no revision/checkpoint assignment)
 
 New `agent_runs` fields used by this flow:

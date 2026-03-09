@@ -1,6 +1,6 @@
 # Apps Builder Current Implementation Overview
 
-Last Updated: 2026-03-08
+Last Updated: 2026-03-09
 
 ## Purpose
 This document is the current-state overview of the Apps Builder system (not a future implementation plan). It summarizes how the builder works today across backend, frontend, runtime, coding-agent, revision persistence, and publish/runtime delivery.
@@ -11,8 +11,8 @@ Apps Builder currently operates in two execution modes:
 - Publish mode (immutable runtime artifact): optimized for determinism and stability.
 
 Core implementation choices in current state:
-- Draft preview uses a persistent draft-dev sandbox session per app/user.
-- Coding-agent runs use the same sandbox as preview, with stage/live isolation inside that sandbox.
+- Draft preview uses one persistent shared Sprite workspace per app with per-user attachment sessions.
+- Coding-agent runs use the same shared Sprite as preview, with shared live/stage isolation inside that workspace.
 - Published runtime is static artifact delivery (`vite_static`) and no longer source-UI compilation.
 - Revision dist builds are asynchronous and build-readiness-aware for version publish/preview flows.
 
@@ -76,7 +76,7 @@ Behavior today:
 - Canonical runtime bootstrap overlay is also re-applied during draft-dev session materialization and publish build materialization to prevent stale runtime SDK contracts.
 
 ## Draft Preview Runtime
-Draft preview uses draft-dev sandbox sessions and no longer uses browser-side compile for app-builder runtime.
+Draft preview uses Sprite-backed draft-dev shared workspaces and no longer uses browser-side compile for app-builder runtime.
 
 Session lifecycle APIs:
 - `GET /admin/apps/{app_id}/builder/draft-dev/session`
@@ -86,8 +86,10 @@ Session lifecycle APIs:
 - `DELETE /admin/apps/{app_id}/builder/draft-dev/session`
 
 Important runtime behavior:
-- Persistent dev server in sandbox for fast feedback/HMR during editing.
+- One shared Sprite is owned at app scope; user sessions attach to it.
+- Persistent filesystem means dependencies are reused across re-entry and provider warm/cold transitions.
 - Sync path avoids unnecessary rewrites to reduce no-op restarts.
+- Reattach/heartbeat waits for preview readiness and no longer blindly restarts Sprite services on every reopen.
 - Builder preview iframe URL stays stable and tokenless across heartbeat/token refresh.
 - Draft-dev session response carries off-URL auth fields (`preview_auth_token`, `preview_auth_expires_at`) for iframe auth channel updates.
 - Draft-dev preview URLs are decorated only with runtime routing query params so template runtime clients can resolve chat base path in preview:
@@ -97,14 +99,14 @@ Important runtime behavior:
 - Draft-dev sandbox, preview proxy, coding-agent, and publish flows now emit shared structured lifecycle events to the app-builder trace stream for operational debugging.
 
 ## Coding-Agent Runtime (Current)
-### Single-Sandbox, Stage/Live Model
-Coding-agent execution is now single-sandbox with internal stage/live workspaces:
+### Shared Sprite, Stage/Live Model
+Coding-agent execution is now shared-Sprite with internal stage/live workspaces:
 - Live workspace: preview app root used by Vite.
-- Shared stage workspace: `.talmudpedia/stage/shared/workspace` inside same sandbox.
+- Shared stage workspace inside the same app Sprite runtime.
 
 Run flow:
 1. Submit prompt (`POST /coding-agent/v2/prompts`) and resolve active preview sandbox session.
-2. Compute active run count for `(surface=published_app_coding_agent, app_id, initiator_user_id)`.
+2. Compute active run count for `(surface=published_app_coding_agent, app_id)`.
 3. Prepare shared stage workspace:
    - `reset=true` when active count is `0` (new batch)
    - `reset=false` when joining an already-active batch
@@ -112,7 +114,10 @@ Run flow:
 5. Stream run events to frontend (assistant/tool/terminal events).
 6. On each run terminalization, invoke batch finalizer for the scope.
 7. Promote shared stage -> live only when scope becomes idle and there is at least one unfinalized completed run.
-8. Persist one revision/checkpoint for the batch owner run (latest completed in batch).
+8. Persist one revision outcome for the app-wide batch and assign that result across finalized completed runs.
+
+Promotion behavior:
+- shared stage is mirrored into the existing live workspace in place rather than deleting/recreating the live root, so the running Vite process can observe file changes without a forced restart.
 
 ### Streaming and Stall Ownership (Current Defaults)
 - Backend monitor owns forced terminalization policies; aggressive fail-close is env-gated.
@@ -143,6 +148,7 @@ Current integration model:
 - Project-local custom tool bootstrap (`.opencode/*`) is seeded per run if needed.
 - `read_agent_context` is the consolidated custom tool for selected-agent context reads.
 - Run startup fails closed when required bootstrap/context seeding fails.
+- Sprite-backed OpenCode traffic is routed through a backend-owned Sprite proxy tunnel to the in-Sprite `127.0.0.1:4141` service, not through public `https://<sprite>.sprites.app:4141` access.
 - Tool event passthrough defaults to raw OpenCode semantics (`APPS_CODING_AGENT_OPENCODE_TOOL_EVENT_MODE=raw`), with optional normalized mapping mode for legacy UI behavior.
 - Wrapper apply-patch unrecovered fail-close is opt-in (`APPS_CODING_AGENT_OPENCODE_FAIL_ON_UNRECOVERED_APPLY_PATCH=0` by default).
 
@@ -150,7 +156,7 @@ Recent stability hardening reflected in code/docs:
 - Improved terminal event handling to reduce hanging runs.
 - Stream handling tuned for incremental assistant deltas.
 - Cancel path supports sandbox-routed cancellation and run finalization semantics.
-- Idle-batch finalization with advisory lock per `(app_id, actor_id)` to prevent duplicate promotions/revisions during parallel completion races.
+- Idle-batch finalization with advisory lock per `app_id` to prevent duplicate promotions/revisions during parallel completion races.
 
 ## Revision Persistence Model
 Current revision persistence uses snapshot-manifest + content-addressed blob storage.

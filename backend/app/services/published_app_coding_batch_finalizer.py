@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routers.published_apps_admin_builder_core import _next_build_seq
@@ -39,33 +39,29 @@ class PublishedAppCodingBatchFinalizer:
         self.db = db
 
     @staticmethod
-    def _scope_filters(*, app_id: UUID, actor_id: UUID) -> list[Any]:
+    def _scope_filters(*, app_id: UUID) -> list[Any]:
         return [
             AgentRun.surface == CODING_AGENT_SURFACE,
             AgentRun.published_app_id == app_id,
-            or_(
-                AgentRun.initiator_user_id == actor_id,
-                and_(AgentRun.initiator_user_id.is_(None), AgentRun.user_id == actor_id),
-            ),
         ]
 
-    async def _count_active_runs(self, *, app_id: UUID, actor_id: UUID) -> int:
+    async def _count_active_runs(self, *, app_id: UUID) -> int:
         result = await self.db.execute(
             select(func.count(AgentRun.id)).where(
                 and_(
-                    *self._scope_filters(app_id=app_id, actor_id=actor_id),
+                    *self._scope_filters(app_id=app_id),
                     AgentRun.status.in_(list(_ACTIVE_RUN_STATUSES)),
                 )
             )
         )
         return int(result.scalar() or 0)
 
-    async def _load_unfinalized_completed_runs(self, *, app_id: UUID, actor_id: UUID) -> list[AgentRun]:
+    async def _load_unfinalized_completed_runs(self, *, app_id: UUID) -> list[AgentRun]:
         result = await self.db.execute(
             select(AgentRun)
             .where(
                 and_(
-                    *self._scope_filters(app_id=app_id, actor_id=actor_id),
+                    *self._scope_filters(app_id=app_id),
                     AgentRun.status == RunStatus.completed,
                     AgentRun.batch_finalized_at.is_(None),
                 )
@@ -74,11 +70,11 @@ class PublishedAppCodingBatchFinalizer:
         )
         return list(result.scalars().all())
 
-    async def _try_scope_advisory_lock(self, *, app_id: UUID, actor_id: UUID) -> tuple[bool, int | None]:
+    async def _try_scope_advisory_lock(self, *, app_id: UUID) -> tuple[bool, int | None]:
         dialect_name = str(getattr(getattr(self.db.get_bind(), "dialect", None), "name", "")).lower()
         if dialect_name != "postgresql":
             return True, None
-        lock_key = ((app_id.int ^ (actor_id.int << 1)) & ((1 << 63) - 1))
+        lock_key = (app_id.int & ((1 << 63) - 1))
         result = await self.db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": int(lock_key)})
         return bool(result.scalar_one_or_none()), int(lock_key)
 
@@ -145,7 +141,6 @@ class PublishedAppCodingBatchFinalizer:
         self,
         *,
         app_id: UUID,
-        actor_id: UUID,
         sample_run: AgentRun,
     ) -> tuple[PublishedApp, PublishedAppRevision, dict[str, str] | None]:
         app = await self.db.get(PublishedApp, app_id)
@@ -160,10 +155,10 @@ class PublishedAppCodingBatchFinalizer:
             raise RuntimeError("Current draft revision not found")
 
         runtime_service = PublishedAppDraftDevRuntimeService(self.db)
-        session = await runtime_service.get_session(app_id=app_id, user_id=actor_id)
-        if session is None or not session.sandbox_id:
+        workspace = await runtime_service.get_workspace(app_id=app_id)
+        if workspace is None or not workspace.sandbox_id:
             return app, current, None
-        sandbox_id = str(session.sandbox_id)
+        sandbox_id = str(workspace.sandbox_id)
 
         stage_files = await self._snapshot_shared_stage_files(
             runtime_service=runtime_service,
@@ -174,7 +169,7 @@ class PublishedAppCodingBatchFinalizer:
                 "batch_finalizer.noop",
                 domain="coding_agent.finalizer",
                 app_id=str(app_id),
-                actor_id=str(actor_id),
+                actor_id=str(sample_run.initiator_user_id or sample_run.user_id or "") or None,
                 sandbox_id=sandbox_id,
                 reason="stage_matches_current_revision",
                 current_revision_id=str(current.id),
@@ -186,7 +181,7 @@ class PublishedAppCodingBatchFinalizer:
             "batch_finalizer.promote_stage",
             domain="coding_agent.finalizer",
             app_id=str(app_id),
-            actor_id=str(actor_id),
+            actor_id=str(sample_run.initiator_user_id or sample_run.user_id or "") or None,
             sandbox_id=sandbox_id,
             current_revision_id=str(current.id),
         )
@@ -214,42 +209,41 @@ class PublishedAppCodingBatchFinalizer:
         if status_value not in terminal_values:
             return {"status": "run_not_terminal"}
         app_id = run.published_app_id
-        actor_id = run.initiator_user_id or run.user_id
-        if app_id is None or actor_id is None:
+        if app_id is None:
             return {"status": "scope_unavailable"}
 
         lock_acquired = False
         lock_key: int | None = None
         try:
-            lock_acquired, lock_key = await self._try_scope_advisory_lock(app_id=app_id, actor_id=actor_id)
+            lock_acquired, lock_key = await self._try_scope_advisory_lock(app_id=app_id)
             if not lock_acquired:
                 return {"status": "scope_lock_busy"}
 
-            active_count = await self._count_active_runs(app_id=app_id, actor_id=actor_id)
+            active_count = await self._count_active_runs(app_id=app_id)
             if active_count > 0:
                 apps_builder_trace(
                     "batch_finalizer.deferred",
                     domain="coding_agent.finalizer",
                     run_id=str(run_id),
                     app_id=str(app_id),
-                    actor_id=str(actor_id),
+                    actor_id=str(run.initiator_user_id or run.user_id or "") or None,
                     active_count=active_count,
                 )
                 return {"status": "active_runs_remaining", "active_count": active_count}
 
-            completed_candidates = await self._load_unfinalized_completed_runs(app_id=app_id, actor_id=actor_id)
+            completed_candidates = await self._load_unfinalized_completed_runs(app_id=app_id)
             if not completed_candidates:
                 return {"status": "no_unfinalized_completed_runs"}
 
             app, current, live_files = await self._prepare_finalized_live_snapshot(
                 app_id=app_id,
-                actor_id=actor_id,
                 sample_run=completed_candidates[-1],
             )
 
             finalized_at = datetime.now(timezone.utc)
             created_by_run: dict[str, str] = {}
             build_enqueue_by_run: dict[str, dict[str, str | bool]] = {}
+            batch_revision: PublishedAppRevision | None = None
 
             if live_files is not None:
                 _validate_builder_project_or_raise(live_files, current.entry_file)
@@ -258,74 +252,65 @@ class PublishedAppCodingBatchFinalizer:
                     domain="coding_agent.finalizer",
                     run_id=str(run_id),
                     app_id=str(app_id),
-                    actor_id=str(actor_id),
+                    actor_id=str(run.initiator_user_id or run.user_id or "") or None,
                     file_count=len(live_files),
                     current_revision_id=str(current.id),
                 )
 
-            latest_revision = current
-            for candidate in completed_candidates:
-                candidate.batch_finalized_at = finalized_at
-
-                if live_files is None:
-                    candidate.result_revision_id = None
-                    continue
-
-                is_diff = True
-                if candidate.base_revision_id:
-                    base_revision = await self.db.get(PublishedAppRevision, candidate.base_revision_id)
-                    if base_revision is not None and dict(base_revision.files or {}) == live_files:
-                        is_diff = False
-
-                if not is_diff:
-                    candidate.result_revision_id = None
-                    continue
-
-                revision = await create_app_version(
+            if live_files is not None and live_files != dict(current.files or {}):
+                created_by = completed_candidates[-1].initiator_user_id or completed_candidates[-1].user_id
+                batch_revision = await create_app_version(
                     self.db,
                     app=app,
                     kind=PublishedAppRevisionKind.draft,
                     template_key=app.template_key,
-                    entry_file=latest_revision.entry_file,
+                    entry_file=current.entry_file,
                     files=live_files,
-                    created_by=actor_id,
-                    source_revision_id=latest_revision.id,
+                    created_by=created_by,
+                    source_revision_id=current.id,
                     origin_kind="coding_run",
-                    origin_run_id=candidate.id,
+                    origin_run_id=completed_candidates[-1].id,
                     build_status=PublishedAppRevisionBuildStatus.queued,
-                    build_seq=_next_build_seq(latest_revision),
-                    template_runtime="vite_static",
+                    build_seq=_next_build_seq(current),
+                    template_runtime=current.template_runtime or "vite_static",
                 )
-                source_revision_id = str(latest_revision.id)
-                latest_revision = revision
-                app.current_draft_revision_id = revision.id
-                candidate.result_revision_id = revision.id
+                app.current_draft_revision_id = batch_revision.id
                 apps_builder_trace(
                     "batch_finalizer.revision_created",
                     domain="coding_agent.finalizer",
-                    run_id=str(candidate.id),
+                    run_id=str(completed_candidates[-1].id),
                     app_id=str(app_id),
-                    actor_id=str(actor_id),
-                    revision_id=str(revision.id),
-                    source_revision_id=source_revision_id,
+                    actor_id=str(created_by or "") or None,
+                    revision_id=str(batch_revision.id),
+                    source_revision_id=str(current.id),
+                    candidate_count=len(completed_candidates),
                 )
-                created_by_run[str(candidate.id)] = str(revision.id)
                 enqueue_error = enqueue_revision_build(
-                    revision=revision,
+                    revision=batch_revision,
                     app=app,
                     build_kind="coding_run",
                 )
+                build_result: dict[str, str | bool]
                 if enqueue_error:
                     mark_revision_build_enqueue_failed(
-                        revision=revision,
+                        revision=batch_revision,
                         reason=enqueue_error,
                     )
-                    build_enqueue_by_run[str(candidate.id)] = {
+                    build_result = {
                         "ok": False,
                         "error": enqueue_error,
                     }
                 else:
-                    build_enqueue_by_run[str(candidate.id)] = {"ok": True}
+                    build_result = {"ok": True}
+            else:
+                build_result = {"ok": True}
+
+            for candidate in completed_candidates:
+                candidate.batch_finalized_at = finalized_at
+                candidate.result_revision_id = batch_revision.id if batch_revision is not None else None
+                if batch_revision is not None:
+                    created_by_run[str(candidate.id)] = str(batch_revision.id)
+                    build_enqueue_by_run[str(candidate.id)] = dict(build_result)
 
             await self.db.commit()
             apps_builder_trace(
@@ -333,7 +318,7 @@ class PublishedAppCodingBatchFinalizer:
                 domain="coding_agent.finalizer",
                 run_id=str(run_id),
                 app_id=str(app_id),
-                actor_id=str(actor_id),
+                actor_id=str(run.initiator_user_id or run.user_id or "") or None,
                 candidate_count=len(completed_candidates),
                 latest_revision_id=str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
                 live_files_present=live_files is not None,

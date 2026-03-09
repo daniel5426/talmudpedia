@@ -180,6 +180,8 @@ async def delete_published_app(
     ctx = await _resolve_tenant_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    await runtime_service.destroy_workspace_for_app(app_id=app.id)
     await db.delete(app)
     await db.commit()
     return {"status": "deleted", "id": str(app_id)}

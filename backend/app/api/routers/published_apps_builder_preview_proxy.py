@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
@@ -10,6 +13,7 @@ import websockets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.security import decode_published_app_preview_token
 from app.db.postgres.models.published_apps import PublishedAppDraftDevSession
@@ -20,9 +24,22 @@ from app.services.apps_builder_trace import apps_builder_trace
 router = APIRouter(tags=["published-apps-builder-preview-proxy"])
 
 PREVIEW_COOKIE_NAME = "published_app_preview_token"
-PREVIEW_PROXY_HEADER = "e2b-traffic-access-token"
 _PREVIEW_WEBSOCKET_OPEN_TIMEOUT_SECONDS = 20.0
 _PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS = 3
+_PREVIEW_HTTP_RETRY_DELAYS_SECONDS = (0.0, 0.35, 0.75, 1.5)
+_HTML_URL_ATTR_PATTERN = re.compile(r"""(?P<prefix>\b(?:src|href)=["'])(?P<path>/[^"'?#]+(?:[?#][^"']*)?)""")
+_INLINE_VITE_PATH_PATTERN = re.compile(
+    r"""(?P<quote>["'])(?P<path>/(?:@vite|@react-refresh|src/|node_modules/|runtime-sdk/|__vite)[^"']*)(?P=quote)"""
+)
+_REWRITABLE_TEXT_PREFIXES = ("text/html", "application/javascript", "text/javascript", "text/css")
+
+
+def _should_retry_preview_request(*, method: str, status_code: int | None = None, error: Exception | None = None) -> bool:
+    if str(method or "").upper() not in {"GET", "HEAD"}:
+        return False
+    if error is not None:
+        return isinstance(error, httpx.HTTPError)
+    return int(status_code or 0) in {404, 408, 425, 429, 500, 502, 503, 504}
 
 
 def _extract_preview_token(*, request: Request | None = None, websocket: WebSocket | None = None) -> str | None:
@@ -52,7 +69,10 @@ async def _load_session(*, db: AsyncSession, session_id: str) -> PublishedAppDra
     except Exception as exc:
         raise HTTPException(status_code=404, detail="Draft dev session not found") from exc
     result = await db.execute(
-        select(PublishedAppDraftDevSession).where(PublishedAppDraftDevSession.id == session_uuid).limit(1)
+        select(PublishedAppDraftDevSession)
+        .options(selectinload(PublishedAppDraftDevSession.draft_workspace))
+        .where(PublishedAppDraftDevSession.id == session_uuid)
+        .limit(1)
     )
     session = result.scalar_one_or_none()
     if session is None:
@@ -61,19 +81,35 @@ async def _load_session(*, db: AsyncSession, session_id: str) -> PublishedAppDra
 
 
 def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[str, str]:
-    metadata = session.backend_metadata if isinstance(session.backend_metadata, dict) else {}
+    workspace = getattr(session, "draft_workspace", None)
+    workspace_metadata = getattr(workspace, "backend_metadata", None)
+    metadata = (
+        workspace_metadata
+        if isinstance(workspace_metadata, dict)
+        else session.backend_metadata
+        if isinstance(session.backend_metadata, dict)
+        else {}
+    )
     preview = metadata.get("preview") if isinstance(metadata.get("preview"), dict) else {}
     upstream_base_url = str(preview.get("upstream_base_url") or "").strip()
     if not upstream_base_url:
         raise HTTPException(status_code=404, detail="Draft dev preview target is unavailable")
     base_path = str(preview.get("base_path") or "").strip() or "/"
     upstream_path = str(preview.get("upstream_path") or "").strip() or base_path
-    traffic_access_token = str(preview.get("traffic_access_token") or "").strip()
+    auth_header_name = str(preview.get("auth_header_name") or "").strip() or "Authorization"
+    auth_token_env = str(preview.get("auth_token_env") or "").strip()
+    auth_token_prefix_value = preview.get("auth_token_prefix")
+    auth_token_prefix = str(auth_token_prefix_value) if auth_token_prefix_value is not None else ""
+    auth_token = str(os.getenv(auth_token_env) or "").strip() if auth_token_env else ""
+    extra_headers = preview.get("extra_headers") if isinstance(preview.get("extra_headers"), dict) else {}
     return {
         "upstream_base_url": upstream_base_url.rstrip("/"),
         "base_path": base_path,
         "upstream_path": upstream_path,
-        "traffic_access_token": traffic_access_token,
+        "auth_header_name": auth_header_name,
+        "auth_token": auth_token,
+        "auth_token_prefix": auth_token_prefix,
+        "extra_headers": json.dumps(extra_headers, sort_keys=True),
     }
 
 
@@ -107,15 +143,75 @@ def _upstream_url(*, path: str, query_params: Any, target: dict[str, str]) -> st
     return urlunparse(updated)
 
 
+def _compose_proxy_path(*, target: dict[str, str], resource_path: str) -> str:
+    base_path = str(target.get("base_path") or "/").strip() or "/"
+    if not base_path.startswith("/"):
+        base_path = f"/{base_path}"
+    return f"{base_path.rstrip('/')}/{str(resource_path or '').lstrip('/')}"
+
+
+def _rewrite_inline_vite_paths(*, target: dict[str, str], text: str) -> str:
+    def _replace_inline(match: re.Match[str]) -> str:
+        quote = str(match.group("quote") or '"')
+        original = str(match.group("path") or "")
+        if original.startswith("//"):
+            return match.group(0)
+        rewritten = _compose_proxy_path(target=target, resource_path=original)
+        return f"{quote}{rewritten}{quote}"
+
+    return _INLINE_VITE_PATH_PATTERN.sub(_replace_inline, text)
+
+
+def _rewrite_html_preview_content(*, target: dict[str, str], content: bytes) -> bytes:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+
+    def _replace_attr(match: re.Match[str]) -> str:
+        original = str(match.group("path") or "")
+        if original.startswith("//"):
+            return match.group(0)
+        return f"{match.group('prefix')}{_compose_proxy_path(target=target, resource_path=original)}"
+
+    rewritten = _HTML_URL_ATTR_PATTERN.sub(_replace_attr, text)
+    rewritten = _rewrite_inline_vite_paths(target=target, text=rewritten)
+    return rewritten.encode("utf-8")
+
+
+def _rewrite_text_preview_content(*, target: dict[str, str], content_type: str, content: bytes) -> tuple[bytes, bool]:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if not normalized_content_type.startswith(_REWRITABLE_TEXT_PREFIXES):
+        return content, False
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content, False
+    if normalized_content_type == "text/html":
+        rewritten = _rewrite_html_preview_content(target=target, content=content)
+        return rewritten, rewritten != content
+    rewritten_text = _rewrite_inline_vite_paths(target=target, text=text)
+    rewritten = rewritten_text.encode("utf-8")
+    return rewritten, rewritten != content
+
+
 def _proxy_headers(request: Request, *, target: dict[str, str]) -> dict[str, str]:
     headers: dict[str, str] = {}
     for key, value in request.headers.items():
         lowered = key.lower()
-        if lowered in {"host", "content-length", "cookie"}:
+        if lowered in {"host", "content-length", "cookie", "if-none-match", "if-modified-since"}:
             continue
         headers[key] = value
-    if target["traffic_access_token"]:
-        headers[PREVIEW_PROXY_HEADER] = target["traffic_access_token"]
+    extra_headers = json.loads(str(target.get("extra_headers") or "{}"))
+    if isinstance(extra_headers, dict):
+        for key, value in extra_headers.items():
+            if str(key).strip():
+                headers[str(key)] = str(value)
+    auth_token = str(target.get("auth_token") or "").strip()
+    if auth_token:
+        headers[str(target.get("auth_header_name") or "Authorization")] = (
+            f"{str(target.get('auth_token_prefix') or '')}{auth_token}"
+        )
     return headers
 
 
@@ -125,9 +221,19 @@ def _websocket_proxy_connect_options(
     target: dict[str, str],
 ) -> tuple[list[tuple[str, str]], list[str]]:
     additional_headers: list[tuple[str, str]] = []
-    traffic_access_token = str(target.get("traffic_access_token") or "").strip()
-    if traffic_access_token:
-        additional_headers.append((PREVIEW_PROXY_HEADER, traffic_access_token))
+    extra_headers = json.loads(str(target.get("extra_headers") or "{}"))
+    if isinstance(extra_headers, dict):
+        for key, value in extra_headers.items():
+            if str(key).strip():
+                additional_headers.append((str(key), str(value)))
+    auth_token = str(target.get("auth_token") or "").strip()
+    if auth_token:
+        additional_headers.append(
+            (
+                str(target.get("auth_header_name") or "Authorization"),
+                f"{str(target.get('auth_token_prefix') or '')}{auth_token}",
+            )
+        )
 
     origin = str(websocket.headers.get("origin") or "").strip()
     if origin:
@@ -193,23 +299,85 @@ async def proxy_builder_preview(
         upstream_url=upstream_url,
     )
     body = await request.body()
-    async with httpx.AsyncClient(follow_redirects=False, timeout=60.0) as client:
-        upstream = await client.request(
-            request.method,
-            upstream_url,
-            headers=_proxy_headers(request, target=target),
-            content=body if body else None,
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=60.0) as client:
+            upstream = None
+            last_error: httpx.HTTPError | None = None
+            for delay in _PREVIEW_HTTP_RETRY_DELAYS_SECONDS:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                try:
+                    candidate = await client.request(
+                        request.method,
+                        upstream_url,
+                        headers=_proxy_headers(request, target=target),
+                        content=body if body else None,
+                    )
+                except httpx.HTTPError as exc:
+                    last_error = exc
+                    if _should_retry_preview_request(method=request.method, error=exc):
+                        continue
+                    raise
+                if _should_retry_preview_request(method=request.method, status_code=candidate.status_code):
+                    upstream = candidate
+                    continue
+                upstream = candidate
+                break
+            if upstream is None:
+                if last_error is not None:
+                    raise last_error
+                raise HTTPException(status_code=502, detail="Draft dev preview upstream request failed")
+    except httpx.TimeoutException as exc:
+        apps_builder_trace(
+            "preview.proxy.failed",
+            domain="preview.proxy",
+            session_id=str(session.id),
+            app_id=str(session.published_app_id),
+            revision_id=str(session.revision_id or ""),
+            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+            method=request.method,
+            path=path,
+            error=str(exc),
+            error_type=exc.__class__.__name__,
         )
-    excluded_headers = {"content-encoding", "transfer-encoding", "connection"}
+        raise HTTPException(status_code=504, detail="Draft dev preview upstream timed out") from exc
+    except httpx.HTTPError as exc:
+        apps_builder_trace(
+            "preview.proxy.failed",
+            domain="preview.proxy",
+            session_id=str(session.id),
+            app_id=str(session.published_app_id),
+            revision_id=str(session.revision_id or ""),
+            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+            method=request.method,
+            path=path,
+            error=str(exc),
+            error_type=exc.__class__.__name__,
+        )
+        raise HTTPException(status_code=502, detail="Draft dev preview upstream request failed") from exc
+    content_type = str(upstream.headers.get("content-type") or "")
+    response_content = upstream.content
+    content_rewritten = False
+    if request.method.upper() == "GET" and upstream.status_code == 200:
+        response_content, content_rewritten = _rewrite_text_preview_content(
+            target=target,
+            content_type=content_type,
+            content=upstream.content,
+        )
+    excluded_headers = {"content-encoding", "transfer-encoding", "connection", "content-length"}
+    if content_rewritten:
+        excluded_headers.update({"etag", "last-modified"})
     response = Response(
-        content=upstream.content,
+        content=response_content,
         status_code=upstream.status_code,
-        media_type=upstream.headers.get("content-type"),
+        media_type=content_type,
     )
     for key, value in upstream.headers.items():
         if key.lower() in excluded_headers or key.lower() == "content-type":
             continue
         response.headers[key] = value
+    if content_rewritten:
+        response.headers["Cache-Control"] = "no-store"
     if request.query_params.get("runtime_token"):
         _set_preview_cookie(response, request=request, token=token)
     apps_builder_trace(

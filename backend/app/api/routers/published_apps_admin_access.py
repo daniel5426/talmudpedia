@@ -244,6 +244,7 @@ async def _get_draft_dev_session_for_scope(
                 PublishedAppDraftDevSession.published_app_id,
                 PublishedAppDraftDevSession.user_id,
                 PublishedAppDraftDevSession.revision_id,
+                PublishedAppDraftDevSession.draft_workspace_id,
                 PublishedAppDraftDevSession.status,
                 PublishedAppDraftDevSession.sandbox_id,
                 PublishedAppDraftDevSession.runtime_generation,
@@ -276,20 +277,12 @@ async def _count_active_coding_runs_for_scope(
     app_id: UUID,
     user_id: UUID | None,
 ) -> int:
-    if user_id is None:
-        return 0
+    _ = user_id
     result = await db.execute(
         select(func.count(AgentRun.id)).where(
             and_(
                 AgentRun.surface == CODING_AGENT_SURFACE,
                 AgentRun.published_app_id == app_id,
-                or_(
-                    AgentRun.initiator_user_id == user_id,
-                    and_(
-                        AgentRun.initiator_user_id.is_(None),
-                        AgentRun.user_id == user_id,
-                    ),
-                ),
                 AgentRun.status.in_([RunStatus.queued, RunStatus.running]),
             )
         )

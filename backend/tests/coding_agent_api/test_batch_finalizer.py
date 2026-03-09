@@ -64,7 +64,7 @@ def _new_scope_run(
 
 
 @pytest.mark.asyncio
-async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(client, db_session, monkeypatch):
+async def test_batch_finalizer_diff_only_creates_one_shared_revision_per_app_batch(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
@@ -103,7 +103,7 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
     run_with_diff = _new_scope_run(
         tenant_id=tenant.id,
         agent_id=agent.id,
-        user_id=user.id,
+        user_id=UUID("00000000-0000-0000-0000-000000000002"),
         app_id=app_id,
         base_revision_id=draft.id,
         status=RunStatus.completed,
@@ -113,8 +113,8 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
     await db_session.refresh(run_no_diff)
     await db_session.refresh(run_with_diff)
 
-    async def _fake_prepare(self, *, app_id, actor_id, sample_run):
-        _ = actor_id, sample_run
+    async def _fake_prepare(self, *, app_id, sample_run):
+        _ = sample_run
         loaded_app = await self.db.get(PublishedApp, app_id)
         loaded_current = await self.db.get(PublishedAppRevision, draft.id)
         assert loaded_app is not None
@@ -139,8 +139,9 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
     result = await service.finalize_for_terminal_run(run_id=run_with_diff.id)
     assert result["status"] == "finalized"
     assert result["candidate_count"] == 2
-    assert str(run_no_diff.id) not in result["revision_ids_by_run"]
+    assert str(run_no_diff.id) in result["revision_ids_by_run"]
     assert str(run_with_diff.id) in result["revision_ids_by_run"]
+    assert result["revision_ids_by_run"][str(run_no_diff.id)] == result["revision_ids_by_run"][str(run_with_diff.id)]
 
     refreshed_no_diff = await db_session.get(AgentRun, run_no_diff.id)
     refreshed_with_diff = await db_session.get(AgentRun, run_with_diff.id)
@@ -148,10 +149,11 @@ async def test_batch_finalizer_diff_only_creates_versions_per_completed_run(clie
     assert refreshed_with_diff is not None
 
     assert refreshed_no_diff.batch_finalized_at is not None
-    assert refreshed_no_diff.result_revision_id is None
+    assert refreshed_no_diff.result_revision_id is not None
 
     assert refreshed_with_diff.batch_finalized_at is not None
     assert refreshed_with_diff.result_revision_id is not None
+    assert refreshed_no_diff.result_revision_id == refreshed_with_diff.result_revision_id
     assert enqueue_calls
     assert enqueue_calls[0].endswith(":coding_run")
 
@@ -182,8 +184,8 @@ async def test_batch_finalizer_marks_revision_failed_when_build_enqueue_fails(cl
     await db_session.commit()
     await db_session.refresh(run_with_diff)
 
-    async def _fake_prepare(self, *, app_id, actor_id, sample_run):
-        _ = actor_id, sample_run
+    async def _fake_prepare(self, *, app_id, sample_run):
+        _ = sample_run
         loaded_app = await self.db.get(PublishedApp, app_id)
         loaded_current = await self.db.get(PublishedAppRevision, draft.id)
         assert loaded_app is not None
@@ -228,7 +230,7 @@ async def test_batch_finalizer_skips_when_active_runs_remain(client, db_session,
     running = _new_scope_run(
         tenant_id=tenant.id,
         agent_id=agent.id,
-        user_id=user.id,
+        user_id=UUID("00000000-0000-0000-0000-000000000003"),
         app_id=app_id,
         base_revision_id=draft_revision_id,
         status=RunStatus.running,
@@ -237,8 +239,8 @@ async def test_batch_finalizer_skips_when_active_runs_remain(client, db_session,
     await db_session.commit()
     await db_session.refresh(completed)
 
-    async def _unexpected_prepare(self, *, app_id, actor_id, sample_run):
-        _ = app_id, actor_id, sample_run
+    async def _unexpected_prepare(self, *, app_id, sample_run):
+        _ = app_id, sample_run
         raise AssertionError("finalizer should not prepare snapshots while active runs remain")
 
     monkeypatch.setattr(PublishedAppCodingBatchFinalizer, "_prepare_finalized_live_snapshot", _unexpected_prepare)
