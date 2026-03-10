@@ -25,7 +25,6 @@ from app.db.postgres.models.rag import (
     PipelineStepStatus,
     PipelineType,
 )
-from app.db.postgres.models.operators import CustomOperator, OperatorCategory
 from app.rag.pipeline.registry import (
     OperatorRegistry,
     OperatorSpec,
@@ -33,6 +32,7 @@ from app.rag.pipeline.registry import (
     ConfigFieldType,
     DataType,
 )
+from app.rag.pipeline.custom_operator_sync import sync_custom_operators as sync_tenant_custom_operators
 from app.db.postgres.models.rbac import Action, ResourceType, ActorType
 from app.api.routers.auth import get_current_user
 from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
@@ -47,11 +47,11 @@ router = APIRouter()
 
 
 
-async def run_pipeline_job_background(job_id: UUID):
+async def run_pipeline_job_background(job_id: UUID, artifact_queue_class: str = "artifact_prod_background"):
     """Execute pipeline job in background with its own DB session."""
     async with sessionmaker() as session:
         executor = PipelineExecutor(session)
-        await executor.execute_job(job_id)
+        await executor.execute_job(job_id, artifact_queue_class=artifact_queue_class)
 
 
 # =============================================================================
@@ -120,49 +120,7 @@ def truncate_large_strings(data: Any, limit: int = 50000, path: str = "") -> Tup
 # =============================================================================
 
 async def sync_custom_operators(db: AsyncSession, tenant_id: UUID):
-    """Fetch custom operators from DB and register them in the registry."""
-    query = select(CustomOperator).where(CustomOperator.tenant_id == tenant_id, CustomOperator.is_active == True)
-    result = await db.execute(query)
-    custom_ops = result.scalars().all()
-    
-    registry = OperatorRegistry.get_instance()
-    specs = []
-    for op in custom_ops:
-        required_config = []
-        optional_config = []
-        
-        if op.config_schema:
-            for field in op.config_schema:
-                try:
-                    spec = ConfigFieldSpec(**field)
-                    if spec.required:
-                        required_config.append(spec)
-                    else:
-                        optional_config.append(spec)
-                except Exception as e:
-                    print(f"Error parsing config field for {op.name}: {e}")
-                    continue
-
-        try:
-            op_spec = OperatorSpec(
-                operator_id=op.name,
-                display_name=op.display_name,
-                category=op.category, 
-                version=op.version,
-                description=op.description,
-                input_type=op.input_type,
-                output_type=op.output_type,
-                required_config=required_config,
-                optional_config=optional_config,
-                is_custom=True,
-                python_code=op.python_code,
-                author=str(op.created_by) if op.created_by else None,
-            )
-            specs.append(op_spec)
-        except Exception as e:
-             print(f"Error creating OperatorSpec for {op.name}: {e}")
-        
-    registry.load_custom_operators(specs, str(tenant_id))
+    await sync_tenant_custom_operators(db, tenant_id)
 
 
 async def get_pipeline_context(
@@ -754,7 +712,12 @@ async def compile_pipeline(
     try:
         compiler = PipelineCompiler()
         compiled_by = str(user.id) if user else str(context.get("initiator_user_id") or context.get("principal_id") or "")
-        compile_result = compiler.compile(mock_pipeline, compiled_by=compiled_by, tenant_id=str(tenant.id))
+        compile_result = compiler.compile(
+            mock_pipeline,
+            compiled_by=compiled_by,
+            tenant_id=str(tenant.id),
+            require_published_artifacts=True,
+        )
     except Exception as e:
         return {
             "success": False,
@@ -1233,7 +1196,7 @@ async def create_pipeline_job(
     )
 
     # Trigger background execution
-    background_tasks.add_task(run_pipeline_job_background, job.id)
+    background_tasks.add_task(run_pipeline_job_background, job.id, "artifact_prod_background")
 
     return {
         "job_id": str(job.id),

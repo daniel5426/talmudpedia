@@ -26,14 +26,13 @@ type AssistantResponseTimelineProps = {
   isLoading?: boolean;
 };
 
-function renderToolRow(block: ChatToolCallBlock, forceRunning = false) {
+function renderToolRow(block: ChatToolCallBlock, isActive = false) {
   const status = block.status;
   const showPathBadge = block.tool.path && !isEditToolName(String(block.tool.toolName || ""));
   const label = block.tool.title || block.tool.displayName || block.tool.summary || block.tool.toolName;
   const summary = String(block.tool.summary || "").trim();
   const hasSummary = Boolean(summary) && summary.toLowerCase() !== String(label || "").trim().toLowerCase();
-  const isRunning = forceRunning || status === "running" || status === "streaming";
-  const rowContent = isRunning ? (
+  const rowContent = isActive ? (
     <Shimmer className="flex items-center gap-2 text-sm">
       <span>{label}</span>
       {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
@@ -125,6 +124,12 @@ export function AssistantResponseTimeline({
       .reverse()
       .find((entry): entry is ChatToolCallBlock => entry.kind === "tool_call")
       ?.id;
+    const activeToolCallId = [...blocks]
+      .reverse()
+      .find(
+        (entry): entry is ChatToolCallBlock =>
+          entry.kind === "tool_call" && (entry.status === "running" || entry.status === "streaming"),
+      )?.id || (isLoading ? lastToolCallId : undefined);
 
     while (index < blocks.length) {
       const block = blocks[index];
@@ -149,12 +154,7 @@ export function AssistantResponseTimeline({
           headerParts.push(`${searchItems.length} ${searchItems.length === 1 ? "search" : "searches"}`);
         }
         const headerText = `Exploring ${headerParts.join(", ") || "workspace"}`;
-        const keepShimmer = explorationStreak.some(
-          (entry) =>
-            entry.status === "running" ||
-            entry.status === "streaming" ||
-            (isLoading && entry.id === lastToolCallId),
-        );
+        const keepShimmer = explorationStreak.some((entry) => entry.id === activeToolCallId);
 
         items.push(
           <Task defaultOpen={false} key={`explore-${explorationStreak[0].id}`} className="w-full">
@@ -190,7 +190,7 @@ export function AssistantResponseTimeline({
                       entry.status === "error" ? "text-destructive" : "text-muted-foreground",
                     )}
                   >
-                    {entry.status === "running" || entry.status === "streaming" || (isLoading && entry.id === lastToolCallId) ? (
+                    {entry.id === activeToolCallId ? (
                       <Shimmer className="text-sm">{label}</Shimmer>
                     ) : (
                       <span>{label}</span>
@@ -205,7 +205,7 @@ export function AssistantResponseTimeline({
       }
 
       if (block.kind === "tool_call") {
-        items.push(renderToolRow(block, isLoading && block.id === lastToolCallId));
+        items.push(renderToolRow(block, block.id === activeToolCallId));
         index += 1;
         continue;
       }

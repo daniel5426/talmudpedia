@@ -421,6 +421,85 @@ class ArtifactExecutor(OperatorExecutor):
                 error_message=f"Artifact execution error: {str(e)}\n{traceback.format_exc()}"
             )
 
+
+class ArtifactRuntimeExecutor(OperatorExecutor):
+    """Execute tenant artifact-backed operators through the shared artifact runtime."""
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext,
+    ) -> OperatorOutput:
+        from app.db.postgres.models.artifact_runtime import ArtifactRunDomain
+        from app.services.artifact_runtime.execution_service import ArtifactExecutionService
+
+        db = getattr(context, "db", None)
+        if db is None:
+            return OperatorOutput(
+                data=None,
+                operator_id=self.operator_id,
+                success=False,
+                error_message="Artifact runtime executor requires db in execution context",
+            )
+        if not self.spec.artifact_revision_id:
+            return OperatorOutput(
+                data=None,
+                operator_id=self.operator_id,
+                success=False,
+                error_message="Artifact-backed operator is missing artifact_revision_id",
+            )
+
+        run = await ArtifactExecutionService(db).execute_live_run(
+            tenant_id=uuid.UUID(str(context.tenant_id)),
+            created_by=uuid.UUID(str(context.triggered_by)) if getattr(context, "triggered_by", None) else None,
+            revision_id=uuid.UUID(str(self.spec.artifact_revision_id)),
+            domain=ArtifactRunDomain.RAG,
+            queue_class=str(getattr(context, "queue_class", None) or "artifact_prod_background"),
+            input_payload=input_data.data,
+            config_payload=context.config,
+            context_payload={
+                "pipeline_id": context.pipeline_id,
+                "job_id": context.job_id,
+                "step_id": context.step_id,
+                "tenant_id": context.tenant_id,
+                "operator_id": self.operator_id,
+            },
+            require_published=True,
+        )
+        if run is None:
+            return OperatorOutput(
+                data=None,
+                operator_id=self.operator_id,
+                success=False,
+                error_message="Artifact runtime did not return a run",
+            )
+        if str(getattr(run.status, "value", run.status)) != "completed":
+            error_payload = run.error_payload if isinstance(run.error_payload, dict) else {}
+            return OperatorOutput(
+                data=None,
+                operator_id=self.operator_id,
+                success=False,
+                error_message=str(error_payload.get("message") or "Artifact runtime execution failed"),
+            )
+
+        result = run.result_payload
+        if isinstance(result, dict) and "data" in result:
+            metadata = result.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = input_data.metadata
+            return OperatorOutput(
+                data=result.get("data"),
+                metadata=metadata,
+                operator_id=self.operator_id,
+                success=True,
+            )
+        return OperatorOutput(
+            data=result,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
+        )
+
 class PassthroughExecutor(OperatorExecutor):
     """Simple passthrough operator for testing."""
     
@@ -1437,6 +1516,9 @@ class ExecutorRegistry:
         2. Custom operators (DB-stored python_code)
         3. Built-in executors (hardcoded in ExecutorRegistry)
         """
+        if spec.artifact_id:
+            return ArtifactRuntimeExecutor(spec)
+
         # Check if this operator is an artifact
         from app.services.artifact_registry import get_artifact_registry
         artifact_registry = get_artifact_registry()

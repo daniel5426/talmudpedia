@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import {
   Select,
@@ -167,7 +168,7 @@ export default function AuditPage() {
       {/* ============================================================ */}
       {/*  Header                                                      */}
       {/* ============================================================ */}
-      <header className="h-12 shrink-0 bg-background px-4 flex items-center justify-between border-b border-border/40">
+      <AdminPageHeader>
         <CustomBreadcrumb
           items={[
             { label: "Security & Org", href: "/admin/organization" },
@@ -177,7 +178,7 @@ export default function AuditPage() {
         <span className="text-xs text-muted-foreground/60 tabular-nums">
           {total.toLocaleString()} entries
         </span>
-      </header>
+      </AdminPageHeader>
 
       {/* ============================================================ */}
       {/*  Filter bar                                                  */}
@@ -287,7 +288,7 @@ export default function AuditPage() {
       {/* ============================================================ */}
       {/*  Log list                                                    */}
       {/* ============================================================ */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto" data-admin-page-scroll>
         {isLoading ? (
           <div>
             {Array.from({ length: 8 }).map((_, i) => (

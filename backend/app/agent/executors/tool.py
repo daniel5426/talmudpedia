@@ -19,7 +19,10 @@ from sqlalchemy.exc import ProgrammingError
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
+from app.db.postgres.models.artifact_runtime import ArtifactRunDomain
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
+from app.services.artifact_runtime.execution_service import ArtifactExecutionService
+from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.credentials_service import CredentialsService
 from app.services.mcp_client import call_mcp_tool
 from app.services.published_app_coding_agent_tools import (
@@ -880,12 +883,119 @@ class ToolNodeExecutor(BaseNodeExecutor):
         status = getattr(tool, "status", None)
         return str(getattr(status, "value", status or "")).lower()
 
+    def _resolve_tool_artifact_binding(self, tool: Any) -> tuple[str | None, str | None]:
+        artifact_id = getattr(tool, "artifact_id", None)
+        artifact_version = getattr(tool, "artifact_version", None)
+        if artifact_id:
+            return str(artifact_id), artifact_version
+
+        config_schema = getattr(tool, "config_schema", {}) or {}
+        implementation = config_schema.get("implementation") if isinstance(config_schema, dict) else {}
+        if isinstance(implementation, dict):
+            artifact_ref = implementation.get("artifact_id")
+            if artifact_ref:
+                return str(artifact_ref), implementation.get("artifact_version")
+        return None, None
+
+    async def _resolve_tenant_artifact_revision_id(
+        self,
+        *,
+        artifact_id: str,
+        pinned_revision_id: Any,
+        require_published: bool,
+    ) -> UUID:
+        revision_uuid = self._parse_uuid(pinned_revision_id)
+        if revision_uuid is not None:
+            if self.db is None:
+                return revision_uuid
+            registry = ArtifactRegistryService(self.db)
+            revision = await registry.get_revision(revision_id=revision_uuid, tenant_id=self.tenant_id)
+            if revision is None:
+                raise ValueError("Pinned tool artifact revision not found")
+            if require_published and (not revision.is_published or revision.is_ephemeral):
+                raise PermissionError("Published artifact-backed tools require a published immutable revision")
+            return revision.id
+
+        artifact_uuid = self._parse_uuid(artifact_id)
+        if artifact_uuid is None:
+            raise ValueError("Tenant artifact tools require a UUID artifact id")
+        if self.db is None:
+            raise ValueError("Tool artifact resolution requires a database session")
+
+        registry = ArtifactRegistryService(self.db)
+        artifact = await registry.get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=self.tenant_id)
+        if artifact is None:
+            raise ValueError("Artifact-backed tool references an artifact outside tenant scope")
+        revision = artifact.latest_published_revision if require_published else (artifact.latest_draft_revision or artifact.latest_published_revision)
+        if revision is None:
+            raise ValueError("Artifact-backed tool has no executable revision")
+        if require_published and (not revision.is_published or revision.is_ephemeral):
+            raise PermissionError("Published artifact-backed tools require a published immutable revision")
+        return revision.id
+
+    async def _execute_tenant_artifact_tool(
+        self,
+        *,
+        tool: Any,
+        input_data: dict[str, Any],
+        context: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        artifact_id, _artifact_version = self._resolve_tool_artifact_binding(tool)
+        if not artifact_id:
+            raise ValueError("Missing artifact binding for artifact-backed tool")
+
+        revision_id = await self._resolve_tenant_artifact_revision_id(
+            artifact_id=artifact_id,
+            pinned_revision_id=getattr(tool, "artifact_revision_id", None),
+            require_published=self._is_production_mode(context),
+        )
+        config_schema = getattr(tool, "config_schema", {}) or {}
+        runtime_config = dict(config_schema) if isinstance(config_schema, dict) else {}
+        runtime_config.pop("implementation", None)
+        runtime_config.pop("execution", None)
+
+        run = await ArtifactExecutionService(self.db).execute_live_run(
+            tenant_id=self.tenant_id,
+            created_by=self._parse_uuid((context or {}).get("initiator_user_id")),
+            revision_id=revision_id,
+            domain=ArtifactRunDomain.TOOL,
+            queue_class="artifact_prod_interactive",
+            input_payload=input_data,
+            config_payload=runtime_config,
+            context_payload={
+                "tool_id": str(getattr(tool, "id", "")),
+                "tool_slug": getattr(tool, "slug", None),
+                "tool_name": getattr(tool, "name", None),
+                "node_id": (context or {}).get("node_id"),
+                "run_id": (context or {}).get("run_id"),
+                "tenant_id": str(self.tenant_id) if self.tenant_id else None,
+                "principal_id": (context or {}).get("principal_id"),
+                "initiator_user_id": (context or {}).get("initiator_user_id"),
+                "agent_id": (context or {}).get("agent_id"),
+                "agent_slug": (context or {}).get("agent_slug"),
+                "mode": (context or {}).get("mode"),
+            },
+            require_published=self._is_production_mode(context),
+        )
+        if run is None:
+            raise RuntimeError("Artifact-backed tool execution did not return a run")
+        if str(getattr(run.status, "value", run.status)) != "completed":
+            error_payload = run.error_payload if isinstance(run.error_payload, dict) else {}
+            raise RuntimeError(str(error_payload.get("message") or "Artifact-backed tool execution failed"))
+        result = run.result_payload or {}
+        if not isinstance(result, dict):
+            return {"result": result}
+        return result
+
     def _assert_runtime_policy(self, tool: Any, context: dict[str, Any] | None) -> None:
         if not getattr(tool, "is_active", False):
             raise PermissionError(f"Tool {getattr(tool, 'id', '')} is inactive")
         if self._is_production_mode(context):
             if self._status_text(tool) != "published":
                 raise PermissionError("Tool must be published for production execution")
+            artifact_id, _artifact_version = self._resolve_tool_artifact_binding(tool)
+            if self._parse_uuid(artifact_id) is not None and not getattr(tool, "artifact_revision_id", None):
+                raise PermissionError("Published artifact-backed tools must pin artifact_revision_id for production execution")
 
     async def _has_artifact_columns(self) -> bool:
         try:
@@ -895,7 +1005,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     SELECT column_name
                     FROM information_schema.columns
                     WHERE table_name = 'tool_registry'
-                      AND column_name IN ('artifact_id', 'artifact_version')
+                      AND column_name IN ('artifact_id', 'artifact_version', 'artifact_revision_id')
                     """
                 )
             )
@@ -963,6 +1073,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     is_system=row[8],
                     artifact_id=None,
                     artifact_version=None,
+                    artifact_revision_id=None,
                     builtin_key=None,
                     is_builtin_template=False,
                     status="published" if row[6] else "disabled",
@@ -1020,16 +1131,35 @@ class ToolNodeExecutor(BaseNodeExecutor):
         try:
             from app.services.platform_architect_guardrails import enforce_platform_architect_guardrails
 
-            if getattr(tool, "artifact_id", None):
+            artifact_id, artifact_version = self._resolve_tool_artifact_binding(tool)
+            artifact_uuid = self._parse_uuid(artifact_id)
+            if artifact_id and artifact_uuid is not None:
+                result = await self._execute_tenant_artifact_tool(
+                    tool=tool,
+                    input_data=input_data,
+                    context=context,
+                )
+                enforce_platform_architect_guardrails(
+                    tool_slug=getattr(tool, "slug", None),
+                    tool_result=result,
+                    input_data=input_data,
+                    node_context=context,
+                    emitter=emitter,
+                )
+                if emitter:
+                    emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
+                return result
+
+            if artifact_id:
                 from app.agent.executors.artifact import ArtifactNodeExecutor
 
                 artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
-                strict_validation = str(getattr(tool, "artifact_id", "")) != "builtin/platform_sdk"
+                strict_validation = str(artifact_id or "") != "builtin/platform_sdk"
                 artifact_config = {
                     **config,
                     "tool_slug": getattr(tool, "slug", None),
-                    "_artifact_id": tool.artifact_id,
-                    "_artifact_version": getattr(tool, "artifact_version", None),
+                    "_artifact_id": artifact_id,
+                    "_artifact_version": artifact_version,
                     "label": tool.name,
                     "input_mappings": self._build_literal_input_mappings(input_data),
                     "_strict_validation": strict_validation,
@@ -1048,14 +1178,32 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 return result
 
             if impl_type == "artifact" and implementation_config.get("artifact_id"):
+                implementation_artifact_id = str(implementation_config.get("artifact_id"))
+                if self._parse_uuid(implementation_artifact_id) is not None:
+                    result = await self._execute_tenant_artifact_tool(
+                        tool=tool,
+                        input_data=input_data,
+                        context=context,
+                    )
+                    enforce_platform_architect_guardrails(
+                        tool_slug=getattr(tool, "slug", None),
+                        tool_result=result,
+                        input_data=input_data,
+                        node_context=context,
+                        emitter=emitter,
+                    )
+                    if emitter:
+                        emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
+                    return result
+
                 from app.agent.executors.artifact import ArtifactNodeExecutor
 
                 artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
-                strict_validation = str(implementation_config.get("artifact_id", "")) != "builtin/platform_sdk"
+                strict_validation = implementation_artifact_id != "builtin/platform_sdk"
                 artifact_config = {
                     **config,
                     "tool_slug": getattr(tool, "slug", None),
-                    "_artifact_id": implementation_config.get("artifact_id"),
+                    "_artifact_id": implementation_artifact_id,
                     "_artifact_version": implementation_config.get("artifact_version"),
                     "label": tool.name,
                     "input_mappings": self._build_literal_input_mappings(input_data),

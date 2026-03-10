@@ -73,6 +73,8 @@ class ExecutableStep(BaseModel):
     category: str
     config: Dict[str, Any] = {}
     depends_on: List[str] = []
+    artifact_id: Optional[str] = None
+    artifact_revision_id: Optional[str] = None
 
 
 class ExecutablePipeline(BaseModel):
@@ -145,7 +147,8 @@ class PipelineCompiler:
         self,
         visual_pipeline: Any,
         compiled_by: Optional[str] = None,
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        require_published_artifacts: bool = False,
     ) -> CompilationResult:
         """
         Compile a visual pipeline into an executable pipeline.
@@ -197,7 +200,12 @@ class PipelineCompiler:
             return CompilationResult(success=False, errors=errors, warnings=warnings)
 
         # Build DAG with locked versions
-        dag, locked_versions = self._build_dag(pipeline, ordered_steps, tenant_id)
+        dag, locked_versions = self._build_dag(
+            pipeline,
+            ordered_steps,
+            tenant_id,
+            require_published_artifacts=require_published_artifacts,
+        )
 
         # Build config snapshot
         config_snapshot = self._build_config_snapshot(pipeline)
@@ -231,7 +239,8 @@ class PipelineCompiler:
         visual_pipeline: Any,
         model_resolver: Any,
         compiled_by: Optional[str] = None,
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        require_published_artifacts: bool = False,
     ) -> CompilationResult:
         """
         Async compilation with model validation.
@@ -243,7 +252,12 @@ class PipelineCompiler:
         - Resolves dimension from model metadata
         """
         # First run synchronous compilation
-        result = self.compile(visual_pipeline, compiled_by, tenant_id)
+        result = self.compile(
+            visual_pipeline,
+            compiled_by,
+            tenant_id,
+            require_published_artifacts=require_published_artifacts,
+        )
         if not result.success:
             return result
         
@@ -615,7 +629,8 @@ class PipelineCompiler:
         self,
         pipeline: VisualPipeline,
         ordered_node_ids: List[str],
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        require_published_artifacts: bool = False,
     ) -> tuple[List[ExecutableStep], Dict[str, str]]:
         """Build the executable DAG with locked operator versions."""
         node_map = {n.id: n for n in pipeline.nodes}
@@ -633,6 +648,10 @@ class PipelineCompiler:
             spec = self.registry.get(node.operator, tenant_id)
             version = spec.version if spec else "1.0.0"
             locked_versions[node.operator] = version
+            artifact_id = getattr(spec, "artifact_id", None) if spec else None
+            artifact_revision_id = getattr(spec, "artifact_revision_id", None) if spec else None
+            if require_published_artifacts and artifact_id and not artifact_revision_id:
+                raise ValueError(f"Operator '{node.operator}' requires a published artifact revision before pipeline publish")
             
             step = ExecutableStep(
                 step_id=node_id,
@@ -641,6 +660,8 @@ class PipelineCompiler:
                 category=node.category,
                 config=node.config,
                 depends_on=reverse_adjacency.get(node_id, []),
+                artifact_id=artifact_id,
+                artifact_revision_id=artifact_revision_id,
             )
             dag.append(step)
 

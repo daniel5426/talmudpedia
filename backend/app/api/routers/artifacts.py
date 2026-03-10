@@ -118,6 +118,7 @@ def _repo_spec_to_schema(spec, *, path: Optional[str], code: Optional[str]) -> A
         config_schema=config_schema,
         updated_at=datetime.utcnow(),
         python_code=code,
+        dependencies=[],
         path=path,
         reads=list(getattr(spec, "reads", []) or []),
         writes=list(getattr(spec, "writes", []) or []),
@@ -150,6 +151,7 @@ def _tenant_artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = 
         created_at=artifact.created_at,
         updated_at=artifact.updated_at,
         python_code=active_revision.source_code if include_code else None,
+        dependencies=list(active_revision.python_dependencies or []),
         reads=list(active_revision.reads or []),
         writes=list(active_revision.writes or []),
         inputs=list(active_revision.inputs or []),
@@ -253,6 +255,7 @@ async def create_artifact_draft(
         input_type=request.input_type,
         output_type=request.output_type,
         source_code=request.python_code,
+        python_dependencies=list(request.dependencies or []),
         config_schema=list(request.config_schema or []),
         inputs=list(request.inputs or []),
         outputs=list(request.outputs or []),
@@ -300,6 +303,7 @@ async def update_artifact(
         input_type=payload.get("input_type", artifact.input_type),
         output_type=payload.get("output_type", artifact.output_type),
         source_code=payload.get("python_code", current_revision.source_code),
+        python_dependencies=list(payload.get("dependencies", current_revision.python_dependencies or [])),
         config_schema=list(payload.get("config_schema", current_revision.config_schema or [])),
         inputs=list(payload.get("inputs", current_revision.inputs or [])),
         outputs=list(payload.get("outputs", current_revision.outputs or [])),
@@ -400,10 +404,11 @@ async def create_unsaved_test_run(
         python_code=request.python_code,
         input_data=request.input_data,
         config=request.config or {},
+        dependencies=list(request.dependencies or []),
         input_type=request.input_type,
         output_type=request.output_type,
     )
-    return ArtifactRunCreateResponse(run_id=str(run.id), status=run.status.value)
+    return ArtifactRunCreateResponse(run_id=str(run.id), status=str(getattr(run.status, "value", run.status)))
 
 
 @router.post("/{artifact_id:path}/test-runs", response_model=ArtifactRunCreateResponse)
@@ -436,6 +441,7 @@ async def test_artifact(
         python_code=request.python_code,
         input_data=request.input_data,
         config=request.config or {},
+        dependencies=list(request.dependencies or []),
         input_type=request.input_type,
         output_type=request.output_type,
     )

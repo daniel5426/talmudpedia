@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-02-18
+Last Updated: 2026-03-10
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -12,6 +12,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - test_reasoning_tool_input_aliases.py
 - test_reasoning_tool_call_chunk_buffering.py
 - test_coding_agent_tool_path_resolution.py
+- test_artifact_runtime_tool_execution.py
 
 ## Key Scenarios Covered
 - MCP JSON-RPC request shape and successful result handling
@@ -40,6 +41,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - `agent_call` rejects draft/unpublished targets
 - `agent_call` enforces cross-tenant target isolation
 - `agent_call` timeout returns failed payload and marks child run failed
+- tool publish pins `artifact_revision_id` for tenant artifact-backed tools
+- tenant artifact-backed tools execute via `ArtifactExecutionService` on `artifact_prod_interactive`
+- builtin `platform_sdk` stays on the compatibility artifact executor path
 
 ## Last Run
 - Command: `pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_runtime_guardrails.py backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py`
@@ -78,6 +82,10 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend pytest -q backend/tests/tool_execution/test_coding_agent_tool_path_resolution.py`
 - Date/Time: 2026-02-18 00:45 UTC
 - Result: PASS (`11 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py -q`
+- Date/Time: 2026-03-10 22:09 EET
+- Result: PASS (`19 passed`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).
+- Add API-level regression coverage for tool updates that clear and repin `artifact_revision_id`.

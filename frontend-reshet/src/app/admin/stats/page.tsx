@@ -20,6 +20,7 @@ import {
   Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import {
   adminService,
   type StatsSection,
@@ -468,7 +469,7 @@ export default function AdminStatsPage() {
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
-      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
+      <AdminPageHeader>
         <div className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground">Admin</span>
           <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -571,7 +572,7 @@ export default function AdminStatsPage() {
             Export
           </Button>
         </div>
-      </header>
+      </AdminPageHeader>
 
       <Tabs
         value={activeTab}
@@ -596,7 +597,7 @@ export default function AdminStatsPage() {
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto">
+        <div className="flex-1 min-h-0 overflow-auto" data-admin-page-scroll>
           {loading ? (
             <LoadingState />
           ) : error ? (

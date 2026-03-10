@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.postgres.models.rag import PipelineJob, PipelineJobStatus, ExecutablePipeline, PipelineStepExecution, PipelineStepStatus
-from app.db.postgres.models.operators import CustomOperator, OperatorCategory
-from app.rag.pipeline.registry import OperatorRegistry, OperatorSpec, DataType, ConfigFieldSpec
+from app.db.postgres.models.operators import OperatorCategory
+from app.rag.pipeline.custom_operator_sync import sync_custom_operators
+from app.rag.pipeline.registry import OperatorRegistry
 from app.rag.pipeline.operator_executor import (
     ExecutorRegistry, 
     OperatorInput, 
@@ -30,39 +31,7 @@ class PipelineExecutor:
             return step_params
         return input_params
 
-    async def _sync_custom_operators(self, tenant_id: UUID):
-        stmt = select(CustomOperator).where(CustomOperator.tenant_id == tenant_id)
-        result = await self.db.execute(stmt)
-        custom_ops = result.scalars().all()
-        
-        specs = []
-        for op in custom_ops:
-            # Parse config schema
-            required_config = []
-            if op.config_schema:
-                for field in op.config_schema:
-                    try:
-                        required_config.append(ConfigFieldSpec(**field))
-                    except Exception:
-                        pass # Skip invalid fields
-
-            spec = OperatorSpec(
-                operator_id=op.name,
-                display_name=op.display_name,
-                category=OperatorCategory(op.category),
-                description=op.description,
-                input_type=DataType(op.input_type),
-                output_type=DataType(op.output_type),
-                is_custom=True,
-                python_code=op.python_code,
-                required_config=required_config,
-                version="1.0.0"
-            )
-            specs.append(spec)
-        
-        self.registry.load_custom_operators(specs, str(tenant_id))
-
-    async def execute_job(self, job_id: UUID):
+    async def execute_job(self, job_id: UUID, *, artifact_queue_class: str = "artifact_prod_background"):
         """
         Execute a pipeline job.
         This method is designed to be run as a background task.
@@ -84,7 +53,7 @@ class PipelineExecutor:
                  raise ValueError(f"Executable pipeline {job.executable_pipeline_id} not found")
             
             # 3. Sync Custom Operators
-            await self._sync_custom_operators(job.tenant_id)
+            await sync_custom_operators(self.db, job.tenant_id)
             
             # 4. Initialize Execution Steps
             dag_steps = exec_pipeline.compiled_graph.get("dag", [])
@@ -171,6 +140,14 @@ class PipelineExecutor:
                     if not spec:
                          raise ValueError(f"Operator {op_id} not found in registry")
 
+                    if step_data.get("artifact_id"):
+                        spec = spec.model_copy(
+                            update={
+                                "artifact_id": step_data.get("artifact_id"),
+                                "artifact_revision_id": step_data.get("artifact_revision_id"),
+                            }
+                        )
+
                     executor = ExecutorRegistry.create_executor(spec, spec.python_code)
                     
                     context = ExecutionContext(
@@ -179,7 +156,9 @@ class PipelineExecutor:
                         job_id=str(job.id),
                         step_id=step_id,
                         config=config,
-                        db=self.db
+                        db=self.db,
+                        queue_class=artifact_queue_class,
+                        triggered_by=str(job.triggered_by) if job.triggered_by else None,
                     )
 
                     # Execute
@@ -247,4 +226,3 @@ class PipelineExecutor:
                 await self.db.commit()
             except Exception as e2:
                 print(f"Failed to update job status: {e2}")
-

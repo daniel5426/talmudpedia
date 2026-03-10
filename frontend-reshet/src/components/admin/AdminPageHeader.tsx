@@ -28,27 +28,7 @@ export function AdminPageHeader({
     if (!header) return
 
     const sibling = header.nextElementSibling
-    const targets = new Set<HTMLElement | Window>()
-
-    if (sibling instanceof HTMLElement) {
-      if (sibling.matches("[data-admin-page-scroll]") && isScrollable(sibling)) {
-        targets.add(sibling)
-      }
-      if (isScrollable(sibling)) {
-        targets.add(sibling)
-      }
-      sibling
-        .querySelectorAll<HTMLElement>("[data-admin-page-scroll]")
-        .forEach((element) => {
-          if (isScrollable(element)) {
-            targets.add(element)
-          }
-        })
-    }
-
-    if (targets.size === 0) {
-      targets.add(window)
-    }
+    let targets = new Set<HTMLElement | Window>()
 
     const syncScrollState = () => {
       setIsScrolled(
@@ -58,12 +38,74 @@ export function AdminPageHeader({
       )
     }
 
-    syncScrollState()
-    targets.forEach((target) => {
-      target.addEventListener("scroll", syncScrollState, { passive: true })
+    const collectTargets = () => {
+      const nextTargets = new Set<HTMLElement | Window>()
+
+      if (sibling instanceof HTMLElement) {
+        if (sibling.matches("[data-admin-page-scroll]") && isScrollable(sibling)) {
+          nextTargets.add(sibling)
+        }
+        if (isScrollable(sibling)) {
+          nextTargets.add(sibling)
+        }
+        sibling
+          .querySelectorAll<HTMLElement>("[data-admin-page-scroll], .admin-page-scroll")
+          .forEach((element) => {
+            if (isScrollable(element)) {
+              nextTargets.add(element)
+            }
+          })
+      }
+
+      if (nextTargets.size === 0) {
+        nextTargets.add(window)
+      }
+
+      return nextTargets
+    }
+
+    const bindTargets = () => {
+      const nextTargets = collectTargets()
+      const hasChanged =
+        nextTargets.size !== targets.size ||
+        Array.from(nextTargets).some((target) => !targets.has(target))
+
+      if (!hasChanged) {
+        syncScrollState()
+        return
+      }
+
+      targets.forEach((target) => {
+        target.removeEventListener("scroll", syncScrollState)
+      })
+
+      targets = nextTargets
+
+      targets.forEach((target) => {
+        target.addEventListener("scroll", syncScrollState, { passive: true })
+      })
+
+      syncScrollState()
+    }
+
+    bindTargets()
+
+    const observer =
+      sibling instanceof HTMLElement
+        ? new MutationObserver(() => {
+            bindTargets()
+          })
+        : null
+
+    observer?.observe(sibling, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "data-admin-page-scroll"],
     })
 
     return () => {
+      observer?.disconnect()
       targets.forEach((target) => {
         target.removeEventListener("scroll", syncScrollState)
       })
@@ -74,9 +116,9 @@ export function AdminPageHeader({
     <header
       ref={headerRef}
       className={cn(
-        "shrink-0 border-b border-transparent bg-background/100 supports-[backdrop-filter]:bg-background/100 transition-[background-color,border-color,backdrop-filter,box-shadow] duration-300",
+        "relative z-30 shrink-0 overflow-visible bg-background/100 supports-[backdrop-filter]:bg-background/100 transition-[background-color,backdrop-filter] duration-300",
         isScrolled &&
-          "border-border/40 bg-background/80 shadow-[0_10px_30px_-26px_hsl(var(--foreground)/0.55)] backdrop-blur-md supports-[backdrop-filter]:bg-background/65",
+          "bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/65",
         className,
       )}
       {...props}
@@ -84,6 +126,13 @@ export function AdminPageHeader({
       <div className={cn("flex h-12 items-center justify-between gap-4 px-4", contentClassName)}>
         {children}
       </div>
+      <div
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute inset-x-0 top-full z-10 h-5 bg-gradient-to-b from-background via-background/95 to-transparent transition-opacity duration-0 supports-[backdrop-filter]:from-background supports-[backdrop-filter]:via-background/70",
+          isScrolled ? "opacity-100" : "opacity-0",
+        )}
+      />
     </header>
   )
 }

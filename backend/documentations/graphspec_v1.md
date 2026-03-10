@@ -1,69 +1,12 @@
-# GraphSpec v1 (Agent Builder)
+# Agent Graph Spec (Legacy v1 Entry Point)
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-10
 
-## Overview
-GraphSpec v1 is the canonical, runtime-agnostic graph format used by:
-- Agent Builder (frontend)
-- Agent Compiler (backend)
-- SDK deploy/validate flows
+This file is now a legacy location.
 
-It is versioned and normalized across systems to ensure stable execution and routing.
+The agent graph contract is no longer v1-only. The current canonical spec covers both the existing v1 contract and current v2 orchestration behavior.
 
-## Top-level Structure
-```
-{
-  "spec_version": "1.0",
-  "nodes": [...],
-  "edges": [...]
-}
-```
+Read instead:
+- `docs/product-specs/agent_graph_spec.md`
 
-## Node Schema (v1)
-Required:
-- `id`: string
-- `type`: string
-- `position`: `{ x: number, y: number }`
-- `config`: object
-
-Optional:
-- `data`: object (ReactFlow data)
-- `label`: string
-- `input_mappings`: `{ [field: string]: string }`
-
-Notes:
-- `config` is the only persisted runtime configuration source of truth.
-- `data` is UI metadata only; persisted graphs must not store functional node configuration in `data.config`.
-- `input_mappings` is used for artifact nodes to map inputs to state/upstream output.
-
-## Edge Schema (v1)
-Required:
-- `id`: string
-- `source`: string
-- `target`: string
-
-Optional:
-- `source_handle`: string (branch handle name)
-- `target_handle`: string
-- `label`: string
-- `condition`: string
-
-Notes:
-- For conditional routing, `source_handle` must match the handle name defined by the node type.
-
-## Conditional Handle Names
-- `if_else`: condition names + `else`
-- `classify`: category names
-- `while`: `loop`, `exit`
-- `user_approval`: `approve`, `reject`
-- `conditional`: `true`, `false` (legacy)
-
-## Legacy Normalization
-Backend accepts and normalizes:
-- `sourceHandle` → `source_handle`
-- `targetHandle` → `target_handle`
-- `inputMappings` → `input_mappings`
-
-## Versioning Rules
-- `spec_version` must be `"1.0"` or omitted (legacy).
-- Unsupported versions are rejected by the compiler.
+Do not add new canonical graph-spec detail here.

@@ -69,7 +69,6 @@ celery_app.conf.update(
         "app.workers.tasks.reap_published_app_draft_dev_sessions_task": {"queue": "default"},
         "app.workers.tasks.expire_usage_quota_reservations_task": {"queue": "default"},
         "app.workers.tasks.reconcile_usage_quota_counters_task": {"queue": "default"},
-        "app.workers.artifact_tasks.execute_artifact_run_task": {"queue": "artifact_test"},
     },
 
     beat_schedule=_beat_schedule,

@@ -119,6 +119,8 @@ class OperatorSpec(BaseModel):
     # Custom operator fields
     is_custom: bool = False
     python_code: Optional[str] = None  # For custom Python operators
+    artifact_id: Optional[str] = None
+    artifact_revision_id: Optional[str] = None
     
     # Metadata
     author: Optional[str] = None
@@ -197,6 +199,8 @@ class OperatorSpec(BaseModel):
             "output_type": self.output_type.value,
             "dimension": self.dimension,
             "is_custom": self.is_custom,
+            "artifact_id": self.artifact_id,
+            "artifact_revision_id": self.artifact_revision_id,
             "deprecated": self.deprecated,
             "tags": self.tags,
         }

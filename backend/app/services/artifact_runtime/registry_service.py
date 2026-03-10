@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.postgres.models.artifact_runtime import Artifact
+from app.db.postgres.models.artifact_runtime import Artifact, ArtifactRevision
 from app.services.artifact_registry import get_artifact_registry
 
 
@@ -35,6 +35,31 @@ class ArtifactRegistryService:
                 selectinload(Artifact.latest_draft_revision),
                 selectinload(Artifact.latest_published_revision),
                 selectinload(Artifact.revisions),
+            )
+        )
+
+    async def get_revision(self, *, revision_id: UUID, tenant_id: UUID) -> ArtifactRevision | None:
+        return await self._db.scalar(
+            select(ArtifactRevision)
+            .where(ArtifactRevision.id == revision_id, ArtifactRevision.tenant_id == tenant_id)
+            .options(selectinload(ArtifactRevision.artifact))
+        )
+
+    async def get_artifact_for_custom_operator(
+        self,
+        *,
+        tenant_id: UUID,
+        custom_operator_id: UUID,
+    ) -> Artifact | None:
+        return await self._db.scalar(
+            select(Artifact)
+            .where(
+                Artifact.tenant_id == tenant_id,
+                Artifact.legacy_custom_operator_id == custom_operator_id,
+            )
+            .options(
+                selectinload(Artifact.latest_draft_revision),
+                selectinload(Artifact.latest_published_revision),
             )
         )
 

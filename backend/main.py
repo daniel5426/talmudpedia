@@ -63,10 +63,13 @@ def _artifact_runtime_auto_bootstrap_enabled() -> bool:
 def _configure_local_artifact_runtime_if_needed() -> None:
     if not _artifact_runtime_auto_bootstrap_enabled():
         return
-    if not (os.getenv("ARTIFACT_WORKER_CLIENT_MODE") or "").strip():
-        os.environ["ARTIFACT_WORKER_CLIENT_MODE"] = "direct"
-    if os.getenv("ARTIFACT_RUN_TASK_EAGER") is None:
-        os.environ["ARTIFACT_RUN_TASK_EAGER"] = "0"
+    from app.services.artifact_runtime.local_bootstrap import (
+        configure_local_artifact_runtime_env_if_needed,
+    )
+
+    configure_local_artifact_runtime_env_if_needed(
+        auto_bootstrap_enabled=_artifact_runtime_auto_bootstrap_enabled(),
+    )
 
 
 def _is_port_open(host: str, port: int, timeout_seconds: float = 0.35) -> bool:
@@ -888,6 +891,13 @@ def _bootstrap_local_infra_once() -> None:
     _ensure_local_crawl4ai_if_needed()
     _ensure_local_moto_server_if_needed()
     _ensure_local_bundle_bucket_if_needed()
+    from app.services.artifact_runtime.local_bootstrap import (
+        ensure_local_artifact_runtime_infra_if_needed,
+    )
+
+    ensure_local_artifact_runtime_infra_if_needed(
+        auto_bootstrap_enabled=_artifact_runtime_auto_bootstrap_enabled(),
+    )
     _ensure_celery_worker_if_needed()
     _ensure_artifact_runtime_worker_if_needed()
     _ensure_local_draft_dev_runtime_if_needed()
@@ -996,6 +1006,11 @@ async def lifespan(app: FastAPI):
     _stop_local_pgvector_if_needed()
     _stop_local_crawl4ai_if_needed()
     _stop_local_opencode_if_needed()
+    from app.services.artifact_runtime.local_bootstrap import (
+        stop_local_artifact_runtime_infra_if_needed,
+    )
+
+    stop_local_artifact_runtime_infra_if_needed()
 
     await MongoDatabase.close()
 

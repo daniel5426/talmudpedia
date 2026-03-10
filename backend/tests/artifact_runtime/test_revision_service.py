@@ -1,5 +1,7 @@
 import os
 import uuid
+import zipfile
+import io
 
 import pytest
 
@@ -51,6 +53,7 @@ async def test_revision_service_creates_updates_and_publishes_with_bundle_inline
         input_type="any",
         output_type="any",
         source_code="def execute(context):\n    return {'echo': context.input_data, 'cfg': context.config}\n",
+        python_dependencies=["requests>=2.0"],
         config_schema=[{"name": "enabled", "type": "boolean", "default": True}],
         inputs=[{"name": "text", "type": "string"}],
         outputs=[{"name": "echo", "type": "object"}],
@@ -64,6 +67,8 @@ async def test_revision_service_creates_updates_and_publishes_with_bundle_inline
     assert artifact.status == ArtifactStatus.DRAFT
     assert artifact.latest_published_revision_id is None
     assert artifact.latest_draft_revision.bundle_inline_bytes is not None
+    assert artifact.latest_draft_revision.python_dependencies == ["requests>=2.0"]
+    assert artifact.latest_draft_revision.dependency_hash
     first_hash = artifact.latest_draft_revision.bundle_hash
 
     await service.update_artifact(
@@ -76,6 +81,7 @@ async def test_revision_service_creates_updates_and_publishes_with_bundle_inline
         input_type="any",
         output_type="any",
         source_code="def execute(context):\n    return {'updated': True, 'echo': context.input_data}\n",
+        python_dependencies=["httpx>=0.27"],
         config_schema=[{"name": "wpm", "type": "integer", "default": 200}],
         inputs=[{"name": "text", "type": "string"}],
         outputs=[{"name": "updated", "type": "boolean"}],
@@ -88,6 +94,7 @@ async def test_revision_service_creates_updates_and_publishes_with_bundle_inline
     assert artifact.latest_draft_revision.revision_number == 2
     assert artifact.latest_draft_revision.bundle_hash != first_hash
     assert artifact.latest_draft_revision.bundle_inline_bytes is not None
+    assert artifact.latest_draft_revision.python_dependencies == ["httpx>=0.27"]
 
     published_revision = await service.publish_latest_draft(artifact)
     await db_session.commit()
@@ -110,6 +117,7 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
         scope = "rag"
         input_type = "raw_documents"
         output_type = "raw_documents"
+        python_dependencies = ["requests>=2.0"]
         config_schema = []
         inputs = []
         outputs = []
@@ -125,3 +133,8 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
     second = builder.build_revision_bundle(_Revision())
     assert first.bundle_hash == second.bundle_hash
     assert first.payload == second.payload
+    assert first.dependency_hash == second.dependency_hash
+
+    archive = zipfile.ZipFile(io.BytesIO(first.payload), "r")
+    assert "dependencies.json" in archive.namelist()
+    assert "runtime/runner.py" in archive.namelist()

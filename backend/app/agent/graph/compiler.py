@@ -8,7 +8,7 @@ import jsonschema
 from sqlalchemy import select
 
 from .schema import AgentGraph, AgentNode, AgentEdge, NodeType, EdgeType
-from app.agent.registry import AgentOperatorRegistry, AgentStateField
+from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry, AgentOperatorSpec, AgentStateField
 from app.agent.models import CompiledAgent
 from app.agent.graph.ir import (
     GRAPH_SPEC_V1,
@@ -788,7 +788,8 @@ class AgentCompiler:
         input_params: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> GraphIR:
-        from app.agent.resolution import ToolResolver, RAGPipelineResolver, ResolutionError
+        from app.agent.executors.artifact import ArtifactNodeExecutor
+        from app.agent.resolution import ArtifactResolver, ToolResolver, RAGPipelineResolver, ResolutionError
         
         # 0. Resolve Components (Compile-time resolution)
         # We start by verifying and resolving external references.
@@ -797,6 +798,7 @@ class AgentCompiler:
         
         tool_resolver = ToolResolver(self.db, self.tenant_id)
         rag_resolver = RAGPipelineResolver(self.db, self.tenant_id)
+        artifact_resolver = ArtifactResolver(self.db, self.tenant_id)
         execution_mode = str((config or {}).get("mode") or "debug").strip().lower()
         require_published_tools = execution_mode == "production"
         
@@ -834,6 +836,33 @@ class AgentCompiler:
                             )
                         except (ValueError, ResolutionError) as e:
                             raise ValueError(f"Agent node {node.id} tool resolution failed: {e}")
+            else:
+                artifact_uuid = None
+                try:
+                    artifact_uuid = UUID(str(node.type))
+                except Exception:
+                    artifact_uuid = None
+                try:
+                    resolved_artifact = await artifact_resolver.resolve(
+                        str(node.type),
+                        require_published=require_published_tools,
+                    )
+                except ResolutionError as e:
+                    if artifact_uuid is not None:
+                        raise ValueError(f"Artifact resolution failed for node {node.id}: {e}")
+                    resolved_artifact = None
+                if resolved_artifact is not None:
+                    node.config = dict(node.config or {})
+                    node.config["_artifact_id"] = resolved_artifact.get("artifact_id") or str(node.type)
+                    if resolved_artifact.get("artifact_kind") == "tenant":
+                        node.config["_artifact_revision_id"] = resolved_artifact.get("artifact_revision_id")
+                    elif resolved_artifact.get("artifact_version"):
+                        node.config["_artifact_version"] = resolved_artifact.get("artifact_version")
+                    self._register_runtime_artifact_node(
+                        node_type=str(node.type),
+                        display_name=resolved_artifact.get("display_name") or str(node.type),
+                        executor_cls=ArtifactNodeExecutor,
+                    )
 
         # 1. Validate
         errors = await self.validate(graph, agent_id=agent_id)
@@ -860,6 +889,29 @@ class AgentCompiler:
         )
         graph_ir.metadata["snapshot"] = snapshot.model_dump()
         return graph_ir
+
+    @staticmethod
+    def _register_runtime_artifact_node(
+        *,
+        node_type: str,
+        display_name: str,
+        executor_cls: type,
+    ) -> None:
+        if AgentOperatorRegistry.get(node_type) is None:
+            AgentOperatorRegistry.register(
+                AgentOperatorSpec(
+                    type=node_type,
+                    category="action",
+                    display_name=display_name,
+                    description="Runtime-resolved artifact node",
+                    reads=[AgentStateField.STATE_VARIABLES, AgentStateField.CONTEXT],
+                    writes=[AgentStateField.STATE_VARIABLES],
+                    config_schema={},
+                    ui={"icon": "Package", "color": "#64748b"},
+                )
+            )
+        if AgentExecutorRegistry.get_executor_cls(node_type) is None:
+            AgentExecutorRegistry.register(node_type, executor_cls)
 
     def _build_graph_ir(self, graph: AgentGraph, input_params: Optional[Dict[str, Any]] = None) -> GraphIR:
         routing_maps: Dict[str, RoutingMap] = {}

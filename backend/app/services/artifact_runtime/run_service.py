@@ -22,26 +22,28 @@ class ArtifactRunService:
     def __init__(self, db: AsyncSession):
         self._db = db
 
-    async def create_test_run(
+    async def create_run(
         self,
         *,
         tenant_id: UUID,
         artifact: Artifact | None,
         revision: ArtifactRevision,
-        input_payload: dict[str, Any],
-        config_payload: dict[str, Any],
-        context_payload: dict[str, Any],
-        queue_class: str = "artifact_test",
+        domain: ArtifactRunDomain | str,
+        input_payload: Any,
+        config_payload: dict[str, Any] | None,
+        context_payload: dict[str, Any] | None,
+        queue_class: str,
     ) -> ArtifactRun:
+        normalized_domain = self._normalize_domain(domain)
         run = ArtifactRun(
             tenant_id=tenant_id,
             artifact_id=artifact.id if artifact else revision.artifact_id,
             revision_id=revision.id,
-            domain=ArtifactRunDomain.TEST,
+            domain=normalized_domain,
             status=ArtifactRunStatus.QUEUED,
             queue_class=queue_class,
             sandbox_backend="difysandbox",
-            input_payload=dict(input_payload or {}),
+            input_payload=input_payload,
             config_payload=dict(config_payload or {}),
             context_payload=dict(context_payload or {}),
         )
@@ -57,7 +59,7 @@ class ArtifactRunService:
                         "event": "run_queued",
                         "name": "run_queued",
                         "data": {
-                            "domain": run.domain.value,
+                            "domain": normalized_domain.value,
                             "queue_class": queue_class,
                         },
                     },
@@ -66,10 +68,33 @@ class ArtifactRunService:
         )
         return run
 
+    async def create_test_run(
+        self,
+        *,
+        tenant_id: UUID,
+        artifact: Artifact | None,
+        revision: ArtifactRevision,
+        input_payload: Any,
+        config_payload: dict[str, Any] | None,
+        context_payload: dict[str, Any] | None,
+        queue_class: str = "artifact_test",
+    ) -> ArtifactRun:
+        return await self.create_run(
+            tenant_id=tenant_id,
+            artifact=artifact,
+            revision=revision,
+            domain=ArtifactRunDomain.TEST,
+            input_payload=input_payload,
+            config_payload=config_payload,
+            context_payload=context_payload,
+            queue_class=queue_class,
+        )
+
     async def get_run(self, *, run_id: UUID) -> ArtifactRun | None:
         return await self._db.scalar(
             select(ArtifactRun)
             .where(ArtifactRun.id == run_id)
+            .execution_options(populate_existing=True)
             .options(
                 selectinload(ArtifactRun.events),
                 selectinload(ArtifactRun.revision),
@@ -156,3 +181,9 @@ class ArtifactRunService:
                 payload=dict(item.get("payload") or item),
             )
             self._db.add(event)
+
+    @staticmethod
+    def _normalize_domain(domain: ArtifactRunDomain | str) -> ArtifactRunDomain:
+        if isinstance(domain, ArtifactRunDomain):
+            return domain
+        return ArtifactRunDomain(str(domain).strip().lower())

@@ -1,115 +1,24 @@
 # Backend Architecture Overview
 
-## System Purpose
-A FastAPI-based backend for TalmudPedia, an Enterprise AI Agent & RAG Platform. Provides AI agent execution with LangGraph, visual pipeline builders for RAG, and unified management of models, tools, and knowledge stores.
+Last Updated: 2026-03-10
 
-## Core Architecture
+This file is now a legacy entry point.
 
-### 1. API Layer (`app/api/routers/`)
-RESTful API endpoints organized by domain:
-- **`auth.py`**: User authentication (register, login, JWT tokens)
-- **`agent.py`**: AI chat endpoint with streaming responses
-- **`chat.py`**: Chat history management (CRUD operations)
-- **`texts.py`**: Text retrieval with complex reference navigation and pagination
-- **`library.py`**: Library menu/tree serving
-- **`search.py`**: Vector-based semantic search
-- **`stt.py`**: Speech-to-text transcription
-- **`general.py`**: Health checks and general utilities
-- **`admin.py`**: Admin dashboard statistics and user management
+The previous content in this file described an older and much simpler backend shape than the one currently implemented. The current canonical backend architecture overview now lives in:
 
-### 2. Agent System (`app/agent/`)
-Modular AI agent built on LangGraph:
-- **`factory.py`**: Agent instantiation with dependency injection
-- **`config.py`**: Configuration management
-- **`workflows/`**: LangGraph workflow definitions
-  - `advanced_rag.py`: Main RAG workflow with retrieval decision logic
-- **`components/`**: Pluggable agent components
-  - `llm/`: Language model providers (OpenAI, Google)
-  - `retrieval/`: Vector (Pinecone), lexical (Elasticsearch), and hybrid retrievers
-  - `tools/`: LangChain tools for text fetching and retrieval
-- **`core/`**: Base abstractions and utilities
+- `docs/design-docs/backend_architecture_current.md`
+- `docs/design-docs/agent_execution_current.md`
+- `code_architect/architecture_tree.md`
 
-### 3. Service Layer (`app/services/`)
-Business logic separated from endpoints:
-- **`text/navigator.py`**: Complex text reference parsing and navigation
-  - `ReferenceNavigator`: Parses Sefaria-style references (e.g., "Genesis 1:1", "Berakhot 2a")
-  - `ComplexTextNavigator`: Handles hierarchical text structures (schemas)
-- **`library/tree_builder.py`**: Builds hierarchical library menu from Sefaria API
-- **`stt/`**: Speech-to-text providers (Google Cloud STT)
+## Why This Changed
 
-### 4. Database Layer (`app/db/`)
-MongoDB integration with Pydantic models:
-- **`connection.py`**: Async MongoDB client management
-- **`models/`**: Pydantic schemas
-  - `sefaria.py`: Text and index documents
-  - `user.py`: User accounts
-  - `chat.py`: Chat sessions and messages
+The backend is no longer accurately described as a small FastAPI app centered on a classic chat flow plus a narrow RAG workflow. The live codebase now includes:
+- a broad domain-based API surface
+- graph-based agent and RAG runtimes
+- artifact runtime and worker execution
+- published app runtime and builder infrastructure
+- workload security, quota, and trace systems
 
-### 5. Core Utilities (`app/core/`)
-- **`security.py`**: Password hashing, JWT token generation/validation
+## Migration Note
 
-### 6. External Services
-- **`vector_store.py`** (root): PostgreSQL/pgvector wrapper
-- **Elasticsearch**: Lexical search for hybrid retrieval
-- **PostgreSQL**: Primary metadata store with pgvector for embeddings
-- **MongoDB**: Legacy/specific data (e.g., Sefaria texts)
-
-## Data Flow
-
-### Chat Request Flow
-1. Client sends message to `/chat` endpoint
-2. `agent.py` validates user authentication
-3. Message stored in MongoDB chat collection
-4. Agent workflow (`AdvancedRAGWorkflow`) processes request:
-   - Decides if retrieval is needed
-   - If yes: Queries hybrid retriever (vector + lexical)
-   - Reranks results
-   - Generates response with LLM
-5. Streams response tokens and reasoning steps to client
-6. Saves assistant message with citations to MongoDB
-
-### Text Retrieval Flow
-1. Client requests text via `/api/source/{ref}`
-2. `texts.py` parses reference using `ReferenceNavigator`
-3. Queries PostgreSQL for best version (priority-based)
-4. `ComplexTextNavigator` traverses schema tree to locate content
-5. Constructs paginated response with context pages
-6. Returns formatted text
-
-## Key Design Patterns
-- **Dependency Injection**: Agent components are injected via factory pattern
-- **Strategy Pattern**: Pluggable LLM and retrieval providers
-- **Repository Pattern**: Database access abstracted through models
-- **Service Layer**: Business logic separated from HTTP handlers
-- **Streaming**: Server-sent events for real-time chat responses
-
-## Technology Stack
-- **Framework**: FastAPI (async Python web framework)
-- **Agent**: LangGraph + LangChain
-- **LLMs**: OpenAI, Anthropic, Google Gemini (vendor-agnostic)
-- **Vector DB**: PostgreSQL with pgvector
-- **Search**: Elasticsearch (lexical/hybrid)
-- **Database**: PostgreSQL (SQLAlchemy async), MongoDB (legacy), Redis
-- **Auth**: JWT with multi-tenancy (Tenant, OrgMembership)
-- **Embeddings**: Model Registry with tenant-specific configurations
-
-## Directory Structure
-```
-backend/
-├── main.py                 # FastAPI app initialization
-├── vector_store.py         # Pinecone wrapper
-├── app/
-│   ├── api/routers/        # HTTP endpoints
-│   ├── agent/              # AI agent system
-│   ├── services/           # Business logic
-│   ├── db/                 # Database models & connection
-│   └── core/               # Shared utilities
-├── ingestion/              # Data ingestion scripts
-└── scripts/                # Utility/debug scripts
-```
-
-## Scalability Considerations
-- **Async I/O**: All database and external API calls are async
-- **Stateless**: No server-side session state (JWT-based auth)
-- **Serverless-ready**: Pinecone serverless, MongoDB Atlas compatible
-- **Modular**: Components can be swapped (e.g., different LLM providers)
+Do not add new long-lived architecture detail here. Use `docs/design-docs/` for canonical architecture documentation.

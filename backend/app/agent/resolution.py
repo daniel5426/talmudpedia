@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.registry import ToolRegistry
 from app.db.postgres.models.rag import ExecutablePipeline, VisualPipeline, PipelineType
+from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,17 @@ class ComponentResolver:
         self.db = db
         self.tenant_id = tenant_id
 
+    @staticmethod
+    def _parse_uuid(value: Any) -> UUID | None:
+        if value in (None, ""):
+            return None
+        try:
+            return UUID(str(value))
+        except Exception:
+            return None
+
 class ToolResolver(ComponentResolver):
-    async def _has_artifact_columns(self) -> bool:
+    async def _tool_registry_columns(self) -> set[str]:
         try:
             result = await self.db.execute(
                 text(
@@ -27,20 +37,18 @@ class ToolResolver(ComponentResolver):
                     SELECT column_name
                     FROM information_schema.columns
                     WHERE table_name = 'tool_registry'
-                      AND column_name IN ('artifact_id', 'artifact_version')
+                      AND column_name IN ('artifact_id', 'artifact_version', 'artifact_revision_id')
                     """
                 )
             )
-            cols = {row[0] for row in result.all()}
-            return "artifact_id" in cols and "artifact_version" in cols
+            return {row[0] for row in result.all()}
         except Exception:
             # SQLite fallback
             try:
                 result = await self.db.execute(text("PRAGMA table_info(tool_registry)"))
-                cols = {row[1] for row in result.all()}
-                return "artifact_id" in cols and "artifact_version" in cols
+                return {row[1] for row in result.all()}
             except Exception:
-                return False
+                return set()
 
     async def resolve(self, tool_id: UUID, require_published: bool = False) -> Dict[str, Any]:
         """
@@ -48,7 +56,8 @@ class ToolResolver(ComponentResolver):
         """
         tool = None
         try:
-            if await self._has_artifact_columns():
+            columns = await self._tool_registry_columns()
+            if "artifact_id" in columns and "artifact_version" in columns:
                 if self.tenant_id is None:
                     scope_condition = ToolRegistry.tenant_id == None
                 else:
@@ -104,6 +113,24 @@ class ToolResolver(ComponentResolver):
             status_text = str(getattr(status_val, "value", status_val or "")).lower()
             if status_text != "published":
                 raise ResolutionError(f"Tool {tool_id} must be published for production execution")
+            artifact_revision_id = getattr(tool, "artifact_revision_id", None)
+            artifact_id = getattr(tool, "artifact_id", None)
+            config_schema = getattr(tool, "config_schema", {}) or {}
+            implementation_type = getattr(tool, "implementation_type", None)
+            implementation_type_text = str(getattr(implementation_type, "value", implementation_type or "")).lower()
+            implementation_artifact_id = None
+            if isinstance(config_schema, dict):
+                implementation = config_schema.get("implementation") or {}
+                if isinstance(implementation, dict):
+                    implementation_artifact_id = implementation.get("artifact_id")
+            if artifact_revision_id is None and (
+                self._parse_uuid(artifact_id) is not None
+                or (
+                    implementation_type_text == "artifact"
+                    and self._parse_uuid(implementation_artifact_id) is not None
+                )
+            ):
+                raise ResolutionError(f"Tool {tool_id} must pin artifact_revision_id for production execution")
              
         impl_type = getattr(tool, "implementation_type", None)
         if hasattr(impl_type, "value"):
@@ -117,6 +144,53 @@ class ToolResolver(ComponentResolver):
             "name": tool.name,
             "implementation_type": impl_type,
             "status": str(getattr(getattr(tool, "status", None), "value", getattr(tool, "status", ""))),
+            "artifact_id": getattr(tool, "artifact_id", None),
+            "artifact_revision_id": str(getattr(tool, "artifact_revision_id", None)) if getattr(tool, "artifact_revision_id", None) else None,
+        }
+
+
+class ArtifactResolver(ComponentResolver):
+    def __init__(self, db: AsyncSession, tenant_id: UUID):
+        super().__init__(db, tenant_id)
+        self._registry = ArtifactRegistryService(db)
+
+    async def resolve(self, artifact_ref: str, require_published: bool = False) -> Dict[str, Any]:
+        artifact_uuid = self._parse_uuid(artifact_ref)
+        if artifact_uuid is None:
+            spec = self._registry.get_repo_artifact(str(artifact_ref))
+            if spec is None:
+                raise ResolutionError(f"Artifact {artifact_ref} not found")
+            return {
+                "artifact_kind": "repo",
+                "artifact_id": str(artifact_ref),
+                "artifact_version": str(getattr(spec, "version", "") or ""),
+                "display_name": str(getattr(spec, "display_name", artifact_ref) or artifact_ref),
+            }
+
+        if self.tenant_id is None:
+            raise ResolutionError("Tenant context required for tenant artifact resolution")
+
+        artifact = await self._registry.get_tenant_artifact(
+            artifact_id=artifact_uuid,
+            tenant_id=self.tenant_id,
+        )
+        if artifact is None:
+            raise ResolutionError(f"Artifact {artifact_ref} not found")
+
+        revision = artifact.latest_published_revision
+        if not require_published:
+            revision = artifact.latest_draft_revision or artifact.latest_published_revision
+        if revision is None:
+            raise ResolutionError(f"Artifact {artifact_ref} has no executable revision")
+        if require_published and (not revision.is_published or revision.is_ephemeral):
+            raise ResolutionError(f"Artifact {artifact_ref} requires a published immutable revision")
+
+        return {
+            "artifact_kind": "tenant",
+            "artifact_id": str(artifact.id),
+            "artifact_revision_id": str(revision.id),
+            "status": str(getattr(getattr(artifact, "status", None), "value", getattr(artifact, "status", ""))),
+            "display_name": str(getattr(artifact, "display_name", artifact.id)),
         }
 
 class RAGPipelineResolver(ComponentResolver):

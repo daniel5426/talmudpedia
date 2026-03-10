@@ -40,28 +40,34 @@ class DifySandboxWorkerClient:
         base_url = str(os.getenv("ARTIFACT_WORKER_BASE_URL") or "").strip().rstrip("/")
         if not base_url:
             raise RuntimeError("ARTIFACT_WORKER_BASE_URL is required for HTTP artifact worker mode")
+        timeout_seconds = float(os.getenv("ARTIFACT_WORKER_HTTP_TIMEOUT_SECONDS") or "60")
         headers = {}
         token = str(os.getenv("ARTIFACT_WORKER_INTERNAL_TOKEN") or "").strip()
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(
                 f"{base_url}/internal/artifact-worker/runs/execute",
                 json=request.model_dump(mode="json"),
                 headers=headers,
             )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = response.text.strip() or exc.__class__.__name__
+            raise RuntimeError(f"Artifact worker request failed ({response.status_code}): {detail}") from exc
         return ArtifactWorkerExecutionResponse.model_validate(response.json())
 
     async def _cancel_http(self, sandbox_session_id: str) -> None:
         base_url = str(os.getenv("ARTIFACT_WORKER_BASE_URL") or "").strip().rstrip("/")
         if not base_url:
             raise RuntimeError("ARTIFACT_WORKER_BASE_URL is required for HTTP artifact worker mode")
+        timeout_seconds = float(os.getenv("ARTIFACT_WORKER_HTTP_TIMEOUT_SECONDS") or "15")
         headers = {}
         token = str(os.getenv("ARTIFACT_WORKER_INTERNAL_TOKEN") or "").strip()
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(
                 f"{base_url}/internal/artifact-worker/runs/{sandbox_session_id}/cancel",
                 headers=headers,

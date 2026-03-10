@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
+from uuid import uuid4
 from uuid import UUID
 
 from sqlalchemy import select
@@ -52,19 +54,31 @@ class ArtifactWorkerExecutor:
                     "bundle_hash": revision.bundle_hash,
                     "cache_hit": bundle_resolution.cache_hit,
                     "payload_source": bundle_resolution.payload_source,
+                    "dependency_cache_hit": bundle_resolution.dependency_cache_hit,
                     "bundle_dir": str(bundle_dir),
+                },
+            )
+        )
+        sandbox_session_id = f"difysandbox-{uuid4()}"
+        events.append(
+            self._event(
+                "sandbox_session_created",
+                {
+                    "sandbox_session_id": sandbox_session_id,
+                    "sandbox_backend": "difysandbox",
                 },
             )
         )
         started_ts = datetime.now(timezone.utc).isoformat()
         events.append(
             self._event(
-                "worker_execute_started",
+                "sandbox_execution_started",
                 {
                     "ts": started_ts,
                     "domain": request.domain,
-                    "worker_mode": "direct",
+                    "worker_mode": self._worker_mode(),
                     "timeout_seconds": int(request.resource_limits.get("timeout_seconds") or 30),
+                    "sandbox_session_id": sandbox_session_id,
                 },
             )
         )
@@ -72,6 +86,7 @@ class ArtifactWorkerExecutor:
             bundle_dir=bundle_dir,
             payload=request.model_dump(mode="json"),
             timeout_seconds=int(request.resource_limits.get("timeout_seconds") or 30),
+            sandbox_session_id=sandbox_session_id,
         )
         events.append(
             self._event(
@@ -87,6 +102,18 @@ class ArtifactWorkerExecutor:
             events.append(self._event("stdout", {"content": result.stdout_excerpt}))
         if result.stderr_excerpt:
             events.append(self._event("stderr", {"content": result.stderr_excerpt}))
+        events.append(
+            self._event(
+                "sandbox_execution_finished",
+                {
+                    "duration_ms": result.duration_ms,
+                    "sandbox_session_id": result.sandbox_session_id,
+                    "status": result.status,
+                    "code": (result.error or {}).get("code") if result.error else None,
+                },
+            )
+        )
+        events.append(self._event("sandbox_cleanup_finished", {"sandbox_session_id": result.sandbox_session_id}))
         events.append(
             self._event(
                 "run_completed" if result.status == "completed" else "run_failed",
@@ -107,6 +134,11 @@ class ArtifactWorkerExecutor:
             duration_ms=result.duration_ms,
             worker_id=result.worker_id,
             sandbox_session_id=result.sandbox_session_id,
+            bundle_cache_hit=bundle_resolution.cache_hit,
+            bundle_payload_source=bundle_resolution.payload_source,
+            dependency_cache_hit=bundle_resolution.dependency_cache_hit,
+            sandbox_backend="difysandbox",
+            sandbox_metadata=dict(result.sandbox_metadata or {}),
         )
 
     def cancel(self, sandbox_session_id: str) -> None:
@@ -125,3 +157,9 @@ class ArtifactWorkerExecutor:
                 "source_run_id": None,
             },
         }
+
+    @staticmethod
+    def _worker_mode() -> str:
+        if str(os.getenv("ARTIFACT_WORKER_CLIENT_MODE") or "").strip().lower() == "http":
+            return "http_worker"
+        return "embedded_worker"

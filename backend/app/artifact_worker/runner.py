@@ -45,7 +45,15 @@ def _load_execute_fn(bundle_dir: Path):
     return execute_fn
 
 
-async def _invoke(execute_fn, inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> Any:
+def _input_summary(value: Any) -> str:
+    if isinstance(value, dict):
+        return f"dict:{sorted(value.keys())}"
+    if isinstance(value, list):
+        return f"list:{len(value)}"
+    return type(value).__name__
+
+
+async def _invoke(execute_fn, inputs: Any, config: dict[str, Any], context: dict[str, Any]) -> Any:
     params = list(inspect.signature(execute_fn).parameters.values())
     legacy_context = SimpleNamespace(
         input_data=inputs,
@@ -79,15 +87,15 @@ async def _main(bundle_dir: Path, request_path: Path, result_path: Path) -> int:
     )
     execute_fn = _load_execute_fn(bundle_dir)
     logger.info(
-        "Invoking artifact handler execute_fn=%s domain=%s input_keys=%s config_keys=%s",
+        "Invoking artifact handler execute_fn=%s domain=%s input_summary=%s config_keys=%s",
         getattr(execute_fn, "__name__", "execute"),
         payload.get("domain"),
-        sorted(dict(payload.get("inputs") or {}).keys()),
+        _input_summary(payload.get("inputs")),
         sorted(dict(payload.get("config") or {}).keys()),
     )
     result = await _invoke(
         execute_fn,
-        dict(payload.get("inputs") or {}),
+        payload.get("inputs"),
         dict(payload.get("config") or {}),
         dict(payload.get("context") or {}),
     )

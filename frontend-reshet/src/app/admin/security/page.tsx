@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react"
 import { useTenant } from "@/contexts/TenantContext"
 import { useDirection } from "@/components/direction-provider"
 import { cn } from "@/lib/utils"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { rbacService, Role, RoleAssignment, ScopeCatalog } from "@/services/rbac"
 import { orgUnitsService, OrgUnit } from "@/services/org-units"
 import {
@@ -358,7 +359,7 @@ export default function SecurityPage() {
   return (
     <div className="flex flex-col h-full w-full" dir={direction}>
       {/* Header */}
-      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
+      <AdminPageHeader>
         <CustomBreadcrumb items={[
           { label: "Security & Org", href: "/admin/organization" },
           { label: "Security", active: true }
@@ -384,7 +385,7 @@ export default function SecurityPage() {
             </Button>
           </div>
         )}
-      </header>
+      </AdminPageHeader>
 
       {/* Tabs + Content */}
       <Tabs
@@ -425,7 +426,7 @@ export default function SecurityPage() {
         </div>
 
         {/* =================== ASSIGNMENTS TAB =================== */}
-        <TabsContent value="assignments" className="flex-1 min-h-0 overflow-auto mt-0 p-4">
+        <TabsContent value="assignments" className="flex-1 min-h-0 overflow-auto mt-0 p-4" data-admin-page-scroll>
           {isLoading ? (
             <div className="space-y-2">
               {[...Array(5)].map((_, i) => (
@@ -496,7 +497,7 @@ export default function SecurityPage() {
         </TabsContent>
 
         {/* =================== ROLES TAB =================== */}
-        <TabsContent value="roles" className="flex-1 min-h-0 overflow-auto mt-0 p-4">
+        <TabsContent value="roles" className="flex-1 min-h-0 overflow-auto mt-0 p-4" data-admin-page-scroll>
           {isLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {[...Array(4)].map((_, i) => (
@@ -618,7 +619,7 @@ export default function SecurityPage() {
         </TabsContent>
 
         {/* =================== WORKLOADS TAB =================== */}
-        <TabsContent value="workloads" className="flex-1 min-h-0 overflow-auto mt-0 p-4 space-y-6">
+        <TabsContent value="workloads" className="flex-1 min-h-0 overflow-auto mt-0 p-4 space-y-6" data-admin-page-scroll>
           {/* Pending Policies Section */}
           <div>
             <div className="flex items-center gap-2 mb-3 px-1">

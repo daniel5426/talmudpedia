@@ -88,6 +88,7 @@ class ToolRegistry(Base):
     # Artifact Integration
     artifact_id = Column(String, nullable=True, index=True)
     artifact_version = Column(String, nullable=True)
+    artifact_revision_id = Column(UUID(as_uuid=True), ForeignKey("artifact_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Built-in templates/instances metadata
     builtin_key = Column(String, nullable=True, index=True)

@@ -83,6 +83,7 @@ backend/app/rag/factory.py
 
 backend/app/rag/pipeline/
 backend/app/rag/pipeline/compiler.py
+backend/app/rag/pipeline/custom_operator_sync.py
 backend/app/rag/pipeline/executor.py
 backend/app/rag/pipeline/operator_executor.py
 backend/app/rag/pipeline/registry.py
@@ -129,10 +130,12 @@ backend/app/services/artifact_runtime/
 backend/app/services/artifact_runtime/registry_service.py
 backend/app/services/artifact_runtime/revision_service.py
 backend/app/services/artifact_runtime/bundle_builder.py
+backend/app/services/artifact_runtime/dependency_packager.py
 backend/app/services/artifact_runtime/bundle_storage.py
 backend/app/services/artifact_runtime/execution_service.py
 backend/app/services/artifact_runtime/run_service.py
 backend/app/services/artifact_runtime/difysandbox_client.py
+backend/app/services/artifact_runtime/local_bootstrap.py
 backend/app/services/builtin_tools.py
 backend/app/services/delegation_service.py
 backend/app/services/workload_provisioning_service.py

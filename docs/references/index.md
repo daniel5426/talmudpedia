@@ -1,0 +1,27 @@
+# References Index
+
+Last Updated: 2026-03-10
+
+This section is for stable supporting documentation used as lookup material by humans and agents.
+
+## Put Here
+- Naming conventions
+- docs guides and indexes
+- operational reference notes
+- external-system summaries
+- curated technical references
+
+## Initial Migration Targets
+- `backend/documentations/auth/00_auth_docs_guide.md`
+- `backend/documentations/backend_dev_rules.md`
+- `backend/documentations/tools_overview.md`
+- `backend/documentations/mcp_tools_overview.md`
+- `backend/documentations/web_crawler_crawl4ai_dev_setup.md`
+
+## Current Canonical Docs
+- `canonical_docs_guide.md`
+  - Entry points and legacy-pointer map after the documentation-system refactor.
+- `auth_docs_guide.md`
+  - Current auth documentation entry points and detailed-doc map.
+- `mcp_tools_reference.md`
+  - Current MCP tool runtime behavior and open governance gaps.

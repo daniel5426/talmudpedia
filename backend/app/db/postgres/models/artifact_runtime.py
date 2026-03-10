@@ -128,6 +128,7 @@ class ArtifactRevision(Base):
 
     source_code = Column(Text, nullable=False)
     manifest_json = Column(JSONB, nullable=False, default=dict)
+    python_dependencies = Column(JSONB, nullable=False, default=list)
     config_schema = Column(JSONB, nullable=False, default=list)
     inputs = Column(JSONB, nullable=False, default=list)
     outputs = Column(JSONB, nullable=False, default=list)

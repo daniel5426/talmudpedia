@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
 import { ragAdminService, CustomOperator } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -862,7 +863,7 @@ export default function OperatorsPage() {
 
     return (
         <div className="flex flex-col h-full w-full min-w-0 overflow-hidden">
-            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
+            <AdminPageHeader>
                 <div className="flex items-center gap-3">
                     {viewMode !== "list" && (
                         <Button variant="ghost" size="icon" onClick={handleBack} className="mr-1">
@@ -927,7 +928,7 @@ export default function OperatorsPage() {
                         </Button>
                     </div>
                 )}
-            </header>
+            </AdminPageHeader>
 
             <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
                 {loading ? (
@@ -936,7 +937,7 @@ export default function OperatorsPage() {
                         <Skeleton className="h-[400px] w-full" />
                     </div>
                 ) : viewMode === "list" ? (
-                    <div className="h-full overflow-auto">{renderList()}</div>
+                    <div className="h-full overflow-auto" data-admin-page-scroll>{renderList()}</div>
                 ) : (
                     <>
                         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">

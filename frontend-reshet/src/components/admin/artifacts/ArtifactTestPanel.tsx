@@ -1,5 +1,6 @@
 "use client"
 
+import type { PointerEvent as ReactPointerEvent } from "react"
 import { useEffect, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -28,11 +29,17 @@ interface ArtifactTestPanelProps {
   pythonCode: string
   inputType: string
   outputType: string
+  onOpenChange?: (isOpen: boolean) => void
 }
 
 const INITIAL_INPUT = '[\n  {\n    "text": "Hello world",\n    "metadata": {}\n  }\n]'
 const INITIAL_CONFIG = "{\n  \n}"
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"])
+const DEFAULT_OPEN_HEIGHT = 420
+const MIN_OPEN_HEIGHT = 260
+const MAX_OPEN_HEIGHT = 720
+const CLOSED_HEIGHT = 44
+const RUNTIME_PANEL_HEIGHT_STORAGE_KEY = "artifact-test-panel-height"
 
 function formatPhase(event: ArtifactRunEvent | null): string {
   if (!event) return "Synthesizing execution environment..."
@@ -58,6 +65,7 @@ export function ArtifactTestPanel({
   pythonCode,
   inputType,
   outputType,
+  onOpenChange,
 }: ArtifactTestPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
@@ -68,12 +76,40 @@ export function ArtifactTestPanel({
   const [events, setEvents] = useState<ArtifactRunEvent[]>([])
   const [legacyResult, setLegacyResult] = useState<ArtifactTestResponse | null>(null)
   const pollTimerRef = useRef<number | null>(null)
+  const resizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null)
+  const [openHeight, setOpenHeight] = useState(DEFAULT_OPEN_HEIGHT)
+  const [isResizing, setIsResizing] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const storedHeight = window.localStorage.getItem(RUNTIME_PANEL_HEIGHT_STORAGE_KEY)
+    const parsedHeight = storedHeight ? Number.parseInt(storedHeight, 10) : Number.NaN
+    if (Number.isFinite(parsedHeight)) {
+      setOpenHeight(Math.min(MAX_OPEN_HEIGHT, Math.max(MIN_OPEN_HEIGHT, parsedHeight)))
+    }
+  }, [])
 
   useEffect(() => {
     return () => {
       if (pollTimerRef.current) {
         window.clearTimeout(pollTimerRef.current)
       }
+    }
+  }, [])
+
+  useEffect(() => {
+    onOpenChange?.(isOpen)
+  }, [isOpen, onOpenChange])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(RUNTIME_PANEL_HEIGHT_STORAGE_KEY, String(openHeight))
+  }, [openHeight])
+
+  useEffect(() => {
+    return () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
     }
   }, [])
 
@@ -179,15 +215,64 @@ export function ArtifactTestPanel({
   }
 
   const latestPhase = events.length > 0 ? events[events.length - 1] : null
+  const setOpen = (nextOpen: boolean) => {
+    setIsOpen(nextOpen)
+  }
+  const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isOpen) return
+    event.preventDefault()
+    setIsResizing(true)
+    resizeStateRef.current = {
+      startY: event.clientY,
+      startHeight: openHeight,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    document.body.style.cursor = "ns-resize"
+    document.body.style.userSelect = "none"
+  }
+
+  const handleResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current
+    if (!resizeState) return
+    const nextHeight = resizeState.startHeight - (event.clientY - resizeState.startY)
+    setOpenHeight(Math.min(MAX_OPEN_HEIGHT, Math.max(MIN_OPEN_HEIGHT, nextHeight)))
+  }
+
+  const handleResizePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeStateRef.current) {
+      resizeStateRef.current = null
+      setIsResizing(false)
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    }
+    document.body.style.cursor = ""
+    document.body.style.userSelect = ""
+  }
 
   return (
-    <div className={cn("border-t bg-background flex flex-col transition-all duration-300", isOpen ? "h-[420px]" : "h-11")}>
+    <div
+      className={cn(
+        "relative border-t bg-background flex flex-col",
+        isResizing ? "transition-none" : "transition-[height] duration-200"
+      )}
+      style={{ height: isOpen ? `${openHeight}px` : `${CLOSED_HEIGHT}px` }}
+    >
+      {isOpen && (
+        <div
+          className="absolute inset-x-0 top-0 z-10 h-2 cursor-ns-resize touch-none"
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+          onPointerCancel={handleResizePointerEnd}
+        />
+      )}
       <Tabs value={testTab} onValueChange={setTestTab} className="flex-1 flex flex-col min-h-0">
-        <div className="h-11 px-3 border-b bg-muted/15 flex items-center gap-3">
+        <div className="h-11 px-3 bg-muted/15 flex items-center gap-3">
           <button
             type="button"
             className="flex items-center gap-3 min-w-0 flex-1 text-left"
-            onClick={() => setIsOpen(!isOpen)}
+            onClick={() => setOpen(!isOpen)}
           >
             <div className="h-7 w-7 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0">
               <Terminal className="h-4 w-4" />
@@ -237,7 +322,7 @@ export function ArtifactTestPanel({
             variant="ghost"
             size="icon"
             className="h-8 w-8 shrink-0"
-            onClick={() => setIsOpen(!isOpen)}
+            onClick={() => setOpen(!isOpen)}
             aria-label={isOpen ? "Collapse test runtime" : "Expand test runtime"}
           >
             {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
@@ -247,10 +332,10 @@ export function ArtifactTestPanel({
         {isOpen && (
           <div className="flex-1 min-h-0 relative">
               <TabsContent value="input" className="absolute inset-0 m-0">
-                <CodeEditor value={testInput} onChange={setTestInput} language="json" className="h-full" />
+                <CodeEditor value={testInput} onChange={setTestInput} language="json" className="h-full border-0 rounded-none" />
               </TabsContent>
               <TabsContent value="config" className="absolute inset-0 m-0">
-                <CodeEditor value={testConfig} onChange={setTestConfig} language="json" className="h-full" />
+                <CodeEditor value={testConfig} onChange={setTestConfig} language="json" className="h-full border-0 rounded-none" />
               </TabsContent>
               <TabsContent value="output" className="absolute inset-0 m-0 p-5 font-mono text-sm overflow-auto bg-background">
                 {legacyResult ? (

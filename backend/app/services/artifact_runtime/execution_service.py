@@ -10,7 +10,12 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.artifact_worker.schemas import ArtifactWorkerExecutionRequest
-from app.db.postgres.models.artifact_runtime import Artifact, ArtifactRevision, ArtifactRunStatus
+from app.db.postgres.models.artifact_runtime import (
+    Artifact,
+    ArtifactRevision,
+    ArtifactRunDomain,
+    ArtifactRunStatus,
+)
 
 from .difysandbox_client import DifySandboxWorkerClient
 from .registry_service import ArtifactRegistryService
@@ -43,6 +48,7 @@ class ArtifactExecutionService:
         python_code: str | None,
         input_data: Any,
         config: dict[str, Any] | None,
+        dependencies: list[str] | None,
         input_type: str,
         output_type: str,
     ):
@@ -57,8 +63,11 @@ class ArtifactExecutionService:
                 raise ValueError("Artifact has no executable revision")
 
         request_code = str(python_code or "").strip()
+        requested_dependencies = list(dependencies or [])
         if request_code:
-            if artifact is None or request_code != str((revision.source_code if revision else "") or ""):
+            same_code = request_code == str((revision.source_code if revision else "") or "")
+            same_dependencies = requested_dependencies == list((revision.python_dependencies if revision else []) or [])
+            if artifact is None or not (same_code and same_dependencies):
                 revision = await self._revisions.create_ephemeral_revision(
                     tenant_id=tenant_id,
                     created_by=created_by,
@@ -70,6 +79,7 @@ class ArtifactExecutionService:
                     input_type=input_type or (artifact.input_type if artifact else "raw_documents"),
                     output_type=output_type or (artifact.output_type if artifact else "raw_documents"),
                     source_code=request_code,
+                    python_dependencies=requested_dependencies or list((revision.python_dependencies if revision else []) or []),
                     config_schema=list((revision.config_schema if revision else []) or []),
                     inputs=list((revision.inputs if revision else []) or []),
                     outputs=list((revision.outputs if revision else []) or []),
@@ -78,6 +88,25 @@ class ArtifactExecutionService:
                 )
         elif revision is None:
             raise ValueError("A saved artifact or python_code is required for test execution")
+        elif requested_dependencies and requested_dependencies != list((revision.python_dependencies if revision else []) or []):
+            revision = await self._revisions.create_ephemeral_revision(
+                tenant_id=tenant_id,
+                created_by=created_by,
+                artifact=artifact,
+                display_name=artifact.display_name if artifact else "Unsaved Artifact",
+                description=artifact.description if artifact else None,
+                category=artifact.category if artifact else "custom",
+                scope=(getattr(artifact.scope, "value", artifact.scope) if artifact else "rag"),
+                input_type=input_type or (artifact.input_type if artifact else "raw_documents"),
+                output_type=output_type or (artifact.output_type if artifact else "raw_documents"),
+                source_code=str((revision.source_code if revision else "") or ""),
+                python_dependencies=requested_dependencies,
+                config_schema=list((revision.config_schema if revision else []) or []),
+                inputs=list((revision.inputs if revision else []) or []),
+                outputs=list((revision.outputs if revision else []) or []),
+                reads=list((revision.reads if revision else []) or []),
+                writes=list((revision.writes if revision else []) or []),
+            )
 
         run = await self._runs.create_test_run(
             tenant_id=tenant_id,
@@ -116,15 +145,92 @@ class ArtifactExecutionService:
         await self.enqueue_run(run.id)
         return run
 
+    async def execute_live_run(
+        self,
+        *,
+        tenant_id: UUID,
+        created_by: UUID | None,
+        revision_id: UUID,
+        domain: ArtifactRunDomain | str,
+        queue_class: str,
+        input_payload: Any,
+        config_payload: dict[str, Any] | None = None,
+        context_payload: dict[str, Any] | None = None,
+        require_published: bool = True,
+        wait_timeout_seconds: float = 30.0,
+    ):
+        normalized_domain = self._normalize_domain(domain)
+        revision = await self._resolve_revision_for_execution(
+            revision_id=revision_id,
+            tenant_id=tenant_id,
+            require_published=require_published and normalized_domain != ArtifactRunDomain.TEST,
+        )
+        artifact = None
+        if revision.artifact_id is not None:
+            artifact = await self._registry.get_tenant_artifact(
+                artifact_id=revision.artifact_id,
+                tenant_id=tenant_id,
+            )
+
+        run = await self._runs.create_run(
+            tenant_id=tenant_id,
+            artifact=artifact,
+            revision=revision,
+            domain=normalized_domain,
+            input_payload=input_payload,
+            config_payload=config_payload,
+            context_payload={
+                **dict(context_payload or {}),
+                "tenant_id": str(tenant_id),
+                "artifact_id": str(revision.artifact_id) if revision.artifact_id else None,
+                "revision_id": str(revision.id),
+                "domain": normalized_domain.value,
+                "created_by": str(created_by) if created_by else None,
+            },
+            queue_class=queue_class,
+        )
+        await self._runs.add_events(
+            run,
+            [
+                {
+                    "event_type": "run_prepared",
+                    "payload": {
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "event": "run_prepared",
+                        "name": "run_prepared",
+                        "data": {
+                            "artifact_id": str(revision.artifact_id) if revision.artifact_id else None,
+                            "revision_id": str(revision.id),
+                            "is_ephemeral_revision": bool(revision.is_ephemeral),
+                            "queue_class": run.queue_class,
+                            "require_published": bool(require_published),
+                        },
+                    },
+                }
+            ],
+        )
+        await self._db.commit()
+
+        if queue_class == "artifact_prod_interactive":
+            logger.info("Executing interactive artifact run run_id=%s queue=%s", run.id, queue_class)
+            await self.execute_enqueued_run(run.id)
+        else:
+            await self.enqueue_run(run.id)
+
+        return await self.wait_for_terminal_state(run.id, timeout_seconds=wait_timeout_seconds)
+
     async def enqueue_run(self, run_id: UUID) -> None:
+        run = await self._runs.get_run(run_id=run_id)
+        if run is None:
+            return
         if artifact_run_task_eager():
             logger.info("Executing artifact run eagerly run_id=%s", run_id)
             await self.execute_enqueued_run(run_id)
             return
         from app.workers.artifact_tasks import execute_artifact_run_task
 
-        logger.info("Enqueueing artifact run run_id=%s queue=artifact_test", run_id)
-        execute_artifact_run_task.delay(str(run_id))
+        logger.info("Enqueueing artifact run run_id=%s queue=%s", run_id, run.queue_class)
+        execute_artifact_run_task.apply_async(args=[str(run_id)], queue=run.queue_class)
 
     async def execute_enqueued_run(self, run_id: UUID) -> None:
         run = await self._runs.get_run(run_id=run_id)
@@ -139,10 +245,14 @@ class ArtifactExecutionService:
             tenant_id=run.tenant_id,
             artifact_id=run.artifact_id,
             revision_id=run.revision_id,
-            domain=run.domain.value,
-            inputs=dict(run.input_payload or {}),
+            domain=self._enum_text(run.domain),
+            inputs=run.input_payload,
             config=dict(run.config_payload or {}),
             context=dict(run.context_payload or {}),
+            bundle_hash=str((run.revision.bundle_hash if run.revision else "") or ""),
+            bundle_storage_key=str((run.revision.bundle_storage_key if run.revision else "") or "") or None,
+            dependency_hash=str((run.revision.dependency_hash if run.revision else "") or ""),
+            dependency_manifest=list((run.revision.python_dependencies if run.revision else []) or []),
             resource_limits={"timeout_seconds": 30},
         )
 
@@ -157,7 +267,7 @@ class ArtifactExecutionService:
                         "ts": datetime.now(timezone.utc).isoformat(),
                         "event": "run_started",
                         "name": "run_started",
-                        "data": {"domain": run.domain.value},
+                        "data": {"domain": self._enum_text(run.domain)},
                     },
                 }
                 ,
@@ -306,3 +416,27 @@ class ArtifactExecutionService:
         )
         await self._db.commit()
         return run
+
+    async def _resolve_revision_for_execution(
+        self,
+        *,
+        revision_id: UUID,
+        tenant_id: UUID,
+        require_published: bool,
+    ) -> ArtifactRevision:
+        revision = await self._registry.get_revision(revision_id=revision_id, tenant_id=tenant_id)
+        if revision is None:
+            raise ValueError("Artifact revision not found")
+        if require_published and (not revision.is_published or revision.is_ephemeral):
+            raise PermissionError("Live artifact execution requires a published immutable revision")
+        return revision
+
+    @staticmethod
+    def _normalize_domain(domain: ArtifactRunDomain | str) -> ArtifactRunDomain:
+        if isinstance(domain, ArtifactRunDomain):
+            return domain
+        return ArtifactRunDomain(str(domain).strip().lower())
+
+    @staticmethod
+    def _enum_text(value: Any) -> str:
+        return str(getattr(value, "value", value))

@@ -5,6 +5,7 @@ import { useRouter, useParams, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
 import { ragAdminService, VisualPipeline, OperatorCatalog, OperatorSpec, CompileResult, PipelineStepExecution } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import {
@@ -380,10 +381,10 @@ export default function PipelineEditorPage() {
     if (loading) {
         return (
             <div className="flex flex-col h-full w-full">
-                <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
+                <AdminPageHeader>
                     <Skeleton className="h-6 w-48" />
                     <Skeleton className="h-9 w-32" />
-                </header>
+                </AdminPageHeader>
                 <div className="flex-1 flex items-center justify-center">
                     <div className="flex flex-col items-center gap-4">
                         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -398,8 +399,7 @@ export default function PipelineEditorPage() {
 
     return (
         <div className="flex flex-col h-full w-full">
-            <header className="shrink-0 bg-background z-[70]">
-                <div className="flex h-12 items-center justify-between gap-4 px-4">
+            <AdminPageHeader className="z-[70]">
                     <div className="flex items-center gap-3">
                         <CustomBreadcrumb
                             items={[
@@ -482,8 +482,7 @@ export default function PipelineEditorPage() {
                             Save
                         </Button>
                     </div>
-                </div>
-            </header>
+            </AdminPageHeader>
 
             <div className="flex-1 overflow-hidden relative bg-muted/20">
                 <PipelineBuilder

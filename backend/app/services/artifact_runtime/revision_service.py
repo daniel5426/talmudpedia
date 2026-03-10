@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 from uuid import UUID, uuid4
+import os
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +40,7 @@ class ArtifactRevisionService:
         input_type: str,
         output_type: str,
         source_code: str,
+        python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
         outputs: list[dict[str, Any]],
@@ -85,7 +87,9 @@ class ArtifactRevisionService:
                 category=category,
                 input_type=input_type,
                 output_type=output_type,
+                python_dependencies=python_dependencies,
             ),
+            python_dependencies=list(python_dependencies or []),
             config_schema=list(config_schema or []),
             inputs=list(inputs or []),
             outputs=list(outputs or []),
@@ -113,6 +117,7 @@ class ArtifactRevisionService:
         input_type: str,
         output_type: str,
         source_code: str,
+        python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
         outputs: list[dict[str, Any]],
@@ -149,7 +154,9 @@ class ArtifactRevisionService:
                 category=category,
                 input_type=input_type,
                 output_type=output_type,
+                python_dependencies=python_dependencies,
             ),
+            python_dependencies=list(python_dependencies or []),
             config_schema=list(config_schema or []),
             inputs=list(inputs or []),
             outputs=list(outputs or []),
@@ -178,6 +185,7 @@ class ArtifactRevisionService:
         input_type: str,
         output_type: str,
         source_code: str,
+        python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
         outputs: list[dict[str, Any]],
@@ -205,7 +213,9 @@ class ArtifactRevisionService:
                 category=category,
                 input_type=input_type,
                 output_type=output_type,
+                python_dependencies=python_dependencies,
             ),
+            python_dependencies=list(python_dependencies or []),
             config_schema=list(config_schema or []),
             inputs=list(inputs or []),
             outputs=list(outputs or []),
@@ -243,8 +253,12 @@ class ArtifactRevisionService:
     async def _hydrate_bundle(self, revision: ArtifactRevision) -> None:
         built = self._bundle_builder.build_revision_bundle(revision)
         revision.bundle_hash = built.bundle_hash
-        revision.dependency_hash = ""
+        revision.dependency_hash = built.dependency_hash
         if self._bundle_storage is None:
+            if not _inline_bundle_fallback_enabled():
+                raise RuntimeError(
+                    "Artifact bundle storage is not configured and inline bundle fallback is disabled"
+                )
             revision.bundle_inline_bytes = built.payload
             revision.bundle_storage_key = None
             return
@@ -274,6 +288,7 @@ class ArtifactRevisionService:
         category: str,
         input_type: str,
         output_type: str,
+        python_dependencies: list[str],
     ) -> dict[str, Any]:
         return {
             "artifact_id": str(artifact_id) if artifact_id else None,
@@ -281,4 +296,12 @@ class ArtifactRevisionService:
             "category": category,
             "input_type": input_type,
             "output_type": output_type,
+            "python_dependencies": list(python_dependencies or []),
         }
+
+
+def _inline_bundle_fallback_enabled() -> bool:
+    raw = os.getenv("ARTIFACT_BUNDLE_INLINE_FALLBACK_ENABLED")
+    if raw is None:
+        return True
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}

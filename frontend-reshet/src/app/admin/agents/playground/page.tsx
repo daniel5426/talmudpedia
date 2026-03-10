@@ -18,6 +18,7 @@ import { ExecutionSidebar } from "./ExecutionSidebar"
 import { Conversation } from "@/components/ai-elements/conversation"
 import { useDirection } from "@/components/direction-provider"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import {
     Select,
     SelectContent,
@@ -163,7 +164,7 @@ function PlaygroundContent() {
     return (
         <div className="flex w-full flex-col h-screen bg-background overflow-hidden [&_button]:shadow-none">
             {/* Header */}
-            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
+            <AdminPageHeader>
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
                         <CustomBreadcrumb items={[
@@ -245,7 +246,7 @@ function PlaygroundContent() {
                         </SelectContent>
                     </Select>
                 </div>
-            </header>
+            </AdminPageHeader>
 
             <main className="relative flex-1 overflow-hidden">
                 {isMetadataLoading ? (
@@ -254,7 +255,7 @@ function PlaygroundContent() {
                         <p className="text-muted-foreground">Loading agent runner...</p>
                     </div>
                 ) : !agentId || !agent ? (
-                    <div className="p-6 h-full overflow-auto">
+                    <div className="p-6 h-full overflow-auto" data-admin-page-scroll>
                         {!isListingLoading && agents.length === 0 && (
                             <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4 text-center border-2 border-dashed rounded-lg">
                                 <div className="bg-muted p-4 rounded-full">
@@ -284,6 +285,7 @@ function PlaygroundContent() {
                             <Conversation
                                 dir={direction}
                                 className="flex-1 relative border-none flex min-h-full flex-col overflow-hidden bg-(--chat-background)"
+                                data-admin-page-scroll
                                 targetScrollTop={controller.isLoading ? (_target: number, { scrollElement }: any) => scrollElement?.scrollTop ?? 0 : undefined}
                             >
                                 <ChatWorkspace
@@ -291,6 +293,7 @@ function PlaygroundContent() {
                                     controller={controller}
                                     isVoiceModeActive={false}
                                     handleToggleVoiceMode={() => { }}
+                                    conversationScrollClassName="admin-page-scroll"
                                     onOpenArtifact={openFromMessage}
                                     isArtifactMessage={isArtifactMessage}
                                 />

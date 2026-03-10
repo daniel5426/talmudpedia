@@ -108,7 +108,7 @@ class RetrievalPipelineRuntime:
         await self._db.commit()
 
         executor = RAGPipelineExecutor(self._db)
-        await executor.execute_job(job.id)
+        await executor.execute_job(job.id, artifact_queue_class="artifact_prod_interactive")
 
         await self._db.refresh(job)
         if job.status == PipelineJobStatus.FAILED:

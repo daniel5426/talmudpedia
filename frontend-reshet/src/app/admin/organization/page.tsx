@@ -23,6 +23,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -414,7 +415,7 @@ export default function OrganizationPage() {
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background" dir={direction}>
       {/* Header */}
-      <header className="h-12 shrink-0 bg-background px-4 flex items-center justify-between">
+      <AdminPageHeader>
         <CustomBreadcrumb
           items={[
             { label: "Security & Org", href: "/admin/organization" },
@@ -432,7 +433,7 @@ export default function OrganizationPage() {
           <Plus className="h-3.5 w-3.5" />
           New Unit
         </Button>
-      </header>
+      </AdminPageHeader>
 
       {/* Body: sidebar + detail */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -480,7 +481,7 @@ export default function OrganizationPage() {
         </aside>
 
         {/* Detail panel */}
-        <main className="flex-1 min-w-0 overflow-y-auto">
+        <main className="flex-1 min-w-0 overflow-y-auto" data-admin-page-scroll>
           {!selectedUnit ? (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-dashed border-border/60 mb-4">

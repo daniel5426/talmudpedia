@@ -408,6 +408,7 @@ class AgentExecutorService:
             runtime_context["orchestration_group_id"] = str(run.orchestration_group_id)
         if run.tenant_id:
             runtime_context["tenant_id"] = str(run.tenant_id)
+        runtime_context["agent_id"] = str(agent.id)
         if getattr(agent, "slug", None):
             runtime_context["agent_slug"] = str(agent.slug)
         if run.resolved_model_id:
@@ -537,6 +538,8 @@ class AgentExecutorService:
                 "initiator_user_id": str(run.initiator_user_id) if run.initiator_user_id else None,
                 "tenant_id": str(run.tenant_id) if run.tenant_id else None,
                 "user_id": str(run.user_id) if run.user_id else None,
+                "agent_id": str(agent.id),
+                "agent_slug": str(getattr(agent, "slug", "")) or None,
                 "auth_token": runtime_context.get("token"),
                 "root_run_id": str(run.root_run_id) if run.root_run_id else None,
                 "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,

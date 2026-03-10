@@ -1,90 +1,15 @@
 # Tools Overview
 
 Date: 2026-02-03
-Last Updated: 2026-02-22
+Last Updated: 2026-03-10
 
-This document describes the full Tools domain in the app: data model, APIs, execution flow, UI, and tests. It reflects the current architecture after removing built-in template/instance behavior from runtime and introducing first-class `agent_call`.
+This file is now a legacy location.
 
----
+For the current canonical tools-domain docs, read:
+- `docs/product-specs/tools_domain_spec.md`
+- `docs/references/mcp_tools_reference.md`
 
-## 1) Concepts and Taxonomy
-
-Tools are callable capabilities that agents can invoke. The system uses a **hybrid taxonomy**:
-
-### Primary Buckets (tool_type)
-- `built_in`  - system/global built-ins (`builtin_key` or `is_system`)
-- `mcp`       - tools served from MCP servers
-- `artifact`  - tools backed by code artifacts
-- `custom`    - tenant-defined tools (http/function/rag/agent_call/custom)
-
-### Subtypes (implementation_type)
-- `internal`
-- `http`
-- `rag_retrieval`
-- `agent_call`
-- `function`
-- `custom`
-- `artifact`
-- `mcp`
-
-The API returns `tool_type` as a **derived** field. It is not stored in the DB.
-
----
-
-## 2) Data Model
-
-### Table: `tool_registry`
-Key fields (non-exhaustive):
-- `id`, `tenant_id`, `name`, `slug`, `description`, `scope`
-- `schema`             - JSON Schema for inputs/outputs
-- `config_schema`      - execution config (implementation/execution)
-- `status`             - `draft | published | deprecated | disabled`
-- `version`            - current version string (semver)
-- `implementation_type`- subtype
-- `published_at`       - publish timestamp
-- `artifact_id`, `artifact_version`
-- `builtin_key`                - built-in identifier (e.g. `retrieval_pipeline`)
-- `builtin_template_id`        - legacy metadata (kept for DB compatibility; not used in runtime logic)
-- `is_builtin_template`        - legacy metadata (kept for DB compatibility; not used in runtime logic)
-- `is_active`, `is_system`
-
-### Table: `tool_versions`
-Snapshot table created on publish and versioning. Stores:
-- `version`
-- `schema_snapshot` (schema + config + implementation_type)
-
----
-
-## 3) Derived Fields
-
-### tool_type
-Computed by the Tools API:
-- `built_in` if `is_system == true` OR `builtin_key` is set
-- `mcp` if `implementation_type == mcp` OR `config_schema.implementation.type == "mcp"`
-- `artifact` if `artifact_id` exists OR `implementation_type == artifact`
-- `custom` otherwise
-
----
-
-## 4) API Endpoints
-
-### List
-`GET /tools`
-- Filters:
-  - `status`
-  - `implementation_type`
-  - `tool_type`
-  - `skip`, `limit`
-- Notes:
-  - Returns tenant + global tools.
-  - Legacy tenant-scoped built-in clone rows are hidden from standard list output.
-  - `config_schema` is sanitized (sensitive keys like `api_key`/`token` are redacted).
-
-### Create
-`POST /tools`
-- Accepts:
-  - `implementation_type`
-  - `implementation_config` (stored under `config_schema.implementation`)
+Do not add new canonical tools-domain detail here.
   - `execution_config` (stored under `config_schema.execution`)
 - Guardrails:
   - Only `scope=tenant` is allowed on this endpoint

@@ -60,6 +60,7 @@ class ArtifactSchema(BaseModel):
     python_code: Optional[str] = None
     reads: List[str] = []
     writes: List[str] = []
+    dependencies: List[str] = []
     
     # Input/output field definitions for field mapping
     inputs: List[Dict[str, Any]] = []  # List of ArtifactInputField dicts
@@ -80,6 +81,7 @@ class ArtifactCreate(BaseModel):
     config_schema: List[Dict[str, Any]] = []
     reads: List[str] = []
     writes: List[str] = []
+    dependencies: List[str] = []
     inputs: List[Dict[str, Any]] = []
     outputs: List[Dict[str, Any]] = []
 
@@ -94,12 +96,14 @@ class ArtifactUpdate(BaseModel):
     config_schema: Optional[List[Dict[str, Any]]] = None
     reads: Optional[List[str]] = None
     writes: Optional[List[str]] = None
+    dependencies: Optional[List[str]] = None
 
 class ArtifactTestRequest(BaseModel):
     artifact_id: Optional[str] = None # If testing existing one
     python_code: Optional[str] = None # If testing with unsaved code
     input_data: Any
     config: Dict[str, Any] = {}
+    dependencies: List[str] = []
     input_type: str = "raw_documents"
     output_type: str = "raw_documents"
 

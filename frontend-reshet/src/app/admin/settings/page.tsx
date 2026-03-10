@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -599,10 +600,10 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-col h-full w-full" dir={direction}>
-      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0 border-b border-border/40">
+      <AdminPageHeader>
         <CustomBreadcrumb items={[{ label: "Settings", href: "/admin/settings", active: true }]} />
         {hasUnsavedChanges && <span className="text-xs text-amber-600 font-medium">Unsaved changes</span>}
-      </header>
+      </AdminPageHeader>
 
       <div className="flex-1 flex overflow-hidden">
         <nav className="w-48 shrink-0 border-r border-border/40 p-3 overflow-y-auto hidden sm:block">
@@ -642,7 +643,7 @@ export default function SettingsPage() {
           ))}
         </div>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto" data-admin-page-scroll>
           <div className="max-w-4xl px-4 sm:px-6 py-6">
             {loading ? (
               <LoadingSkeleton />

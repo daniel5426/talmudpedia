@@ -55,6 +55,8 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             "initiator_user_id": configurable.get("initiator_user_id") or state_context.get("initiator_user_id"),
             "tenant_id": configurable.get("tenant_id") or state_context.get("tenant_id"),
             "user_id": configurable.get("user_id") or state_context.get("user_id"),
+            "agent_id": configurable.get("agent_id") or state_context.get("agent_id"),
+            "agent_slug": configurable.get("agent_slug") or state_context.get("agent_slug"),
             "token": configurable.get("auth_token") or state_context.get("token"),
             "state_context": state_context,
         }

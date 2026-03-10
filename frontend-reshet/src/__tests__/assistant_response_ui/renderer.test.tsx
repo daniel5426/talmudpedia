@@ -62,4 +62,41 @@ describe("AssistantResponseTimeline", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(onApprovalAction).toHaveBeenCalledWith("approve");
   });
+
+  it("only shimmers the latest active tool row while streaming", () => {
+    const blocks: ChatRenderBlock[] = [
+      {
+        id: "tool-1",
+        kind: "tool_call",
+        runId: "run-2",
+        seq: 1,
+        status: "running",
+        source: { event: "tool.started", stage: "tool" },
+        tool: {
+          toolCallId: "call-1",
+          toolName: "platform sdk",
+          title: "List agent nodes",
+        },
+      },
+      {
+        id: "tool-2",
+        kind: "tool_call",
+        runId: "run-2",
+        seq: 2,
+        status: "running",
+        source: { event: "tool.started", stage: "tool" },
+        tool: {
+          toolCallId: "call-2",
+          toolName: "platform sdk",
+          title: "Get agent schemas",
+        },
+      },
+    ];
+
+    const { container } = render(<AssistantResponseTimeline blocks={blocks} isLoading />);
+
+    expect(screen.getByText("List agent nodes").closest("p")?.className || "").not.toContain("text-transparent");
+    expect(screen.getByText("Get agent schemas").closest("p")?.className || "").toContain("text-transparent");
+    expect(container.querySelectorAll(".text-transparent").length).toBe(1);
+  });
 });

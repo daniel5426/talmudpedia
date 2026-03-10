@@ -1,0 +1,185 @@
+import uuid
+from types import SimpleNamespace
+
+import pytest
+
+from app.api.dependencies import get_current_principal
+from app.agent.executors.tool import ToolNodeExecutor
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.services.artifact_runtime.revision_service import ArtifactRevisionService
+from main import app
+
+
+async def _seed_tenant_context(db_session):
+    tenant = Tenant(id=uuid.uuid4(), name="Tool Tenant", slug=f"tool-{uuid.uuid4().hex[:8]}")
+    user = User(id=uuid.uuid4(), email=f"tool-{uuid.uuid4().hex[:6]}@example.com", role="admin")
+    org_unit = OrgUnit(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        name="Tool Org",
+        slug=f"tool-org-{uuid.uuid4().hex[:6]}",
+        type=OrgUnitType.org,
+    )
+    membership = OrgMembership(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        user_id=user.id,
+        org_unit_id=org_unit.id,
+        role=OrgRole.owner,
+        status=MembershipStatus.active,
+    )
+    db_session.add_all([tenant, user, org_unit, membership])
+    await db_session.commit()
+    return tenant, user
+
+
+def _override_principal(tenant_id, user):
+    async def _inner():
+        return {
+            "type": "user",
+            "user": user,
+            "user_id": str(user.id),
+            "tenant_id": str(tenant_id),
+            "scopes": ["tools.write"],
+        }
+
+    return _inner
+
+
+async def _create_published_artifact(db_session, tenant_id, created_by):
+    revisions = ArtifactRevisionService(db_session)
+    artifact = await revisions.create_artifact(
+        tenant_id=tenant_id,
+        created_by=created_by,
+        name=f"tool_artifact_{uuid.uuid4().hex[:8]}",
+        display_name="Tool Artifact",
+        description=None,
+        category="custom",
+        scope="tool",
+        input_type="any",
+        output_type="any",
+        source_code="def execute(context):\n    return {'ok': True}\n",
+        python_dependencies=[],
+        config_schema=[],
+        inputs=[],
+        outputs=[],
+        reads=[],
+        writes=[],
+    )
+    await revisions.publish_latest_draft(artifact)
+    await db_session.commit()
+    return artifact
+
+
+@pytest.mark.asyncio
+async def test_tool_publish_pins_artifact_revision_id(client, db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    artifact = await _create_published_artifact(db_session, tenant.id, user.id)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    try:
+        create_response = await client.post(
+            "/tools",
+            json={
+                "name": "Runtime Tool",
+                "slug": f"runtime-tool-{uuid.uuid4().hex[:6]}",
+                "description": "Tool backed by an artifact",
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"},
+                "scope": "tenant",
+                "artifact_id": str(artifact.id),
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        tool_id = create_response.json()["id"]
+
+        publish_response = await client.post(f"/tools/{tool_id}/publish")
+        assert publish_response.status_code == 200, publish_response.text
+        assert publish_response.json()["artifact_revision_id"] == str(artifact.latest_published_revision_id)
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_routes_tenant_artifact_tools_through_shared_runtime(monkeypatch):
+    tenant_id = uuid.uuid4()
+    revision_id = uuid.uuid4()
+    tool_id = uuid.uuid4()
+    captured = {}
+
+    async def fake_load_tool(self, tool_id_arg):
+        assert tool_id_arg == tool_id
+        return SimpleNamespace(
+            id=tool_id,
+            name="Artifact Tool",
+            slug="artifact-tool",
+            config_schema={},
+            implementation_type="artifact",
+            status="published",
+            is_active=True,
+            artifact_id=str(uuid.uuid4()),
+            artifact_version=None,
+            artifact_revision_id=revision_id,
+        )
+
+    async def fake_execute_live_run(self, **kwargs):
+        captured["runtime"] = kwargs
+        return SimpleNamespace(status="completed", result_payload={"answer": 42}, error_payload=None)
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+    monkeypatch.setattr(
+        "app.agent.executors.tool.ArtifactExecutionService.execute_live_run",
+        fake_execute_live_run,
+    )
+
+    executor = ToolNodeExecutor(tenant_id=tenant_id, db=None)
+    result = await executor.execute(
+        {},
+        {"tool_id": str(tool_id), "input": {"question": "life"}},
+        {"mode": "production", "run_id": "run-1", "agent_id": "agent-1", "agent_slug": "demo"},
+    )
+
+    assert result == {"answer": 42}
+    assert captured["runtime"]["domain"].value == "tool"
+    assert captured["runtime"]["queue_class"] == "artifact_prod_interactive"
+    assert captured["runtime"]["revision_id"] == revision_id
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_keeps_builtin_artifact_compatibility(monkeypatch):
+    tool_id = uuid.uuid4()
+
+    async def fake_load_tool(self, tool_id_arg):
+        assert tool_id_arg == tool_id
+        return SimpleNamespace(
+            id=tool_id,
+            name="Builtin Tool",
+            slug="builtin-tool",
+            config_schema={},
+            implementation_type="artifact",
+            status="published",
+            is_active=True,
+            artifact_id="builtin/platform_sdk",
+            artifact_version=None,
+            artifact_revision_id=None,
+        )
+
+    async def fake_artifact_execute(self, state, config, context):
+        return {"compat": True, "artifact_id": config["_artifact_id"]}
+
+    async def fail_execute_live_run(self, **kwargs):
+        raise AssertionError("Shared runtime should not be used for builtin artifacts")
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+    monkeypatch.setattr(
+        "app.agent.executors.artifact.ArtifactNodeExecutor.execute",
+        fake_artifact_execute,
+    )
+    monkeypatch.setattr(
+        "app.agent.executors.tool.ArtifactExecutionService.execute_live_run",
+        fail_execute_live_run,
+    )
+
+    executor = ToolNodeExecutor(tenant_id=uuid.uuid4(), db=None)
+    result = await executor.execute({}, {"tool_id": str(tool_id), "input": {"x": 1}}, {"mode": "production"})
+    assert result == {"compat": True, "artifact_id": "builtin/platform_sdk"}

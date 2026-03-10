@@ -13,6 +13,7 @@ import {
     ToolTypeBucket,
 } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -737,7 +738,7 @@ export default function ToolsPage() {
     return (
         <div className="flex flex-col h-full w-full" dir={direction}>
             {/* Header */}
-            <header className="h-12 shrink-0 bg-background px-4 flex items-center justify-between border-b border-border/40">
+            <AdminPageHeader>
                 <CustomBreadcrumb items={[{ label: "Tools Registry", href: "/admin/tools", active: true }]} />
                 <Button
                     size="sm"
@@ -747,7 +748,7 @@ export default function ToolsPage() {
                     <Plus className="h-3.5 w-3.5" />
                     New Tool
                 </Button>
-            </header>
+            </AdminPageHeader>
 
             {/* Body: sidebar nav + content */}
             <div className="flex-1 flex overflow-hidden">
@@ -854,7 +855,7 @@ export default function ToolsPage() {
                     </div>
 
                     {/* Tool list */}
-                    <main className="flex-1 overflow-y-auto">
+                    <main className="flex-1 overflow-y-auto" data-admin-page-scroll>
                         {loading ? (
                             <div>
                                 {Array.from({ length: 8 }).map((_, i) => (

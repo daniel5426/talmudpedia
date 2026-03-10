@@ -1,6 +1,12 @@
 # Auth Docs Guide
 
-Last Updated: 2026-03-09
+Last Updated: 2026-03-10
+
+This file is now a legacy location for the auth guide.
+
+For the current canonical auth entry points, read:
+- `docs/design-docs/auth_current.md`
+- `docs/references/auth_docs_guide.md`
 
 This folder contains the auth-specific backend documentation.
 

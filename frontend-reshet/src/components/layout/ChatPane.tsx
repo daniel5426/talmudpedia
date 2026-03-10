@@ -316,6 +316,7 @@ export function ChatWorkspace({
   noBackground = false,
   onOpenArtifact,
   isArtifactMessage,
+  conversationScrollClassName,
 }: {
   controller: ReturnType<typeof useChatController>;
   chatId?: string;
@@ -325,6 +326,7 @@ export function ChatWorkspace({
   noBackground?: boolean;
   onOpenArtifact?: (messageId: string, content: string) => void;
   isArtifactMessage?: (content: string) => boolean;
+  conversationScrollClassName?: string;
 }) {
   // Auto (Agent Router) - Extract controller methods and state
   const {
@@ -558,7 +560,10 @@ export function ChatWorkspace({
       {isEmptyState && containerWidth >= 650 && !noBackground && (
         <BackgroundLogos />
       )}
-      <ConversationContent className={cn("flex-1 p-0 pt-13", !isEmptyState && "pb-30", isEmptyState && "h-full justify-center relative z-10")}>
+      <ConversationContent
+        scrollClassName={conversationScrollClassName}
+        className={cn("flex-1 p-0 pt-13", !isEmptyState && "pb-30", isEmptyState && "h-full justify-center relative z-10")}
+      >
         {isEmptyState ? (
           <div className="flex w-full flex-col items-center text-center pb-34 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <p className="text-3xl font-semibold pb-6">
@@ -637,7 +642,7 @@ export function ChatWorkspace({
                                   <AssistantResponseTimeline
                                     blocks={responseBlocks}
                                     onApprovalAction={handleApprovalClick}
-                                    isLoading={isLoading}
+                                    isLoading={isLoading && msg.id === activeStreamingId}
                                   />
                                 </div>
                               );
@@ -908,8 +913,8 @@ export function ChatWorkspace({
       </ConversationContent>
 
       {!isEmptyState && (
-        <>
-          <ConversationScrollButton />
+        <div className="relative">
+          <ConversationScrollButton className="bottom-full mb-3" />
           <BotInputArea
             textareaRef={textareaRef}
             handleSubmit={handleSubmit}
@@ -919,7 +924,7 @@ export function ChatWorkspace({
             onToggleVoiceMode={handleToggleVoiceMode}
             analyser={analyser}
           />
-        </>
+        </div>
       )}
     </div>
   );

@@ -26,6 +26,7 @@ from app.db.postgres.models.registry import (
     ToolVersion,
 )
 from app.db.postgres.session import get_db
+from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.builtin_tools import is_builtin_tools_v1_enabled
 
 router = APIRouter(prefix="/tools", tags=["tools"])
@@ -116,6 +117,7 @@ class ToolResponse(BaseModel):
     tool_type: str
     artifact_id: Optional[str] = None
     artifact_version: Optional[str] = None
+    artifact_revision_id: Optional[uuid.UUID] = None
     builtin_key: Optional[str] = None
     builtin_template_id: Optional[uuid.UUID] = None
     is_builtin_template: bool = False
@@ -325,6 +327,7 @@ def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
         tool_type=_get_tool_type(tool, impl_type),
         artifact_id=getattr(tool, "artifact_id", None),
         artifact_version=getattr(tool, "artifact_version", None),
+        artifact_revision_id=getattr(tool, "artifact_revision_id", None),
         builtin_key=getattr(tool, "builtin_key", None),
         builtin_template_id=getattr(tool, "builtin_template_id", None),
         is_builtin_template=_is_builtin_template(tool),
@@ -371,6 +374,59 @@ def _enum_name(value: ToolImplementationType | ToolStatus | ToolDefinitionScope 
     return str(value)
 
 
+def _parse_uuid(raw: Any) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(raw))
+    except Exception:
+        return None
+
+
+def _resolve_artifact_binding(
+    *,
+    artifact_id: Optional[str],
+    artifact_version: Optional[str],
+    config_schema: Optional[dict],
+    implementation_type: Optional[ToolImplementationType],
+) -> tuple[Optional[str], Optional[str]]:
+    if artifact_id:
+        return artifact_id, artifact_version
+
+    impl_type = implementation_type.value if hasattr(implementation_type, "value") else implementation_type
+    impl_config = (config_schema or {}).get("implementation") if isinstance(config_schema, dict) else {}
+    if str(impl_type or "").lower() == ToolImplementationType.ARTIFACT.value.lower() and isinstance(impl_config, dict):
+        artifact_ref = impl_config.get("artifact_id")
+        if artifact_ref:
+            return str(artifact_ref), impl_config.get("artifact_version")
+    return None, None
+
+
+async def _resolve_tool_artifact_revision_id(
+    *,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    tool: ToolRegistry,
+) -> uuid.UUID | None:
+    artifact_id, _artifact_version = _resolve_artifact_binding(
+        artifact_id=getattr(tool, "artifact_id", None),
+        artifact_version=getattr(tool, "artifact_version", None),
+        config_schema=getattr(tool, "config_schema", None),
+        implementation_type=getattr(tool, "implementation_type", None),
+    )
+    artifact_uuid = _parse_uuid(artifact_id)
+    if artifact_uuid is None:
+        return None
+
+    artifact = await ArtifactRegistryService(db).get_tenant_artifact(
+        artifact_id=artifact_uuid,
+        tenant_id=tenant_id,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=400, detail="Artifact-backed tool references an artifact outside tenant scope")
+    if artifact.latest_published_revision_id is None:
+        raise HTTPException(status_code=400, detail="Artifact-backed tool requires a published artifact revision before publish")
+    return artifact.latest_published_revision_id
+
+
 async def _publish_tool(
     *,
     db: AsyncSession,
@@ -388,6 +444,11 @@ async def _publish_tool(
         db=db,
     )
 
+    tool.artifact_revision_id = await _resolve_tool_artifact_revision_id(
+        db=db,
+        tenant_id=tenant_id,
+        tool=tool,
+    )
     tool.status = ToolStatus.PUBLISHED
     tool.is_active = True
     tool.published_at = tool.published_at or datetime.utcnow()
@@ -397,6 +458,9 @@ async def _publish_tool(
         "config_schema": tool.config_schema or {},
         "implementation_type": _enum_name(tool.implementation_type),
         "version": tool.version,
+        "artifact_id": tool.artifact_id,
+        "artifact_version": tool.artifact_version,
+        "artifact_revision_id": str(tool.artifact_revision_id) if tool.artifact_revision_id else None,
     }
     actor = tenant_ctx.get("user")
     db.add(
@@ -632,6 +696,7 @@ async def create_tool(
         published_at=None,
         artifact_id=request.artifact_id,
         artifact_version=request.artifact_version,
+        artifact_revision_id=None,
         builtin_key=None,
         builtin_template_id=None,
         is_builtin_template=False,
@@ -705,12 +770,23 @@ async def update_tool(
         implementation_type=request.implementation_type,
     )
 
+    artifact_binding_changed = False
     if request.artifact_id is not None:
+        if request.artifact_id != tool.artifact_id:
+            artifact_binding_changed = True
         tool.artifact_id = request.artifact_id
     if request.artifact_version is not None:
+        if request.artifact_version != tool.artifact_version:
+            artifact_binding_changed = True
         tool.artifact_version = request.artifact_version
+    if request.implementation_config is not None:
+        current_impl = (tool.config_schema or {}).get("implementation") if isinstance(tool.config_schema, dict) else {}
+        if current_impl != request.implementation_config:
+            artifact_binding_changed = True
     if request.implementation_type is not None:
         tool.implementation_type = request.implementation_type
+    if artifact_binding_changed:
+        tool.artifact_revision_id = None
 
     if request.status is not None:
         if request.status == ToolStatus.PUBLISHED and _status_value(tool) != "published":
@@ -801,6 +877,9 @@ async def create_tool_version(
         "config_schema": tool.config_schema or {},
         "implementation_type": _enum_name(tool.implementation_type),
         "version": new_version,
+        "artifact_id": tool.artifact_id,
+        "artifact_version": tool.artifact_version,
+        "artifact_revision_id": str(tool.artifact_revision_id) if tool.artifact_revision_id else None,
     }
     actor = tenant_ctx.get("user")
     db.add(
