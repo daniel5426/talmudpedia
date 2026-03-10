@@ -26,6 +26,8 @@ backend/app/api/routers/published_apps_host_runtime.py
 backend/app/api/routers/agent_graph_mutations.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
+backend/app/api/routers/artifacts.py
+backend/app/api/routers/artifact_runs.py
 backend/app/api/schemas/
 
 backend/app/core/
@@ -101,6 +103,7 @@ backend/app/db/postgres/
 backend/app/db/postgres/engine.py
 backend/app/db/postgres/session.py
 backend/app/db/postgres/models/
+backend/app/db/postgres/models/artifact_runtime.py
 backend/app/db/postgres/models/agent_threads.py
 backend/app/db/postgres/models/usage_quota.py
 backend/app/db/postgres/seeds/
@@ -111,6 +114,7 @@ backend/app/services/security_bootstrap_service.py
 backend/app/services/retrieval_service.py
 backend/app/services/rag_admin_service.py
 backend/app/services/model_resolver.py
+backend/app/services/model_temperature_policy.py
 backend/app/services/credentials_service.py
 backend/app/services/integration_provider_catalog.py
 backend/app/services/registry_seeding.py
@@ -121,6 +125,14 @@ backend/app/services/agent_graph_mutation_service.py
 backend/app/services/rag_graph_mutation_service.py
 backend/app/services/tool_function_registry.py
 backend/app/services/artifact_registry.py
+backend/app/services/artifact_runtime/
+backend/app/services/artifact_runtime/registry_service.py
+backend/app/services/artifact_runtime/revision_service.py
+backend/app/services/artifact_runtime/bundle_builder.py
+backend/app/services/artifact_runtime/bundle_storage.py
+backend/app/services/artifact_runtime/execution_service.py
+backend/app/services/artifact_runtime/run_service.py
+backend/app/services/artifact_runtime/difysandbox_client.py
 backend/app/services/builtin_tools.py
 backend/app/services/delegation_service.py
 backend/app/services/workload_provisioning_service.py
@@ -183,8 +195,15 @@ backend/app/middleware/published_apps_host_runtime.py
 backend/app/workers/
 backend/app/workers/celery_app.py
 backend/app/workers/tasks.py
+backend/app/workers/artifact_tasks.py
 backend/app/workers/job_manager.py
 backend/app/workers/livekit_worker.py
+
+backend/app/artifact_worker/
+backend/app/artifact_worker/router.py
+backend/app/artifact_worker/executor.py
+backend/app/artifact_worker/bundle_cache.py
+backend/app/artifact_worker/difysandbox_adapter.py
 
 backend/app/templates/
 

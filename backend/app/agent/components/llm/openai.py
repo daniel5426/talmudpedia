@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from openai import AsyncOpenAI, Timeout
 
 from app.agent.core.interfaces import LLMProvider
+from app.services.model_temperature_policy import normalize_temperature_for_model
 
 
 class OpenAILLM(LLMProvider):
@@ -65,11 +66,17 @@ class OpenAILLM(LLMProvider):
             input_messages.append({"role": "user", "content": system_prompt}) # Using user role for system prompt as per original agent.py pattern often seen with o1/reasoning models
         
         input_messages.extend(self._convert_messages(messages))
+        request_kwargs = {**self.default_kwargs, **kwargs}
+        request_kwargs["temperature"] = normalize_temperature_for_model(
+            provider="openai",
+            model_name=self.model,
+            temperature=request_kwargs.get("temperature"),
+        )
 
         response = await self.client.responses.create(
             model=self.model,
             input=input_messages,
-            **kwargs
+            **request_kwargs
         )
         
         # Extract content - this depends on the specific response structure of this API
@@ -122,7 +129,13 @@ class OpenAILLM(LLMProvider):
         input_messages.extend(self._convert_messages(messages))
 
         # Default reasoning config
-        reasoning_config = kwargs.pop("reasoning", {"effort": "low", "summary": "auto"})
+        request_kwargs = {**self.default_kwargs, **kwargs}
+        request_kwargs["temperature"] = normalize_temperature_for_model(
+            provider="openai",
+            model_name=self.model,
+            temperature=request_kwargs.get("temperature"),
+        )
+        reasoning_config = request_kwargs.pop("reasoning", {"effort": "low", "summary": "auto"})
 
         try:
             stream = await self.client.responses.create(
@@ -131,7 +144,7 @@ class OpenAILLM(LLMProvider):
                 input=input_messages,
                 include=["reasoning.encrypted_content"],
                 stream=True,
-                **kwargs
+                **request_kwargs
             )
         except Exception as e:
             err = str(e)
@@ -143,7 +156,7 @@ class OpenAILLM(LLMProvider):
                         reasoning=reasoning_config,
                         input=input_messages,
                         stream=True,
-                        **kwargs
+                        **request_kwargs
                     )
                 except Exception as e2:
                     err2 = str(e2)
@@ -152,7 +165,7 @@ class OpenAILLM(LLMProvider):
                             model=self.model,
                             input=input_messages,
                             stream=True,
-                            **kwargs
+                            **request_kwargs
                         )
                     else:
                         raise
@@ -161,7 +174,7 @@ class OpenAILLM(LLMProvider):
                     model=self.model,
                     input=input_messages,
                     stream=True,
-                    **kwargs
+                    **request_kwargs
                 )
             else:
                 raise

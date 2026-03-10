@@ -360,7 +360,7 @@ function PipelineBuilderInner({
         isExecutionMode={isExecutionMode}
       />
 
-      <div className="relative flex-1 bg-muted/40" ref={reactFlowWrapper}>
+      <div className="relative flex-1 rounded-2xl bg-muted/40" ref={reactFlowWrapper}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -389,7 +389,7 @@ function PipelineBuilderInner({
             variant={BackgroundVariant.Dots}
             gap={20}
             size={1}
-            className="opacity-100"
+            className="opacity-0"
           />
 
           {/* Shared Toolbar Component */}

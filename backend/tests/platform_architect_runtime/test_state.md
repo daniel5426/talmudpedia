@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-03-08
+Last Updated: 2026-03-10
 
 ## Scope
 - Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
@@ -28,11 +28,12 @@ Last Updated: 2026-03-08
 - Platform architect domain schema includes `agents.nodes.catalog/schema/validate` action contracts.
 - Platform architect domain schema now includes `rag.operators.catalog/schema` action contracts for RAG-native discovery.
 - Seeded architect runtime no longer forces JSON-only output in prompt or node config.
+- Seeded architect runtime now defaults `temperature` to `1`.
 
 ## Last run command + date/time + result
-- Command: `cd backend && pytest -q tests/platform_architect_runtime/test_architect_seeding.py tests/platform_architect_runtime/test_platform_architect_runtime.py tests/platform_sdk_tool/test_platform_sdk_actions.py tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
-- Date/Time: 2026-03-08
-- Result: passed (`94 passed, 1 warning`)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-03-10 19:02 EET
+- Result: passed (`3 passed, 1 warning`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.

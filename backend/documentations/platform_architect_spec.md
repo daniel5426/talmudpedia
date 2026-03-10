@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-08
+Last Updated: 2026-03-10
 
 ## Purpose
 This is the single authoritative spec for the Platform Architect.
@@ -46,6 +46,14 @@ Architect seeding:
 Primary implementation files:
 - `backend/app/services/registry_seeding.py`
 - `backend/app/services/platform_architect_contracts.py`
+
+Seeded runtime defaults:
+- `architect_runtime.config.temperature = 1`
+- `architect_runtime.config.reasoning_effort = medium`
+
+Shared model fallback:
+- backend runtime normalizes `temperature` to `1` for OpenAI/Azure model families that only accept `1` today (`gpt-5*`, `o1*`, `o3*`, `o4*`)
+- this normalization is shared at the LLM provider layer and is not architect-specific
 
 ### Runtime loop
 The architect runtime follows this direct loop:

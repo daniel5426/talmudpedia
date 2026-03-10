@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
-import { artifactsService, Artifact, ArtifactType, ArtifactScope, ArtifactTestResponse } from "@/services/artifacts"
+import { artifactsService, Artifact, ArtifactScope } from "@/services/artifacts"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
@@ -33,25 +33,13 @@ import {
     Edit,
     Loader2,
     Save,
-    ArrowLeft,
     Code2,
     Settings2,
     X,
-    Lock,
-    Link,
     Play,
-    Terminal,
-    ChevronUp,
-    ChevronDown,
     Zap,
-    CheckCircle2,
-    XCircle,
-    Clock,
     Maximize2,
     Minimize2,
-    Braces,
-    FileCode,
-    Database,
     Package,
 } from "lucide-react"
 import { CodeEditor } from "@/components/ui/code-editor"
@@ -59,6 +47,7 @@ import { JsonEditor } from "@/components/ui/json-editor"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
+import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
 
 type ViewMode = "list" | "create" | "edit"
 
@@ -75,6 +64,7 @@ const SCOPES = [
     { value: "rag", label: "RAG" },
     { value: "agent", label: "Agent" },
     { value: "both", label: "Both" },
+    { value: "tool", label: "Tool" },
 ]
 
 const DATA_TYPES = [
@@ -157,13 +147,6 @@ export default function ArtifactsPage() {
     const [slugError, setSlugError] = useState<string | null>(null)
     const [isSchemaMaximized, setIsSchemaMaximized] = useState(false)
 
-    // Test Panel States
-    const [isTestPanelOpen, setIsTestPanelOpen] = useState(false)
-    const [isTesting, setIsTesting] = useState(false)
-    const [testInput, setTestInput] = useState('[\n  {\n    "text": "Hello world",\n    "metadata": {}\n  }\n]')
-    const [testConfig, setTestConfig] = useState("{\n  \n}")
-    const [testResult, setTestResult] = useState<ArtifactTestResponse | null>(null)
-    const [testTab, setTestTab] = useState("input")
     const [promotingId, setPromotingId] = useState<string | null>(null)
 
     const slugify = (text: string) => text.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/__+/g, "_").replace(/^_|_$/g, "")
@@ -254,11 +237,6 @@ export default function ArtifactsPage() {
         setViewMode("edit")
     }
 
-    const handleBack = () => {
-        setViewModeWithUrl("list")
-        setSelectedArtifact(null)
-    }
-
     const handleSave = async () => {
         if (!formData.display_name.trim()) {
             alert("Please enter a display name")
@@ -277,21 +255,21 @@ export default function ArtifactsPage() {
             let outputs = []
             try {
                 configSchema = JSON.parse(formData.config_schema || "[]")
-            } catch (e) {
+            } catch {
                 alert("Invalid Parameters JSON")
                 setSaving(false)
                 return
             }
             try {
                 inputs = JSON.parse(formData.inputs || "[]")
-            } catch (e) {
+            } catch {
                 alert("Invalid Inputs JSON")
                 setSaving(false)
                 return
             }
             try {
                 outputs = JSON.parse(formData.outputs || "[]")
-            } catch (e) {
+            } catch {
                 alert("Invalid Outputs JSON")
                 setSaving(false)
                 return
@@ -317,37 +295,6 @@ export default function ArtifactsPage() {
             alert("Failed to save artifact")
         } finally {
             setSaving(false)
-        }
-    }
-
-    const handleTestRun = async () => {
-        setIsTesting(true)
-        setTestTab("output")
-        try {
-            let inputData, config
-            try { inputData = JSON.parse(testInput) } catch (e) { alert("Invalid Input JSON"); setIsTesting(false); setTestTab("input"); return; }
-            try { config = JSON.parse(testConfig) } catch (e) { alert("Invalid Config JSON"); setIsTesting(false); setTestTab("config"); return; }
-
-            const response = await artifactsService.test({
-                artifact_id: selectedArtifact?.id,
-                python_code: formData.python_code,
-                input_data: inputData,
-                config: config,
-                input_type: formData.input_type,
-                output_type: formData.output_type,
-            }, currentTenant?.slug)
-
-            setTestResult(response)
-        } catch (error) {
-            console.error("Test execution failed", error)
-            setTestResult({
-                success: false,
-                data: null,
-                error_message: error instanceof Error ? error.message : "Unknown error",
-                execution_time_ms: 0,
-            })
-        } finally {
-            setIsTesting(false)
         }
     }
 
@@ -444,15 +391,13 @@ export default function ArtifactsPage() {
                     <Button
                         size="sm"
                         variant="outline"
-                        onClick={handleTestRun}
-                        disabled={isTesting}
+                        onClick={() => {
+                            const executeButton = document.getElementById("artifact-test-panel-execute")
+                            executeButton?.click()
+                        }}
                         className="bg-primary/5 border-primary/20 text-primary hover:bg-primary/10"
                     >
-                        {isTesting ? (
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                            <Play className="h-4 w-4 mr-2 fill-current" />
-                        )}
+                        <Play className="h-4 w-4 mr-2 fill-current" />
                         Test
                     </Button>
 
@@ -468,14 +413,6 @@ export default function ArtifactsPage() {
             )}
         </header>
     )
-
-    const getTypeIcon = (type: ArtifactType) => {
-        switch (type) {
-            case "draft": return <Database className="h-3 w-3" />;
-            case "promoted": return <FileCode className="h-3 w-3" />;
-            case "builtin": return <Package className="h-3 w-3" />;
-        }
-    }
 
     const renderList = () => (
         <div className="space-y-6 p-4">
@@ -780,73 +717,6 @@ export default function ArtifactsPage() {
         </div>
     )
 
-    const renderTestPanel = () => (
-        <div className={cn("border-t bg-background flex flex-col transition-all duration-300", isTestPanelOpen ? "h-[400px]" : "h-10")}>
-            <div className="h-10 px-4 flex items-center justify-between border-b bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors" onClick={() => setIsTestPanelOpen(!isTestPanelOpen)}>
-                <div className="flex items-center gap-3">
-                    <Terminal className="h-4 w-4 text-primary" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Test Runtime</span>
-                    {testResult && (
-                        <Badge variant={testResult.success ? "secondary" : "destructive"} className="h-5 text-[10px] gap-1 px-2 border-none">
-                            {testResult.success ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                            {testResult.success ? `Ready (${testResult.execution_time_ms.toFixed(1)}ms)` : "Error"}
-                        </Badge>
-                    )}
-                </div>
-                {isTestPanelOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-            </div>
-
-            {isTestPanelOpen && (
-                <div className="flex-1 flex overflow-hidden">
-                    <Tabs value={testTab} onValueChange={setTestTab} className="flex-1 flex flex-col">
-                        <div className="flex items-center justify-between px-2 py-1 bg-muted/10 border-b">
-                            <TabsList className="bg-transparent h-8 gap-0.5">
-                                <TabsTrigger value="input" className="text-[11px] h-7 px-3">Input Data (JSON)</TabsTrigger>
-                                <TabsTrigger value="config" className="text-[11px] h-7 px-3">Runtime Config</TabsTrigger>
-                                <TabsTrigger value="output" className="text-[11px] h-7 px-3">Trace Output</TabsTrigger>
-                            </TabsList>
-                            <Button size="sm" onClick={(e) => { e.stopPropagation(); handleTestRun(); }} disabled={isTesting} className="h-7 px-4 text-xs">
-                                {isTesting ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : <Play className="h-3.3 w-3.5 fill-current mr-2" />}
-                                Execute
-                            </Button>
-                        </div>
-                        <div className="flex-1 min-h-0 relative">
-                            <TabsContent value="input" className="absolute inset-0 m-0">
-                                <CodeEditor value={testInput} onChange={setTestInput} language="json" className="h-full" />
-                            </TabsContent>
-                            <TabsContent value="config" className="absolute inset-0 m-0">
-                                <CodeEditor value={testConfig} onChange={setTestConfig} language="json" className="h-full" />
-                            </TabsContent>
-                            <TabsContent value="output" className="absolute inset-0 m-0 p-4 font-mono text-sm overflow-auto transition-colors">
-                                {isTesting ? (
-                                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
-                                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                                        <span className="animate-pulse">Synthesizing execution environment...</span>
-                                    </div>
-                                ) : testResult ? (
-                                    <div className="space-y-4">
-                                        {testResult.success ? (
-                                            <pre className="text-emerald-400 whitespace-pre-wrap">{JSON.stringify(testResult.data, null, 2)}</pre>
-                                        ) : (
-                                            <div className="text-rose-400">
-                                                <p className="font-bold underline mb-2">Execution Failed:</p>
-                                                <pre className="whitespace-pre-wrap">{testResult.error_message}</pre>
-                                            </div>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                                        <span>No execution trace yet. Click "Execute" to start session.</span>
-                                    </div>
-                                )}
-                            </TabsContent>
-                        </div>
-                    </Tabs>
-                </div>
-            )}
-        </div>
-    )
-
     if (loading) return (
         <div className="p-8 space-y-6 w-full">
             <div className="flex items-center gap-4"><Skeleton className="h-10 w-10 rounded-full" /><div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-64" /></div></div>
@@ -870,7 +740,13 @@ export default function ArtifactsPage() {
                         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                             {renderEditor()}
                         </div>
-                        {renderTestPanel()}
+                        <ArtifactTestPanel
+                            tenantSlug={currentTenant?.slug}
+                            artifactId={selectedArtifact?.id}
+                            pythonCode={formData.python_code}
+                            inputType={formData.input_type}
+                            outputType={formData.output_type}
+                        />
                     </>
                 )}
             </div>

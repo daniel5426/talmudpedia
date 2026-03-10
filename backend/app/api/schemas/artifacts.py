@@ -13,6 +13,7 @@ class ArtifactScope(str, Enum):
     RAG = "rag"
     AGENT = "agent"
     BOTH = "both"
+    TOOL = "tool"
 
 class ArtifactConfigField(BaseModel):
     name: str
@@ -107,7 +108,50 @@ class ArtifactTestResponse(BaseModel):
     data: Optional[Any] = None
     error_message: Optional[str] = None
     execution_time_ms: float = 0.0
+    run_id: Optional[str] = None
+    error_payload: Optional[Dict[str, Any]] = None
+    stdout_excerpt: Optional[str] = None
+    stderr_excerpt: Optional[str] = None
 
 class ArtifactPromoteRequest(BaseModel):
     namespace: str = "custom"
     version: Optional[str] = None
+
+
+class ArtifactRunStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCELLED = "cancelled"
+
+
+class ArtifactRunSchema(BaseModel):
+    id: str
+    artifact_id: Optional[str] = None
+    revision_id: str
+    domain: str
+    status: ArtifactRunStatus
+    queue_class: str
+    result_payload: Optional[Dict[str, Any]] = None
+    error_payload: Optional[Dict[str, Any]] = None
+    stdout_excerpt: Optional[str] = None
+    stderr_excerpt: Optional[str] = None
+    duration_ms: Optional[int] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
+class ArtifactRunCreateResponse(BaseModel):
+    run_id: str
+    status: ArtifactRunStatus
+
+
+class ArtifactRunEventSchema(BaseModel):
+    id: str
+    sequence: int
+    timestamp: Optional[datetime] = None
+    event_type: str
+    payload: Dict[str, Any] = Field(default_factory=dict)

@@ -7,7 +7,6 @@ import { ragAdminService, VisualPipeline, OperatorCatalog, OperatorSpec, Compile
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
     Dialog,
     DialogContent,
@@ -29,6 +28,7 @@ import {
 import { PipelineBuilder } from "@/components/pipeline"
 import { RunPipelineDialog } from "@/components/pipeline/RunPipelineDialog"
 import { Node, Edge } from "@xyflow/react"
+import { HeaderConfigEditor } from "@/components/builder"
 
 interface PipelineNodeData {
     operator: string
@@ -398,84 +398,90 @@ export default function PipelineEditorPage() {
 
     return (
         <div className="flex flex-col h-full w-full">
-            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
-                <div className="flex items-center gap-3">
-                    <CustomBreadcrumb
-                        items={[
-                            { label: "RAG Management", href: "/admin/rag" },
-                            { label: "Pipelines", href: "/admin/pipelines" },
-                            { label: isNew ? "New Pipeline" : pipelineName || "Edit Pipeline", active: true },
-                        ]}
-                    />
-                </div>
-                <div className="flex items-center gap-2">
-                    <Input
-                        value={pipelineName}
-                        onChange={(e) => setPipelineName(e.target.value)}
-                        placeholder="Pipeline name"
-                        className="w-48 h-9"
-                    />
-                    <Input
-                        value={pipelineDescription}
-                        onChange={(e) => setPipelineDescription(e.target.value)}
-                        placeholder="Description (optional)"
-                        className="w-64 h-9 hidden md:block"
-                    />
-                    {!isNew ? (
-                        <div className="flex items-center px-2 py-1 bg-muted/50 rounded-md border border-border/50">
-                            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mr-2">Type</span>
+            <header className="shrink-0 bg-background z-[70]">
+                <div className="flex h-12 items-center justify-between gap-4 px-4">
+                    <div className="flex items-center gap-3">
+                        <CustomBreadcrumb
+                            items={[
+                                { label: "Pipelines", href: "/admin/pipelines" },
+                                { label: isNew ? "New Pipeline" : pipelineName || "Edit Pipeline", active: true },
+                            ]}
+                        />
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <HeaderConfigEditor
+                            name={pipelineName}
+                            description={pipelineDescription}
+                            onNameChange={setPipelineName}
+                            onDescriptionChange={setPipelineDescription}
+                            nameLabel="Pipeline name"
+                            descriptionLabel="Description"
+                            namePlaceholder="Pipeline name"
+                            descriptionPlaceholder="What this pipeline ingests or retrieves."
+                            triggerLabel="Edit details"
+                            defaultOpen={isNew}
+                        />
+                        {!isNew ? (
                             <Badge variant="outline" className={cn(
-                                "h-5 text-[9px] px-1.5 uppercase font-bold border-none",
-                                pipelineType === "retrieval" ? "bg-purple-500/10 text-purple-600" : "bg-blue-500/10 text-blue-600"
+                                "h-8 rounded-md border px-3 text-xs font-medium capitalize shadow-none",
+                                pipelineType === "retrieval"
+                                    ? "border-purple-200 bg-purple-500/10 text-purple-700"
+                                    : "border-blue-200 bg-blue-500/10 text-blue-700"
                             )}>
-                                {pipelineType}
+                                    {pipelineType}
                             </Badge>
-                        </div>
-                    ) : (
-                        <div className="flex bg-muted/50 p-1 rounded-md h-9 items-center">
+                        ) : (
+                            <div className="flex h-8 items-center gap-1 rounded-md border border-border/50 bg-muted/40 p-0.5">
+                                <Button
+                                    variant={pipelineType === "ingestion" ? "secondary" : "ghost"}
+                                    size="sm"
+                                    className={cn(
+                                        "h-7 rounded-sm px-3 text-xs shadow-none",
+                                        pipelineType === "ingestion" ? "bg-background" : "text-muted-foreground"
+                                    )}
+                                    onClick={() => setPipelineType("ingestion")}
+                                >
+                                    Ingestion
+                                </Button>
+                                <Button
+                                    variant={pipelineType === "retrieval" ? "secondary" : "ghost"}
+                                    size="sm"
+                                    className={cn(
+                                        "h-7 rounded-sm px-3 text-xs shadow-none",
+                                        pipelineType === "retrieval" ? "bg-background" : "text-muted-foreground"
+                                    )}
+                                    onClick={() => setPipelineType("retrieval")}
+                                >
+                                    Retrieval
+                                </Button>
+                            </div>
+                        )}
+                        <div className="mx-1 h-6 w-px bg-border" />
+                        {!isNew && pipeline && (
                             <Button
-                                variant={pipelineType === "ingestion" ? "secondary" : "ghost"}
+                                variant="outline"
                                 size="sm"
-                                className="h-7 text-[10px] px-2 rounded-sm"
-                                onClick={() => setPipelineType("ingestion")}
+                                className="h-8 rounded-md text-xs shadow-none"
+                                onClick={handleCompile}
+                                disabled={compiling}
                             >
-                                Ingestion
+                                {compiling ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                    <Play className="h-4 w-4 mr-2" />
+                                )}
+                                Compile
                             </Button>
-                            <Button
-                                variant={pipelineType === "retrieval" ? "secondary" : "ghost"}
-                                size="sm"
-                                className="h-7 text-[10px] px-2 rounded-sm"
-                                onClick={() => setPipelineType("retrieval")}
-                            >
-                                Retrieval
-                            </Button>
-                        </div>
-                    )}
-                    <div className="w-px h-6 bg-border mx-1" />
-                    {!isNew && pipeline && (
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-9"
-                            onClick={handleCompile}
-                            disabled={compiling}
-                        >
-                            {compiling ? (
+                        )}
+                        <Button size="sm" onClick={handleSave} disabled={saving} className="h-8 rounded-md text-xs shadow-none">
+                            {saving ? (
                                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             ) : (
-                                <Play className="h-4 w-4 mr-2" />
+                                <Save className="h-4 w-4 mr-2" />
                             )}
-                            Compile
+                            Save
                         </Button>
-                    )}
-                    <Button size="sm" onClick={handleSave} disabled={saving} className="h-9">
-                        {saving ? (
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                            <Save className="h-4 w-4 mr-2" />
-                        )}
-                        Save
-                    </Button>
+                    </div>
                 </div>
             </header>
 

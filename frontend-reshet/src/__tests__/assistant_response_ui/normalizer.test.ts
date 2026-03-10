@@ -110,8 +110,73 @@ describe("chat presentation normalizer", () => {
 
     expect(blocks.map((block) => block.kind)).toEqual(["tool_call", "assistant_text"]);
     expect(blocks[0].kind).toBe("tool_call");
-    expect(blocks[0].tool.title).toBe("Validate agent graph");
+    expect(blocks[0].tool.title).toBe("Validate agent nodes");
+    expect(blocks[0].tool.displayName).toBe("Validate agent graph");
     expect(blocks[1].kind).toBe("assistant_text");
+  });
+
+  it("shortens verbose platform sdk summaries into shared action titles", () => {
+    const blocks = sortChatRenderBlocks(
+      applyRunStreamEventToBlocks(
+        [],
+        adaptRunStreamEvent(
+          {
+            version: "run-stream.v2",
+            seq: 1,
+            ts: "2026-03-10T10:00:00Z",
+            event: "tool.started",
+            run_id: "run-2",
+            stage: "tool",
+            payload: {
+              span_id: "call-2",
+              tool: "platform sdk",
+              tool_slug: "platform-rag",
+              action: "rag.operators.schema",
+              display_name: "Resolve schemas/contracts for multiple RAG operators in one call, including config schema and exact visual-node/create contract shape.",
+              summary: "Resolve schemas/contracts for multiple RAG operators in one call, including config schema and exact visual-node/create contract shape.",
+            },
+            diagnostics: [],
+          },
+          0,
+        ),
+      ),
+    );
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].kind).toBe("tool_call");
+    expect(blocks[0].tool.title).toBe("Get RAG operator schemas");
+    expect(blocks[0].tool.summary).toContain("Resolve schemas/contracts for multiple RAG operators");
+  });
+
+  it("adapts persisted trace tool lifecycle events back into tool-call blocks", () => {
+    const blocks = sortChatRenderBlocks(
+      applyRunStreamEventToBlocks(
+        [],
+        adaptRunStreamEvent(
+          {
+            sequence: 7,
+            timestamp: "2026-03-10T12:00:00Z",
+            event: "on_tool_start",
+            source_run_id: "run-trace-1",
+            span_id: "trace-call-1",
+            name: "platform sdk",
+            data: {
+              input: { action: "rag.operators.catalog" },
+              tool_slug: "platform-rag",
+              action: "rag.operators.catalog",
+              display_name: "List available RAG operators with categories, summaries, and required fields.",
+              summary: "List available RAG operators with categories, summaries, and required fields.",
+            },
+          },
+          0,
+        ),
+      ),
+    );
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].kind).toBe("tool_call");
+    expect(blocks[0].tool.title).toBe("List RAG operators");
+    expect(blocks[0].tool.toolCallId).toBe("trace-call-1");
   });
 
   it("extracts user-facing text from architect envelopes and falls back safely", () => {

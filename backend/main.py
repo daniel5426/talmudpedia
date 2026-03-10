@@ -53,6 +53,22 @@ def _auto_infra_bootstrap_enabled() -> bool:
     return True
 
 
+def _artifact_runtime_auto_bootstrap_enabled() -> bool:
+    explicit = os.getenv("ARTIFACT_RUNTIME_AUTO_BOOTSTRAP")
+    if explicit is not None:
+        return _is_truthy(explicit)
+    return _auto_infra_bootstrap_enabled()
+
+
+def _configure_local_artifact_runtime_if_needed() -> None:
+    if not _artifact_runtime_auto_bootstrap_enabled():
+        return
+    if not (os.getenv("ARTIFACT_WORKER_CLIENT_MODE") or "").strip():
+        os.environ["ARTIFACT_WORKER_CLIENT_MODE"] = "direct"
+    if os.getenv("ARTIFACT_RUN_TASK_EAGER") is None:
+        os.environ["ARTIFACT_RUN_TASK_EAGER"] = "0"
+
+
 def _is_port_open(host: str, port: int, timeout_seconds: float = 0.35) -> bool:
     try:
         with socket.create_connection((host, int(port)), timeout=timeout_seconds):
@@ -455,6 +471,22 @@ def _celery_worker_running() -> bool:
     return result.returncode == 0
 
 
+def _artifact_celery_worker_running() -> bool:
+    if shutil.which("pgrep") is None:
+        return False
+    result = subprocess.run(
+        [
+            "pgrep",
+            "-f",
+            "celery -A app.workers.celery_app.celery_app worker.*artifact_test",
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
 def _ensure_celery_worker_if_needed() -> None:
     if not _is_truthy(os.getenv("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", "0")):
         return
@@ -501,6 +533,64 @@ def _ensure_celery_worker_if_needed() -> None:
         logger.info("Started Celery worker for apps builder queues")
     else:
         logger.warning("Failed to auto-start Celery worker; check %s", celery_log_path)
+
+
+def _ensure_artifact_runtime_worker_if_needed() -> None:
+    if not _artifact_runtime_auto_bootstrap_enabled():
+        return
+    if _is_truthy(os.getenv("ARTIFACT_RUN_TASK_EAGER", "0")):
+        logger.info("Artifact runtime is configured for eager execution; skipping artifact Celery bootstrap")
+        return
+    if _artifact_celery_worker_running():
+        return
+
+    redis_url = (os.getenv("REDIS_URL") or "redis://127.0.0.1:6379/0").strip()
+    parsed = urlparse(redis_url)
+    redis_host = parsed.hostname or "127.0.0.1"
+    redis_port = int(parsed.port or 6379)
+    if _is_local_host(redis_host) and not _is_port_open(redis_host, redis_port):
+        logger.warning(
+            "Redis is not reachable at %s:%s; skipping artifact Celery auto-start",
+            redis_host,
+            redis_port,
+        )
+        return
+
+    artifact_celery_log_path = Path(
+        os.getenv("ARTIFACT_CELERY_LOG_PATH", "/tmp/talmudpedia-artifact-celery.log")
+    )
+    backend_dir = Path(__file__).resolve().parent
+    celery_cmd = [
+        sys.executable,
+        "-m",
+        "celery",
+        "-A",
+        "app.workers.celery_app.celery_app",
+        "worker",
+        "-Q",
+        "artifact_test",
+        "-n",
+        "artifact_test@%h",
+        "-l",
+        "info",
+    ]
+    with artifact_celery_log_path.open("ab") as log_file:
+        subprocess.Popen(
+            celery_cmd,
+            cwd=str(backend_dir),
+            env=os.environ.copy(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    time.sleep(1.0)
+    if _artifact_celery_worker_running():
+        logger.info("Started Celery worker for artifact runtime queue")
+    else:
+        logger.warning(
+            "Failed to auto-start artifact Celery worker; check %s",
+            artifact_celery_log_path,
+        )
 
 
 def _ensure_local_draft_dev_runtime_if_needed() -> None:
@@ -791,6 +881,7 @@ def _bootstrap_local_infra_once() -> None:
         return
 
     logger.info("Running local infra bootstrap checks")
+    _configure_local_artifact_runtime_if_needed()
     _try_start_brew_service("postgresql@17", "127.0.0.1", 5432)
     _try_start_brew_service("redis", "127.0.0.1", 6379)
     _ensure_local_pgvector_if_needed()
@@ -798,6 +889,7 @@ def _bootstrap_local_infra_once() -> None:
     _ensure_local_moto_server_if_needed()
     _ensure_local_bundle_bucket_if_needed()
     _ensure_celery_worker_if_needed()
+    _ensure_artifact_runtime_worker_if_needed()
     _ensure_local_draft_dev_runtime_if_needed()
     _ensure_local_opencode_if_needed()
 
@@ -965,6 +1057,7 @@ from app.api.routers import rag_custom_operators as rag_custom_operators_router
 from app.api.routers import models as models_router
 from app.api.routers import tools as tools_router
 from app.api.routers import artifacts as artifacts_router
+from app.api.routers import artifact_runs as artifact_runs_router
 from app.api.routers import stats as stats_router
 from app.api.routers import settings as settings_router
 from app.api.routers import internal_auth as internal_auth_router
@@ -975,6 +1068,7 @@ from app.api.routers import published_apps_public as published_apps_public_route
 from app.api.routers import published_apps_host_runtime as published_apps_host_runtime_router
 from app.api.routers import published_apps_builder_preview_proxy as published_apps_builder_preview_proxy_router
 from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
+from app.artifact_worker import router as artifact_worker_router
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(agents_router)
@@ -987,6 +1081,7 @@ app.include_router(rag_graph_mutations_router.router, prefix="/admin/pipelines",
 app.include_router(rag_operator_contracts_router.router, prefix="/admin/pipelines", tags=["rag-pipelines"])
 app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom-operators", tags=["rag-custom-operators"])
 app.include_router(artifacts_router.router, tags=["artifacts"])
+app.include_router(artifact_runs_router.router, tags=["artifacts"])
 app.include_router(stats_router.router, prefix="/admin", tags=["stats"])
 app.include_router(settings_router.router, prefix="/admin/settings", tags=["settings"])
 app.include_router(workload_security_router.router)
@@ -998,6 +1093,7 @@ app.include_router(published_apps_public_router.router)
 app.include_router(published_apps_host_runtime_router.router)
 app.include_router(published_apps_builder_preview_proxy_router.router)
 app.include_router(sandbox_controller_dev_shim_router.router)
+app.include_router(artifact_worker_router.router)
 
 from app.api.routers import knowledge_stores as knowledge_stores_router
 app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stores", tags=["knowledge-stores"])

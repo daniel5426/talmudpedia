@@ -26,33 +26,58 @@ type AssistantResponseTimelineProps = {
   isLoading?: boolean;
 };
 
-function renderToolRow(block: ChatToolCallBlock) {
+function renderToolRow(block: ChatToolCallBlock, forceRunning = false) {
   const status = block.status;
   const showPathBadge = block.tool.path && !isEditToolName(String(block.tool.toolName || ""));
   const label = block.tool.title || block.tool.displayName || block.tool.summary || block.tool.toolName;
+  const summary = String(block.tool.summary || "").trim();
+  const hasSummary = Boolean(summary) && summary.toLowerCase() !== String(label || "").trim().toLowerCase();
+  const isRunning = forceRunning || status === "running" || status === "streaming";
+  const rowContent = isRunning ? (
+    <Shimmer className="flex items-center gap-2 text-sm">
+      <span>{label}</span>
+      {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
+      {block.tool.detail ? <TaskItemFile>{block.tool.detail}</TaskItemFile> : null}
+    </Shimmer>
+  ) : (
+    <>
+      <span>{label}</span>
+      {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
+      {block.tool.detail ? <TaskItemFile>{block.tool.detail}</TaskItemFile> : null}
+    </>
+  );
+
+  if (!hasSummary) {
+    return (
+      <Task defaultOpen key={block.id} className="w-full">
+        <TaskItem
+          className={cn(
+            "flex items-center gap-2 text-sm",
+            status === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {rowContent}
+        </TaskItem>
+      </Task>
+    );
+  }
 
   return (
-    <Task defaultOpen key={block.id} className="w-full">
-      <TaskItem
-        className={cn(
-          "flex items-center gap-2 text-sm",
-          status === "error" ? "text-destructive" : "text-muted-foreground",
-        )}
-      >
-        {status === "running" || status === "streaming" ? (
-          <Shimmer className="flex items-center gap-2 text-sm">
-            <span>{label}</span>
-            {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
-            {block.tool.detail ? <TaskItemFile>{block.tool.detail}</TaskItemFile> : null}
-          </Shimmer>
-        ) : (
-          <>
-            <span>{label}</span>
-            {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
-            {block.tool.detail ? <TaskItemFile>{block.tool.detail}</TaskItemFile> : null}
-          </>
-        )}
-      </TaskItem>
+    <Task defaultOpen={false} key={block.id} className="w-full">
+      <TaskTrigger asChild title={label}>
+        <button
+          type="button"
+          className={cn(
+            "flex w-full items-center gap-2 rounded-md px-0 py-0.5 text-left text-sm transition-colors hover:text-foreground",
+            status === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {rowContent}
+        </button>
+      </TaskTrigger>
+      <TaskContent className="mt-1">
+        <div className="text-sm text-muted-foreground">{summary}</div>
+      </TaskContent>
     </Task>
   );
 }
@@ -96,6 +121,10 @@ export function AssistantResponseTimeline({
   const renderedBlocks = useMemo(() => {
     const items: JSX.Element[] = [];
     let index = 0;
+    const lastToolCallId = [...blocks]
+      .reverse()
+      .find((entry): entry is ChatToolCallBlock => entry.kind === "tool_call")
+      ?.id;
 
     while (index < blocks.length) {
       const block = blocks[index];
@@ -120,7 +149,12 @@ export function AssistantResponseTimeline({
           headerParts.push(`${searchItems.length} ${searchItems.length === 1 ? "search" : "searches"}`);
         }
         const headerText = `Exploring ${headerParts.join(", ") || "workspace"}`;
-        const keepShimmer = explorationStreak.some((entry) => entry.status === "running" || entry.status === "streaming");
+        const keepShimmer = explorationStreak.some(
+          (entry) =>
+            entry.status === "running" ||
+            entry.status === "streaming" ||
+            (isLoading && entry.id === lastToolCallId),
+        );
 
         items.push(
           <Task defaultOpen={false} key={`explore-${explorationStreak[0].id}`} className="w-full">
@@ -156,7 +190,7 @@ export function AssistantResponseTimeline({
                       entry.status === "error" ? "text-destructive" : "text-muted-foreground",
                     )}
                   >
-                    {entry.status === "running" || entry.status === "streaming" ? (
+                    {entry.status === "running" || entry.status === "streaming" || (isLoading && entry.id === lastToolCallId) ? (
                       <Shimmer className="text-sm">{label}</Shimmer>
                     ) : (
                       <span>{label}</span>
@@ -171,7 +205,7 @@ export function AssistantResponseTimeline({
       }
 
       if (block.kind === "tool_call") {
-        items.push(renderToolRow(block));
+        items.push(renderToolRow(block, isLoading && block.id === lastToolCallId));
         index += 1;
         continue;
       }

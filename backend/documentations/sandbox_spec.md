@@ -56,12 +56,12 @@ Current runtime semantics:
 
 Two existing docs overlap with this one:
 - [backend/documentations/apps_builder_e2b_runtime_migration_status.md](/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/apps_builder_e2b_runtime_migration_status.md)
-- [backend/documentations/artifact_sandbox_architecture.md](/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/artifact_sandbox_architecture.md)
+- [backend/documentations/artifacts_execution_infra_spec.md](/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/artifacts_execution_infra_spec.md)
 
 Current relationship:
 - this file is the broad implementation spec
 - `apps_builder_e2b_runtime_migration_status.md` is a narrower rollout/status note
-- `artifact_sandbox_architecture.md` is an artifact-focused design note
+- `artifacts_execution_infra_spec.md` is the artifact execution current-infra companion
 
 Suggestion:
 - keep this file as the canonical sandbox spec

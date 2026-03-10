@@ -15,6 +15,7 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "join_catalog_stage" not in node_ids
     runtime_node = next(node for node in graph["nodes"] if node["id"] == "architect_runtime")
     assert runtime_node["config"]["tools"] == ["tool-a", "tool-b", "tool-c", "tool-d"]
+    assert runtime_node["config"]["temperature"] == 1
     instructions = runtime_node["config"]["instructions"]
     assert "Never call architect.run" in instructions
     assert "one tool call at a time" in instructions

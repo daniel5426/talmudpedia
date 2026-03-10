@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb";
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -229,38 +230,37 @@ export default function AppsPage() {
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
       {/* Header */}
-      <header className="h-12 shrink-0 bg-background px-4 flex items-center justify-between border-b border-border/40">
+      <AdminPageHeader>
         <CustomBreadcrumb
           items={[{ label: "Apps", href: "/admin/apps", active: true }]}
         />
-        <Button
-          size="sm"
-          className="h-8 gap-1.5"
-          onClick={() => {
-            resetCreateForm();
-            setCreateDialogOpen(true);
-          }}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add New
-        </Button>
-      </header>
-
-      {/* Search bar */}
-      <div className="shrink-0 border-b border-border/40 px-4 py-3">
-        <div className="relative max-w-md">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-9 pl-8 bg-muted/30 border-border/50 text-sm placeholder:text-muted-foreground/50"
-            placeholder="Search apps..."
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative w-64">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 border-border/50 bg-muted/30 pl-8 text-sm placeholder:text-muted-foreground/50"
+              placeholder="Search apps..."
+              disabled={isLoading}
+            />
+          </div>
+          <Button
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => {
+              resetCreateForm();
+              setCreateDialogOpen(true);
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add New
+          </Button>
         </div>
-      </div>
+      </AdminPageHeader>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto" data-admin-page-scroll>
         {error && (
           <div className="mx-4 mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
             {error}

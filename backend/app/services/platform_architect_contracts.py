@@ -894,6 +894,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
                     "model_id": model_id,
                     "instructions": instructions,
                     "include_chat_history": True,
+                    "temperature": 1,
                     "reasoning_effort": "medium",
                     "tools": list(tool_ids or []),
                     "write_output_to_context": True,

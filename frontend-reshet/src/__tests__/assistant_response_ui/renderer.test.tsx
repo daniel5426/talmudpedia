@@ -24,8 +24,8 @@ describe("AssistantResponseTimeline", () => {
           toolSlug: "platform-agents",
           action: "agents.nodes.validate",
           displayName: "Validate agent graph",
-          summary: "Validate agent graph",
-          title: "Validate agent graph",
+          summary: "Validate agent graph against the current contract and return structured validation errors and warnings.",
+          title: "Validate agent nodes",
         },
       },
       {
@@ -50,9 +50,14 @@ describe("AssistantResponseTimeline", () => {
 
     render(<AssistantResponseTimeline blocks={blocks} onApprovalAction={onApprovalAction} />);
 
-    expect(screen.getByText("Validate agent graph")).toBeInTheDocument();
+    expect(screen.getByText("Validate agent nodes")).toBeInTheDocument();
     expect(screen.getByText("Graph looks valid.")).toBeInTheDocument();
     expect(screen.getByText("Do you wish to continue?")).toBeInTheDocument();
+    expect(screen.queryByText("Validate agent graph against the current contract and return structured validation errors and warnings.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /validate agent nodes/i }));
+    expect(screen.getByText("Validate agent graph against the current contract and return structured validation errors and warnings.")).toBeInTheDocument();
+    expect(screen.getByText("Validate agent nodes").closest("p")?.className || "").toContain("text-transparent");
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(onApprovalAction).toHaveBeenCalledWith("approve");

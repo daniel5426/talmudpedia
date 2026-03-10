@@ -256,18 +256,31 @@ export function blocksFromLegacyAssistantContent(params: {
 
 export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: number): NormalizedRunStreamEvent {
   const fallbackSeq = index + 1;
+  const eventData = rawEvent.data && typeof rawEvent.data === "object"
+    ? (rawEvent.data as Record<string, unknown>)
+    : {};
+  const payload = rawEvent.payload && typeof rawEvent.payload === "object"
+    ? (rawEvent.payload as Record<string, unknown>)
+    : eventData;
   const base: RunStreamBase = {
-    runId: typeof rawEvent.run_id === "string" ? rawEvent.run_id : undefined,
-    seq: toSafeSeq(rawEvent.seq, fallbackSeq),
-    ts: typeof rawEvent.ts === "string" ? rawEvent.ts : undefined,
+    runId:
+      typeof rawEvent.run_id === "string"
+        ? rawEvent.run_id
+        : typeof rawEvent.source_run_id === "string"
+          ? rawEvent.source_run_id
+          : undefined,
+    seq: toSafeSeq(rawEvent.seq ?? rawEvent.sequence, fallbackSeq),
+    ts:
+      typeof rawEvent.ts === "string"
+        ? rawEvent.ts
+        : typeof rawEvent.timestamp === "string"
+          ? rawEvent.timestamp
+          : undefined,
     sourceEvent: typeof rawEvent.event === "string" ? rawEvent.event : undefined,
     stage: typeof rawEvent.stage === "string" ? rawEvent.stage : undefined,
   };
 
   const eventName = String(rawEvent.event || "");
-  const payload = rawEvent.payload && typeof rawEvent.payload === "object"
-    ? (rawEvent.payload as Record<string, unknown>)
-    : {};
   const diagnostics = Array.isArray(rawEvent.diagnostics)
     ? (rawEvent.diagnostics as Array<Record<string, unknown>>)
     : [];
@@ -295,6 +308,21 @@ export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: nu
     };
   }
 
+  if (eventName === "on_tool_start") {
+    return {
+      ...base,
+      kind: "tool_start",
+      toolCallId: typeof rawEvent.span_id === "string" ? rawEvent.span_id : undefined,
+      toolName: toSafeText(rawEvent.name) || "tool",
+      input: payload.input ?? rawEvent.inputs,
+      message: typeof payload.message === "string" ? payload.message : undefined,
+      toolSlug: typeof payload.tool_slug === "string" ? payload.tool_slug : undefined,
+      action: typeof payload.action === "string" ? payload.action : undefined,
+      displayName: typeof payload.display_name === "string" ? payload.display_name : undefined,
+      summary: typeof payload.summary === "string" ? payload.summary : undefined,
+    };
+  }
+
   if (eventName === "tool.completed") {
     return {
       ...base,
@@ -302,6 +330,20 @@ export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: nu
       toolCallId: typeof payload.span_id === "string" ? payload.span_id : undefined,
       toolName: toSafeText(payload.tool) || "tool",
       output: payload.output,
+      toolSlug: typeof payload.tool_slug === "string" ? payload.tool_slug : undefined,
+      action: typeof payload.action === "string" ? payload.action : undefined,
+      displayName: typeof payload.display_name === "string" ? payload.display_name : undefined,
+      summary: typeof payload.summary === "string" ? payload.summary : undefined,
+    };
+  }
+
+  if (eventName === "on_tool_end") {
+    return {
+      ...base,
+      kind: "tool_end",
+      toolCallId: typeof rawEvent.span_id === "string" ? rawEvent.span_id : undefined,
+      toolName: toSafeText(rawEvent.name) || "tool",
+      output: payload.output ?? rawEvent.outputs,
       toolSlug: typeof payload.tool_slug === "string" ? payload.tool_slug : undefined,
       action: typeof payload.action === "string" ? payload.action : undefined,
       displayName: typeof payload.display_name === "string" ? payload.display_name : undefined,
@@ -363,10 +405,7 @@ function buildToolBlockFromStart(event: Extract<NormalizedRunStreamEvent, { kind
       action: event.action,
       displayName: event.displayName,
       summary: event.summary,
-      title:
-        event.displayName ||
-        event.summary ||
-        extractToolTitleForEvent(event.toolName, presentationPayload, "running", path),
+      title: extractToolTitleForEvent(event.toolName, presentationPayload, "running", path),
       detail: extractToolDetailForEvent(event.toolName, presentationPayload),
       path,
       isExploration: isExplorationToolName(event.toolName),
@@ -405,10 +444,7 @@ function buildToolBlockFromEnd(
       action: event.action || existing?.tool.action,
       displayName: event.displayName || existing?.tool.displayName,
       summary: event.summary || existing?.tool.summary,
-      title:
-        event.displayName ||
-        event.summary ||
-        extractToolTitleForEvent(event.toolName, presentationPayload, "completed", path),
+      title: extractToolTitleForEvent(event.toolName, presentationPayload, "completed", path),
       detail:
         extractToolDetailForEvent(event.toolName, presentationPayload) ||
         existing?.tool.detail,

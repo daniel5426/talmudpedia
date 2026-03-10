@@ -20,6 +20,7 @@ interface ExecutionHistoryDropdownProps {
   onSelectHistory: (item: AgentChatHistoryItem) => void;
   onStartNewChat?: () => void;
   className?: string;
+  contentClassName?: string;
 }
 
 export function ExecutionHistoryDropdown({
@@ -32,6 +33,7 @@ export function ExecutionHistoryDropdown({
   onSelectHistory,
   onStartNewChat,
   className,
+  contentClassName,
 }: ExecutionHistoryDropdownProps) {
   return (
     <DropdownMenu>
@@ -46,7 +48,7 @@ export function ExecutionHistoryDropdown({
           {showChevron ? <ChevronDown className="h-3 w-3 opacity-70" /> : null}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align={align} className="min-w-[220px]">
+      <DropdownMenuContent align={align} className={contentClassName || "min-w-[220px]"}>
         {loading ? (
           <DropdownMenuItem disabled className="text-muted-foreground">
             Loading...

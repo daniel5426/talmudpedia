@@ -229,6 +229,12 @@ export interface AgentExecutionEvent {
   received_at?: number
 }
 
+export interface AgentRunEventsResponse {
+  run_id: string
+  event_count: number
+  events: Record<string, unknown>[]
+}
+
 export interface AgentOperatorSpec {
   type: string;
   category: string;
@@ -303,6 +309,10 @@ export const agentService = {
 
   async getRunTree(runId: string) {
     return httpClient.get<AgentRunTreeResponse>(`/agents/runs/${runId}/tree`);
+  },
+
+  async getRunEvents(runId: string) {
+    return httpClient.get<AgentRunEventsResponse>(`/agents/runs/${runId}/events`);
   },
 
   async executeAgent(id: string, input: Record<string, any>) {

@@ -1,0 +1,29 @@
+Last Updated: 2026-03-10
+
+# Test State
+
+## Scope
+
+Artifact runtime revision and bundle lifecycle.
+
+## Test Files Present
+
+- `test_revision_service.py`
+
+## Key Scenarios Covered
+
+- create tenant artifact draft with bundled runtime payload
+- update artifact and create a new draft revision
+- publish the latest draft revision
+- verify bundle builder hash stability
+
+## Last Run
+
+- Command: `python3 -m pytest backend/tests/artifact_runtime/test_revision_service.py`
+- Date: 2026-03-10
+- Result: Pass (2 passed)
+
+## Known Gaps
+
+- no object-storage-backed bundle upload integration coverage yet
+- no migration script execution coverage yet

@@ -14,6 +14,7 @@ import {
   OperatorCatalog,
 } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -364,7 +365,7 @@ export default function RAGAdminPage() {
 
   return (
     <div className="flex flex-col h-full w-full" dir={direction}>
-      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
+      <AdminPageHeader>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <CustomBreadcrumb items={[
@@ -392,8 +393,8 @@ export default function RAGAdminPage() {
             </Link>
           </Button>
         </div>
-      </header>
-      <div className="flex-1 overflow-auto p-4">
+      </AdminPageHeader>
+      <div className="flex-1 overflow-auto p-4" data-admin-page-scroll>
         {loading ? (
           <div className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">

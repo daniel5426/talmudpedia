@@ -1,6 +1,6 @@
 # Agent Streaming Response UI & Architecture
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-10
 
 This document describes the end-to-end architecture for streaming agentic responses in Talmudpedia, covering the backend event stream, frontend state management, and the high-performance UI implementation designed for zero flicker.
 
@@ -74,6 +74,14 @@ const displayMessages = useMemo(() => {
 }, [...]);
 ```
 This ensures a single coherent list where the "Live" message is treated as part of the normal flow, allowing for consistent styling and animations.
+
+### Tool Call Presentation
+Shared tool-call rendering now separates short UI titles from verbose backend summaries.
+- Short titles are derived in the shared frontend presentation layer from structured action metadata when available (for example, platform SDK action ids such as `agents.nodes.schema` or `rag.operators.catalog`).
+- Verbose contract summaries remain available in stream metadata for diagnostics and future secondary-detail rendering, but they are no longer used as the primary visible tool-call title.
+- Active tool-call labels and live thinking labels shimmer while streaming, without adding separate status dots or row-level shimmer chrome.
+- Tool rows are collapsible in the shared timeline: clicking a tool row expands its verbose summary when the summary provides more detail than the short title.
+- Historical thread reload should rehydrate tool-call blocks from persisted run execution events when available, instead of falling back to plain assistant text only.
 
 ### Chain of Thought (Reasoning)
 The reasoning UI is integrated directly into the `MessageContent` component.

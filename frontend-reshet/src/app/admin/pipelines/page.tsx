@@ -252,7 +252,6 @@ export default function PipelinesPage() {
         <div className="flex items-center gap-3">
           <CustomBreadcrumb
             items={[
-              { label: "RAG Management", href: "/admin/rag" },
               { label: "Pipelines", active: true },
             ]}
           />

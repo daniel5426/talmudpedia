@@ -47,6 +47,86 @@ export function describeToolIntent(toolName: string): string {
   return `Running ${toolName || "tool"}`;
 }
 
+function prettifyActionToken(token: string): string {
+  return token
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function inferPlatformActionSubject(action: string): string | null {
+  const normalized = action.trim().toLowerCase();
+  const subject = normalized.split(".").slice(0, -1).join(".");
+
+  const subjectMap: Record<string, string> = {
+    "agents.nodes": "agent node types",
+    "agents.graph": "agent graph",
+    "agents": "agent",
+    "rag.operators": "RAG operators",
+    "rag.graph": "RAG graph",
+    "rag": "RAG pipeline",
+    "tools": "tools",
+    "artifacts": "artifacts",
+    "models": "models",
+    "credentials": "credentials",
+    "knowledge_stores": "knowledge stores",
+    "auth": "auth settings",
+    "workload_security": "workload security",
+    "orchestration": "orchestration settings",
+  };
+
+  return subjectMap[subject] || null;
+}
+
+function inferPlatformActionTitle(action: string, status: ToolRunStatus): string | null {
+  const normalized = action.trim().toLowerCase();
+  if (!normalized) return null;
+  const exactTitleMap: Record<string, string> = {
+    "agents.nodes.catalog": "List agent node types",
+    "agents.nodes.schema": "Get node schemas",
+    "agents.nodes.validate": "Validate agent nodes",
+    "agents.validate": "Validate agent",
+    "rag.operators.catalog": "List RAG operators",
+    "rag.operators.schema": "Get RAG operator schemas",
+  };
+  if (exactTitleMap[normalized]) {
+    return exactTitleMap[normalized];
+  }
+  const tokens = normalized.split(".");
+  const verb = tokens[tokens.length - 1] || "";
+  const subject = inferPlatformActionSubject(normalized);
+  if (!subject) return null;
+
+  if (verb === "catalog" || verb.startsWith("list_")) {
+    return `List ${subject}`;
+  }
+  if (verb === "schema") {
+    return `Get ${subject} schemas`;
+  }
+  if (verb === "validate" || verb.startsWith("validate_")) {
+    return `Validate ${subject}`;
+  }
+  if (verb === "get" || verb.startsWith("get_")) {
+    return `Get ${subject}`;
+  }
+  if (verb === "create" || verb.startsWith("create_")) {
+    return `Create ${subject}`;
+  }
+  if (verb === "update" || verb.startsWith("update_") || verb.startsWith("set_") || verb.startsWith("attach_")) {
+    return `Update ${subject}`;
+  }
+  if (verb === "compile" || verb.startsWith("compile_")) {
+    return `Compile ${subject}`;
+  }
+  if (verb === "publish" || verb.startsWith("publish_") || verb === "promote" || verb.startsWith("promote_")) {
+    return `${status === "completed" ? "Published" : "Publishing"} ${subject}`;
+  }
+  if (verb === "delete" || verb.startsWith("delete_") || verb === "remove" || verb.startsWith("remove_")) {
+    return `Delete ${subject}`;
+  }
+
+  return `${prettifyActionToken(verb)} ${subject}`;
+}
+
 export function isReadToolName(toolName: string): boolean {
   const normalized = normalizeToolName(toolName);
   return normalized === "read" || normalized.includes("read_file");
@@ -359,12 +439,21 @@ export function extractToolTitleForEvent(
   const source = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const input = (source.input && typeof source.input === "object" ? source.input : {}) as Record<string, unknown>;
   const output = (source.output && typeof source.output === "object" ? source.output : {}) as Record<string, unknown>;
+  const action = firstNonEmptyString([
+    source.action,
+    input.action,
+    output.action,
+  ]);
+  const actionTitle = inferPlatformActionTitle(action, status);
+  if (actionTitle) return actionTitle;
   const title = firstNonEmptyString([
     source.title,
     output.title,
     output.description,
     input.title,
     input.description,
+    typeof source.display_name === "string" && source.display_name.length <= 48 ? source.display_name : "",
+    typeof source.summary === "string" && source.summary.length <= 48 ? source.summary : "",
   ]);
   return title || describeToolIntent(toolName);
 }

@@ -29,7 +29,7 @@ celery_app = Celery(
     "rag_workers",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["app.workers.tasks"]
+    include=["app.workers.tasks", "app.workers.artifact_tasks"]
 )
 
 celery_app.conf.update(
@@ -51,6 +51,9 @@ celery_app.conf.update(
         Queue("ingestion", routing_key="ingestion"),
         Queue("embedding", routing_key="embedding"),
         Queue("apps_build", routing_key="apps_build"),
+        Queue("artifact_prod_interactive", routing_key="artifact_prod_interactive"),
+        Queue("artifact_prod_background", routing_key="artifact_prod_background"),
+        Queue("artifact_test", routing_key="artifact_test"),
     ),
     
     task_default_queue="default",
@@ -66,6 +69,7 @@ celery_app.conf.update(
         "app.workers.tasks.reap_published_app_draft_dev_sessions_task": {"queue": "default"},
         "app.workers.tasks.expire_usage_quota_reservations_task": {"queue": "default"},
         "app.workers.tasks.reconcile_usage_quota_counters_task": {"queue": "default"},
+        "app.workers.artifact_tasks.execute_artifact_run_task": {"queue": "artifact_test"},
     },
 
     beat_schedule=_beat_schedule,

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { adminService } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
@@ -52,15 +53,15 @@ export default function AdminThreadPage() {
 
   return (
     <div className="flex flex-col h-full w-full">
-      <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0 border-b">
+      <AdminPageHeader>
         <CustomBreadcrumb
           items={[
             { label: "Threads", href: "/admin/threads" },
             { label: thread.title || thread.id, active: true },
           ]}
         />
-      </header>
-      <div className="flex-1 overflow-auto p-6 space-y-4">
+      </AdminPageHeader>
+      <div className="flex-1 overflow-auto p-6 space-y-4" data-admin-page-scroll>
         {thread.turns.length === 0 ? (
           <div className="text-sm text-muted-foreground">No turns found.</div>
         ) : (

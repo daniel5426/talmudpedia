@@ -4,8 +4,6 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
     Save,
-    Settings,
-    ChevronLeft,
     Loader2,
     AlertCircle,
     CheckCircle2,
@@ -19,11 +17,14 @@ import { Badge } from "@/components/ui/badge"
 import { agentService, Agent, AgentGraphDefinition } from "@/services"
 import { AgentBuilder, AgentNodeData } from "@/components/agent-builder"
 import { normalizeGraphSpecForSave } from "@/components/agent-builder/graphspec"
+import { HeaderConfigEditor } from "@/components/builder"
 
 export default function AgentBuilderPage() {
     const { id } = useParams()
     const router = useRouter()
     const [agent, setAgent] = useState<Agent | null>(null)
+    const [agentName, setAgentName] = useState("")
+    const [agentDescription, setAgentDescription] = useState("")
     const [isLoading, setIsLoading] = useState(true)
     const [isSaving, setIsSaving] = useState(false)
     const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
@@ -32,17 +33,13 @@ export default function AgentBuilderPage() {
     // Store current graph state for saving
     const graphRef = useRef<AgentGraphDefinition>({ spec_version: "1.0", nodes: [], edges: [] })
 
-    useEffect(() => {
-        if (id) {
-            loadAgent()
-        }
-    }, [id])
-
-    const loadAgent = async () => {
+    const loadAgent = useCallback(async () => {
         try {
             setIsLoading(true)
             const data = await agentService.getAgent(id as string)
             setAgent(data)
+            setAgentName(data.name)
+            setAgentDescription(data.description || "")
             // Initialize graph ref with loaded data
             if (data.graph_definition) {
                 graphRef.current = {
@@ -57,7 +54,13 @@ export default function AgentBuilderPage() {
         } finally {
             setIsLoading(false)
         }
-    }
+    }, [id])
+
+    useEffect(() => {
+        if (id) {
+            loadAgent()
+        }
+    }, [id, loadAgent])
 
     const handleGraphChange = useCallback((nodes: Node<AgentNodeData>[], edges: Edge[]) => {
         graphRef.current = normalizeGraphSpecForSave(nodes, edges, { specVersion: graphRef.current.spec_version })
@@ -75,9 +78,16 @@ export default function AgentBuilderPage() {
             setSaveStatus("saving")
 
             await agentService.updateAgent(agent.id, {
+                name: agentName.trim(),
+                description: agentDescription.trim() || undefined,
                 graph_definition: graphRef.current
             })
 
+            setAgent((current) => current ? {
+                ...current,
+                name: agentName.trim(),
+                description: agentDescription.trim() || undefined,
+            } : current)
             setSaveStatus("saved")
             setTimeout(() => setSaveStatus("idle"), 2000)
         } catch (err) {
@@ -95,6 +105,8 @@ export default function AgentBuilderPage() {
             setIsSaving(true)
             // Save first, then publish
             await agentService.updateAgent(agent.id, {
+                name: agentName.trim(),
+                description: agentDescription.trim() || undefined,
                 graph_definition: graphRef.current
             })
             await agentService.publishAgent(agent.id)
@@ -112,13 +124,13 @@ export default function AgentBuilderPage() {
     return (
         <div className="flex w-full flex-col h-screen overflow-hidden">
             {/* Header */}
-            <header className="h-12 flex items-center justify-between px-4 bg-background z-30 shrink-0">
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
+            <header className="shrink-0 bg-background z-[70]">
+                <div className="flex h-12 items-center justify-between gap-4 px-4">
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
                         <CustomBreadcrumb items={[
                             { label: "Agents", href: "/admin/agents" },
-                            { label: agent?.name || "Loading...", active: true },
-                            { label: "Builder", active: true }
+                            { label: agentName || agent?.name || "Loading...", active: true },
                         ]} />
                         {agent && (
                             <div className="flex items-center gap-2 ml-2">
@@ -132,38 +144,61 @@ export default function AgentBuilderPage() {
                             </div>
                         )}
                     </div>
-                </div>
+                    </div>
 
-                <div className="flex items-center gap-2">
-                    {saveStatus === "saved" && (
-                        <span className="text-xs text-green-600 flex items-center gap-1">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Saved
-                        </span>
-                    )}
-                    {saveStatus === "error" && (
-                        <span className="text-xs text-destructive flex items-center gap-1">
-                            <AlertCircle className="h-3 w-3" />
-                            Save failed
-                        </span>
-                    )}
-                    <Button variant="outline" size="sm" onClick={handleSave} disabled={isSaving || isLoading} className="h-8 text-xs">
-                        {isSaving && saveStatus === "saving" ? (
-                            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                        ) : (
-                            <Save className="mr-2 h-3 w-3" />
+                    <div className="flex items-center gap-2">
+                        <HeaderConfigEditor
+                            name={agentName}
+                            description={agentDescription}
+                            onNameChange={(value) => {
+                                setAgentName(value)
+                                if (saveStatus === "saved") {
+                                    setSaveStatus("idle")
+                                }
+                            }}
+                            onDescriptionChange={(value) => {
+                                setAgentDescription(value)
+                                if (saveStatus === "saved") {
+                                    setSaveStatus("idle")
+                                }
+                            }}
+                            nameLabel="Agent name"
+                            descriptionLabel="Description"
+                            namePlaceholder="Research Assistant"
+                            descriptionPlaceholder="Describe what this agent is meant to handle."
+                            triggerLabel="Edit details"
+                            disabled={isSaving || isLoading}
+                        />
+                        {saveStatus === "saved" && (
+                            <span className="flex h-8 items-center gap-1 text-xs text-green-600">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Saved
+                            </span>
                         )}
-                        Save Draft
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="default"
-                        className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                        onClick={handlePublish}
-                        disabled={isSaving || isLoading}
-                    >
-                        Publish
-                    </Button>
+                        {saveStatus === "error" && (
+                            <span className="flex h-8 items-center gap-1 text-xs text-destructive">
+                                <AlertCircle className="h-3 w-3" />
+                                Save failed
+                            </span>
+                        )}
+                        <Button variant="outline" size="sm" onClick={handleSave} disabled={isSaving || isLoading} className="h-8 rounded-md text-xs shadow-none">
+                            {isSaving && saveStatus === "saving" ? (
+                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                            ) : (
+                                <Save className="mr-2 h-3 w-3" />
+                            )}
+                            Save Draft
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="default"
+                            className="h-8 rounded-md bg-green-600 text-xs text-white shadow-none hover:bg-green-700"
+                            onClick={handlePublish}
+                            disabled={isSaving || isLoading}
+                        >
+                            Publish
+                        </Button>
+                    </div>
                 </div>
             </header>
 

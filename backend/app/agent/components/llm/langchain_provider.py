@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 
 from app.agent.core.interfaces import LLMProvider
 from app.db.postgres.models.registry import ModelProviderType
+from app.services.model_temperature_policy import normalize_temperature_for_model
 
 
 class LangChainProviderAdapter(LLMProvider):
@@ -55,6 +56,11 @@ class LangChainProviderAdapter(LLMProvider):
 
     def _map_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         mapped = dict(kwargs)
+        mapped["temperature"] = normalize_temperature_for_model(
+            provider=self.provider,
+            model_name=self.model_name,
+            temperature=mapped.get("temperature"),
+        )
         if "max_tokens" in mapped:
             max_tokens = mapped.pop("max_tokens")
             if self.provider == ModelProviderType.OPENAI:

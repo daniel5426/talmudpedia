@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
     Loader2,
-    Settings,
+    Pencil,
     Bot,
     Terminal,
     Plus
@@ -152,6 +152,14 @@ function PlaygroundContent() {
         })()
     }, [agentId, controller, isListingLoading, isMetadataLoading, router, threadId])
 
+    const handleStartNewThread = useCallback(() => {
+        hydratedThreadRef.current = null
+        controller.startNewChat()
+        if (agentId) {
+            router.replace(`/admin/agents/playground?agentId=${agentId}`, { scroll: false })
+        }
+    }, [agentId, controller, router])
+
     return (
         <div className="flex w-full flex-col h-screen bg-background overflow-hidden [&_button]:shadow-none">
             {/* Header */}
@@ -186,6 +194,7 @@ function PlaygroundContent() {
                         onSelectHistory={handleSelectHistory}
                         onStartNewChat={controller.startNewChat}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        contentClassName="w-[320px] max-w-[min(90vw,320px)] max-h-[360px] overflow-y-auto"
                     />
 
                     {agent && (
@@ -194,11 +203,24 @@ function PlaygroundContent() {
                             size="icon"
                             className="h-8 w-8"
                             onClick={() => router.push(`/admin/agents/${agent.id}/builder`)}
-                            aria-label="Open builder"
+                            aria-label="Edit agent"
+                            title="Edit agent"
                         >
-                            <Settings className="size-3.5" />
+                            <Pencil className="size-3.5" />
                         </Button>
                     )}
+
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        onClick={handleStartNewThread}
+                        disabled={!agent || isMetadataLoading}
+                    >
+                        <Plus className="size-3.5" />
+                        <span>New Thread</span>
+                    </Button>
 
                     <Select
                         value={agent?.id || ""}
@@ -209,7 +231,7 @@ function PlaygroundContent() {
                             <Bot className="size-3.5 text-primary" />
                             <SelectValue placeholder={isMetadataLoading ? "Loading..." : "Select Agent"} />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="w-[280px] max-w-[min(90vw,280px)] max-h-[320px]">
                             {agents.map((a) => (
                                 <SelectItem key={a.id} value={a.id}>
                                     <div className="flex items-center gap-2">

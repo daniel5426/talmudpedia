@@ -39,6 +39,7 @@ import {
   ChainOfThoughtContent,
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 
 import { Code, CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic, AlertCircle } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
@@ -656,12 +657,10 @@ export function ChatWorkspace({
                               >
                                 <ChainOfThoughtHeader
                                   dir={direction}
-                                  renderLabel={({ isOpen }) => {
-                                    if (isOpen && msg.id === activeStreamingId && isLoading) {
+                                  renderLabel={() => {
+                                    if (msg.id === activeStreamingId && isLoading) {
                                       return (
-                                        <span className="animate-pulse text-sm text-muted-foreground">
-                                          Thinking
-                                        </span>
+                                        <Shimmer className="text-sm">Thinking</Shimmer>
                                       );
                                     }
                                     const thinkingLabel = buildThinkingLabel(
@@ -676,9 +675,7 @@ export function ChatWorkspace({
                                     if (latestLabel) {
                                       if (msg.id === activeStreamingId && isLoading && typeof latestLabel === "string") {
                                         return (
-                                          <span className="animate-pulse text-muted-foreground text-sm">
-                                            {latestLabel}
-                                          </span>
+                                          <Shimmer className="text-sm">{latestLabel}</Shimmer>
                                         );
                                       }
                                       return latestLabel;

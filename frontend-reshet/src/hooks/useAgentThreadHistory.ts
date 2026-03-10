@@ -1,8 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { adminService, Thread } from "@/services";
+import { adminService, agentService, Thread } from "@/services";
 import type { ChatMessage } from "@/components/layout/useChatController";
+import type { ChatRenderBlock } from "@/services/chat-presentation";
+import {
+  adaptRunStreamEvent,
+  applyRunStreamEventToBlocks,
+  finalizeAssistantRenderBlocks,
+  sortChatRenderBlocks,
+} from "@/services/chat-presentation";
 
 export interface AgentChatHistoryItem {
   id: string;
@@ -15,11 +22,13 @@ export interface AgentChatHistoryItem {
 
 type ThreadTurn = {
   id?: string;
+  run_id?: string;
   turn_index?: number;
   user_input_text?: string | null;
   assistant_output_text?: string | null;
   created_at?: string;
   completed_at?: string;
+  metadata?: Record<string, unknown> | null;
 };
 
 type ThreadDetails = {
@@ -35,12 +44,62 @@ const parseTimestamp = (value?: string, fallback: number = Date.now()): number =
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
-const mapTurnsToMessages = (threadId: string, turns: ThreadTurn[]): ChatMessage[] => {
+const buildResponseBlocksFromTurn = async (
+  turn: ThreadTurn,
+  assistantText: string
+): Promise<ChatRenderBlock[] | undefined> => {
+  const metadata = turn.metadata && typeof turn.metadata === "object"
+    ? (turn.metadata as Record<string, unknown>)
+    : {};
+  const storedBlocks = Array.isArray(metadata.response_blocks)
+    ? (metadata.response_blocks as ChatRenderBlock[])
+    : [];
+  if (storedBlocks.length > 0) {
+    return sortChatRenderBlocks(storedBlocks);
+  }
+
+  const runId = String(turn.run_id || "").trim();
+  if (!runId) return undefined;
+
+  try {
+    const response = await agentService.getRunEvents(runId);
+    const rawEvents = Array.isArray(response.events) ? response.events : [];
+    let blocks: ChatRenderBlock[] = [];
+    rawEvents.forEach((event, index) => {
+      blocks = sortChatRenderBlocks(
+        applyRunStreamEventToBlocks(blocks, adaptRunStreamEvent(event, index)),
+      );
+    });
+    const finalized = sortChatRenderBlocks(
+      finalizeAssistantRenderBlocks(blocks, assistantText, {
+        runId,
+        fallbackSeq: rawEvents.length + 1,
+      }),
+    );
+    return finalized.length > 0 ? finalized : undefined;
+  } catch (error) {
+    console.error("Failed to load run events for thread turn", { runId, error });
+    return undefined;
+  }
+};
+
+const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]): Promise<ChatMessage[]> => {
   const sortedTurns = [...turns].sort(
     (a, b) => Number(a.turn_index ?? 0) - Number(b.turn_index ?? 0)
   );
   const next: ChatMessage[] = [];
   const priorAssistantParts: string[] = [];
+  const responseBlocksByTurnKey = new Map<string, ChatRenderBlock[] | undefined>();
+
+  await Promise.all(
+    sortedTurns.map(async (turn, index) => {
+      const rawAssistantText = String(turn.assistant_output_text ?? "").trim();
+      if (!rawAssistantText) return;
+      const turnKey = String(turn.id ?? index);
+      const blocks = await buildResponseBlocksFromTurn(turn, rawAssistantText);
+      responseBlocksByTurnKey.set(turnKey, blocks);
+    })
+  );
 
   sortedTurns.forEach((turn, index) => {
     const baseTimestamp = parseTimestamp(turn.created_at);
@@ -74,11 +133,13 @@ const mapTurnsToMessages = (threadId: string, turns: ThreadTurn[]): ChatMessage[
 
     if (assistantText) {
       const assistantTimestamp = parseTimestamp(turn.completed_at, baseTimestamp + 1);
+      const responseBlocks = responseBlocksByTurnKey.get(turnKey);
       next.push({
         id: `${threadId}:turn:${turnKey}:assistant`,
         role: "assistant",
         content: assistantText,
         createdAt: new Date(assistantTimestamp),
+        responseBlocks,
       });
       priorAssistantParts.push(assistantText);
     }
@@ -135,11 +196,15 @@ export function useAgentThreadHistory(userId: string | undefined) {
 
     try {
       const details = (await adminService.getThread(item.threadId)) as ThreadDetails;
+      const mappedMessages = await mapTurnsToMessages(
+        item.threadId,
+        Array.isArray(details.turns) ? details.turns : [],
+      );
       const mapped: AgentChatHistoryItem = {
         ...item,
         agentId: details.agent_id ? String(details.agent_id) : item.agentId,
         title: String(details.title || item.title || "Untitled thread"),
-        messages: mapTurnsToMessages(item.threadId, Array.isArray(details.turns) ? details.turns : []),
+        messages: mappedMessages,
       };
       setHistory((prev) =>
         prev.map((entry) => (entry.threadId === mapped.threadId ? mapped : entry))

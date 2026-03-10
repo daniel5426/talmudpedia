@@ -1,27 +1,33 @@
-from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-from uuid import UUID
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from __future__ import annotations
 
-from app.db.postgres.session import get_db
-from app.db.postgres.models.identity import User, Tenant, OrgMembership
-from app.db.postgres.models.operators import CustomOperator, OperatorCategory
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.api.dependencies import get_current_principal, require_scopes, ensure_sensitive_action_approved
-from app.services.artifact_registry import get_artifact_registry
 from app.api.schemas.artifacts import (
-    ArtifactSchema, 
-    ArtifactCreate, 
-    ArtifactUpdate, 
-    ArtifactType, 
-    ArtifactScope,
+    ArtifactCreate,
+    ArtifactPromoteRequest,
+    ArtifactRunCreateResponse,
+    ArtifactSchema,
+    ArtifactScope as ArtifactScopeSchema,
     ArtifactTestRequest,
     ArtifactTestResponse,
-    ArtifactPromoteRequest
+    ArtifactType,
+    ArtifactUpdate,
 )
-from app.rag.pipeline.operator_executor import PythonOperatorExecutor, OperatorInput, ExecutionContext
-from app.rag.pipeline.registry import OperatorSpec, DataType, OperatorCategory as RegistryCategory
+from app.db.postgres.models.artifact_runtime import Artifact as ArtifactModel
+from app.db.postgres.models.artifact_runtime import ArtifactRunStatus, ArtifactStatus
+from app.db.postgres.models.identity import OrgMembership, Tenant
+from app.db.postgres.session import get_db
+from app.services.artifact_runtime.execution_service import ArtifactExecutionService
+from app.services.artifact_runtime.registry_service import ArtifactRegistryService
+from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 
 router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
 
@@ -39,9 +45,8 @@ async def get_artifact_context(
             tenant_uuid = UUID(str(tenant_id))
         except Exception:
             raise HTTPException(status_code=403, detail="Invalid tenant context")
-        result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
-        tenant = result.scalar_one_or_none()
-        if not tenant:
+        tenant = await db.scalar(select(Tenant).where(Tenant.id == tenant_uuid))
+        if tenant is None:
             raise HTTPException(status_code=404, detail="Tenant not found")
         return tenant, None, db
 
@@ -50,117 +55,143 @@ async def get_artifact_context(
         raise HTTPException(status_code=403, detail="Not authorized")
 
     if not tenant_slug:
-        if current_user.role != "admin":
+        if getattr(current_user, "role", None) != "admin":
             raise HTTPException(status_code=403, detail="Tenant context required")
         return None, current_user, db
 
-    result = await db.execute(select(Tenant).where(Tenant.slug == tenant_slug))
-    tenant = result.scalar_one_or_none()
-    if not tenant:
+    tenant = await db.scalar(select(Tenant).where(Tenant.slug == tenant_slug))
+    if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    membership_result = await db.execute(
+    membership = await db.scalar(
         select(OrgMembership).where(
             OrgMembership.tenant_id == tenant.id,
             OrgMembership.user_id == current_user.id,
         )
     )
-    membership = membership_result.scalar_one_or_none()
-    if not membership and current_user.role != "admin":
+    if membership is None and getattr(current_user, "role", None) != "admin":
         raise HTTPException(status_code=403, detail="Not a member of this tenant")
-
     return tenant, current_user, db
 
-def spec_to_schema(spec: OperatorSpec, atype: ArtifactType, path: Optional[str] = None, code: Optional[str] = None) -> ArtifactSchema:
-    """Helper to convert Registry Spec to Unified Schema."""
-    scope = ArtifactScope(spec.scope) if hasattr(spec, "scope") and spec.scope in ArtifactScope.__members__.values() else ArtifactScope.RAG
-    
-    # Check manifest for scope if we could load it... 
-    # For now, let's assume default is RAG unless specified.
-    
-    config_schema = []
-    # Convert ConfigFieldSpec to dict
-    for cfg in (spec.required_config + spec.optional_config):
-        config_schema.append({
-            "name": cfg.name,
-            "type": cfg.field_type.value if hasattr(cfg.field_type, 'value') else str(cfg.field_type),
-            "required": cfg.required,
-            "default": cfg.default,
-            "description": cfg.description,
-            "options": cfg.options
-        })
+def _scope_to_schema_value(raw: Any) -> ArtifactScopeSchema:
+    value = getattr(raw, "value", raw)
+    try:
+        return ArtifactScopeSchema(str(value))
+    except Exception:
+        return ArtifactScopeSchema.RAG
 
+
+def _model_dump(model: Any, **kwargs):
+    if hasattr(model, "model_dump"):
+        return model.model_dump(**kwargs)
+    return model.dict(**kwargs)
+
+
+def _repo_spec_to_schema(spec, *, path: Optional[str], code: Optional[str]) -> ArtifactSchema:
+    scope = _scope_to_schema_value(getattr(spec, "scope", "rag"))
+    config_schema = []
+    for cfg in (getattr(spec, "required_config", []) + getattr(spec, "optional_config", [])):
+        config_schema.append(
+            {
+                "name": cfg.name,
+                "type": cfg.field_type.value if hasattr(cfg.field_type, "value") else str(cfg.field_type),
+                "required": cfg.required,
+                "default": cfg.default,
+                "description": cfg.description,
+                "options": cfg.options,
+            }
+        )
+    artifact_type = ArtifactType.BUILTIN if str(getattr(spec, "operator_id", "")).startswith("builtin/") else ArtifactType.PROMOTED
     return ArtifactSchema(
-        id=spec.operator_id,
-        name=spec.operator_id.split("/")[-1] if "/" in spec.operator_id else spec.operator_id,
+        id=str(spec.operator_id),
+        name=str(spec.operator_id).split("/")[-1],
         display_name=spec.display_name,
         description=spec.description,
-        category=spec.category.value,
-        input_type=spec.input_type.value,
-        output_type=spec.output_type.value,
-        version=spec.version,
-        type=atype,
+        category=spec.category.value if hasattr(spec.category, "value") else str(spec.category),
+        input_type=spec.input_type.value if hasattr(spec.input_type, "value") else str(spec.input_type),
+        output_type=spec.output_type.value if hasattr(spec.output_type, "value") else str(spec.output_type),
+        version=str(spec.version),
+        type=artifact_type,
         scope=scope,
-        author=spec.author,
-        tags=spec.tags or [],
+        author=getattr(spec, "author", None),
+        tags=list(getattr(spec, "tags", []) or []),
         config_schema=config_schema,
+        updated_at=datetime.utcnow(),
         python_code=code,
         path=path,
-        reads=getattr(spec, "reads", []),
-        writes=getattr(spec, "writes", []),
-        updated_at=datetime.utcnow()
+        reads=list(getattr(spec, "reads", []) or []),
+        writes=list(getattr(spec, "writes", []) or []),
+        inputs=list(getattr(spec, "inputs", []) or []),
+        outputs=list(getattr(spec, "outputs", []) or []),
     )
 
-def draft_to_schema(op: CustomOperator) -> ArtifactSchema:
-    """Helper to convert DB model to Unified Schema."""
+
+def _tenant_artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = False) -> ArtifactSchema:
+    active_revision = artifact.latest_draft_revision or artifact.latest_published_revision
+    if active_revision is None:
+        raise ValueError("Artifact is missing a current revision")
+    artifact_type = ArtifactType.DRAFT
+    if artifact.latest_published_revision_id and active_revision.is_published:
+        artifact_type = ArtifactType.PROMOTED
     return ArtifactSchema(
-        id=str(op.id),
-        name=op.name,
-        display_name=op.display_name,
-        description=op.description,
-        category=op.category.value,
-        input_type=op.input_type,
-        output_type=op.output_type,
-        version=op.version,
-        type=ArtifactType.DRAFT,
-        scope=ArtifactScope(op.scope) if hasattr(op, "scope") and op.scope else ArtifactScope.RAG,
-        reads=getattr(op, "reads", []),
-        writes=getattr(op, "writes", []),
+        id=str(artifact.id),
+        name=artifact.slug,
+        display_name=artifact.display_name,
+        description=artifact.description,
+        category=artifact.category,
+        input_type=artifact.input_type,
+        output_type=artifact.output_type,
+        version=str(active_revision.version_label or "draft"),
+        type=artifact_type,
+        scope=_scope_to_schema_value(artifact.scope),
         author=None,
-        tags=["draft"],
-        config_schema=op.config_schema if isinstance(op.config_schema, list) else [],
-        created_at=op.created_at,
-        updated_at=op.updated_at,
-        python_code=op.python_code
+        tags=["published"] if artifact.status == ArtifactStatus.PUBLISHED else ["draft"],
+        config_schema=list(active_revision.config_schema or []),
+        created_at=artifact.created_at,
+        updated_at=artifact.updated_at,
+        python_code=active_revision.source_code if include_code else None,
+        reads=list(active_revision.reads or []),
+        writes=list(active_revision.writes or []),
+        inputs=list(active_revision.inputs or []),
+        outputs=list(active_revision.outputs or []),
     )
+
+
+def _parse_artifact_uuid(raw: str) -> UUID | None:
+    try:
+        return UUID(str(raw))
+    except Exception:
+        return None
+
 
 @router.get("", response_model=List[ArtifactSchema])
 async def list_artifacts(
     tenant_slug: Optional[str] = None,
     artifact_ctx=Depends(get_artifact_context),
 ):
-    """List all artifacts (File-based and DB drafts)."""
-    tenant, user, db = artifact_ctx
-    
-    results = []
-    
-    # 1. Fetch File-based Artifacts
-    registry = get_artifact_registry()
-    artifacts = registry.get_all_artifacts()
-    for aid, spec in artifacts.items():
-        path = str(registry.get_artifact_path(aid))
-        results.append(spec_to_schema(spec, ArtifactType.BUILTIN if "builtin/" in aid else ArtifactType.PROMOTED, path))
-    
-    # 2. Fetch DB Drafts
-    query = select(CustomOperator)
-    if tenant:
-        query = query.where(CustomOperator.tenant_id == tenant.id)
-    
-    res = await db.execute(query)
-    drafts = res.scalars().all()
-    for draft in drafts:
-        results.append(draft_to_schema(draft))
-        
+    tenant, _user, db = artifact_ctx
+    registry = ArtifactRegistryService(db)
+    results: list[ArtifactSchema] = []
+
+    for artifact_id, spec in registry.list_repo_artifacts().items():
+        path = registry.get_repo_artifact_path(artifact_id)
+        results.append(_repo_spec_to_schema(spec, path=str(path) if path else None, code=None))
+
+    if tenant is not None:
+        tenant_artifacts = await registry.list_tenant_artifacts(tenant_id=tenant.id)
+    else:
+        tenant_artifacts = list(
+            (
+                await db.execute(
+                    select(ArtifactModel).options(
+                        selectinload(ArtifactModel.latest_draft_revision),
+                        selectinload(ArtifactModel.latest_published_revision),
+                    )
+                )
+            ).scalars().all()
+        )
+    for artifact in tenant_artifacts:
+        results.append(_tenant_artifact_to_schema(artifact))
     return results
 
 @router.get("/{artifact_id:path}", response_model=ArtifactSchema)
@@ -169,31 +200,31 @@ async def get_artifact(
     tenant_slug: Optional[str] = None,
     artifact_ctx=Depends(get_artifact_context),
 ):
-    """Get specialized artifact details."""
-    tenant, user, db = artifact_ctx
-    
-    # Check if UUID (Draft)
-    try:
-        uid = UUID(artifact_id)
-        query = select(CustomOperator).where(CustomOperator.id == uid)
-        if tenant:
-            query = query.where(CustomOperator.tenant_id == tenant.id)
-        
-        draft = await db.scalar(query)
-        if draft:
-            return draft_to_schema(draft)
-    except ValueError:
-        pass # Not a UUID
-        
-    # Check File-based
-    registry = get_artifact_registry()
-    spec = registry.get_artifact(artifact_id)
-    if spec:
-        path = str(registry.get_artifact_path(artifact_id))
-        code = registry.get_artifact_code(artifact_id)
-        return spec_to_schema(spec, ArtifactType.BUILTIN if "builtin/" in artifact_id else ArtifactType.PROMOTED, path, code)
-        
+    tenant, _user, db = artifact_ctx
+    tenant_uuid = tenant.id if tenant is not None else None
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    registry = ArtifactRegistryService(db)
+
+    if artifact_uuid is not None:
+        artifact = await registry.get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant_uuid) if tenant_uuid else await db.scalar(
+            select(ArtifactModel)
+            .where(ArtifactModel.id == artifact_uuid)
+            .options(
+                selectinload(ArtifactModel.latest_draft_revision),
+                selectinload(ArtifactModel.latest_published_revision),
+            )
+        )
+        if artifact is not None:
+            return _tenant_artifact_to_schema(artifact, include_code=True)
+
+    spec = registry.get_repo_artifact(artifact_id)
+    if spec is not None:
+        path = registry.get_repo_artifact_path(artifact_id)
+        code = registry.get_repo_artifact_code(artifact_id)
+        return _repo_spec_to_schema(spec, path=str(path) if path else None, code=code)
+
     raise HTTPException(status_code=404, detail="Artifact not found")
+
 
 @router.post("", response_model=ArtifactSchema)
 async def create_artifact_draft(
@@ -202,32 +233,37 @@ async def create_artifact_draft(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    """Create a new artifact draft (DB)."""
     tenant, user, db = artifact_ctx
-    if not tenant:
-         raise HTTPException(status_code=400, detail="Tenant context required")
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
 
-    operator = CustomOperator(
+    existing = await db.scalar(select(ArtifactModel).where(ArtifactModel.tenant_id == tenant.id, ArtifactModel.slug == request.name))
+    if existing is not None:
+        raise HTTPException(status_code=400, detail="Artifact with this slug already exists")
+
+    service = ArtifactRevisionService(db)
+    artifact = await service.create_artifact(
         tenant_id=tenant.id,
+        created_by=user.id if user else None,
         name=request.name,
         display_name=request.display_name,
-        category=OperatorCategory(request.category),
         description=request.description,
-        python_code=request.python_code,
+        category=request.category,
+        scope=request.scope.value if request.scope else "rag",
         input_type=request.input_type,
         output_type=request.output_type,
-        config_schema=request.config_schema,
-        scope=request.scope.value if request.scope else "rag",
-        reads=request.reads or [],
-        writes=request.writes or [],
-        created_by=user.id if user else None
+        source_code=request.python_code,
+        config_schema=list(request.config_schema or []),
+        inputs=list(request.inputs or []),
+        outputs=list(request.outputs or []),
+        reads=list(request.reads or []),
+        writes=list(request.writes or []),
     )
-    
-    db.add(operator)
     await db.commit()
-    await db.refresh(operator)
-    
-    return draft_to_schema(operator)
+    await db.refresh(artifact)
+    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    return _tenant_artifact_to_schema(artifact, include_code=True)
+
 
 @router.put("/{artifact_id:path}", response_model=ArtifactSchema)
 async def update_artifact(
@@ -237,66 +273,43 @@ async def update_artifact(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    """Update an artifact (Draft DB or File-based)."""
     tenant, user, db = artifact_ctx
-    
-    # Check if UUID (Draft)
-    try:
-        uid = UUID(artifact_id)
-        query = select(CustomOperator).where(CustomOperator.id == uid)
-        if tenant:
-            query = query.where(CustomOperator.tenant_id == tenant.id)
-            
-        draft = await db.scalar(query)
-        if draft:
-            data = update_data.dict(exclude_unset=True)
-            for field, value in data.items():
-                if field == 'category' and value:
-                    value = OperatorCategory(value)
-                if field == 'scope' and value:
-                    value = value.value if hasattr(value, 'value') else value
-                setattr(draft, field, value)
-            
-            draft.updated_at = datetime.utcnow()
-            await db.commit()
-            await db.refresh(draft)
-            return draft_to_schema(draft)
-    except ValueError:
-        pass
-        
-    # Check File-based
-    registry = get_artifact_registry()
-    spec = registry.get_artifact(artifact_id)
-    if spec:
-        if "builtin/" in artifact_id and (not user or user.role != "admin"):
-             raise HTTPException(status_code=403, detail="Cannot update builtin artifacts")
-             
-        # Prepare updated manifest
-        manifest = {
-            "id": artifact_id,
-            "version": spec.version,
-            "display_name": update_data.display_name or spec.display_name,
-            "category": update_data.category or spec.category.value,
-            "description": update_data.description or spec.description,
-            "input_type": update_data.input_type or spec.input_type.value,
-            "output_type": update_data.output_type or spec.output_type.value,
-            "config": update_data.config_schema if update_data.config_schema is not None else (spec.required_config + spec.optional_config),
-            "author": spec.author,
-            "tags": spec.tags,
-            "scope": update_data.scope.value if update_data.scope else (spec.scope if hasattr(spec, "scope") else "rag"),
-            "reads": update_data.reads if update_data.reads is not None else getattr(spec, "reads", []),
-            "writes": update_data.writes if update_data.writes is not None else getattr(spec, "writes", []),
-        }
-        
-        # Ensure config is serializable (not Pydantic objects)
-        if isinstance(manifest["config"], list):
-            manifest["config"] = [c.dict(by_alias=True) if hasattr(c, "dict") else c for c in manifest["config"]]
-        
-        success = registry.update_artifact(artifact_id, manifest, update_data.python_code)
-        if success:
-            return await get_artifact(artifact_id, tenant_slug=tenant_slug, artifact_ctx=artifact_ctx)
-            
-    raise HTTPException(status_code=404, detail="Artifact not found or update failed")
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        raise HTTPException(status_code=403, detail="Repo-backed artifacts are read-only in runtime v1")
+
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+
+    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
+    if current_revision is None:
+        raise HTTPException(status_code=409, detail="Artifact is missing a current revision")
+    payload = _model_dump(update_data, exclude_unset=True)
+    revision_service = ArtifactRevisionService(db)
+    await revision_service.update_artifact(
+        artifact,
+        updated_by=user.id if user else None,
+        display_name=payload.get("display_name", artifact.display_name),
+        description=payload.get("description", artifact.description),
+        category=payload.get("category", artifact.category),
+        scope=(payload.get("scope").value if hasattr(payload.get("scope"), "value") else payload.get("scope", getattr(artifact.scope, "value", artifact.scope))),
+        input_type=payload.get("input_type", artifact.input_type),
+        output_type=payload.get("output_type", artifact.output_type),
+        source_code=payload.get("python_code", current_revision.source_code),
+        config_schema=list(payload.get("config_schema", current_revision.config_schema or [])),
+        inputs=list(payload.get("inputs", current_revision.inputs or [])),
+        outputs=list(payload.get("outputs", current_revision.outputs or [])),
+        reads=list(payload.get("reads", current_revision.reads or [])),
+        writes=list(payload.get("writes", current_revision.writes or [])),
+    )
+    await db.commit()
+    refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    return _tenant_artifact_to_schema(refreshed, include_code=True)
+
 
 @router.delete("/{artifact_id:path}")
 async def delete_artifact(
@@ -306,52 +319,28 @@ async def delete_artifact(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    """Delete an artifact."""
-    tenant, user, db = artifact_ctx
-    tenant_id = str(tenant.id) if tenant else principal.get("tenant_id")
-    
-    # Check if UUID (Draft)
-    try:
-        uid = UUID(artifact_id)
-        query = select(CustomOperator).where(CustomOperator.id == uid)
-        if tenant:
-            query = query.where(CustomOperator.tenant_id == tenant.id)
-            
-        draft = await db.scalar(query)
-        if draft:
-            await ensure_sensitive_action_approved(
-                principal=principal,
-                tenant_id=tenant_id,
-                subject_type="artifact",
-                subject_id=str(draft.id),
-                action_scope="artifacts.delete",
-                db=db,
-            )
-            await db.delete(draft)
-            await db.commit()
-            return {"status": "deleted"}
-    except ValueError:
-        pass
-        
-    # Check File-based
-    registry = get_artifact_registry()
-    if registry.get_artifact(artifact_id):
-        if "builtin/" in artifact_id:
-            raise HTTPException(status_code=403, detail="Cannot delete builtin artifacts")
-        await ensure_sensitive_action_approved(
-            principal=principal,
-            tenant_id=tenant_id,
-            subject_type="artifact",
-            subject_id=str(artifact_id),
-            action_scope="artifacts.delete",
-            db=db,
-        )
-            
-        success = registry.delete_artifact(artifact_id)
-        if success:
-            return {"status": "deleted"}
-            
-    raise HTTPException(status_code=404, detail="Artifact not found")
+    tenant, _user, db = artifact_ctx
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        raise HTTPException(status_code=403, detail="Repo-backed artifacts are read-only in runtime v1")
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    await ensure_sensitive_action_approved(
+        principal=principal,
+        tenant_id=tenant.id,
+        subject_type="artifact",
+        subject_id=str(artifact.id),
+        action_scope="artifacts.delete",
+        db=db,
+    )
+    await db.delete(artifact)
+    await db.commit()
+    return {"status": "deleted"}
+
 
 @router.post("/{artifact_id:path}/promote")
 async def promote_artifact(
@@ -362,68 +351,72 @@ async def promote_artifact(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    """Promote a DB draft to a File artifact."""
-    tenant, user, db = artifact_ctx
-    
-    try:
-        uid = UUID(artifact_id)
-        query = select(CustomOperator).where(CustomOperator.id == uid)
-        if tenant:
-            query = query.where(CustomOperator.tenant_id == tenant.id)
-            
-        draft = await db.scalar(query)
-        if not draft:
-            raise HTTPException(status_code=404, detail="Draft not found")
+    _ = request
+    tenant, _user, db = artifact_ctx
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        raise HTTPException(status_code=403, detail="Repo-backed artifacts are read-only in runtime v1")
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
 
-        await ensure_sensitive_action_approved(
-            principal=principal,
-            tenant_id=tenant.id if tenant else principal.get("tenant_id"),
-            subject_type="artifact",
-            subject_id=str(draft.id),
-            action_scope="artifacts.promote",
-            db=db,
-        )
-            
-        # Re-use existing promotion logic from rag_custom_operators (or duplicate/move it)
-        registry = get_artifact_registry()
-        
-        artifact_name = draft.name
-        namespace = request.namespace
-        promoted_id = f"{namespace}/{artifact_name}"
-        
-        manifest = {
-            "id": promoted_id,
-            "version": request.version or draft.version or "1.0.0",
-            "display_name": draft.display_name,
-            "category": draft.category.value,
-            "description": draft.description,
-            "input_type": draft.input_type,
-            "output_type": draft.output_type,
-            "config": draft.config_schema if isinstance(draft.config_schema, list) else [],
-            "author": (
-                f"{user.full_name} ({user.email})"
-                if user and hasattr(user, "full_name") and user.full_name
-                else (user.email if user else "platform-service")
-            ),
-            "scope": draft.scope or "rag",
-            "reads": draft.reads or [],
-            "writes": draft.writes or [],
-            "tags": ["promoted", "custom"]
-        }
-        
-        path = registry.promote_to_artifact(namespace, artifact_name, manifest, draft.python_code)
-        
-        # Delete the draft after successful promotion to avoid duplicates
-        await db.delete(draft)
-        await db.commit()
-        
-        return {
-            "status": "promoted",
-            "artifact_id": promoted_id,
-            "path": str(path)
-        }
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Only drafts can be promoted")
+    await ensure_sensitive_action_approved(
+        principal=principal,
+        tenant_id=tenant.id,
+        subject_type="artifact",
+        subject_id=str(artifact.id),
+        action_scope="artifacts.promote",
+        db=db,
+    )
+
+    revision = await ArtifactRevisionService(db).publish_latest_draft(artifact)
+    await db.commit()
+    return {
+        "status": "published",
+        "artifact_id": str(artifact.id),
+        "revision_id": str(revision.id),
+        "version": revision.version_label,
+    }
+
+
+@router.post("/test-runs", response_model=ArtifactRunCreateResponse)
+async def create_unsaved_test_run(
+    request: ArtifactTestRequest,
+    tenant_slug: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, user, db = artifact_ctx
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    artifact_uuid = _parse_artifact_uuid(request.artifact_id) if request.artifact_id else None
+    service = ArtifactExecutionService(db)
+    run = await service.start_test_run(
+        tenant_id=tenant.id,
+        created_by=user.id if user else None,
+        artifact_id=artifact_uuid,
+        python_code=request.python_code,
+        input_data=request.input_data,
+        config=request.config or {},
+        input_type=request.input_type,
+        output_type=request.output_type,
+    )
+    return ArtifactRunCreateResponse(run_id=str(run.id), status=run.status.value)
+
+
+@router.post("/{artifact_id:path}/test-runs", response_model=ArtifactRunCreateResponse)
+async def create_saved_artifact_test_run(
+    artifact_id: str,
+    request: ArtifactTestRequest,
+    tenant_slug: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    request.artifact_id = artifact_id
+    return await create_unsaved_test_run(request, tenant_slug=tenant_slug, artifact_ctx=artifact_ctx)
+
 
 @router.post("/test", response_model=ArtifactTestResponse)
 async def test_artifact(
@@ -431,60 +424,59 @@ async def test_artifact(
     tenant_slug: Optional[str] = None,
     artifact_ctx=Depends(get_artifact_context),
 ):
-    """Test an artifact execution."""
     tenant, user, db = artifact_ctx
-    # Logic similar to CustomOperator.test
-    code = request.python_code
-    input_type = request.input_type
-    output_type = request.output_type
-    
-    if request.artifact_id and not code:
-        # Load code from existing artifact
-        registry = get_artifact_registry()
-        # Try as file-based first
-        code = registry.get_artifact_code(request.artifact_id)
-        if not code:
-            # Try as draft
-            try:
-                uid = UUID(request.artifact_id)
-                draft = await db.get(CustomOperator, uid)
-                if draft:
-                    code = draft.python_code
-                    input_type = draft.input_type
-                    output_type = draft.output_type
-            except ValueError:
-                pass
-                
-    if not code:
-        raise HTTPException(status_code=400, detail="No code provided for testing")
-        
-    spec = OperatorSpec(
-        operator_id="test_artifact",
-        display_name="Test Artifact",
-        category=RegistryCategory.CUSTOM,
-        input_type=DataType(input_type),
-        output_type=DataType(output_type),
-        is_custom=True
-    )
-    
-    executor = PythonOperatorExecutor(spec, code)
-    
-    input_obj = OperatorInput(
-        data=request.input_data,
-        metadata={}
-    )
-    
-    context = ExecutionContext(
-        step_id="test_step",
-        config=request.config,
-        tenant_id=str(tenant.id) if tenant else None,
-    )
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
 
-    output = await executor.safe_execute(input_obj, context)
-    
+    service = ArtifactExecutionService(db)
+    run = await service.start_test_run(
+        tenant_id=tenant.id,
+        created_by=user.id if user else None,
+        artifact_id=_parse_artifact_uuid(request.artifact_id) if request.artifact_id else None,
+        python_code=request.python_code,
+        input_data=request.input_data,
+        config=request.config or {},
+        input_type=request.input_type,
+        output_type=request.output_type,
+    )
+    terminal = await service.wait_for_terminal_state(run.id, timeout_seconds=30.0)
+    if terminal is None:
+        return ArtifactTestResponse(
+            success=False,
+            data=None,
+            error_message="Timed out waiting for test run",
+            execution_time_ms=0.0,
+            run_id=str(run.id),
+        )
+    if terminal.status == ArtifactRunStatus.COMPLETED:
+        return ArtifactTestResponse(
+            success=True,
+            data=terminal.result_payload,
+            error_message=None,
+            execution_time_ms=float(terminal.duration_ms or 0),
+            run_id=str(terminal.id),
+            stdout_excerpt=terminal.stdout_excerpt,
+            stderr_excerpt=terminal.stderr_excerpt,
+        )
+    if terminal.status == ArtifactRunStatus.CANCELLED:
+        return ArtifactTestResponse(
+            success=False,
+            data=None,
+            error_message="Test run cancelled",
+            execution_time_ms=float(terminal.duration_ms or 0),
+            run_id=str(terminal.id),
+            error_payload=terminal.error_payload,
+            stdout_excerpt=terminal.stdout_excerpt,
+            stderr_excerpt=terminal.stderr_excerpt,
+        )
+    message = (terminal.error_payload or {}).get("message") if isinstance(terminal.error_payload, dict) else None
     return ArtifactTestResponse(
-        success=output.success,
-        data=output.data,
-        error_message=output.error_message,
-        execution_time_ms=output.execution_time_ms
+        success=False,
+        data=None,
+        error_message=message or "Artifact test run failed",
+        execution_time_ms=float(terminal.duration_ms or 0),
+        run_id=str(terminal.id),
+        error_payload=terminal.error_payload,
+        stdout_excerpt=terminal.stdout_excerpt,
+        stderr_excerpt=terminal.stderr_excerpt,
     )

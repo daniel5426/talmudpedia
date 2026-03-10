@@ -1,7 +1,8 @@
 import { httpClient } from "./http";
 
 export type ArtifactType = "draft" | "promoted" | "builtin";
-export type ArtifactScope = "rag" | "agent" | "both";
+export type ArtifactScope = "rag" | "agent" | "both" | "tool";
+export type ArtifactRunStatus = "queued" | "running" | "completed" | "failed" | "cancel_requested" | "cancelled";
 
 export interface Artifact {
   id: string;
@@ -72,6 +73,46 @@ export interface ArtifactTestResponse {
   data?: any;
   error_message?: string;
   execution_time_ms: number;
+  run_id?: string;
+  error_payload?: Record<string, any>;
+  stdout_excerpt?: string;
+  stderr_excerpt?: string;
+}
+
+export interface ArtifactRun {
+  id: string;
+  artifact_id?: string;
+  revision_id: string;
+  domain: string;
+  status: ArtifactRunStatus;
+  queue_class: string;
+  result_payload?: Record<string, any>;
+  error_payload?: Record<string, any>;
+  stdout_excerpt?: string;
+  stderr_excerpt?: string;
+  duration_ms?: number;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export interface ArtifactRunEvent {
+  id: string;
+  sequence: number;
+  timestamp?: string;
+  event_type: string;
+  payload: Record<string, any>;
+}
+
+export interface ArtifactRunCreateResponse {
+  run_id: string;
+  status: ArtifactRunStatus;
+}
+
+export interface ArtifactRunEventsResponse {
+  run_id: string;
+  event_count: number;
+  events: ArtifactRunEvent[];
 }
 
 export const artifactsService = {
@@ -110,5 +151,22 @@ export const artifactsService = {
   test: async (data: ArtifactTestRequest, tenantSlug?: string): Promise<ArtifactTestResponse> => {
     const url = tenantSlug ? `/admin/artifacts/test?tenant_slug=${tenantSlug}` : "/admin/artifacts/test";
     return httpClient.post<ArtifactTestResponse>(url, data);
+  },
+
+  createTestRun: async (data: ArtifactTestRequest, tenantSlug?: string): Promise<ArtifactRunCreateResponse> => {
+    const url = tenantSlug ? `/admin/artifacts/test-runs?tenant_slug=${tenantSlug}` : "/admin/artifacts/test-runs";
+    return httpClient.post<ArtifactRunCreateResponse>(url, data);
+  },
+
+  getRun: async (runId: string, tenantSlug?: string): Promise<ArtifactRun> => {
+    const url = tenantSlug ? `/admin/artifact-runs/${runId}?tenant_slug=${tenantSlug}` : `/admin/artifact-runs/${runId}`;
+    return httpClient.get<ArtifactRun>(url);
+  },
+
+  getRunEvents: async (runId: string, tenantSlug?: string): Promise<ArtifactRunEventsResponse> => {
+    const url = tenantSlug
+      ? `/admin/artifact-runs/${runId}/events?tenant_slug=${tenantSlug}`
+      : `/admin/artifact-runs/${runId}/events`;
+    return httpClient.get<ArtifactRunEventsResponse>(url);
   },
 };
