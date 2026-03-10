@@ -70,12 +70,35 @@ export function useAppsBuilderChatSessionActions({
   forceClearSessionSendingState,
   createClientMessageId,
 }: SessionActionsDeps) {
+  const logChatDebug = useCallback((event: string, fields: Record<string, unknown> = {}) => {
+    if (typeof console === "undefined" || typeof console.info !== "function") {
+      return;
+    }
+    console.info("[apps-builder][chat]", {
+      event,
+      appId,
+      ...fields,
+    });
+  }, [appId]);
+
   const runPrompt = useCallback(async (sessionKey: string, { input, clientMessageId, userTimelineId, modelId }: PromptRequest) => {
     const resolvedSessionKey = normalizeSessionKey(sessionKey);
     const promptText = input.trim();
     if (!promptText) return;
     const resolvedModelId = String(modelId || "").trim() || OPENCODE_CODING_MODEL_AUTO_ID;
     const session = getSession(resolvedSessionKey);
+    session.promptSubmissionInFlightRef.current = true;
+    logChatDebug("run_prompt.begin", {
+      sessionKey: resolvedSessionKey,
+      isLocalSession: isLocalSessionKey(resolvedSessionKey),
+      attachedRunSessionId: String(session.attachedRunSessionIdRef.current || "").trim() || null,
+      activeRunId: String(session.activeRunIdRef.current || "").trim() || null,
+      lastKnownRunId: String(session.lastKnownRunIdRef.current || "").trim() || null,
+      isSending: session.isSendingRef.current,
+      promptSubmissionInFlight: session.promptSubmissionInFlightRef.current,
+      pendingCancel: session.pendingCancelRef.current,
+      clientMessageId,
+    });
 
     onError(null);
     mutateSession(resolvedSessionKey, (target) => {
@@ -148,6 +171,15 @@ export function useAppsBuilderChatSessionActions({
       const run = submission.run;
       const runSessionId = String(run.chat_session_id || currentSessionId || "").trim();
       const targetSessionKey = ensureSessionKeyByServerSessionId(resolvedSessionKey, runSessionId || null);
+      getSession(targetSessionKey).promptSubmissionInFlightRef.current = false;
+      logChatDebug("run_prompt.submitted", {
+        sourceSessionKey: resolvedSessionKey,
+        targetSessionKey,
+        runId: run.run_id,
+        runSessionId: runSessionId || null,
+        currentSessionId: currentSessionId || null,
+        submissionStatus: submission.submission_status,
+      });
       if (targetSessionKey !== resolvedSessionKey) {
         moveSessionTitleHint(resolvedSessionKey, targetSessionKey);
       }
@@ -182,12 +214,22 @@ export function useAppsBuilderChatSessionActions({
       streamStarted = true;
       await consumeRunStreamForSession(targetSessionKey, run.run_id, runSessionId || null);
     } catch (err) {
+      session.promptSubmissionInFlightRef.current = false;
+      logChatDebug("run_prompt.error", {
+        sessionKey: resolvedSessionKey,
+        error: err instanceof Error ? err.message : String(err || ""),
+      });
       mutateSession(resolvedSessionKey, (target) => {
         target.timeline = target.timeline.map((item) => item.id === userTimelineId ? { ...item, userDeliveryStatus: "failed" } : item);
       });
       onError(err instanceof Error ? err.message : "Failed to run coding agent");
     } finally {
       if (!streamStarted) {
+        session.promptSubmissionInFlightRef.current = false;
+        logChatDebug("run_prompt.cleanup_without_stream", {
+          sessionKey: resolvedSessionKey,
+          streamStarted,
+        });
         mutateSession(resolvedSessionKey, (target) => {
           target.pendingCancelRef.current = false;
           target.isStopping = false;
@@ -229,6 +271,12 @@ export function useAppsBuilderChatSessionActions({
   const drainQueuedPrompts = useCallback(async (sessionKey: string) => {
     const session = getSession(sessionKey);
     if (session.isQueueDrainActiveRef.current || session.isSendingRef.current) {
+      logChatDebug("queue_drain.skipped", {
+        sessionKey,
+        isQueueDrainActive: session.isQueueDrainActiveRef.current,
+        isSending: session.isSendingRef.current,
+        queuedPromptCount: session.queuedPrompts.length,
+      });
       return;
     }
     session.isQueueDrainActiveRef.current = true;
@@ -238,6 +286,11 @@ export function useAppsBuilderChatSessionActions({
         if (!nextPrompt) {
           break;
         }
+        logChatDebug("queue_drain.dequeue", {
+          sessionKey,
+          promptId: nextPrompt.id,
+          queuedPromptCount: session.queuedPrompts.length,
+        });
         mutateSession(sessionKey, (target) => {
           target.queuedPrompts = target.queuedPrompts.slice(1);
         });
@@ -245,15 +298,41 @@ export function useAppsBuilderChatSessionActions({
       }
     } finally {
       session.isQueueDrainActiveRef.current = false;
+      logChatDebug("queue_drain.done", {
+        sessionKey,
+        queuedPromptCount: session.queuedPrompts.length,
+        isSending: session.isSendingRef.current,
+      });
     }
-  }, [getSession, mutateSession, runPromptWithTimeline]);
+  }, [getSession, logChatDebug, mutateSession, runPromptWithTimeline]);
 
   const sendBuilderChat = useCallback(async (rawInput: string) => {
     const input = rawInput.trim();
     if (!input) return;
     let key = normalizeSessionKey(activeChatSessionIdRef.current);
-    const sourceSession = getSession(key);
+    let sourceSession = getSession(key);
+    const attachedServerSessionId = String(sourceSession.attachedRunSessionIdRef.current || "").trim();
+    logChatDebug("send_chat.begin", {
+      activeChatSessionId: String(activeChatSessionIdRef.current || "").trim() || null,
+      initialSessionKey: key,
+      isLocalSession: isLocalSessionKey(key),
+      attachedServerSessionId: attachedServerSessionId || null,
+      sourceIsSending: sourceSession.isSendingRef.current,
+      sourcePendingCancel: sourceSession.pendingCancelRef.current,
+    });
+    if (isLocalSessionKey(key) && attachedServerSessionId && !isLocalSessionKey(attachedServerSessionId)) {
+      key = ensureSessionKeyByServerSessionId(key, attachedServerSessionId);
+      sourceSession = getSession(key);
+      logChatDebug("send_chat.promoted_local_session", {
+        promotedToSessionKey: key,
+      });
+    }
     if (sourceSession.isSendingRef.current || sourceSession.pendingCancelRef.current) {
+      logChatDebug("send_chat.queued_on_busy_session", {
+        sessionKey: key,
+        isSending: sourceSession.isSendingRef.current,
+        pendingCancel: sourceSession.pendingCancelRef.current,
+      });
       mutateSession(key, (target) => {
         target.queuedPrompts = [...target.queuedPrompts, createQueuedPrompt(input, selectedRunModelId)];
       });
@@ -263,9 +342,18 @@ export function useAppsBuilderChatSessionActions({
     if (key === DRAFT_SESSION_KEY) {
       draftRunClientMessageId = createClientMessageId();
       key = promoteDraftSessionToLocalSession(createLocalSessionKey(draftRunClientMessageId));
+      logChatDebug("send_chat.promoted_draft_session", {
+        promotedToSessionKey: key,
+        draftRunClientMessageId,
+      });
     }
     const session = getSession(key);
     if (session.isSendingRef.current || session.pendingCancelRef.current) {
+      logChatDebug("send_chat.queued_after_promotion", {
+        sessionKey: key,
+        isSending: session.isSendingRef.current,
+        pendingCancel: session.pendingCancelRef.current,
+      });
       mutateSession(key, (target) => {
         target.queuedPrompts = [...target.queuedPrompts, createQueuedPrompt(input, selectedRunModelId)];
       });
@@ -276,11 +364,15 @@ export function useAppsBuilderChatSessionActions({
     }
     await runPromptWithTimeline(key, input, selectedRunModelId, draftRunClientMessageId);
     const latestSessionKey = normalizeSessionKey(activeChatSessionIdRef.current);
+    logChatDebug("send_chat.after_run_prompt", {
+      originalSessionKey: key,
+      latestSessionKey,
+    });
     if (latestSessionKey && latestSessionKey !== key) {
       await drainQueuedPrompts(latestSessionKey);
     }
     await drainQueuedPrompts(key);
-  }, [activeChatSessionIdRef, createClientMessageId, drainQueuedPrompts, getSession, mutateSession, promoteDraftSessionToLocalSession, runPromptWithTimeline, selectedRunModelId, setSessionTitleHint]);
+  }, [activeChatSessionIdRef, createClientMessageId, drainQueuedPrompts, ensureSessionKeyByServerSessionId, getSession, logChatDebug, mutateSession, promoteDraftSessionToLocalSession, runPromptWithTimeline, selectedRunModelId, setSessionTitleHint]);
 
   const answerPendingQuestion = useCallback(async (answers: string[][]) => {
     const key = normalizeSessionKey(activeChatSessionIdRef.current);

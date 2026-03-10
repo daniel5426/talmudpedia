@@ -25,6 +25,7 @@ from app.db.postgres.models.published_apps import (
 )
 from app.db.postgres.session import get_db
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
+from app.services.published_app_preview_builds import PublishedAppPreviewBuildService
 from app.services.published_app_revision_build_dispatch import (
     enqueue_revision_build,
     mark_revision_build_enqueue_failed,
@@ -162,86 +163,14 @@ async def create_draft_version(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    actor_id = ctx["user"].id if ctx.get("user") else None
-    active_count = await _count_active_coding_runs_for_scope(db, app_id=app.id, user_id=actor_id)
-    if active_count > 0:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "CODING_AGENT_RUN_ACTIVE",
-                "message": "Builder edits are locked while a coding-agent run is active for this app.",
-                "active_coding_run_count": active_count,
-            },
-        )
-
-    current = await _ensure_current_draft_revision(db, app, actor_id)
-    if payload.base_revision_id and str(payload.base_revision_id) != str(current.id):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "REVISION_CONFLICT",
-                "latest_revision_id": str(current.id),
-                "latest_updated_at": current.created_at.isoformat(),
-                "message": "Draft revision is stale",
-            },
-        )
-
-    if payload.files is not None:
-        next_files = _coerce_files_payload(payload.files)
-        next_entry = _normalize_builder_path(payload.entry_file or current.entry_file)
-        _assert_builder_path_allowed(next_entry, field="entry_file")
-        _validate_builder_project_or_raise(next_files, next_entry)
-    else:
-        next_files, next_entry = _apply_patch_operations(
-            dict(current.files or {}),
-            payload.entry_file or current.entry_file,
-            payload.operations,
-        )
-
-    revision = await create_app_version(
-        db,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=app.template_key,
-        entry_file=next_entry,
-        files=next_files,
-        created_by=actor_id,
-        source_revision_id=current.id,
-        origin_kind="manual_save",
-        build_status=PublishedAppRevisionBuildStatus.queued,
-        build_seq=_next_build_seq(current),
-        template_runtime="vite_static",
+    _ = (app_id, payload, request, principal, db)
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "MANUAL_DRAFT_VERSION_REMOVED",
+            "message": "Manual draft version creation was removed. Versions are created from preview builds after AI runs and publish.",
+        },
     )
-    enqueue_error = enqueue_revision_build(
-        revision=revision,
-        app=app,
-        build_kind="manual_save",
-    )
-    if enqueue_error:
-        mark_revision_build_enqueue_failed(
-            revision=revision,
-            reason=enqueue_error,
-        )
-    app.current_draft_revision_id = revision.id
-    runtime_service = PublishedAppDraftDevRuntimeService(db)
-    if actor_id is not None:
-        try:
-            await runtime_service.sync_session(
-                app=app,
-                revision=revision,
-                user_id=actor_id,
-                files=dict(revision.files or {}),
-                entry_file=revision.entry_file,
-            )
-        except PublishedAppDraftDevRuntimeDisabled:
-            pass
-    await db.commit()
-    await db.refresh(revision)
-    return _revision_to_response(revision)
 
 
 @router.post("/{app_id}/versions/{version_id}/restore", response_model=PublishedAppRevisionResponse)
@@ -354,7 +283,7 @@ async def get_version_preview_runtime(
         manifest_entry = manifest.get("entry_html")
         if isinstance(manifest_entry, str) and manifest_entry.strip():
             entry_html = manifest_entry.lstrip("/")
-    preview_url = f"{asset_base_url}{entry_html}?runtime_token={runtime_token}"
+    preview_url = f"{asset_base_url}{entry_html}"
     return VersionPreviewRuntimeResponse(
         revision_id=str(revision.id),
         preview_url=preview_url,
@@ -379,7 +308,7 @@ async def publish_version(
     if actor_id is None:
         raise HTTPException(status_code=403, detail="Publish requires a user principal")
 
-    revision = await _get_revision_for_app(db, app.id, version_id)
+    _ = version_id
     active_publish = await _get_active_publish_job_for_app(db, app_id=app.id)
     if active_publish is not None:
         raise HTTPException(
@@ -391,7 +320,27 @@ async def publish_version(
             },
         )
 
-    has_dist = _revision_has_dist_assets(revision)
+    preview_builds = PublishedAppPreviewBuildService(db)
+    workspace, snapshot = await preview_builds.get_current_build(app_id=app.id)
+    if workspace is None or snapshot is None or snapshot.status != "succeeded":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PREVIEW_BUILD_NOT_READY",
+                "message": "Publish requires a successful current preview build.",
+                "preview_build_status": snapshot.status if snapshot is not None else None,
+                "preview_build_error": snapshot.last_error if snapshot is not None else None,
+            },
+        )
+
+    revision = await preview_builds.materialize_revision_from_build(
+        app=app,
+        workspace=workspace,
+        snapshot=snapshot,
+        created_by=actor_id,
+        source_revision_id=app.current_draft_revision_id,
+        origin_kind="publish_output",
+    )
 
     now = datetime.now(timezone.utc)
     publish_job = PublishedAppPublishJob(
@@ -399,55 +348,30 @@ async def publish_version(
         tenant_id=app.tenant_id,
         requested_by=actor_id,
         source_revision_id=revision.id,
-        saved_draft_revision_id=None,
-        published_revision_id=None,
-        status=PublishedAppPublishJobStatus.running,
-        stage="running",
+        saved_draft_revision_id=revision.id,
+        published_revision_id=revision.id,
+        status=PublishedAppPublishJobStatus.succeeded,
+        stage="completed",
         error=None,
         diagnostics=[
             {
-                "kind": "publish_pointer",
+                "kind": "preview_publish",
                 "version_id": str(revision.id),
-                "reused_dist": "true" if has_dist else "false",
-                "built_on_publish": "false",
+                "preview_build_id": snapshot.build_id,
+                "preview_build_seq": str(snapshot.build_seq),
+                "reused_dist": "true",
             }
         ],
         last_heartbeat_at=now,
-        started_at=now if has_dist else None,
-        finished_at=None,
+        started_at=now,
+        finished_at=now,
     )
     db.add(publish_job)
     await db.flush()
-
-    if has_dist:
-        app.current_published_revision_id = revision.id
-        app.status = PublishedAppStatus.published
-        app.published_at = now
-        app.published_url = _build_published_url(app.slug)
-        publish_job.status = PublishedAppPublishJobStatus.succeeded
-        publish_job.stage = "completed"
-        publish_job.published_revision_id = revision.id
-        publish_job.finished_at = now
-        publish_job.last_heartbeat_at = now
-    else:
-        publish_job.status = PublishedAppPublishJobStatus.queued
-        publish_job.stage = "waiting_for_build"
-        try:
-            from app.workers.tasks import publish_version_pointer_after_build_task
-            publish_version_pointer_after_build_task.delay(job_id=str(publish_job.id))
-        except Exception as exc:
-            publish_job.status = PublishedAppPublishJobStatus.failed
-            publish_job.stage = "failed"
-            publish_job.error = f"Failed to enqueue publish wait task: {exc}"
-            publish_job.finished_at = datetime.now(timezone.utc)
-            publish_job.last_heartbeat_at = datetime.now(timezone.utc)
-            publish_job.diagnostics = list(publish_job.diagnostics or []) + [
-                {
-                    "kind": "publish_wait_build",
-                    "build_wait_state": "enqueue_failed",
-                    "message": str(exc),
-                }
-            ]
+    app.current_published_revision_id = revision.id
+    app.status = PublishedAppStatus.published
+    app.published_at = now
+    app.published_url = _build_published_url(app.slug)
     await db.commit()
     await db.refresh(publish_job)
 

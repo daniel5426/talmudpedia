@@ -1,4 +1,5 @@
 import os
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -202,6 +203,12 @@ async def get_builder_state(
             app_id=app.id,
             user_id=actor_id,
         )
+        if (
+            draft_dev_session is not None
+            and runtime_service._is_session_serving_status(draft_dev_session.status)
+        ):
+            with suppress(PublishedAppDraftDevRuntimeDisabled, Exception):
+                draft_dev_session = await runtime_service.heartbeat_session(session=draft_dev_session)
     await db.commit()
     await db.refresh(app)
 

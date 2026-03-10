@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -44,7 +45,13 @@ from app.services.usage_quota_service import QuotaExceededError
 
 
 router = APIRouter(prefix="/public/apps", tags=["published-apps-public"])
-PREVIEW_TOKEN_COOKIE_NAME = "published_app_preview_token"
+PREVIEW_TOKEN_COOKIE_NAME = "published_app_public_preview_token"
+_PREVIEW_ASSET_URL_ATTR_PATTERN = re.compile(r"""(?P<prefix>\b(?:src|href)=["'])(?P<path>/[^"'?#]+(?:[?#][^"']*)?)""")
+_PREVIEW_RELATIVE_ASSET_URL_ATTR_PATTERN = re.compile(
+    r"""(?P<prefix>\b(?:src|href)=["'])(?P<path>(?:\./)?assets/[^"'?#]+(?:[?#][^"']*)?)"""
+)
+_PREVIEW_ROOT_ASSET_PATTERN = re.compile(r"""(?P<quote>["'])(?P<path>/assets/[^"'?#]+(?:[?#][^"']*)?)(?P=quote)""")
+_PREVIEW_REWRITABLE_TEXT_PREFIXES = ("text/html", "application/javascript", "text/javascript", "text/css")
 
 
 class PublicAppConfigResponse(BaseModel):
@@ -373,6 +380,57 @@ def _inject_runtime_context_into_html(html: str, context: RuntimeBootstrapRespon
     return f"{script}{html}"
 
 
+def _preview_asset_base_path(*, revision_id: UUID) -> str:
+    return f"/public/apps/preview/revisions/{revision_id}/assets"
+
+
+def _rewrite_preview_asset_text(*, revision_id: UUID, content_type: str, content: bytes) -> tuple[bytes, bool]:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if not normalized_content_type.startswith(_PREVIEW_REWRITABLE_TEXT_PREFIXES):
+        return content, False
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content, False
+
+    asset_base_path = _preview_asset_base_path(revision_id=revision_id)
+
+    def _rewrite_root_asset_path(path: str) -> str:
+        original = str(path or "")
+        if original.startswith("//") or not original.startswith("/assets/"):
+            return original
+        return f"{asset_base_path}{original}"
+
+    def _rewrite_relative_asset_path(path: str) -> str:
+        original = str(path or "")
+        normalized = original[2:] if original.startswith("./") else original
+        if not normalized.startswith("assets/"):
+            return original
+        return f"{asset_base_path}/{normalized}"
+
+    if normalized_content_type == "text/html":
+        def _replace_attr(match: re.Match[str]) -> str:
+            original = str(match.group("path") or "")
+            rewritten = _rewrite_root_asset_path(original)
+            return f"{match.group('prefix')}{rewritten}"
+
+        rewritten_text = _PREVIEW_ASSET_URL_ATTR_PATTERN.sub(_replace_attr, text)
+        rewritten_text = _PREVIEW_RELATIVE_ASSET_URL_ATTR_PATTERN.sub(
+            lambda match: f"{match.group('prefix')}{_rewrite_relative_asset_path(str(match.group('path') or ''))}",
+            rewritten_text,
+        )
+    else:
+        def _replace_root_asset(match: re.Match[str]) -> str:
+            quote = str(match.group("quote") or '"')
+            original = str(match.group("path") or "")
+            return f"{quote}{_rewrite_root_asset_path(original)}{quote}"
+
+        rewritten_text = _PREVIEW_ROOT_ASSET_PATTERN.sub(_replace_root_asset, text)
+
+    rewritten = rewritten_text.encode("utf-8")
+    return rewritten, rewritten != content
+
+
 def _set_preview_auth_cookie(
     *,
     response: Response,
@@ -696,10 +754,16 @@ async def get_preview_asset(
         except Exception:
             pass
 
+    payload, content_rewritten = _rewrite_preview_asset_text(
+        revision_id=revision_id,
+        content_type=content_type,
+        content=payload,
+    )
+
     response = Response(
         content=payload,
         media_type=content_type,
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store" if content_rewritten else "no-store"},
     )
     _set_preview_auth_cookie(
         response=response,

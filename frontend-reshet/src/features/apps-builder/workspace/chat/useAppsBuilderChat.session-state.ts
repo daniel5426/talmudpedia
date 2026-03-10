@@ -73,6 +73,7 @@ export type SessionContainer = {
   streamAttachmentIdRef: { current: number };
   cancelInFlightRunIdRef: { current: string | null };
   isQueueDrainActiveRef: { current: boolean };
+  promptSubmissionInFlightRef: { current: boolean };
 };
 
 export function createSessionContainer(key: string): SessionContainer {
@@ -103,6 +104,7 @@ export function createSessionContainer(key: string): SessionContainer {
     streamAttachmentIdRef: { current: 0 },
     cancelInFlightRunIdRef: { current: null },
     isQueueDrainActiveRef: { current: false },
+    promptSubmissionInFlightRef: { current: false },
   };
 }
 

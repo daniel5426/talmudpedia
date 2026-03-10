@@ -579,7 +579,7 @@ class PublishedAppCodingAgentRuntimeService(
             run_id=str(run.id),
             chat_session_id=str(context.get("chat_session_id") or "") or None,
             sandbox_id=str(context.get("preview_sandbox_id") or "") or None,
-            workspace_path=str(context.get("preview_workspace_stage_path") or "") or None,
+            workspace_path=str(context.get("opencode_workspace_path") or context.get("preview_workspace_live_path") or "") or None,
             resolved_model_id=str(context.get("resolved_model_id") or "") or None,
             phase_metrics_ms=create_run_phase_metrics,
             create_run_ms=create_run_ms,

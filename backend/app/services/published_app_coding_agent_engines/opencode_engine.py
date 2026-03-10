@@ -75,16 +75,13 @@ class OpenCodePublishedAppCodingAgentEngine:
         opencode_model_id = str(context.get("opencode_model_id") or "").strip()
         workspace_path = str(
             context.get("opencode_workspace_path")
-            or context.get("preview_workspace_stage_path")
+            or context.get("preview_workspace_live_path")
             or ""
         ).strip()
         live_workspace_path = str(context.get("preview_workspace_live_path") or "").strip()
         if not workspace_path:
             trace_engine("engine.stream.invalid_workspace", reason="missing_workspace_path")
-            raise RuntimeError("OpenCode run requires a prepared stage workspace path.")
-        if live_workspace_path and workspace_path.rstrip("/") == live_workspace_path.rstrip("/"):
-            trace_engine("engine.stream.invalid_workspace", reason="workspace_equals_live_workspace")
-            raise RuntimeError("OpenCode run workspace resolved to live workspace; stage workspace is required.")
+            raise RuntimeError("OpenCode run requires a workspace path.")
         sandbox_id = str(
             context.get("opencode_sandbox_id")
             or context.get("preview_sandbox_id")

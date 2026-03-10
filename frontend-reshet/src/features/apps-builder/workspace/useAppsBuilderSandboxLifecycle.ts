@@ -87,6 +87,31 @@ function normalizePreviewSessionUrlForReloadCompare(url: string | null | undefin
   }
 }
 
+function withPreviewBuildReloadKey(
+  url: string | null | undefined,
+  buildId: string | null | undefined,
+  buildSeq: number | null | undefined,
+): string | null {
+  const rawUrl = String(url || "").trim();
+  if (!rawUrl) {
+    return null;
+  }
+  const normalizedBuildId = String(buildId || "").trim();
+  const normalizedBuildSeq = Number(buildSeq || 0);
+  const buildKey = normalizedBuildId || (normalizedBuildSeq > 0 ? `seq-${normalizedBuildSeq}` : "");
+  if (!buildKey) {
+    return rawUrl;
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.searchParams.set("__preview_build", buildKey);
+    return parsed.toString();
+  } catch {
+    const separator = rawUrl.includes("?") ? "&" : "?";
+    return `${rawUrl}${separator}__preview_build=${encodeURIComponent(buildKey)}`;
+  }
+}
+
 export function useAppsBuilderSandboxLifecycle({
   appId,
   currentRevisionId,
@@ -135,7 +160,11 @@ export function useAppsBuilderSandboxLifecycle({
     setPreviewAuthToken(session.preview_auth_token || null);
     setRecoveryExhausted(false);
 
-    const nextPreviewUrl = session.preview_url || null;
+    const nextPreviewUrl = withPreviewBuildReloadKey(
+      session.preview_url || null,
+      session.current_preview_build_id || null,
+      session.preview_build_seq ?? 0,
+    );
     setPreviewAssetUrl((current) => {
       const currentNormalized = normalizePreviewSessionUrlForReloadCompare(current);
       const nextNormalized = normalizePreviewSessionUrlForReloadCompare(nextPreviewUrl);
@@ -307,7 +336,16 @@ export function useAppsBuilderSandboxLifecycle({
 
   const retryEnsureDraftDevSession = useCallback(async () => {
     setRecoveryExhausted(false);
-    return ensureDraftDevSession({ force: true, reason: "manual" });
+    try {
+      return await ensureDraftDevSession({ force: true, reason: "manual" });
+    } catch (err) {
+      if (isCodingAgentRunActiveError(err)) {
+        setDraftDevError(null);
+        setPhase("idle");
+        return null;
+      }
+      throw err;
+    }
   }, [ensureDraftDevSession]);
 
   useEffect(() => {

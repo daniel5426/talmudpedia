@@ -1,6 +1,6 @@
 # Custom Coding Agent
 
-Last Updated: 2026-03-09
+Last Updated: 2026-03-10
 
 ## Current State: Hard Cut v2 (OpenCode-Only)
 
@@ -42,13 +42,16 @@ Local embedded draft-dev/runtime cleanup was hardened for development setups:
 - Dev-shim per-sandbox `opencode serve` processes are now tracked with per-sandbox metadata and reclaimed on app boot when stale.
 - Dev-shim OpenCode shutdown now terminates the full spawned process group, reducing orphaned local `opencode` helpers after restarts/crashes.
 
-## Latest Applied Update (2026-03-08)
+## Latest Applied Update (2026-03-10)
 
-App Builder runtime assumptions were hard-cut to the shared Sprite model:
-- Draft runtime now uses one shared Sprite per app instead of per-user remote sandboxes.
-- Coding-agent batch scope is now app-wide shared batch, not `(app_id, actor_id)`.
-- Batch finalization creates one revision outcome for the shared app batch and assigns that result across finalized completed runs.
-- Preview/provider routing metadata is now Sprite-oriented.
+App Builder runtime assumptions were hard-cut again for incremental preview-build architecture:
+- Draft runtime still uses one shared Sprite per app.
+- Coding-agent now writes directly into the canonical shared workspace; stage/live workspace separation is removed from the main App Builder path.
+- Post-run version creation now waits for the next successful preview build and materializes revisions from that exact preview-build snapshot.
+- Publish now reuses or materializes the current visible preview build instead of waiting on separate revision build jobs.
+- Builder state hydration now heartbeats the active draft session so the frontend can see the newest preview build id immediately after a run ends and reload the static iframe to that build.
+- Frontend chat send/reconcile now treats a local draft chat as an alias for the attached server `chat_session_id` once the first run has created it, so follow-up prompts in a brand-new chat do not get stuck behind stale local-session sending state.
+- Frontend sending-state reconcile now explicitly skips “no active run” cleanup while a prompt submission request is still in flight, preventing a race where the second prompt in a new chat is cleared before the backend returns its new `run_id`.
 
 ## Latest Applied Update (2026-03-09)
 
@@ -217,27 +220,16 @@ Key updates:
 - Tool-call activity is persisted on the run (`output_result.tool_events`) so historical chat reload can reconstruct tool timeline rows (including inputs/results)
 - Write-intent telemetry is persisted per run (`has_workspace_writes=true` when write tools are observed)
 
-### 5) Shared Stage Workspace + Idle-Batch Finalization (Current)
+### 5) Canonical Workspace + Preview-Build Finalization (Current)
 
-Coding-agent runs now use a shared stage workspace per `published_app_id` scope:
-- Shared stage path inside sandbox: `.talmudpedia/stage/shared/workspace`
-- All parallel runs in the same app scope write into the same stage workspace
-- Stage APIs no longer require `run_id` for snapshot/promote operations
+Coding-agent runs now use the same canonical workspace that the preview builder watches:
+- `opencode_workspace_path` resolves directly to the app workspace
+- there is no stage workspace preparation/promotion step in the main App Builder path
 
-Stage API contract changes:
-- `prepare_stage_workspace(reset: bool)`:
-  - `reset=true` when starting a new batch (no active runs in scope)
-  - `reset=false` when joining an active batch (do not reset stage)
-- `snapshot_workspace(stage)` and `promote_stage_workspace()` are scope-based and run-agnostic
-
-Batch finalization behavior:
-- Finalization is triggered on run terminal transitions by monitor path
-- If active runs remain in scope, finalizer exits (no promotion)
-- When active run count reaches zero:
-  - collect unfinalized completed runs (`batch_finalized_at IS NULL`)
-  - if none, exit
-  - promote shared stage once (if diff exists) and create one revision outcome for the batch
-  - assign `result_revision_id` across finalized completed runs in the batch
+Post-run finalization behavior:
+- terminal completed runs are marked as waiting for the next successful preview build
+- when a successful preview build is visible, the backend materializes a revision from that exact source/dist snapshot
+- overlapping completed runs may resolve to the same revision if they are both waiting when the same successful build lands
   - mark all processed completed runs finalized (`batch_finalized_at=now()`)
 - If no stage-vs-live diff exists, runs are still finalized (no revision/checkpoint assignment)
 

@@ -543,6 +543,8 @@ class PublishedAppBuilderConversationTurn(Base):
     tool_summary = Column(JSONB, nullable=False, default=dict)
     diagnostics = Column(JSONB, nullable=False, default=list)
     failure_code = Column(String, nullable=True)
+    awaiting_preview_build = Column(Boolean, nullable=False, default=False)
+    min_preview_build_seq = Column(Integer, nullable=False, default=0)
     checkpoint_type = Column(
         SQLEnum(BuilderCheckpointType, values_callable=_enum_values),
         nullable=False,

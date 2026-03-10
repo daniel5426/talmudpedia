@@ -1,6 +1,6 @@
 # Apps Builder Current Implementation Overview
 
-Last Updated: 2026-03-09
+Last Updated: 2026-03-10
 
 ## Purpose
 This document is the current-state overview of the Apps Builder system (not a future implementation plan). It summarizes how the builder works today across backend, frontend, runtime, coding-agent, revision persistence, and publish/runtime delivery.
@@ -12,9 +12,10 @@ Apps Builder currently operates in two execution modes:
 
 Core implementation choices in current state:
 - Draft preview uses one persistent shared Sprite workspace per app with per-user attachment sessions.
-- Coding-agent runs use the same shared Sprite as preview, with shared live/stage isolation inside that workspace.
-- Published runtime is static artifact delivery (`vite_static`) and no longer source-UI compilation.
-- Revision dist builds are asynchronous and build-readiness-aware for version publish/preview flows.
+- Draft preview is now driven by a long-lived Vite build watcher plus static preview serving, not `vite dev`.
+- Coding-agent runs write directly into the canonical shared workspace; stage/live promotion is removed.
+- Published runtime remains static artifact delivery (`vite_static`).
+- Draft revisions created from preview builds are already materialized with dist artifacts; app-builder draft revision build jobs are no longer the primary path.
 
 ## Credential Handling in Builder Runtime
 - Builder-generated apps and coding-agent runs do not embed provider API keys in template files.
@@ -76,7 +77,7 @@ Behavior today:
 - Canonical runtime bootstrap overlay is also re-applied during draft-dev session materialization and publish build materialization to prevent stale runtime SDK contracts.
 
 ## Draft Preview Runtime
-Draft preview uses Sprite-backed draft-dev shared workspaces and no longer uses browser-side compile for app-builder runtime.
+Draft preview uses Sprite-backed shared workspaces with one canonical source tree plus preview-build snapshots.
 
 Session lifecycle APIs:
 - `GET /admin/apps/{app_id}/builder/draft-dev/session`
@@ -88,10 +89,16 @@ Session lifecycle APIs:
 Important runtime behavior:
 - One shared Sprite is owned at app scope; user sessions attach to it.
 - Persistent filesystem means dependencies are reused across re-entry and provider warm/cold transitions.
-- Sync path avoids unnecessary rewrites to reduce no-op restarts.
-- Reattach/heartbeat waits for preview readiness and no longer blindly restarts Sprite services on every reopen.
+- The visible iframe is served from the latest successful preview build snapshot, not live source modules.
+- Preview build failures do not blank the iframe; the last successful snapshot remains served while error metadata is exposed in draft-dev session payloads.
+- Builder state reloads now heartbeat the active draft session before responding, so post-run UI refreshes pick up the newest preview-build metadata immediately instead of waiting for the background heartbeat interval.
 - Builder preview iframe URL stays stable and tokenless across heartbeat/token refresh.
-- Draft-dev session response carries off-URL auth fields (`preview_auth_token`, `preview_auth_expires_at`) for iframe auth channel updates.
+- Draft-dev session response carries off-URL auth fields (`preview_auth_token`, `preview_auth_expires_at`) plus preview-build metadata (`preview_build_status`, `preview_build_error`, `preview_build_seq`, `current_preview_build_id`, `current_preview_built_at`).
+- Version preview inspection follows the same off-URL token rule: the selected-version preview URL is tokenless and the admin response carries the runtime token separately, so iframe reloads cannot mix a new revision URL with an old revision token.
+- Public preview auth now prefers an explicit `runtime_token` query param over any preview cookie so switching between inspected revisions cannot be pinned to a stale cookie token.
+- Historical version preview rewrites root-relative built asset URLs (`/assets/...`) onto the revision-scoped preview asset path so saved Vite bundles render correctly outside the draft preview root.
+- For Vite dist outputs, revision preview keeps the original `assets/...` segment when rewriting, because the stored bundle keys are rooted at `dist/assets/*`, so the correct public path shape is `/public/apps/preview/revisions/{id}/assets/assets/*`.
+- Public revision-preview auth uses its own cookie channel (`published_app_public_preview_token`) so inspected version assets cannot accidentally inherit the draft-preview session token.
 - Draft-dev preview URLs are decorated only with runtime routing query params so template runtime clients can resolve chat base path in preview:
   - `runtime_mode=builder-preview`
   - `runtime_base_path={resolved_runtime_api_base}/public/apps/preview/revisions/{revision_id}`
@@ -99,25 +106,19 @@ Important runtime behavior:
 - Draft-dev sandbox, preview proxy, coding-agent, and publish flows now emit shared structured lifecycle events to the app-builder trace stream for operational debugging.
 
 ## Coding-Agent Runtime (Current)
-### Shared Sprite, Stage/Live Model
-Coding-agent execution is now shared-Sprite with internal stage/live workspaces:
-- Live workspace: preview app root used by Vite.
-- Shared stage workspace inside the same app Sprite runtime.
+### Shared Sprite, Single-Workspace Model
+Coding-agent execution now targets the same canonical shared workspace that the preview builder watches.
 
 Run flow:
 1. Submit prompt (`POST /coding-agent/v2/prompts`) and resolve active preview sandbox session.
-2. Compute active run count for `(surface=published_app_coding_agent, app_id)`.
-3. Prepare shared stage workspace:
-   - `reset=true` when active count is `0` (new batch)
-   - `reset=false` when joining an already-active batch
-4. Start OpenCode against the shared stage workspace path.
-5. Stream run events to frontend (assistant/tool/terminal events).
-6. On each run terminalization, invoke batch finalizer for the scope.
-7. Promote shared stage -> live only when scope becomes idle and there is at least one unfinalized completed run.
-8. Persist one revision outcome for the app-wide batch and assign that result across finalized completed runs.
+2. Start OpenCode against the canonical workspace path.
+3. Stream run events to frontend (assistant/tool/terminal events).
+4. When a run terminalizes, mark it as waiting for the next successful preview build.
+5. The first successful preview build after terminalization materializes a draft revision from the exact preview-build snapshot and assigns that revision to all waiting completed runs it satisfies.
 
-Promotion behavior:
-- shared stage is mirrored into the existing live workspace in place rather than deleting/recreating the live root, so the running Vite process can observe file changes without a forced restart.
+Revisioning behavior:
+- No stage/live promotion or batch finalizer remains.
+- Overlapping completed runs may resolve to one combined auto-created revision if they are both waiting when the same successful preview build lands.
 
 ### Streaming and Stall Ownership (Current Defaults)
 - Backend monitor owns forced terminalization policies; aggressive fail-close is env-gated.
@@ -170,26 +171,22 @@ Service:
 - `backend/app/services/published_app_revision_store.py`
 - `backend/app/services/published_app_revision_build_dispatch.py`
 
-Build enqueue behavior (current):
-- App creation initial draft revision (`origin_kind="app_init"`) is auto-enqueued for build.
-- Coding-run-created revisions (`origin_kind="coding_run"`) are auto-enqueued for build by batch finalizer.
-- Manual draft-save revisions (`POST /admin/apps/{app_id}/versions/draft`, `origin_kind="manual_save"`) are auto-enqueued for build.
-- Restore/template-reset revisions are not auto-enqueued by default.
-- Enqueue failure marks revision build as failed (`build_status=failed`) without rolling back revision creation.
+Build behavior (current):
+- Preview-build-created draft revisions are stored already built (`build_status=succeeded`) with source and dist both taken from the same preview snapshot.
+- Manual draft version creation is removed.
+- Publish no longer waits on a separate app-builder revision build job; it reuses the current preview build snapshot.
 
 ## Publish Pipeline
-Publish is asynchronous and deterministic.
+Publish is immediate from the currently visible preview build.
 
 Flow:
-1. `POST /admin/apps/{app_id}/versions/{version_id}/publish` always creates a publish job.
-2. If selected revision already has dist artifacts, publish pointer update is immediate and job succeeds.
-3. If selected revision dist is missing, publish job remains queued/running and an async wait task is enqueued:
-   - `app.workers.tasks.publish_version_pointer_after_build_task`
-4. Publish wait task polls selected revision build state until:
-   - success (`build_status=succeeded` + dist present): publish pointer updates to selected `version_id`
-   - failure (`build_status=failed`) or timeout: publish job fails and existing published pointer is preserved
-5. Build-related publish failure triggers best-effort coding-agent auto-fix submission in latest existing chat session for publish requester.
-6. Publish diagnostics now include build-wait and auto-fix metadata (`build_wait_state`, `auto_fix_run_id`, `auto_fix_skipped`, `auto_fix_error`).
+1. `POST /admin/apps/{app_id}/versions/{version_id}/publish` resolves the current successful preview build being served in the builder preview.
+2. If that preview build was already materialized into a revision, publish reuses it.
+3. Otherwise publish materializes a revision directly from the preview build snapshot source/dist pair.
+4. Publish pointer updates immediately to that revision and the publish job completes synchronously.
+
+Important current-build rule:
+- Publish uses the currently served successful preview snapshot (`current.json` semantics), not the latest attempted rebuild status. If a newer rebuild fails, the visible older snapshot remains publishable.
 
 Key endpoints:
 - `POST /admin/apps/{app_id}/versions/{version_id}/publish`
@@ -208,11 +205,8 @@ Publish job observability (current additions):
 - Publish jobs record `last_heartbeat_at` for long-running sandbox publishes.
 - Sandbox publish diagnostics may include payload-sync skip metadata indicating live-preview snapshot source-of-truth semantics.
 
-Recent publish correctness fixes reflected in code:
-- Fixed false `npm install` failure on success (`exit code 0`) in sandbox publish command result handling.
-- Sandbox publish no longer regresses/reverts preview state by syncing stale frontend payload files into the live sandbox before snapshot.
-- Sandbox publish now builds directly from the live workspace instead of cloning into a separate publish workspace.
-- Sandbox publish route no longer rejects with `REVISION_CONFLICT` solely because a newer draft revision was created while the live sandbox snapshot is still the intended publish source.
+Current publish invariant:
+- Publish source of truth is exactly the preview build currently visible to the user, not the latest mutable workspace state.
 
 ## Public Runtime Delivery
 Published runtime is static bundle delivery with a host-gated runtime/auth shell and a canonical runtime bootstrap contract.

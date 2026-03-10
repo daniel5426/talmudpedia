@@ -18,7 +18,7 @@ from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp
 from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
-from app.services.published_app_coding_batch_finalizer import PublishedAppCodingBatchFinalizer
+from app.services.published_app_preview_builds import PublishedAppPreviewBuildService
 from app.services.published_app_coding_run_monitor_config import (
     monitor_force_terminal_on_inactivity,
     monitor_force_terminal_on_stream_end_without_terminal,
@@ -224,27 +224,54 @@ class PublishedAppCodingRunMonitor:
     async def _finalize_terminal_scope_detached(cls, *, app_id: UUID, run_id: UUID) -> None:
         try:
             apps_builder_trace(
-                "monitor.batch_finalize_begin",
+                "monitor.preview_finalize_begin",
                 domain="coding_agent.finalizer",
                 run_id=str(run_id),
                 app_id=str(app_id),
             )
             async with cls._session_factory() as db:
-                finalizer = PublishedAppCodingBatchFinalizer(db)
+                preview_builds = PublishedAppPreviewBuildService(db)
+                run = await db.get(AgentRun, run_id)
+                app = await db.get(PublishedApp, app_id)
+                if run is None or app is None:
+                    return
+                run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+                if run_status != RunStatus.completed.value:
+                    await db.commit()
+                    return
+                workspace, snapshot = await preview_builds.get_current_build(app_id=app_id)
+                current_build_seq = int(snapshot.build_seq or 0) if snapshot is not None else 0
+                preview_builds.mark_run_waiting_for_next_build(
+                    run=run,
+                    current_build_seq=current_build_seq,
+                )
                 cls._trace(
-                    "monitor.batch_finalize_begin",
+                    "monitor.preview_finalize_begin",
                     run_id=str(run_id),
                     app_id=str(app_id),
+                    current_build_seq=current_build_seq,
                 )
-                result = await finalizer.finalize_for_terminal_run(run_id=run_id)
+                result = None
+                if workspace is not None and snapshot is not None:
+                    result_revision = await preview_builds.finalize_waiting_runs_for_build(
+                        app=app,
+                        workspace=workspace,
+                        snapshot=snapshot,
+                    )
+                    result = {
+                        "preview_build_id": snapshot.build_id,
+                        "preview_build_seq": snapshot.build_seq,
+                        "result_revision_id": str(result_revision.id) if result_revision is not None else None,
+                    }
+                await db.commit()
                 cls._trace(
-                    "monitor.batch_finalize_done",
+                    "monitor.preview_finalize_done",
                     run_id=str(run_id),
                     app_id=str(app_id),
                     result=result,
                 )
                 apps_builder_trace(
-                    "monitor.batch_finalize_done",
+                    "monitor.preview_finalize_done",
                     domain="coding_agent.finalizer",
                     run_id=str(run_id),
                     app_id=str(app_id),
@@ -252,19 +279,19 @@ class PublishedAppCodingRunMonitor:
                 )
         except Exception as exc:
             logger.exception(
-                "CODING_AGENT_MONITOR batch_finalize_failed run_id=%s app_id=%s",
+                "CODING_AGENT_MONITOR preview_finalize_failed run_id=%s app_id=%s",
                 run_id,
                 app_id,
             )
             cls._trace(
-                "monitor.batch_finalize_failed",
+                "monitor.preview_finalize_failed",
                 run_id=str(run_id),
                 app_id=str(app_id),
                 error=str(exc),
                 error_type=exc.__class__.__name__,
             )
             apps_builder_trace(
-                "monitor.batch_finalize_failed",
+                "monitor.preview_finalize_failed",
                 domain="coding_agent.finalizer",
                 run_id=str(run_id),
                 app_id=str(app_id),

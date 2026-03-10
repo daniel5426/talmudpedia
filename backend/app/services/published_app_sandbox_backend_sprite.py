@@ -12,6 +12,10 @@ from urllib.parse import urlencode
 
 import httpx
 
+from app.services.published_app_preview_runtime_scripts import (
+    build_preview_builder_script,
+    build_preview_static_server_script,
+)
 from app.services.published_app_builder_snapshot_filter import (
     BUILDER_SNAPSHOT_IGNORED_FILE_NAMES,
     BUILDER_SNAPSHOT_IGNORED_SUFFIXES,
@@ -94,6 +98,30 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         if explicit:
             return explicit.rstrip("/")
         return "/home/sprite/.talmudpedia/stage/current/workspace"
+
+    def _preview_internal_root(self) -> str:
+        return f"{self._live_workspace_path()}/.talmudpedia/preview"
+
+    def _preview_runtime_root(self) -> str:
+        return f"{self._preview_internal_root()}/runtime"
+
+    def _preview_builds_root(self) -> str:
+        return f"{self._preview_internal_root()}/builds"
+
+    def _preview_builder_script_path(self) -> str:
+        return f"{self._preview_internal_root()}/preview-builder.mjs"
+
+    def _preview_static_script_path(self) -> str:
+        return f"{self._preview_internal_root()}/preview-static-server.mjs"
+
+    def _preview_current_state_path(self) -> str:
+        return f"{self._preview_builds_root()}/current.json"
+
+    def _preview_latest_state_path(self) -> str:
+        return f"{self._preview_builds_root()}/latest-state.json"
+
+    def _preview_builder_service_name(self) -> str:
+        return "preview-builder"
 
     def _preview_service_name(self) -> str:
         return str(self.config.sprite_preview_service_name or "builder-preview").strip() or "builder-preview"
@@ -194,22 +222,34 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
 
     async def _ensure_services(self, *, sprite_name: str) -> None:
         live_workspace_path = self._live_workspace_path()
-        stage_workspace_path = self._stage_workspace_path()
         preview_script = (
             f"cd {shlex.quote(live_workspace_path)} && "
-            f"npm run dev -- --host 0.0.0.0 --port {self._preview_port()}"
+            f"node {shlex.quote(self._preview_builder_script_path())}"
+        )
+        preview_static_script = (
+            f"cd {shlex.quote(live_workspace_path)} && "
+            f"node {shlex.quote(self._preview_static_script_path())}"
         )
         opencode_command = str(
             self.config.sprite_opencode_command
-            or f"cd {shlex.quote(stage_workspace_path)} && "
+            or f"cd {shlex.quote(live_workspace_path)} && "
             f"(opencode serve --hostname 0.0.0.0 --port {self._opencode_port()} "
             f"|| npx -y opencode-ai serve --hostname 0.0.0.0 --port {self._opencode_port()})"
         ).strip()
         await self._put_service(
             sprite_name=sprite_name,
+            service_name=self._preview_builder_service_name(),
+            payload=self._service_command(preview_script),
+        )
+        await self._start_service(
+            sprite_name=sprite_name,
+            service_name=self._preview_builder_service_name(),
+        )
+        await self._put_service(
+            sprite_name=sprite_name,
             service_name=self._preview_service_name(),
             payload={
-                **self._service_command(preview_script),
+                **self._service_command(preview_static_script),
                 "http_port": self._preview_port(),
             },
         )
@@ -231,9 +271,9 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         script = f"""
 import sys
 import time
-import re
 import urllib.error
 import urllib.request
+import json
 
 deadline = time.time() + 45
 last_error = "preview service did not become ready"
@@ -245,37 +285,28 @@ def fetch(path: str):
 
 while time.time() < deadline:
     try:
-        client_status, client_body = fetch("/@vite/client")
-        if client_status != 200 or "HMRContext" not in client_body:
-            last_error = f"vite client not ready: status={{client_status}}"
+        state_status, state_body = fetch("/__preview_state")
+        if state_status != 200 or not state_body:
+            last_error = f"preview state not ready: status={{state_status}}"
             time.sleep(0.75)
             continue
-        main_status, main_body = fetch("/src/main.tsx")
-        if main_status != 200 or not main_body:
-            last_error = f"main entry not ready: status={{main_status}}"
+        payload = json.loads(state_body)
+        current = payload.get("current") if isinstance(payload.get("current"), dict) else {{}}
+        build_id = str(payload.get("build_id") or current.get("build_id") or "").strip()
+        status = str(payload.get("status") or "").strip().lower()
+        if build_id:
+            root_status, _ = fetch("/")
+            if root_status == 200:
+                print("ready")
+                sys.exit(0)
+            last_error = f"preview root not ready: status={{root_status}}"
             time.sleep(0.75)
             continue
-        style_status, style_body = fetch("/src/styles.css")
-        if style_status != 200 or "Internal Server Error" in style_body:
-            last_error = f"styles not ready: status={{style_status}}"
+        if status == "failed":
+            last_error = str(payload.get("last_error") or "preview build failed")
             time.sleep(0.75)
             continue
-        dep_paths = []
-        for match in re.finditer(r'\"(/node_modules/\\.vite/deps/[^\"?]+\\.js\\?v=[^\\\"]+)\"', main_body):
-            dep_paths.append(match.group(1))
-        dep_paths = dep_paths[:3]
-        dep_error = None
-        for dep_path in dep_paths:
-            dep_status, _ = fetch(dep_path)
-            if dep_status != 200:
-                dep_error = f"optimized dep not ready: {{dep_path}} status={{dep_status}}"
-                break
-        if dep_error:
-            last_error = dep_error
-            time.sleep(0.75)
-            continue
-        print("ready")
-        sys.exit(0)
+        last_error = f"preview build pending: status={{status or 'unknown'}}"
     except Exception as exc:
         last_error = str(exc)
     time.sleep(0.75)
@@ -476,12 +507,26 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
                 "mkdir",
                 "-p",
                 self._live_workspace_path(),
-                self._stage_workspace_path(),
                 os.path.dirname(f"{self._live_workspace_path()}/{_REVISION_FILE}"),
+                self._preview_internal_root(),
+                self._preview_runtime_root(),
+                self._preview_builds_root(),
             ],
             timeout_seconds=60,
             max_output_bytes=2000,
         )
+
+    def _preview_runtime_files(self, *, entry_file: str) -> Dict[str, str]:
+        return {
+            ".talmudpedia/preview/preview-builder.mjs": build_preview_builder_script(
+                workspace_path=self._live_workspace_path()
+            ),
+            ".talmudpedia/preview/preview-static-server.mjs": build_preview_static_server_script(
+                workspace_path=self._live_workspace_path(),
+                port=self._preview_port(),
+            ),
+            ".talmudpedia/preview/entry-file.txt": str(entry_file or "src/main.tsx").strip() or "src/main.tsx",
+        }
 
     async def _sync_files_to_workspace(self, *, sprite_name: str, workspace_path: str, files: Dict[str, str]) -> str:
         encoded = base64.b64encode(json.dumps(files, ensure_ascii=True, sort_keys=True).encode("utf-8")).decode("ascii")
@@ -641,7 +686,9 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
         sprite_url: str,
         preview_base_path: str,
         revision_token: str | None,
+        preview_state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        normalized_preview_state = dict(preview_state or {})
         return {
             "provider": "sprite",
             "preview": {
@@ -656,17 +703,70 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
             "workspace": {
                 "sprite_name": sprite_name,
                 "live_workspace_path": self._live_workspace_path(),
-                "stage_workspace_path": self._stage_workspace_path(),
                 "revision_token": revision_token,
             },
             "services": {
                 "preview_service_name": self._preview_service_name(),
+                "preview_builder_service_name": self._preview_builder_service_name(),
                 "preview_port": self._preview_port(),
                 "opencode_service_name": self._opencode_service_name(),
                 "opencode_port": self._opencode_port(),
                 "opencode_base_url": f"{str(sprite_url).rstrip('/')}:{self._opencode_port()}",
             },
+            "preview_build": normalized_preview_state,
         }
+
+    async def _read_preview_state(self, *, sprite_name: str) -> dict[str, Any]:
+        script = f"""
+import json
+import pathlib
+
+current_path = pathlib.Path({json.dumps(self._preview_current_state_path())})
+latest_path = pathlib.Path({json.dumps(self._preview_latest_state_path())})
+
+def load(path):
+    if not path.exists():
+        return {{}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {{}}
+    return payload if isinstance(payload, dict) else {{}}
+
+current = load(current_path)
+latest = load(latest_path)
+payload = {{}}
+payload.update(latest)
+payload["current"] = current
+if "build_id" not in payload and isinstance(current, dict):
+    payload["build_id"] = current.get("build_id")
+if "build_seq" not in payload and isinstance(current, dict):
+    payload["build_seq"] = current.get("build_seq")
+if "built_at" not in payload and isinstance(current, dict):
+    payload["built_at"] = current.get("built_at")
+if "snapshot_root" not in payload and isinstance(current, dict):
+    payload["snapshot_root"] = current.get("snapshot_root")
+if "source_root" not in payload and isinstance(current, dict):
+    payload["source_root"] = current.get("source_root")
+if "dist_root" not in payload and isinstance(current, dict):
+    payload["dist_root"] = current.get("dist_root")
+print(json.dumps(payload, sort_keys=True))
+""".strip()
+        output, _ = await self._exec_with_stdin(
+            sprite_name=sprite_name,
+            command=["python3", "-"],
+            stdin_text=script,
+            timeout_seconds=30,
+            max_output_bytes=200_000,
+            allow_nonzero=True,
+        )
+        try:
+            payload = json.loads(output or "{}")
+        except Exception as exc:
+            raise PublishedAppSandboxBackendError(f"Sprite preview state returned invalid JSON: {output[:280]}") from exc
+        if not isinstance(payload, dict):
+            raise PublishedAppSandboxBackendError("Sprite preview state returned invalid payload.")
+        return payload
 
     async def _heartbeat_metadata(self, *, sprite_name: str) -> dict[str, Any]:
         sprite = await self._get_sprite(sprite_name=sprite_name)
@@ -681,6 +781,7 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
                 sprite_name=sprite_name,
                 workspace_path=self._live_workspace_path(),
             ),
+            preview_state=await self._read_preview_state(sprite_name=sprite_name),
         )
 
     async def _snapshot_workspace_files(self, *, sprite_name: str, workspace_path: str) -> dict[str, Any]:
@@ -757,7 +858,7 @@ print(json.dumps({{
         revision_token = await self._sync_files_to_workspace(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
-            files=files,
+            files={**dict(files or {}), **self._preview_runtime_files(entry_file=entry_file)},
         )
         await self._install_dependencies_if_needed(
             sprite_name=sprite_name,
@@ -778,7 +879,6 @@ print(json.dumps({{
             "runtime_generation": int(runtime_generation or 0),
             "workspace_path": self._live_workspace_path(),
             "live_workspace_path": self._live_workspace_path(),
-            "stage_workspace_path": self._stage_workspace_path(),
             "preview_service_name": self._preview_service_name(),
             "opencode_service_name": self._opencode_service_name(),
             "preview_url": preview_base_path,
@@ -787,6 +887,7 @@ print(json.dumps({{
                 sprite_url=sprite_url,
                 preview_base_path=preview_base_path,
                 revision_token=revision_token,
+                preview_state=await self._read_preview_state(sprite_name=sprite_name),
             ),
         }
 
@@ -809,7 +910,7 @@ print(json.dumps({{
         revision_token = await self._sync_files_to_workspace(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
-            files=files,
+            files={**dict(files or {}), **self._preview_runtime_files(entry_file=entry_file)},
         )
         await self._install_dependencies_if_needed(
             sprite_name=sprite_name,
@@ -828,6 +929,7 @@ print(json.dumps({{
             sprite_url=sprite_url,
             preview_base_path=preview_base_path or "/",
             revision_token=revision_token,
+            preview_state=await self._read_preview_state(sprite_name=sprite_name),
         )
         return {
             "sandbox_id": sprite_name,
@@ -1174,7 +1276,7 @@ print(json.dumps({{
 
     async def snapshot_workspace(self, *, sandbox_id: str, workspace: str = "live") -> Dict[str, Any]:
         workspace_name = str(workspace or "live").strip().lower()
-        workspace_path = self._live_workspace_path() if workspace_name == "live" else self._stage_workspace_path()
+        workspace_path = self._live_workspace_path()
         payload = await self._snapshot_workspace_files(sprite_name=sandbox_id, workspace_path=workspace_path)
         payload["sandbox_id"] = sandbox_id
         payload["workspace"] = workspace_name
@@ -1182,16 +1284,11 @@ print(json.dumps({{
         return payload
 
     async def promote_stage_workspace(self, *, sandbox_id: str) -> Dict[str, Any]:
-        await self._mirror_workspace(
-            sprite_name=sandbox_id,
-            source_workspace_path=self._stage_workspace_path(),
-            target_workspace_path=self._live_workspace_path(),
-        )
         return {
             "sandbox_id": sandbox_id,
             "status": "promoted",
             "live_workspace_path": self._live_workspace_path(),
-            "stage_workspace_path": self._stage_workspace_path(),
+            "stage_workspace_path": self._live_workspace_path(),
         }
 
     async def prepare_publish_dependencies(self, *, sandbox_id: str, workspace_path: str) -> Dict[str, Any]:

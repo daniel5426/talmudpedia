@@ -1,4 +1,4 @@
-Last Updated: 2026-03-09
+Last Updated: 2026-03-10
 
 # Sandbox Spec
 
@@ -45,8 +45,9 @@ App Builder is now hard-cut to Sprites for draft runtime.
 
 Current runtime semantics:
 - one persistent shared Sprite per app
-- one shared live workspace per app
-- one shared stage workspace per app for coding-agent batches
+- one canonical shared workspace per app
+- draft preview served from the latest successful preview-build snapshot, not `vite dev`
+- coding-agent runs write directly into that canonical workspace
 - user draft-dev sessions act as attachment/auth records pointing to the shared app workspace
 - App Builder preview continues to flow through the backend preview proxy
 - E2B code remains in the repo but is archived for App Builder runtime selection
@@ -168,14 +169,13 @@ Important operational note:
 
 ## Shared Session Semantics
 
-The app-builder runtime semantics above the backend abstraction were preserved:
+The app-builder runtime semantics above the backend abstraction are now:
 - one active draft-dev session per `(app_id, user_id)`
 - generation-based runtime ownership for that session scope
 - dependency-hash based install reuse
-- mutable live workspace
-- separate stage workspace
-- stage promotion into live workspace
-- publish build runs directly against the live workspace
+- mutable canonical workspace
+- long-lived preview build watcher plus static preview server
+- publish/version materialization from preview build snapshots
 - OpenCode runs tied to the same sandbox/workspace as the preview session
 
 The backend abstraction changes the runtime substrate, not the higher-level app-builder lifecycle.
@@ -188,7 +188,7 @@ The backend abstraction changes the runtime substrate, not the higher-level app-
 
 Characteristics:
 - one persistent shared Sprite per app
-- Sprite services own preview and OpenCode process lifecycle
+- Sprite services own preview-builder, static preview, and OpenCode process lifecycle
 - filesystem persists across hibernation, so dependency installs are reused
 - backend metadata stores provider routing/auth details instead of exposing raw provider URLs to the browser
 - backend reaches private OpenCode service ports through the Sprite proxy websocket API, not direct public `:4141` URLs

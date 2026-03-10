@@ -154,6 +154,11 @@ export interface DraftDevSessionResponse {
   preview_url?: string | null;
   preview_auth_token?: string | null;
   preview_auth_expires_at?: string | null;
+  preview_build_status?: string | null;
+  preview_build_error?: string | null;
+  preview_build_seq: number;
+  current_preview_build_id?: string | null;
+  current_preview_built_at?: string | null;
   expires_at?: string | null;
   idle_timeout_seconds: number;
   last_activity_at?: string | null;

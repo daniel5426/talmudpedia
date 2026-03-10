@@ -118,6 +118,17 @@ export function useAppsBuilderChat({
   const restoredLastSessionRef = useRef(false);
   const lastResumeAttemptRunIdRef = useRef<string | null>(null);
 
+  const logChatDebug = useCallback((event: string, fields: Record<string, unknown> = {}) => {
+    if (typeof console === "undefined" || typeof console.info !== "function") {
+      return;
+    }
+    console.info("[apps-builder][chat]", {
+      event,
+      appId,
+      ...fields,
+    });
+  }, [appId]);
+
   const {
     runningSessionIds,
     markSessionRunActive,
@@ -148,6 +159,15 @@ export function useAppsBuilderChat({
   }, [bumpRender, getSession]);
 
   const forceClearSessionSendingState = useCallback((sessionKey: string) => {
+    const session = getSession(sessionKey);
+    logChatDebug("session.force_clear_sending", {
+      sessionKey,
+      attachedRunSessionId: String(session.attachedRunSessionIdRef.current || "").trim() || null,
+      activeRunId: String(session.activeRunIdRef.current || "").trim() || null,
+      lastKnownRunId: String(session.lastKnownRunIdRef.current || "").trim() || null,
+      promptSubmissionInFlight: session.promptSubmissionInFlightRef.current,
+      queuedPromptCount: session.queuedPrompts.length,
+    });
     mutateSession(sessionKey, (session) => {
       session.streamAttachmentIdRef.current += 1;
       session.intentionalAbortRef.current = true;
@@ -162,13 +182,14 @@ export function useAppsBuilderChat({
       session.attachedRunSessionIdRef.current = null;
       session.pendingCancelRef.current = false;
       session.cancelInFlightRunIdRef.current = null;
+      session.promptSubmissionInFlightRef.current = false;
       session.isStopping = false;
       session.activeThinkingSummary = "";
       session.isSending = false;
       session.isSendingRef.current = false;
       session.pendingQuestion = null;
     });
-  }, [mutateSession]);
+  }, [getSession, logChatDebug, mutateSession]);
 
   const setSessionSending = useCallback((sessionKey: string, next: boolean) => {
     mutateSession(sessionKey, (session) => {
@@ -441,6 +462,7 @@ export function useAppsBuilderChat({
     target.streamAttachmentIdRef.current = source.streamAttachmentIdRef.current;
     target.cancelInFlightRunIdRef.current = source.cancelInFlightRunIdRef.current;
     target.isQueueDrainActiveRef.current = source.isQueueDrainActiveRef.current;
+    target.promptSubmissionInFlightRef.current = source.promptSubmissionInFlightRef.current;
   }, []);
 
   const promoteDraftSessionToLocalSession = useCallback((localSessionKey: string): string => {
@@ -450,12 +472,17 @@ export function useAppsBuilderChat({
     }
     const source = getSession(DRAFT_SESSION_KEY);
     const target = getSession(normalizedLocalKey);
+    logChatDebug("session.promote_draft_to_local", {
+      localSessionKey: normalizedLocalKey,
+      sourceTimelineCount: source.timeline.length,
+      sourceQueuedPromptCount: source.queuedPrompts.length,
+    });
     copySessionRuntimeState(source, target);
     sessionStoreRef.current[DRAFT_SESSION_KEY] = createSessionContainer(DRAFT_SESSION_KEY);
     activeChatSessionIdRef.current = normalizedLocalKey;
     setActiveChatSessionId(normalizedLocalKey);
     return normalizedLocalKey;
-  }, [copySessionRuntimeState, getSession]);
+  }, [copySessionRuntimeState, getSession, logChatDebug]);
 
   const ensureSessionKeyByServerSessionId = useCallback((
     sessionKey: string,
@@ -471,6 +498,14 @@ export function useAppsBuilderChat({
     }
     const source = getSession(sourceKey);
     const target = getSession(normalizedServerId);
+    logChatDebug("session.ensure_server_session", {
+      sourceKey,
+      serverSessionId: normalizedServerId,
+      sourceIsLocal: isLocalSessionKey(sourceKey),
+      sourceTimelineCount: source.timeline.length,
+      sourceQueuedPromptCount: source.queuedPrompts.length,
+      sourceIsSending: source.isSendingRef.current,
+    });
     if (sourceKey === DRAFT_SESSION_KEY || isLocalSessionKey(sourceKey)) {
       copySessionRuntimeState(source, target, normalizedServerId);
       if (sourceKey === DRAFT_SESSION_KEY) {
@@ -486,7 +521,7 @@ export function useAppsBuilderChat({
       }
     }
     return normalizedServerId;
-  }, [bumpRender, copySessionRuntimeState, getSession]);
+  }, [bumpRender, copySessionRuntimeState, getSession, logChatDebug]);
 
   const consumeRunStreamForSession = useCallback(async (
     sessionKey: string,
@@ -798,9 +833,16 @@ export function useAppsBuilderChat({
           })();
           continue;
         }
+        if (session.promptSubmissionInFlightRef.current) {
+          continue;
+        }
 
-        const sessionId = key === DRAFT_SESSION_KEY ? null : key;
-        if (!sessionId || isLocalSessionKey(sessionId)) {
+        const sessionId = key === DRAFT_SESSION_KEY
+          ? null
+          : isLocalSessionKey(key)
+            ? String(session.attachedRunSessionIdRef.current || "").trim() || null
+            : key;
+        if (!sessionId) {
           continue;
         }
         void (async () => {
@@ -811,6 +853,11 @@ export function useAppsBuilderChat({
             }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err || "");
+            logChatDebug("session.sending_reconcile_error", {
+              sessionKey: key,
+              resolvedSessionId: sessionId,
+              error: message,
+            });
             if (message.toLowerCase().includes("not found")) {
               forceClearSessionSendingState(key);
             }
@@ -821,7 +868,7 @@ export function useAppsBuilderChat({
     return () => {
       clearInterval(timer);
     };
-  }, [appId, forceClearSessionSendingState]);
+  }, [appId, forceClearSessionSendingState, logChatDebug]);
 
   const isSending = activeSession.isSending;
   const isStopping = activeSession.isStopping;
