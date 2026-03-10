@@ -63,6 +63,12 @@ Shared platform resources include:
 
 These resources are consumed across both the agent and RAG sides of the system.
 
+Current artifact runtime usage now spans:
+- artifact admin/test-run flows
+- tenant artifact nodes in agents
+- artifact-backed tools
+- artifact-backed RAG operators
+
 ### Published Apps
 
 Published apps are a major runtime domain.
@@ -120,6 +126,7 @@ Some areas are clearly still evolving:
 - deeper agent memory and durable execution capabilities
 - further tool-governance hardening
 - richer retrieval and multi-store capabilities
+- stronger artifact queue fairness and scheduling controls beyond the current queue-class split
 - continued cleanup of architecture documentation drift
 
 These gaps do not change the current architectural picture; they only indicate active evolution.

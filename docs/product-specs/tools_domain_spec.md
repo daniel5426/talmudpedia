@@ -68,6 +68,12 @@ Current agent-call tools execute a child-agent run and return compact runtime ou
 
 Current artifact-backed tools resolve a tenant artifact revision and execute through the shared artifact runtime.
 
+Current publish/runtime rules:
+- draft editing may still point at a tenant `artifact_id`
+- tool publish pins the live execution target into `artifact_revision_id`
+- published production execution uses that pinned `artifact_revision_id`
+- if the backing tenant artifact has no published revision, tool publish should fail
+
 ### MCP tools
 
 Current MCP tools execute through HTTP JSON-RPC `tools/call`.

@@ -86,6 +86,16 @@ Current queue classes in the system include:
 - `artifact_prod_background`
 - `artifact_test`
 
+Current intent for those queue classes is:
+- `artifact_test`
+  - artifact admin test runs only
+- `artifact_prod_interactive`
+  - live user-facing work such as agent turns, artifact-backed tool calls, and inline retrieval/runtime execution
+- `artifact_prod_background`
+  - standalone pipeline jobs and other non-user-blocking artifact workloads
+
+In platform terms, this means the system now has separate lanes for test traffic, interactive production traffic, and background production traffic.
+
 Current runtime choices include:
 - direct mode for local/embedded execution path
 - HTTP mode for internal worker-service execution path
@@ -103,6 +113,11 @@ Areas still evolving:
 - stronger worker scheduling/fairness controls
 - fully hardened multi-worker deployment model
 - reduction of remaining compatibility read/execution paths
+
+Important current reality:
+- queue fairness still relies on the existing queue classes and worker consumption behavior
+- there is not yet a separate platform scheduler enforcing stronger tenant-level fairness, weighted priorities, or admission control inside a queue class
+- interactive traffic is better isolated than before because it uses a separate queue class, but fairness within a queue is still limited by the current Celery/worker model
 
 ## Canonical Implementation References
 

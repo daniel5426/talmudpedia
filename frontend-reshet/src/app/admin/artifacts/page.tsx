@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback, useRef, useLayoutEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { motion } from "motion/react"
 import { useTenant } from "@/contexts/TenantContext"
@@ -152,7 +152,7 @@ export default function ArtifactsPage() {
     const [promotingId, setPromotingId] = useState<string | null>(null)
 
     const slugify = (text: string) => text.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/__+/g, "_").replace(/^_|_$/g, "")
-    const configCollapsedWidth = 88
+    const configCollapsedWidth = 100
     const configCollapsedHeight = 40
     const configExpandedWidth = isSchemaMaximized ? "500px" : "384px"
     const configContentRef = useRef<HTMLDivElement | null>(null)
@@ -364,20 +364,27 @@ export default function ArtifactsPage() {
         setConfigExpanded(false)
     }, [])
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const node = configContentRef.current
-        if (!node || typeof ResizeObserver === "undefined") return
+        if (!node) return
 
         const updateHeight = () => {
             setConfigMeasuredHeight(Math.max(configCollapsedHeight, Math.ceil(node.scrollHeight)))
         }
 
         updateHeight()
+        const frameId = window.requestAnimationFrame(updateHeight)
+        if (typeof ResizeObserver === "undefined") {
+            return () => window.cancelAnimationFrame(frameId)
+        }
         const observer = new ResizeObserver(() => updateHeight())
         observer.observe(node)
 
-        return () => observer.disconnect()
-    }, [configCollapsedHeight, isSchemaMaximized])
+        return () => {
+            window.cancelAnimationFrame(frameId)
+            observer.disconnect()
+        }
+    }, [configCollapsedHeight, configExpanded, isSchemaMaximized, loading, viewMode])
 
     const renderHeader = () => (
         <AdminPageHeader>
@@ -567,21 +574,21 @@ export default function ArtifactsPage() {
                     style={{ transformOrigin: "top right" }}
                     className="absolute right-0 top-0 overflow-hidden border border-border/50 bg-background/95 backdrop-blur-sm shadow-sm"
                 >
-                    <button
-                        type="button"
-                        onClick={() => setConfigExpanded(true)}
-                        className={cn(
-                            "absolute left-0 top-0 z-10 flex h-10 items-center text-foreground transition-colors outline-none",
-                            "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                            configExpanded ? "pointer-events-none opacity-0" : "w-[88px] gap-2 px-3 text-xs font-medium hover:bg-muted/60"
-                        )}
-                        aria-label="Open artifact config"
-                        aria-hidden={configExpanded}
-                        tabIndex={configExpanded ? -1 : 0}
-                    >
-                        <Settings2 className="h-4 w-4" />
-                        <span>Config</span>
-                    </button>
+                        <button
+                            type="button"
+                            onClick={() => setConfigExpanded(true)}
+                            className={cn(
+                                "absolute left-0 top-0 z-10 flex h-10 items-center text-foreground transition-colors outline-none",
+                                "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                configExpanded ? "pointer-events-none opacity-0" : "w-[100px] gap-2 px-4 hover:bg-muted/60"
+                            )}
+                            aria-label="Open artifact config"
+                            aria-hidden={configExpanded}
+                            tabIndex={configExpanded ? -1 : 0}
+                        >
+                            <Settings2 className="h-4 w-4" />
+                            <span className="text-xs font-semibold uppercase tracking-tight">Config</span>
+                        </button>
 
                     <motion.div
                         initial={false}

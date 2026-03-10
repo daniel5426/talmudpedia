@@ -132,6 +132,14 @@ Current runtime responsibilities include:
 - dependency packaging and runtime bootstrap
 - isolated execution through sandbox/runtime adapters
 - dedicated artifact-worker execution paths
+- shared execution for artifact test runs and live agent/tool/RAG artifact surfaces
+
+Current queue policy is implemented through queue classes rather than a separate scheduler:
+- `artifact_test`
+- `artifact_prod_interactive`
+- `artifact_prod_background`
+
+This provides workload separation, but stronger fairness inside a queue is still an evolving concern.
 
 Architecture-critical locations:
 - `backend/app/services/artifact_runtime/`

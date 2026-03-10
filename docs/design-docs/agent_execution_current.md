@@ -71,6 +71,11 @@ The node execution layer is broader than a simple LLM-and-tools loop. The curren
 
 This confirms the agent runtime is a graph runtime for heterogeneous node types, not just a chat wrapper.
 
+Current artifact-specific behavior:
+- tenant artifact nodes execute through the shared artifact runtime
+- production runs pin tenant artifact nodes to published artifact revisions during graph compile/startup
+- that pinning is currently per run, not yet a full immutable published-agent snapshot
+
 ## Current Integrations
 
 Agent execution integrates with:

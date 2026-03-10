@@ -69,6 +69,11 @@ Published revisions are the immutable execution target for production-like runti
 Current rule:
 - production/live execution paths should use published immutable revisions
 
+Current pinning behavior by surface:
+- agent artifact nodes are pinned to published artifact revisions at agent run compile/start time
+- artifact-backed tools are pinned to `artifact_revision_id` when the tool is published
+- artifact-backed RAG operators are pinned to artifact revision metadata when the pipeline is published/compiled
+
 ### Test runs
 
 Artifact test runs can use:
@@ -100,9 +105,29 @@ Artifact configuration currently includes:
 The runtime handler contract remains:
 
 ```python
-async def execute(inputs: dict, config: dict, context: dict) -> dict:
-    ...
+async def execute(inputs: dict, config: dict, context: dict) -> dict: ...
 ```
+
+Compatibility behavior also still exists for older handlers:
+
+```python
+def execute(context): ...
+```
+
+## Current Queue Policy
+
+Current queue classes are:
+- `artifact_test`
+- `artifact_prod_interactive`
+- `artifact_prod_background`
+
+Current intent:
+- `artifact_test` is for admin artifact-page test runs
+- `artifact_prod_interactive` is for user-blocking live execution such as agent turns, tool calls, and inline retrieval
+- `artifact_prod_background` is for standalone/background artifact workloads such as pipeline jobs
+
+Current limit:
+- queue isolation exists, but stronger intra-queue fairness and scheduling controls are still V1
 
 ## Canonical Implementation References
 
