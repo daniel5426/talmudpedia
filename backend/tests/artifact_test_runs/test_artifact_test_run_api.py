@@ -7,11 +7,11 @@ from app.db.postgres.models.identity import MembershipStatus, OrgMembership, Org
 from main import app
 
 
-ARTIFACT_CODE = """def execute(context):
-    payload = context.input_data.get("value")
+ARTIFACT_CODE = """def execute(inputs, config, context):
+    payload = inputs.get("value")
     return {
         "received": payload,
-        "config": context.config,
+        "config": config,
         "count": len(payload or []),
     }
 """
@@ -111,8 +111,8 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
                 "scope": "rag",
                 "input_type": "raw_documents",
                 "output_type": "raw_documents",
-                "source_files": [{"path": "handler.py", "content": ARTIFACT_CODE}],
-                "entry_module_path": "handler.py",
+                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "main.py",
                 "config_schema": [],
                 "inputs": [],
                 "outputs": [],
@@ -161,8 +161,8 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
             f"/admin/artifacts/test?tenant_slug={tenant.slug}",
             json={
                 "artifact_id": artifact["id"],
-                "source_files": [{"path": "handler.py", "content": ARTIFACT_CODE}],
-                "entry_module_path": "handler.py",
+                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "main.py",
                 "input_data": [{"text": "legacy"}],
                 "config": {"legacy": True},
                 "input_type": "raw_documents",
@@ -206,8 +206,8 @@ async def test_unsaved_artifact_test_run_uses_principal_tenant_context_without_t
         run_response = await client.post(
             "/admin/artifacts/test-runs",
             json={
-                "source_files": [{"path": "handler.py", "content": ARTIFACT_CODE}],
-                "entry_module_path": "handler.py",
+                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "main.py",
                 "input_data": {"value": ["hello"]},
                 "config": {"mode": "demo"},
                 "dependencies": [],
@@ -245,8 +245,8 @@ async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_sessio
                 "scope": "rag",
                 "input_type": "raw_documents",
                 "output_type": "raw_documents",
-                "source_files": [{"path": "handler.py", "content": ARTIFACT_CODE}],
-                "entry_module_path": "handler.py",
+                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "main.py",
                 "config_schema": [],
                 "inputs": [],
                 "outputs": [],

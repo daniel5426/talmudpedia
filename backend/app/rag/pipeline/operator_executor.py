@@ -516,90 +516,6 @@ class PassthroughExecutor(OperatorExecutor):
         )
 
 
-class HTMLCleanerExecutor(OperatorExecutor):
-    """Clean HTML content and extract text."""
-    
-    async def execute(
-        self, 
-        input_data: OperatorInput, 
-        context: ExecutionContext
-    ) -> OperatorOutput:
-        try:
-            from bs4 import BeautifulSoup
-        except ImportError:
-            # Fallback to regex-based cleaning
-            import re
-            
-            def clean_html(html: str) -> str:
-                # Remove script and style tags
-                cleaned = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-                cleaned = re.sub(r'<style[^>]*>.*?</style>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
-                # Remove tags
-                cleaned = re.sub(r'<[^>]+>', '', cleaned)
-                # Normalize whitespace
-                cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-                return cleaned
-            
-            documents = input_data.data
-            if isinstance(documents, list):
-                result = []
-                for doc in documents:
-                    if isinstance(doc, dict):
-                        text = doc.get("text", doc.get("content", ""))
-                        doc["text"] = clean_html(text)
-                        result.append(doc)
-                    else:
-                        result.append({"text": clean_html(str(doc))})
-            else:
-                result = [{"text": clean_html(str(documents))}]
-            
-            return OperatorOutput(
-                data=result,
-                metadata=input_data.metadata,
-                operator_id=self.operator_id,
-                success=True
-            )
-        
-        # BeautifulSoup is available
-        config = context.config
-        remove_scripts = config.get("remove_scripts", True)
-        remove_styles = config.get("remove_styles", True)
-        
-        documents = input_data.data
-        result = []
-        
-        for doc in (documents if isinstance(documents, list) else [documents]):
-            if isinstance(doc, dict):
-                text = doc.get("text", doc.get("content", ""))
-            else:
-                text = str(doc)
-            
-            soup = BeautifulSoup(text, "html.parser")
-            
-            if remove_scripts:
-                for script in soup.find_all("script"):
-                    script.decompose()
-            
-            if remove_styles:
-                for style in soup.find_all("style"):
-                    style.decompose()
-            
-            cleaned_text = soup.get_text(separator=" ", strip=True)
-            
-            if isinstance(doc, dict):
-                doc["text"] = cleaned_text
-                result.append(doc)
-            else:
-                result.append({"text": cleaned_text})
-        
-        return OperatorOutput(
-            data=result,
-            metadata=input_data.metadata,
-            operator_id=self.operator_id,
-            success=True
-        )
-
-
 class PIIRedactorExecutor(OperatorExecutor):
     """Detect and redact PII from documents."""
     
@@ -1476,7 +1392,6 @@ class ExecutorRegistry:
     """Registry mapping operator IDs to their executor classes."""
     
     _executors: Dict[str, type] = {
-        "html_cleaner": HTMLCleanerExecutor,
         "pii_redactor": PIIRedactorExecutor,
         "metadata_extractor": MetadataExtractorExecutor,
         "local_loader": LoaderExecutor,

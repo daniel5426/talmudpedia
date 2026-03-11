@@ -9,10 +9,12 @@ For the current canonical artifact-domain docs, read:
 - `docs/design-docs/artifact_execution_current.md`
 
 Do not add new canonical artifact-domain detail here.
-2. create an `artifact_runs` row
-3. enqueue or eagerly execute the run
-4. execute through the internal artifact worker
-5. persist result, logs, and events
+
+Current canonical implementation reminders:
+- tenant artifacts are revision-backed with `source_files` and `entry_module_path`
+- artifact-page test runs, tenant agent artifact nodes, artifact-backed tools, and artifact-backed RAG operators already use the shared artifact runtime
+- the intended production target is Cloudflare Workers for Platforms
+- the repo also supports a temporary Cloudflare free-plan `standard_worker_test` mode for runtime-path validation
 
 Current run endpoints:
 - `POST /admin/artifacts/test-runs`
@@ -21,10 +23,10 @@ Current run endpoints:
 - `GET /admin/artifact-runs/{run_id}/events`
 - `POST /admin/artifact-runs/{run_id}/cancel`
 
-Compatibility endpoint:
+Legacy wrapper endpoint kept over the run-based path:
 - `POST /admin/artifacts/test`
 
-That compatibility endpoint still exists, but it now routes through the same new run-based runtime.
+That legacy endpoint still routes through the same run-based runtime.
 
 ### Publish
 
@@ -40,9 +42,6 @@ The new runtime contract is:
 async def execute(inputs: dict, config: dict, context: dict) -> dict:
     ...
 ```
-
-Compatibility note:
-- the current worker runner also supports the older single-context artifact signature for existing code during the transition
 
 ## Current Platform Usage By Domain
 
@@ -93,9 +92,10 @@ Older docs and parts of the historical API language were narrower and focused on
 
 Artifact-page testing and the main live tenant Agent/Tool/RAG paths now use the shared runtime.
 
-Remaining compatibility scope is mostly:
+Remaining migration scope is mostly:
 - builtin repo artifacts
 - older terminology/docs that still say custom operator or DifySandbox
+- temporary free-plan runtime mode versus the intended Workers for Platforms production mode
 
 ## Current Limitations
 

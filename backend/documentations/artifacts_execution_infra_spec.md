@@ -15,6 +15,8 @@ Current artifact-runtime env surface is centered on:
 - `CLOUDFLARE_ACCOUNT_ID`
 - `ARTIFACT_CF_DISPATCH_BASE_URL`
 - `ARTIFACT_CF_DISPATCH_TOKEN`
+- `ARTIFACT_CF_RUNTIME_MODE`
+- `ARTIFACT_CF_DISPATCH_TIMEOUT_SECONDS`
 
 Fallback bundle envs:
 - `APPS_BUNDLE_BUCKET`
@@ -27,13 +29,17 @@ Fallback bundle envs:
 
 - no production-grade fairness scheduler yet beyond queue classes plus tenant concurrency caps
 - tenant artifacts must fit the Cloudflare Workers Python/runtime constraints
-- builtin repo artifacts still remain on compatibility execution paths
+- builtin repo artifacts still remain on their separate backend-local execution path
 
 ## Target Direction
 
 The current direction now is:
 - one shared artifact execution service
-- Cloudflare Workers for Platforms as the tenant artifact execution boundary
+- Cloudflare Workers-compatible runtime boundaries for tenant artifact execution
 - published revision pinning for production execution
 - thin agent/rag/tool integrations over the same execution substrate
 - stronger queueing, fairness, outbound policy, and secret-broker hardening on top of this stack
+
+Current implementation note:
+- `workers_for_platforms` is the intended production mode
+- `standard_worker_test` is the temporary free-plan validation mode currently used when dispatch namespaces are not available

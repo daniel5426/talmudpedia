@@ -22,7 +22,7 @@ Filesystem-backed artifacts under `backend/artifacts/`.
 
 Current role:
 - platform-owned logic
-- compatibility/discovery path through the registry
+- registry/discovery path through the registry
 - not the main editable admin CRUD path for tenant artifact authoring
 
 ### Tenant artifacts
@@ -57,10 +57,16 @@ Tenant artifacts are authored through the admin artifacts APIs.
 Current authoring shape includes:
 - identity and metadata
 - source files and entry module path
+- `main.py` as the default starter entry file in the admin editor
 - config schema
 - inputs and outputs
 - declared reads and writes
 - revision tracking
+
+Current admin authoring UI also includes:
+- a source-tree editor with a file explorer/workspace panel
+- an active-file editor surface
+- artifact-page test-run execution against unsaved source trees
 
 ### Publish
 
@@ -110,12 +116,6 @@ The runtime handler contract remains:
 async def execute(inputs: dict, config: dict, context: dict) -> dict: ...
 ```
 
-Compatibility behavior also still exists for older handlers:
-
-```python
-def execute(context): ...
-```
-
 ## Current Queue Policy
 
 Current queue classes are:
@@ -133,12 +133,17 @@ Current limit:
 
 ## Current Runtime Constraints
 
-Tenant artifacts now execute on Cloudflare Workers for Platforms.
+Tenant artifacts now execute on Cloudflare Workers-compatible runtime paths.
 
 Current practical constraints:
 - tenant revisions must be compatible with the Workers Python runtime
 - unsupported filesystem/process/socket assumptions are out of contract for tenant artifacts
 - dependency declarations are validated against the current Workers-compatible policy before deployment
+
+Current transitional reality:
+- the intended production substrate is Cloudflare Workers for Platforms
+- the repo also supports a temporary `standard_worker_test` mode for Cloudflare free-plan validation
+- that temporary mode validates the control plane and execution path, but it does not yet provide full per-artifact dependency installation fidelity
 
 ## Canonical Implementation References
 

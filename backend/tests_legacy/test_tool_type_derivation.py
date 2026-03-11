@@ -42,7 +42,7 @@ async def test_tool_type_derivation(authorized_client, db_session, setup_tools_e
         scope=ToolDefinitionScope.TENANT,
         schema={"input": {}, "output": {}},
         config_schema={"implementation": {"type": "artifact"}},
-        artifact_id="custom/tool_alpha",
+        artifact_id="builtin/platform_sdk",
         artifact_version="1.0.0",
         implementation_type=ToolImplementationType.ARTIFACT,
         status=ToolStatus.PUBLISHED,

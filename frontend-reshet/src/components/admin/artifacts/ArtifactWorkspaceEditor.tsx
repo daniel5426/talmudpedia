@@ -1,8 +1,7 @@
 "use client"
 
 import type { PointerEvent as ReactPointerEvent } from "react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Button } from "@/components/ui/button"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { CodeEditor } from "@/components/ui/code-editor"
 import { cn } from "@/lib/utils"
 import { ArtifactSourceFile } from "@/services/artifacts"
@@ -14,6 +13,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Settings2,
   X,
 } from "lucide-react"
 
@@ -31,8 +31,8 @@ interface ArtifactWorkspaceEditorProps {
   sidebarOpen?: boolean
   /** Called when sidebar open state changes (toggle, border click, drag). */
   onSidebarOpenChange?: (open: boolean) => void
-  /** Slot rendered at the right end of the tab bar (e.g. config button). */
-  tabBarEndSlot?: React.ReactNode
+  /** Slot rendered as the content of the config file. */
+  configContent?: React.ReactNode
 }
 
 type TreeNode = {
@@ -146,7 +146,7 @@ export function ArtifactWorkspaceEditor({
   onSourceFilesChange,
   sidebarOpen: controlledSidebarOpen,
   onSidebarOpenChange,
-  tabBarEndSlot,
+  configContent,
 }: ArtifactWorkspaceEditorProps) {
   const palette = {
     appBg: "bg-background",
@@ -191,37 +191,16 @@ export function ArtifactWorkspaceEditor({
   const tree = useMemo(() => buildTree(sourceFiles), [sourceFiles])
   const [expandedDirs, setExpandedDirs] = useState<string[]>(() => collectDirectoryPaths(tree))
 
-  // Keep expandedDirs in sync when tree changes (e.g. new dirs added)
-  useEffect(() => {
-    const allDirs = collectDirectoryPaths(tree)
-    setExpandedDirs((prev) => {
-      const asSet = new Set(prev)
-      const merged = [...prev]
-      allDirs.forEach((d) => {
-        if (!asSet.has(d)) merged.push(d)
-      })
-      return merged
-    })
-  }, [tree])
-
   const activeFile = useMemo(
-    () => sourceFiles.find((f) => f.path === activeFilePath) ?? sourceFiles[0] ?? null,
+    () => {
+      if (activeFilePath === "__CONFIG__") return null
+      return sourceFiles.find((f) => f.path === activeFilePath) ?? sourceFiles[0] ?? null
+    },
     [activeFilePath, sourceFiles]
   )
 
   // ---- open tabs: ordered list of paths, independent of selection ----
-  const [openTabs, setOpenTabs] = useState<string[]>(() => sourceFiles.map((f) => f.path))
-
-  // Sync open tabs when sourceFiles change (add new ones, remove deleted)
-  useEffect(() => {
-    setOpenTabs((prev) => {
-      const filePathSet = new Set(sourceFiles.map((f) => f.path))
-      const kept = prev.filter((p) => filePathSet.has(p))
-      const keptSet = new Set(kept)
-      const added = sourceFiles.map((f) => f.path).filter((p) => !keptSet.has(p))
-      return [...kept, ...added]
-    })
-  }, [sourceFiles])
+  const [openTabs, setOpenTabs] = useState<string[]>(() => [...sourceFiles.map((f) => f.path), "__CONFIG__"])
 
   // ---- drag state for tabs ----
   const [draggingTab, setDraggingTab] = useState<string | null>(null)
@@ -249,9 +228,10 @@ export function ArtifactWorkspaceEditor({
       ...sourceFiles,
       { path, content: 'def helper():\n    return "new helper"\n' },
     ])
+    setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]))
     onActiveFileChange(path)
     if (!isTreeOpen) setIsTreeOpen(true)
-  }, [sourceFiles, onSourceFilesChange, onActiveFileChange, isTreeOpen])
+  }, [sourceFiles, onSourceFilesChange, onActiveFileChange, isTreeOpen, setIsTreeOpen])
 
   const handleAddDir = useCallback(() => {
     const dirName = nextAvailableDirPath(sourceFiles, "")
@@ -260,8 +240,9 @@ export function ArtifactWorkspaceEditor({
       ...sourceFiles,
       { path: filePath, content: "" },
     ])
+    setExpandedDirs((prev) => (prev.includes(dirName) ? prev : [...prev, dirName]))
     if (!isTreeOpen) setIsTreeOpen(true)
-  }, [sourceFiles, onSourceFilesChange, isTreeOpen])
+  }, [sourceFiles, onSourceFilesChange, isTreeOpen, setIsTreeOpen])
 
   const handleDeleteFile = useCallback(
     (path: string) => {
@@ -566,7 +547,23 @@ export function ArtifactWorkspaceEditor({
   /*  Render                                                           */
   /* ================================================================ */
 
-  const visibleTabs = openTabs.filter((p) => sourceFiles.some((f) => f.path === p))
+  const visibleTabs = useMemo(() => {
+    const sourcePaths = sourceFiles.map((f) => f.path)
+    const sourcePathSet = new Set(sourcePaths)
+    const kept = openTabs.filter((path) => path === "__CONFIG__" || sourcePathSet.has(path))
+    const withConfig = kept.includes("__CONFIG__") ? kept : [...kept, "__CONFIG__"]
+    const withActive =
+      activeFilePath !== "__CONFIG__" && sourcePathSet.has(activeFilePath) && !withConfig.includes(activeFilePath)
+        ? [...withConfig, activeFilePath]
+        : withConfig
+
+    if (sourcePaths.length === 0) {
+      return withActive
+    }
+
+    const hasFileTab = withActive.some((path) => path !== "__CONFIG__")
+    return hasFileTab ? withActive : [...sourcePaths, "__CONFIG__"]
+  }, [activeFilePath, openTabs, sourceFiles])
 
   return (
     <div className={cn("flex h-full min-h-0 min-w-0 overflow-hidden", palette.appBg, palette.text)}>
@@ -625,6 +622,31 @@ export function ArtifactWorkspaceEditor({
 
             {/* File tree */}
             <div className="flex-1 overflow-y-auto overflow-x-hidden py-0.5">
+              <div
+                className={cn(
+                  "group flex h-[22px] items-center transition-colors duration-75",
+                  activeFilePath === "__CONFIG__" && palette.activeRow
+                )}
+              >
+                <button
+                  type="button"
+                  className={cn(
+                    "flex min-w-0 flex-1 items-center gap-1 text-left text-[13px]",
+                    activeFilePath !== "__CONFIG__" && palette.rowHover,
+                    palette.text
+                  )}
+                  style={{ paddingLeft: `10px` }}
+                  onClick={() => {
+                    onActiveFileChange("__CONFIG__")
+                    setOpenTabs((prev) =>
+                      prev.includes("__CONFIG__") ? prev : [...prev, "__CONFIG__"]
+                    )
+                  }}
+                >
+                  <Settings2 className="h-[14px] w-[14px] shrink-0 text-muted-foreground" />
+                  <span className="truncate pl-0.5">Configuration</span>
+                </button>
+              </div>
               {tree.map((node) => renderNode(node, 0))}
             </div>
           </div>
@@ -650,21 +672,68 @@ export function ArtifactWorkspaceEditor({
 
       {/* -------- MAIN AREA -------- */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {/* End slot (config button, etc.) — positioned above everything */}
-        {tabBarEndSlot && (
-          <div className="absolute right-3 top-0 z-[90] flex shrink-0 items-start">
-            {tabBarEndSlot}
-          </div>
-        )}
-
         {/* Tab bar */}
         <div
           className={cn(
-            "flex h-[35px] rounded-md shrink-0 items-stretch overflow-x-auto",
+            "flex h-[35px] rounded-md shrink-0 mr-3 items-stretch overflow-x-auto",
             palette.topBarBg
           )}
         >
           {visibleTabs.map((filePath, idx) => {
+            if (filePath === "__CONFIG__") {
+              const isActive = activeFilePath === "__CONFIG__"
+              const isDragging = draggingTab === "__CONFIG__"
+              const isDropTarget = tabDropIndex === idx
+              return (
+                <div
+                  key="__CONFIG__"
+                  draggable
+                  onDragStart={(e) => handleTabDragStart(e, "__CONFIG__")}
+                  onDragEnd={handleTabDragEnd}
+                  onDragOver={(e) => handleTabDragOver(e, idx)}
+                  onDrop={(e) => handleTabDrop(e, idx)}
+                  className={cn(
+                    "group relative z-10 flex min-w-[100px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md px-3 text-[12px] transition-colors duration-75",
+                    isActive
+                      ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]")
+                      : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
+                    isDragging && "opacity-40",
+                    isDropTarget && "border-l-2 border-l-[#3794ff]",
+                    idx === 0 && "rounded-tl-none"
+                  )}
+                  style={{
+                    ...(isActive
+                      ? {
+                          borderLeft: idx === 0 ? undefined : `1px solid var(--border)`,
+                          borderRight: `1px solid var(--border)`,
+                          borderTop: `1px solid var(--border)`,
+                          boxShadow: `inset 0 1px 0 0 0`,
+                        }
+                      : {}),
+                  }}
+                  onClick={() => onActiveFileChange("__CONFIG__")}
+                >
+                  <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">Configuration</span>
+                  <button
+                    type="button"
+                    className={cn(
+                      "ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] opacity-0 transition-opacity group-hover:opacity-100",
+                      palette.muted,
+                      palette.buttonHover
+                    )}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleCloseTab("__CONFIG__")
+                    }}
+                    title="Close tab"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              )
+            }
+
             const file = sourceFiles.find((f) => f.path === filePath)
             if (!file) return null
             const isActive = file.path === activeFile?.path
@@ -686,12 +755,13 @@ export function ArtifactWorkspaceEditor({
                     ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]")
                     : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
                   isDragging && "opacity-40",
-                  isDropTarget && "border-l-2 border-l-[#3794ff]"
+                  isDropTarget && "border-l-2 border-l-[#3794ff]",
+                  idx === 0 && "rounded-tl-none"
                 )}
                 style={{
                   ...(isActive
                     ? {
-                        borderLeft: `1px solid var(--border)`,
+                        borderLeft: idx === 0 ? undefined : `1px solid var(--border)`,
                         borderRight: `1px solid var(--border)`,
                         borderTop: `1px solid var(--border)`,
                         boxShadow: `inset 0 1px 0 0 0`,
@@ -739,13 +809,19 @@ export function ArtifactWorkspaceEditor({
         </div>
 
         {/* Editor */}
-        <div className="min-h-0 flex-1">
-          <CodeEditor
-            value={activeFile?.content ?? ""}
-            onChange={updateActiveContent}
-            height="100%"
-            className="h-full w-full border-0 rounded-none"
-          />
+        <div className="min-h-0 flex-1 flex flex-col">
+          {activeFilePath === "__CONFIG__" ? (
+            <div className="flex-1 overflow-auto bg-background">
+              {configContent}
+            </div>
+          ) : (
+            <CodeEditor
+              value={activeFile?.content ?? ""}
+              onChange={updateActiveContent}
+              height="100%"
+              className="h-full w-full border-0 rounded-none"
+            />
+          )}
         </div>
       </div>
     </div>

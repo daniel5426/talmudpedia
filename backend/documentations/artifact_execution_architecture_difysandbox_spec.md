@@ -9,6 +9,7 @@ For the current canonical artifact execution docs, read:
 - `docs/product-specs/artifacts_domain_spec.md`
 
 Keep this file only as historical pre-Cloudflare target-architecture context if needed.
+It does not describe the current active tenant artifact runtime.
 - create run records
 - assign queue class and runtime policy
 - enqueue work
@@ -141,11 +142,13 @@ Deliver:
 
 This DifySandbox target architecture was superseded.
 
-Tenant artifact execution is now implemented on Cloudflare Workers for Platforms instead.
+Tenant artifact execution now uses Cloudflare Workers-compatible runtime paths instead:
+- Workers for Platforms as the intended production target
+- `standard_worker_test` as the temporary free-plan validation mode
 
 ## Relationship To Current Docs
 
-This file is the future-state architecture and migration design note.
+This file is a historical architecture and migration note only.
 
 Current implementation/reference docs:
 - [backend/documentations/artifacts_spec.md](/Users/danielbenassaya/Code/personal/talmudpedia/backend/documentations/artifacts_spec.md)

@@ -2,7 +2,7 @@ import inspect
 import json
 import sys
 from pathlib import PurePosixPath
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 from workers import Response, WorkerEntrypoint
 
@@ -49,7 +49,7 @@ class Default(WorkerEntrypoint):
 
         payload = json.loads(await request.text())
         source_files = list(payload.get("source_files") or [])
-        entry_module_path = str(payload.get("entry_module_path") or "handler.py")
+        entry_module_path = str(payload.get("entry_module_path") or "main.py")
         module = _load_modules(source_files, entry_module_path)
         execute = getattr(module, "execute", None)
         if execute is None:
@@ -77,10 +77,7 @@ class Default(WorkerEntrypoint):
         inputs = payload.get("inputs")
         config = payload.get("config") or {}
         context = payload.get("context") or {}
-        if len(inspect.signature(execute).parameters) == 1:
-            result = execute(SimpleNamespace(input_data=inputs, config=config, context=context))
-        else:
-            result = execute(inputs, config, context)
+        result = execute(inputs, config, context)
         if inspect.isawaitable(result):
             result = await result
 

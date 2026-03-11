@@ -429,36 +429,6 @@ SOURCE_OPERATORS: Dict[str, OperatorSpec] = {
 # =============================================================================
 
 NORMALIZATION_OPERATORS: Dict[str, OperatorSpec] = {
-    "html_cleaner": OperatorSpec(
-        operator_id="html_cleaner",
-        display_name="HTML Cleaner",
-        category=OperatorCategory.NORMALIZATION,
-        version="1.0.0",
-        description="Clean HTML content and extract plain text",
-        input_type=DataType.RAW_DOCUMENTS,
-        output_type=DataType.NORMALIZED_DOCUMENTS,
-        optional_config=[
-            ConfigFieldSpec(
-                name="remove_scripts",
-                field_type=ConfigFieldType.BOOLEAN,
-                default=True,
-                description="Remove script tags",
-            ),
-            ConfigFieldSpec(
-                name="remove_styles",
-                field_type=ConfigFieldType.BOOLEAN,
-                default=True,
-                description="Remove style tags",
-            ),
-            ConfigFieldSpec(
-                name="preserve_links",
-                field_type=ConfigFieldType.BOOLEAN,
-                default=False,
-                description="Preserve link URLs in output",
-            ),
-        ],
-        tags=["html", "cleaning", "text"],
-    ),
     "pii_redactor": OperatorSpec(
         operator_id="pii_redactor",
         display_name="PII Redactor",

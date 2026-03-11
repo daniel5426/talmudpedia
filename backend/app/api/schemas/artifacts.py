@@ -62,7 +62,6 @@ class ArtifactSchema(BaseModel):
     config_schema: List[Dict[str, Any]] = [] # Flexible list of config fields
     created_at: Optional[datetime] = None
     updated_at: datetime
-    python_code: Optional[str] = None
     source_files: List[ArtifactSourceFile] = []
     entry_module_path: Optional[str] = None
     reads: List[str] = []
@@ -84,9 +83,8 @@ class ArtifactCreate(BaseModel):
     input_type: str = "raw_documents"
     output_type: str = "raw_documents"
     scope: ArtifactScope = ArtifactScope.RAG
-    python_code: Optional[str] = None
-    source_files: List[ArtifactSourceFile] = []
-    entry_module_path: Optional[str] = None
+    source_files: List[ArtifactSourceFile]
+    entry_module_path: str
     config_schema: List[Dict[str, Any]] = []
     reads: List[str] = []
     writes: List[str] = []
@@ -101,7 +99,6 @@ class ArtifactUpdate(BaseModel):
     input_type: Optional[str] = None
     output_type: Optional[str] = None
     scope: Optional[ArtifactScope] = None
-    python_code: Optional[str] = None
     source_files: Optional[List[ArtifactSourceFile]] = None
     entry_module_path: Optional[str] = None
     config_schema: Optional[List[Dict[str, Any]]] = None
@@ -113,7 +110,6 @@ class ArtifactUpdate(BaseModel):
 
 class ArtifactTestRequest(BaseModel):
     artifact_id: Optional[str] = None # If testing existing one
-    python_code: Optional[str] = None # If testing with unsaved code
     source_files: List[ArtifactSourceFile] = []
     entry_module_path: Optional[str] = None
     input_data: Any

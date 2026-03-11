@@ -26,24 +26,16 @@ export const DATA_TYPES = [
   { value: "any", label: "Any (Agent)" },
 ]
 
-export const DEFAULT_PYTHON_CODE = `def execute(context):
+export const DEFAULT_PYTHON_CODE = `async def execute(inputs, config, context):
     """
-    Process input data and return transformed output.
-    
-    Args:
-        context: ArtifactContext with:
-            - input_data: List of input items
-            - config: Dict of configuration values
-            - logger: Logger instance
-    
-    Returns:
-        Processed data (matches output_type)
+    Process artifact inputs and return a JSON-serializable result.
     """
-    # Access input data
-    items = context.input_data
-    
-    # Your transformation logic here
-    return items
+    items = inputs.get("items") if isinstance(inputs, dict) else inputs
+    return {
+        "items": items,
+        "config": config,
+        "tenant_id": context.get("tenant_id"),
+    }
 `
 
 export interface ArtifactFormData {
@@ -71,8 +63,8 @@ export const initialFormData: ArtifactFormData = {
   scope: "rag",
   input_type: "raw_documents",
   output_type: "raw_documents",
-  source_files: [{ path: "handler.py", content: DEFAULT_PYTHON_CODE }],
-  entry_module_path: "handler.py",
+  source_files: [{ path: "main.py", content: DEFAULT_PYTHON_CODE }],
+  entry_module_path: "main.py",
   config_schema: "[]",
   inputs: "[]",
   outputs: "[]",

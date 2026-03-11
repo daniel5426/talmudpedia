@@ -51,10 +51,10 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
         input_type="any",
         output_type="any",
         source_files=[
-            {"path": "handler.py", "content": "from helpers import answer\n\ndef execute(context):\n    return answer(context.input_data)\n"},
+            {"path": "main.py", "content": "from helpers import answer\n\ndef execute(inputs, config, context):\n    return answer(inputs)\n"},
             {"path": "helpers.py", "content": "def answer(data):\n    return {'echo': data}\n"},
         ],
-        entry_module_path="handler.py",
+        entry_module_path="main.py",
         python_dependencies=["requests>=2.0"],
         config_schema=[{"name": "enabled", "type": "boolean", "default": True}],
         inputs=[{"name": "text", "type": "string"}],
@@ -68,8 +68,8 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
     assert artifact.latest_draft_revision_id is not None
     assert artifact.status == ArtifactStatus.DRAFT
     assert artifact.latest_published_revision_id is None
-    assert artifact.latest_draft_revision.source_files[0]["path"] == "handler.py"
-    assert artifact.latest_draft_revision.entry_module_path == "handler.py"
+    assert artifact.latest_draft_revision.source_files[0]["path"] == "main.py"
+    assert artifact.latest_draft_revision.entry_module_path == "main.py"
     assert artifact.latest_draft_revision.python_dependencies == ["requests>=2.0"]
     first_hash = artifact.latest_draft_revision.build_hash
 
@@ -83,7 +83,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
         input_type="any",
         output_type="any",
         source_files=[
-            {"path": "main.py", "content": "def execute(context):\n    return {'updated': True, 'echo': context.input_data}\n"},
+            {"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'updated': True, 'echo': inputs}\n"},
         ],
         entry_module_path="main.py",
         python_dependencies=["httpx>=0.27"],
@@ -131,8 +131,8 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
         version_label = "draft"
         is_published = False
         is_ephemeral = False
-        entry_module_path = "handler.py"
-        source_files = [{"path": "handler.py", "content": "def execute(context):\n    return {'ok': True}\n"}]
+        entry_module_path = "main.py"
+        source_files = [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}]
 
     builder = ArtifactBundleBuilder()
     first = builder.build_revision_bundle(_Revision())
@@ -142,8 +142,8 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
     assert first.dependency_hash == second.dependency_hash
 
     manifest = json.loads(io.BytesIO(first.payload).getvalue().decode("utf-8"))
-    assert manifest["entry_module_path"] == "handler.py"
-    assert manifest["source_files"][0]["path"] == "handler.py"
+    assert manifest["entry_module_path"] == "main.py"
+    assert manifest["source_files"][0]["path"] == "main.py"
 
 
 def test_cloudflare_package_builder_emits_runtime_main_wrapper():
@@ -151,11 +151,11 @@ def test_cloudflare_package_builder_emits_runtime_main_wrapper():
         id = uuid.uuid4()
         artifact_id = uuid.uuid4()
         tenant_id = uuid.uuid4()
-        entry_module_path = "handler.py"
+        entry_module_path = "main.py"
         python_dependencies = []
-        source_files = [{"path": "handler.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}]
+        source_files = [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}]
 
     package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
     module_names = {module["name"] for module in package.modules}
     assert "main.py" in module_names
-    assert "handler.py" in module_names
+    assert "main.py" in module_names

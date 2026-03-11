@@ -6,21 +6,19 @@ import json
 from typing import Any
 
 
-DEFAULT_ENTRY_MODULE_PATH = "handler.py"
+DEFAULT_ENTRY_MODULE_PATH = "main.py"
 
 
 @dataclass(frozen=True)
 class NormalizedArtifactSource:
     source_files: list[dict[str, str]]
     entry_module_path: str
-    source_code: str
 
 
 def normalize_artifact_source(
     *,
     source_files: list[dict[str, Any]] | None = None,
     entry_module_path: str | None = None,
-    source_code: str | None = None,
 ) -> NormalizedArtifactSource:
     normalized_entry = str(entry_module_path or DEFAULT_ENTRY_MODULE_PATH).strip() or DEFAULT_ENTRY_MODULE_PATH
     normalized_files: list[dict[str, str]] = []
@@ -35,19 +33,12 @@ def normalize_artifact_source(
         normalized_files.append({"path": path, "content": content})
 
     if not normalized_files:
-        normalized_files = [{"path": normalized_entry, "content": str(source_code or "")}]
-    elif normalized_entry not in {item["path"] for item in normalized_files}:
+        raise ValueError("source_files is required")
+    if normalized_entry not in {item["path"] for item in normalized_files}:
         raise ValueError(f"entry_module_path `{normalized_entry}` must exist in source_files")
-
-    primary_content = ""
-    for item in normalized_files:
-        if item["path"] == normalized_entry:
-            primary_content = item["content"]
-            break
     return NormalizedArtifactSource(
         source_files=normalized_files,
         entry_module_path=normalized_entry,
-        source_code=primary_content,
     )
 
 

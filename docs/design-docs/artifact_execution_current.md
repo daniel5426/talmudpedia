@@ -31,6 +31,17 @@ The current backend supports:
 - deployment resolution and reuse by namespace + build hash
 - artifact run/event persistence
 - Cloudflare Workers dispatch for tenant artifacts
+- one canonical runtime contract: `execute(inputs, config, context)`
+
+Current runtime modes in the repo are:
+- `workers_for_platforms`
+  - intended production target with per-revision deployments and dispatch namespaces
+- `standard_worker_test`
+  - temporary Cloudflare free-plan validation mode using one shared runtime Worker and inline source-tree dispatch
+
+This distinction matters because the codebase currently supports both:
+- the intended Workers for Platforms production shape
+- the temporary free-plan test shape that is usable before dispatch namespaces are enabled
 
 ## Current Execution Surfaces
 
@@ -43,6 +54,11 @@ Current behavior:
 - resolve or create a `staging` deployment by build hash
 - create run and initial events
 - dispatch through the Cloudflare Dispatch Worker eagerly or through Celery depending on queue mode
+
+In `standard_worker_test` mode, test runs:
+- still use the shared run/event control plane
+- still use `staging` semantics in metadata
+- dispatch source files and entry module path inline to the shared free-plan Worker instead of resolving a per-revision deployed User Worker
 
 ### Live agent execution
 
@@ -69,8 +85,8 @@ Current code already routes these live surfaces into the shared artifact runtime
 
 The more accurate current statement is:
 - the shared artifact runtime is already used by test runs and several live execution paths
-- tenant artifacts now execute on Cloudflare Workers for Platforms
-- repo builtin artifacts and some compatibility paths still remain in the system
+- tenant artifacts execute on Cloudflare Workers-compatible runtime paths
+- repo builtin artifacts still remain on their separate backend-local path
 
 ## Current Runtime Flow
 
@@ -81,6 +97,11 @@ The more accurate current statement is:
 5. resolve or create a Cloudflare deployment in `staging` or `production`
 6. send a dispatch request to the platform Dispatch Worker
 7. persist final run state and ordered run events
+
+When the repo is running in `standard_worker_test` mode:
+- deployment resolution is still recorded in backend metadata
+- dispatch goes to the shared free-plan Worker URL
+- the request carries `source_files`, `entry_module_path`, and inputs/config/context directly
 
 ## Current Worker/Queue Model
 
@@ -112,13 +133,14 @@ The artifact runtime is implemented, but it is still a V1 runtime foundation.
 Areas still evolving:
 - stronger worker scheduling/fairness controls
 - fully hardened multi-worker deployment model
-- reduction of remaining compatibility read/execution paths
+- migration of repo builtin artifacts onto the same broader runtime model
 
 Important current reality:
 - queue fairness still relies on the existing queue classes and worker consumption behavior
 - there is not yet a separate platform scheduler enforcing stronger tenant-level fairness, weighted priorities, or admission control inside a queue class
 - interactive traffic is better isolated than before because it uses a separate queue class, but fairness within a queue is still limited by the current Celery/worker model
 - tenant artifacts are now constrained to a Workers-compatible Python model rather than the previous backend bundle/worker sandbox assumptions
+- per-artifact Python dependency installation is not active in the temporary `standard_worker_test` mode; that mode is for runtime-path validation, not final dependency fidelity
 
 ## Canonical Implementation References
 

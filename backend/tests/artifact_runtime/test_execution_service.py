@@ -45,8 +45,8 @@ async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool):
         scope="rag",
         input_type="any",
         output_type="any",
-        source_files=[{"path": "handler.py", "content": "def execute(context):\n    return {'ok': True, 'input': context.input_data}\n"}],
-        entry_module_path="handler.py",
+        source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True, 'input': inputs}\n"}],
+        entry_module_path="main.py",
         python_dependencies=[],
         config_schema=[],
         inputs=[],
@@ -161,8 +161,8 @@ async def test_execute_live_run_standard_worker_test_mode_includes_source_tree(d
     )
 
     assert run is not None
-    assert captured["request"]["entry_module_path"] == "handler.py"
-    assert captured["request"]["source_files"][0]["path"] == "handler.py"
+    assert captured["request"]["entry_module_path"] == "main.py"
+    assert captured["request"]["source_files"][0]["path"] == "main.py"
 
 
 @pytest.mark.asyncio
@@ -248,9 +248,9 @@ async def test_interactive_run_fails_fast_when_tenant_capacity_is_exhausted(db_s
 
 
 @pytest.mark.asyncio
-async def test_handler_runner_legacy_context_preserves_raw_input_payload():
-    async def execute(context):
-        return {"input": context.input_data, "config": context.config}
+async def test_handler_runner_requires_modern_three_argument_contract():
+    async def execute(single_arg):
+        return {"input": single_arg}
 
-    result = await invoke_artifact_handler(execute, ["a", {"b": 1}], {"mode": "legacy"}, {"domain": "rag"})
-    assert result == {"input": ["a", {"b": 1}], "config": {"mode": "legacy"}}
+    with pytest.raises(TypeError, match="exactly \\(inputs, config, context\\)"):
+        await invoke_artifact_handler(execute, ["a", {"b": 1}], {"mode": "strict"}, {"domain": "rag"})

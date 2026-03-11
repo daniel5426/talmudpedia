@@ -126,9 +126,8 @@ class ArtifactRevision(Base):
         default=ArtifactScope.RAG,
     )
 
-    source_code = Column(Text, nullable=True)
     source_files = Column(JSONB, nullable=False, default=list)
-    entry_module_path = Column(String, nullable=False, default="handler.py")
+    entry_module_path = Column(String, nullable=False, default="main.py")
     manifest_json = Column(JSONB, nullable=False, default=dict)
     python_dependencies = Column(JSONB, nullable=False, default=list)
     config_schema = Column(JSONB, nullable=False, default=list)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 import logging
 import sys
-from types import SimpleNamespace
 from typing import Any
 
 
@@ -28,18 +27,12 @@ class _StdoutLogger:
 
 async def invoke_artifact_handler(execute_fn, inputs: Any, config: dict[str, Any], context: dict[str, Any]) -> Any:
     params = list(inspect.signature(execute_fn).parameters.values())
-    legacy_context = SimpleNamespace(
-        input_data=inputs,
-        config=config,
-        logger=_StdoutLogger(),
-        context=context,
-    )
-    if len(params) <= 1:
-        call = lambda: execute_fn(legacy_context)
-    elif len(params) == 2:
-        call = lambda: execute_fn(inputs, config)
-    else:
-        call = lambda: execute_fn(inputs, config, context)
+    if len(params) != 3:
+        raise TypeError("Artifact execute() must accept exactly (inputs, config, context)")
+
+    context_with_logger = dict(context or {})
+    context_with_logger.setdefault("logger", _StdoutLogger())
+    call = lambda: execute_fn(inputs, config, context_with_logger)
 
     if inspect.iscoroutinefunction(execute_fn):
         return await call()

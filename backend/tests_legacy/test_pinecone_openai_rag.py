@@ -404,7 +404,7 @@ async def test_pinecone_openai_rag_and_agent(db_session, tenant_user):
         description="Retrieval with query passthrough",
         nodes=[
             _node("input_2", "input", "query_input", x=0, y=0),
-            _node("pass_2", "enrichment", "custom/rag_query_passthrough", x=200, y=0, config={"tag": "passthrough"}),
+            _node("pass_2", "enrichment", "passthrough", x=200, y=0, config={"tag": "passthrough"}),
             _node("embed_3", "embedding", "model_embedder", x=400, y=0, config={"model_id": embedding_model_id}),
             _node(
                 "search_2",

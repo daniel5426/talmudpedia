@@ -128,9 +128,13 @@ Artifacts are a first-class extension and execution surface.
 Current runtime responsibilities include:
 - artifact discovery and registry integration
 - revision storage and source-tree packaging
-- deployment resolution and dispatch to Cloudflare Workers for Platforms
+- deployment resolution and dispatch to Cloudflare Workers-compatible runtimes
 - backend-side tenant runtime policy enforcement
 - shared execution for artifact test runs and live agent/tool/RAG artifact surfaces
+
+Current runtime modes:
+- `workers_for_platforms` for the intended per-revision production deployment shape
+- `standard_worker_test` for temporary free-plan validation with one shared runtime Worker
 
 Current queue policy is implemented through queue classes rather than a separate scheduler:
 - `artifact_test`

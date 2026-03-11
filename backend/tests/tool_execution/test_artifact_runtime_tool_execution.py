@@ -58,7 +58,8 @@ async def _create_published_artifact(db_session, tenant_id, created_by):
         scope="tool",
         input_type="any",
         output_type="any",
-        source_code="def execute(context):\n    return {'ok': True}\n",
+        source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
+        entry_module_path="main.py",
         python_dependencies=[],
         config_schema=[],
         inputs=[],
@@ -161,7 +162,7 @@ async def test_tool_executor_routes_tenant_artifact_tools_through_shared_runtime
 
 
 @pytest.mark.asyncio
-async def test_tool_executor_keeps_builtin_artifact_compatibility(monkeypatch):
+async def test_tool_executor_keeps_builtin_artifact_path(monkeypatch):
     tool_id = uuid.uuid4()
 
     async def fake_load_tool(self, tool_id_arg):

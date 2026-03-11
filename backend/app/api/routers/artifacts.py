@@ -171,7 +171,8 @@ def _repo_spec_to_schema(spec, *, path: Optional[str], code: Optional[str]) -> A
         tags=list(getattr(spec, "tags", []) or []),
         config_schema=config_schema,
         updated_at=datetime.utcnow(),
-        python_code=code,
+        source_files=[ArtifactSourceFile(path="main.py", content=code)] if code else [],
+        entry_module_path="main.py" if code else None,
         dependencies=[],
         path=path,
         reads=list(getattr(spec, "reads", []) or []),
@@ -204,7 +205,6 @@ def _tenant_artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = 
         config_schema=list(active_revision.config_schema or []),
         created_at=artifact.created_at,
         updated_at=artifact.updated_at,
-        python_code=active_revision.source_code if include_code else None,
         source_files=[
             ArtifactSourceFile(path=str(item.get("path") or ""), content=str(item.get("content") or ""))
             for item in list(active_revision.source_files or [])
@@ -227,16 +227,14 @@ def _parse_artifact_uuid(raw: str) -> UUID | None:
         return None
 
 
-def _request_source_payload(*, source_files, entry_module_path, python_code):
+def _request_source_payload(*, source_files, entry_module_path):
     normalized = normalize_artifact_source(
         source_files=[_model_dump(item) if hasattr(item, "model_dump") else item for item in (source_files or [])],
         entry_module_path=entry_module_path,
-        source_code=python_code,
     )
     return {
         "source_files": normalized.source_files,
         "entry_module_path": normalized.entry_module_path,
-        "source_code": normalized.source_code,
     }
 
 
@@ -321,7 +319,6 @@ async def create_artifact_draft(
     source_payload = _request_source_payload(
         source_files=request.source_files,
         entry_module_path=request.entry_module_path,
-        python_code=request.python_code,
     )
     artifact = await service.create_artifact(
         tenant_id=tenant.id,
@@ -335,7 +332,6 @@ async def create_artifact_draft(
         output_type=request.output_type,
         source_files=source_payload["source_files"],
         entry_module_path=source_payload["entry_module_path"],
-        source_code=source_payload["source_code"],
         python_dependencies=list(request.dependencies or []),
         config_schema=list(request.config_schema or []),
         inputs=list(request.inputs or []),
@@ -376,7 +372,6 @@ async def update_artifact(
     source_payload = _request_source_payload(
         source_files=payload.get("source_files", current_revision.source_files),
         entry_module_path=payload.get("entry_module_path", current_revision.entry_module_path),
-        python_code=payload.get("python_code", current_revision.source_code),
     )
     revision_service = ArtifactRevisionService(db)
     await revision_service.update_artifact(
@@ -390,7 +385,6 @@ async def update_artifact(
         output_type=payload.get("output_type", artifact.output_type),
         source_files=source_payload["source_files"],
         entry_module_path=source_payload["entry_module_path"],
-        source_code=source_payload["source_code"],
         python_dependencies=list(payload.get("dependencies", current_revision.python_dependencies or [])),
         config_schema=list(payload.get("config_schema", current_revision.config_schema or [])),
         inputs=list(payload.get("inputs", current_revision.inputs or [])),
@@ -497,7 +491,6 @@ async def create_unsaved_test_run(
         tenant_id=tenant.id,
         created_by=user.id if user else None,
         artifact_id=artifact_uuid,
-        python_code=request.python_code,
         source_files=[_model_dump(item) for item in request.source_files],
         entry_module_path=request.entry_module_path,
         input_data=request.input_data,
@@ -542,7 +535,6 @@ async def test_artifact(
         tenant_id=tenant.id,
         created_by=user.id if user else None,
         artifact_id=_parse_artifact_uuid(request.artifact_id) if request.artifact_id else None,
-        python_code=request.python_code,
         source_files=[_model_dump(item) for item in request.source_files],
         entry_module_path=request.entry_module_path,
         input_data=request.input_data,

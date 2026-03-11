@@ -25,7 +25,6 @@ export interface Artifact {
   config_schema: any[];
   created_at?: string;
   updated_at: string;
-  python_code?: string;
   source_files?: ArtifactSourceFile[];
   entry_module_path?: string;
   dependencies?: string[];
@@ -44,9 +43,8 @@ export interface ArtifactCreateRequest {
   input_type?: string;
   output_type?: string;
   scope?: ArtifactScope;
-  python_code?: string;
-  source_files?: ArtifactSourceFile[];
-  entry_module_path?: string;
+  source_files: ArtifactSourceFile[];
+  entry_module_path: string;
   dependencies?: string[];
   config_schema?: any[];
   reads?: string[];
@@ -62,7 +60,6 @@ export interface ArtifactUpdateRequest {
   input_type?: string;
   output_type?: string;
   scope?: ArtifactScope;
-  python_code?: string;
   source_files?: ArtifactSourceFile[];
   entry_module_path?: string;
   dependencies?: string[];
@@ -75,7 +72,6 @@ export interface ArtifactUpdateRequest {
 
 export interface ArtifactTestRequest {
   artifact_id?: string;
-  python_code?: string;
   source_files?: ArtifactSourceFile[];
   entry_module_path?: string;
   dependencies?: string[];

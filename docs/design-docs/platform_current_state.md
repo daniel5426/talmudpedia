@@ -69,7 +69,11 @@ Current artifact runtime usage now spans:
 - artifact-backed tools
 - artifact-backed RAG operators
 
-Tenant artifact execution now uses Cloudflare Workers for Platforms as the execution substrate, while the backend remains the artifact control plane.
+Tenant artifact execution now uses a Cloudflare Workers-compatible substrate, while the backend remains the artifact control plane.
+
+Current runtime modes include:
+- Workers for Platforms as the intended production deployment shape
+- a temporary free-plan `standard_worker_test` mode used to validate the current artifact migration before dispatch namespaces are enabled
 
 ### Published Apps
 

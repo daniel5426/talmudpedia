@@ -218,7 +218,7 @@ class ArtifactRegistryService:
         """
         Get the Python module path for an artifact's handler.
         
-        Returns a string like 'artifacts.builtin.html_cleaner.handler'
+        Returns a string like 'artifacts.builtin.platform_sdk.handler'
         that can be used with importlib.
         """
         path = self.get_artifact_path(artifact_id, version)
@@ -226,7 +226,7 @@ class ArtifactRegistryService:
             return None
         
         # Convert filesystem path to module path
-        # /backend/artifacts/builtin/html_cleaner -> artifacts.builtin.html_cleaner.handler
+        # /backend/artifacts/builtin/platform_sdk -> artifacts.builtin.platform_sdk.handler
         try:
             relative = path.relative_to(ARTIFACTS_DIR.parent)
             module_parts = list(relative.parts)

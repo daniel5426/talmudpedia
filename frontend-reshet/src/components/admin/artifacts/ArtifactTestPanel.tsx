@@ -27,7 +27,6 @@ import {
 interface ArtifactTestPanelProps {
   tenantSlug?: string
   artifactId?: string
-  pythonCode: string
   sourceFiles?: ArtifactSourceFile[]
   entryModulePath?: string
   inputType: string
@@ -65,7 +64,6 @@ function summarizeFailure(run: ArtifactRun | null): string {
 export function ArtifactTestPanel({
   tenantSlug,
   artifactId,
-  pythonCode,
   sourceFiles,
   entryModulePath,
   inputType,
@@ -196,7 +194,6 @@ export function ArtifactTestPanel({
       const created = await artifactsService.createTestRun(
         {
           artifact_id: artifactId,
-          python_code: pythonCode,
           source_files: sourceFiles,
           entry_module_path: entryModulePath,
           input_data: inputData,

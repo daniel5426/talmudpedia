@@ -29,7 +29,6 @@ class ArtifactRevisionService:
         output_type: str,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
-        source_code: str | None = None,
         python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
@@ -42,7 +41,6 @@ class ArtifactRevisionService:
         source = normalize_artifact_source(
             source_files=source_files,
             entry_module_path=entry_module_path,
-            source_code=source_code,
         )
         artifact = Artifact(
             id=artifact_id,
@@ -74,7 +72,6 @@ class ArtifactRevisionService:
             scope=scope_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
-            source_code=source.source_code,
             python_dependencies=python_dependencies,
             config_schema=config_schema,
             inputs=inputs,
@@ -103,7 +100,6 @@ class ArtifactRevisionService:
         output_type: str,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
-        source_code: str | None = None,
         python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
@@ -114,7 +110,6 @@ class ArtifactRevisionService:
         source = normalize_artifact_source(
             source_files=source_files,
             entry_module_path=entry_module_path,
-            source_code=source_code,
         )
         scope_value = self._normalize_scope(scope)
         artifact.display_name = display_name
@@ -138,7 +133,6 @@ class ArtifactRevisionService:
             scope=scope_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
-            source_code=source.source_code,
             python_dependencies=python_dependencies,
             config_schema=config_schema,
             inputs=inputs,
@@ -168,7 +162,6 @@ class ArtifactRevisionService:
         output_type: str,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
-        source_code: str | None = None,
         python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
@@ -179,7 +172,6 @@ class ArtifactRevisionService:
         source = normalize_artifact_source(
             source_files=source_files,
             entry_module_path=entry_module_path,
-            source_code=source_code,
         )
         revision = self._build_revision(
             artifact_id=artifact.id if artifact else None,
@@ -196,7 +188,6 @@ class ArtifactRevisionService:
             scope=self._normalize_scope(scope),
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
-            source_code=source.source_code,
             python_dependencies=python_dependencies,
             config_schema=config_schema,
             inputs=inputs,
@@ -248,7 +239,6 @@ class ArtifactRevisionService:
         scope: ArtifactScope,
         source_files: list[dict[str, str]],
         entry_module_path: str,
-        source_code: str,
         python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
@@ -276,7 +266,6 @@ class ArtifactRevisionService:
             input_type=input_type,
             output_type=output_type,
             scope=scope,
-            source_code=source_code,
             source_files=list(source_files or []),
             entry_module_path=entry_module_path,
             manifest_json=self._build_manifest(

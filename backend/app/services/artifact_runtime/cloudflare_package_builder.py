@@ -78,7 +78,7 @@ class CloudflareArtifactPackageBuilder:
 
 
 def _entry_module_name(entry_module_path: str) -> str:
-    normalized = str(entry_module_path or "handler.py").strip().replace("\\", "/")
+    normalized = str(entry_module_path or "main.py").strip().replace("\\", "/")
     if normalized.endswith("/__init__.py"):
         normalized = normalized[: -len("/__init__.py")]
     elif normalized.endswith(".py"):

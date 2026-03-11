@@ -49,7 +49,6 @@ class ArtifactExecutionService:
         tenant_id: UUID,
         created_by: UUID | None,
         artifact_id: UUID | None,
-        python_code: str | None = None,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
         input_data: Any,
@@ -69,13 +68,14 @@ class ArtifactExecutionService:
                 raise ValueError("Artifact has no executable revision")
 
         requested_dependencies = list(dependencies or [])
-        source = normalize_artifact_source(
-            source_files=source_files,
-            entry_module_path=entry_module_path or (revision.entry_module_path if revision else None),
-            source_code=python_code,
-        )
-        should_materialize = artifact is None or bool(source.source_code.strip())
-        if revision is not None and source.source_code.strip():
+        source = None
+        if source_files:
+            source = normalize_artifact_source(
+                source_files=source_files,
+                entry_module_path=entry_module_path or (revision.entry_module_path if revision else None),
+            )
+        should_materialize = artifact is None or source is not None
+        if revision is not None and source is not None:
             current_files = list(revision.source_files or [])
             should_materialize = (
                 current_files != source.source_files
@@ -94,9 +94,8 @@ class ArtifactExecutionService:
                 scope=(getattr(artifact.scope, "value", artifact.scope) if artifact else "rag"),
                 input_type=input_type or (artifact.input_type if artifact else "raw_documents"),
                 output_type=output_type or (artifact.output_type if artifact else "raw_documents"),
-                source_files=source.source_files,
-                entry_module_path=source.entry_module_path,
-                source_code=source.source_code,
+                source_files=source.source_files if source is not None else None,
+                entry_module_path=source.entry_module_path if source is not None else None,
                 python_dependencies=requested_dependencies or list((revision.python_dependencies if revision else []) or []),
                 config_schema=list((revision.config_schema if revision else []) or []),
                 inputs=list((revision.inputs if revision else []) or []),

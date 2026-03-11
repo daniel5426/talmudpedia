@@ -4,7 +4,7 @@ Last Updated: 2026-03-11
 
 ## Scope
 
-Artifact test-run APIs, queued execution lifecycle, and compatibility path.
+Artifact test-run APIs and queued execution lifecycle on the modern run-based artifact runtime.
 
 ## Test Files Present
 
@@ -14,7 +14,7 @@ Artifact test-run APIs, queued execution lifecycle, and compatibility path.
 
 - create artifact through the new tenant artifact CRUD path
 - execute a run-based artifact test and inspect run/events APIs
-- verify legacy `/admin/artifacts/test` uses the new runtime path
+- verify `POST /admin/artifacts/test` remains a thin wrapper over the same run-based runtime path
 - execute an unsaved `/admin/artifacts/test-runs` request without `tenant_slug` by using principal tenant context
 - cancel a queued test run
 - resolve or reuse a `staging` deployment and dispatch through the Cloudflare runtime path
@@ -29,7 +29,7 @@ Artifact test-run APIs, queued execution lifecycle, and compatibility path.
 - Date: 2026-03-11 02:38 Asia/Hebron
 - Result: Pass (19 passed)
 - Command: `PYTHONPATH=backend python3 -m pytest backend/tests/artifact_test_runs/test_artifact_test_run_api.py -q`
-- Date: 2026-03-11 Asia/Hebron
+- Date: 2026-03-11 03:20 Asia/Hebron
 - Result: Pass (3 passed)
 
 ## Known Gaps
