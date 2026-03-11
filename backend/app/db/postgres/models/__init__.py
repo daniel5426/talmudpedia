@@ -79,6 +79,10 @@ from .published_apps import (
 )
 from .artifact_runtime import (
     Artifact,
+    ArtifactCodingMessage,
+    ArtifactCodingRunSnapshot,
+    ArtifactCodingSession,
+    ArtifactCodingSharedDraft,
     ArtifactDeployment,
     ArtifactKind,
     ArtifactDeploymentStatus,

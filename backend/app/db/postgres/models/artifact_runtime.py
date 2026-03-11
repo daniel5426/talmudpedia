@@ -278,3 +278,105 @@ class ArtifactTenantRuntimePolicy(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     tenant = relationship("Tenant")
+
+
+class ArtifactCodingSession(Base):
+    __tablename__ = "artifact_coding_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent_thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    draft_key = Column(String(128), nullable=True, index=True)
+    title = Column(String(255), nullable=False, default="New Chat")
+    active_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    last_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    linked_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    linked_at = Column(DateTime(timezone=True), nullable=True)
+    last_message_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    tenant = relationship("Tenant")
+    artifact = relationship("Artifact", foreign_keys=[artifact_id])
+    linked_artifact = relationship("Artifact", foreign_keys=[linked_artifact_id])
+    agent_thread = relationship("AgentThread", foreign_keys=[agent_thread_id])
+    active_run = relationship("AgentRun", foreign_keys=[active_run_id])
+    last_run = relationship("AgentRun", foreign_keys=[last_run_id])
+    messages = relationship(
+        "ArtifactCodingMessage",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ArtifactCodingMessage.created_at",
+    )
+
+    __table_args__ = (
+        Index("ix_artifact_coding_sessions_scope_activity", "tenant_id", "artifact_id", "draft_key", "last_message_at"),
+    )
+
+
+class ArtifactCodingSharedDraft(Base):
+    __tablename__ = "artifact_coding_shared_drafts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    draft_key = Column(String(128), nullable=True, index=True)
+    linked_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    linked_at = Column(DateTime(timezone=True), nullable=True)
+    working_draft_snapshot = Column(JSONB, nullable=False, default=dict)
+    last_test_run_id = Column(UUID(as_uuid=True), ForeignKey("artifact_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    last_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    tenant = relationship("Tenant")
+    artifact = relationship("Artifact", foreign_keys=[artifact_id])
+    linked_artifact = relationship("Artifact", foreign_keys=[linked_artifact_id])
+    last_test_run = relationship("ArtifactRun", foreign_keys=[last_test_run_id])
+    last_run = relationship("AgentRun", foreign_keys=[last_run_id])
+
+
+class ArtifactCodingRunSnapshot(Base):
+    __tablename__ = "artifact_coding_run_snapshots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    shared_draft_id = Column(UUID(as_uuid=True), ForeignKey("artifact_coding_shared_drafts.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("artifact_coding_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
+    artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    draft_key = Column(String(128), nullable=True, index=True)
+    snapshot_kind = Column(String(32), nullable=False, default="pre_run")
+    draft_snapshot = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant = relationship("Tenant")
+    shared_draft = relationship("ArtifactCodingSharedDraft", foreign_keys=[shared_draft_id])
+    run = relationship("AgentRun", foreign_keys=[run_id])
+    session = relationship("ArtifactCodingSession", foreign_keys=[session_id])
+    artifact = relationship("Artifact", foreign_keys=[artifact_id])
+
+    __table_args__ = (
+        Index("uq_artifact_coding_run_snapshots_run_kind", "run_id", "snapshot_kind", unique=True),
+    )
+
+
+class ArtifactCodingMessage(Base):
+    __tablename__ = "artifact_coding_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("artifact_coding_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(32), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    session = relationship("ArtifactCodingSession", back_populates="messages")
+    run = relationship("AgentRun", foreign_keys=[run_id])
+
+    __table_args__ = (
+        Index("ix_artifact_coding_messages_session_created_at", "session_id", "created_at"),
+        Index("uq_artifact_coding_messages_run_role", "run_id", "role", unique=True),
+    )

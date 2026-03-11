@@ -738,16 +738,63 @@ export default function ToolsPage() {
     return (
         <div className="flex flex-col h-full w-full" dir={direction}>
             {/* Header */}
-            <AdminPageHeader>
+            <AdminPageHeader contentClassName="min-h-12 h-auto flex-wrap py-3">
                 <CustomBreadcrumb items={[{ label: "Tools Registry", href: "/admin/tools", active: true }]} />
-                <Button
-                    size="sm"
-                    className="h-8 gap-1.5"
-                    onClick={() => setCreateDialogOpen(true)}
-                >
-                    <Plus className="h-3.5 w-3.5" />
-                    New Tool
-                </Button>
+                <div className="flex w-full flex-wrap items-center justify-end gap-2 md:w-auto md:flex-nowrap">
+                    <div className="relative min-w-[220px] flex-1 md:w-[280px] md:flex-none">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
+                        <Input
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            className="h-9 border-border/50 bg-muted/30 pl-8 text-sm shadow-none placeholder:text-muted-foreground/50"
+                            placeholder="Search tools..."
+                        />
+                    </div>
+                    <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ToolStatus | "all")}>
+                        <SelectTrigger className="h-9 w-[130px] text-xs shadow-none">
+                            <SelectValue placeholder="Status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All Status</SelectItem>
+                            <SelectItem value="draft">Draft</SelectItem>
+                            <SelectItem value="published">Published</SelectItem>
+                            <SelectItem value="deprecated">Deprecated</SelectItem>
+                            <SelectItem value="disabled">Disabled</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <Select value={subtypeFilter} onValueChange={(v) => setSubtypeFilter(v as ToolImplementationType | "all")}>
+                        <SelectTrigger className="h-9 w-[140px] text-xs shadow-none">
+                            <SelectValue placeholder="Type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All Types</SelectItem>
+                            {TOOL_SUBTYPES.map((subtype) => (
+                                <SelectItem key={subtype.id} value={subtype.id}>{subtype.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    {activeFiltersCount > 0 && (
+                        <button
+                            onClick={() => {
+                                setStatusFilter("all")
+                                setSubtypeFilter("all")
+                                setQuery("")
+                            }}
+                            className="flex h-9 items-center gap-1 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                            <X className="h-3 w-3" />
+                            Clear
+                        </button>
+                    )}
+                    <Button
+                        size="sm"
+                        className="h-9 gap-1.5"
+                        onClick={() => setCreateDialogOpen(true)}
+                    >
+                        <Plus className="h-3.5 w-3.5" />
+                        New Tool
+                    </Button>
+                </div>
             </AdminPageHeader>
 
             {/* Body: sidebar nav + content */}
@@ -805,55 +852,6 @@ export default function ToolsPage() {
 
                 {/* Content area */}
                 <div className="flex-1 flex flex-col overflow-hidden">
-                    {/* Filters bar */}
-                    <div className="shrink-0 border-b border-border/40 px-4 py-3 flex items-center gap-3">
-                        <div className="relative flex-1 max-w-md">
-                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
-                            <Input
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                className="h-9 pl-8 bg-muted/30 border-border/50 text-sm placeholder:text-muted-foreground/50"
-                                placeholder="Search tools..."
-                            />
-                        </div>
-                        <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ToolStatus | "all")}>
-                            <SelectTrigger className="h-9 w-[130px] text-xs">
-                                <SelectValue placeholder="Status" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Status</SelectItem>
-                                <SelectItem value="draft">Draft</SelectItem>
-                                <SelectItem value="published">Published</SelectItem>
-                                <SelectItem value="deprecated">Deprecated</SelectItem>
-                                <SelectItem value="disabled">Disabled</SelectItem>
-                            </SelectContent>
-                        </Select>
-                        <Select value={subtypeFilter} onValueChange={(v) => setSubtypeFilter(v as ToolImplementationType | "all")}>
-                            <SelectTrigger className="h-9 w-[140px] text-xs">
-                                <SelectValue placeholder="Type" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Types</SelectItem>
-                                {TOOL_SUBTYPES.map((subtype) => (
-                                    <SelectItem key={subtype.id} value={subtype.id}>{subtype.label}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        {activeFiltersCount > 0 && (
-                            <button
-                                onClick={() => {
-                                    setStatusFilter("all")
-                                    setSubtypeFilter("all")
-                                    setQuery("")
-                                }}
-                                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                                <X className="h-3 w-3" />
-                                Clear
-                            </button>
-                        )}
-                    </div>
-
                     {/* Tool list */}
                     <main className="flex-1 overflow-y-auto" data-admin-page-scroll>
                         {loading ? (

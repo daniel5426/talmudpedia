@@ -1,4 +1,5 @@
 import { httpClient } from "./http";
+import { useAuthStore } from "@/lib/store/useAuthStore";
 
 export type ArtifactType = "draft" | "published";
 export type ArtifactKind = "agent_node" | "rag_operator" | "tool_impl";
@@ -118,7 +119,7 @@ export interface ArtifactTestRequest {
   config?: Record<string, unknown>;
   kind?: ArtifactKind;
   runtime_target?: string;
-  capabilities?: Record<string, unknown>;
+  capabilities?: ArtifactCapabilityConfig;
   config_schema?: Record<string, unknown>;
   agent_contract?: AgentArtifactContract;
   rag_contract?: RAGArtifactContract;
@@ -173,6 +174,108 @@ export interface ArtifactRunEventsResponse {
   events: ArtifactRunEvent[];
 }
 
+export interface ArtifactCodingStreamEvent {
+  version?: string;
+  event: string;
+  run_id: string;
+  seq: number;
+  ts: string;
+  stage: string;
+  payload?: Record<string, unknown>;
+  diagnostics?: Array<Record<string, unknown>>;
+}
+
+export interface ArtifactCodingRun {
+  run_id: string;
+  status: string;
+  chat_session_id?: string | null;
+  artifact_id?: string | null;
+  draft_key?: string | null;
+  surface?: string | null;
+  requested_model_id?: string | null;
+  resolved_model_id?: string | null;
+  error?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface ArtifactCodingChatSession {
+  id: string;
+  title: string;
+  artifact_id?: string | null;
+  draft_key?: string | null;
+  active_run_id?: string | null;
+  last_run_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string;
+}
+
+export interface ArtifactCodingChatMessage {
+  id: string;
+  run_id: string;
+  role: "user" | "assistant" | string;
+  content: string;
+  created_at: string;
+}
+
+export interface ArtifactCodingRunEvent {
+  run_id: string;
+  event: string;
+  stage: string;
+  payload: Record<string, unknown>;
+  diagnostics: Array<Record<string, unknown>>;
+  ts?: string | null;
+}
+
+export interface ArtifactCodingChatSessionDetail {
+  session: ArtifactCodingChatSession;
+  messages: ArtifactCodingChatMessage[];
+  run_events: ArtifactCodingRunEvent[];
+  draft_snapshot: Record<string, unknown>;
+  paging: {
+    has_more: boolean;
+    next_before_message_id?: string | null;
+  };
+}
+
+export interface ArtifactCodingActiveRunState {
+  run_id: string;
+  status: string;
+}
+
+export interface ArtifactCodingAnswerQuestionRequest {
+  question_id: string;
+  answers: string[][];
+}
+
+export interface ArtifactCodingRevertRequest {
+  run_id: string;
+}
+
+export interface ArtifactCodingPromptRequest {
+  input: string;
+  chat_session_id?: string;
+  artifact_id?: string;
+  draft_key?: string;
+  model_id?: string | null;
+  client_message_id?: string;
+  draft_snapshot: Record<string, unknown>;
+}
+
+export interface ArtifactCodingPromptSubmissionResponse {
+  submission_status: "started";
+  chat_session_id: string;
+  run: ArtifactCodingRun;
+}
+
+export interface ArtifactCodingModelOption {
+  id: string | null;
+  label: string;
+  description?: string;
+}
+
 export const artifactsService = {
   list: async (tenantSlug?: string): Promise<Artifact[]> => {
     const url = tenantSlug ? `/admin/artifacts?tenant_slug=${tenantSlug}` : "/admin/artifacts";
@@ -224,5 +327,153 @@ export const artifactsService = {
       ? `/admin/artifact-runs/${runId}/events?tenant_slug=${tenantSlug}`
       : `/admin/artifact-runs/${runId}/events`;
     return httpClient.get<ArtifactRunEventsResponse>(url);
+  },
+
+  submitCodingAgentPrompt: async (
+    payload: ArtifactCodingPromptRequest,
+    tenantSlug?: string,
+  ): Promise<ArtifactCodingPromptSubmissionResponse> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/coding-agent/v1/prompts?tenant_slug=${tenantSlug}`
+      : "/admin/artifacts/coding-agent/v1/prompts";
+    return httpClient.post<ArtifactCodingPromptSubmissionResponse>(url, payload);
+  },
+
+  listCodingAgentChatSessions: async (
+    options: { artifactId?: string | null; draftKey?: string | null; limit?: number },
+    tenantSlug?: string,
+  ): Promise<ArtifactCodingChatSession[]> => {
+    const params = new URLSearchParams();
+    if (options.artifactId) params.set("artifact_id", options.artifactId);
+    if (options.draftKey) params.set("draft_key", options.draftKey);
+    params.set("limit", String(Math.max(1, Number(options.limit || 25))));
+    if (tenantSlug) params.set("tenant_slug", tenantSlug);
+    return httpClient.get<ArtifactCodingChatSession[]>(
+      `/admin/artifacts/coding-agent/v1/sessions?${params.toString()}`,
+    );
+  },
+
+  getCodingAgentChatSession: async (
+    sessionId: string,
+    options: { limit?: number; before_message_id?: string | null; tenantSlug?: string } = {},
+  ): Promise<ArtifactCodingChatSessionDetail> => {
+    const params = new URLSearchParams();
+    params.set("limit", String(Math.max(1, Number(options.limit || 10))));
+    if (options.before_message_id) {
+      params.set("before_message_id", options.before_message_id);
+    }
+    if (options.tenantSlug) {
+      params.set("tenant_slug", options.tenantSlug);
+    }
+    return httpClient.get<ArtifactCodingChatSessionDetail>(
+      `/admin/artifacts/coding-agent/v1/sessions/${sessionId}?${params.toString()}`,
+    );
+  },
+
+  getCodingAgentChatSessionActiveRun: async (
+    sessionId: string,
+    tenantSlug?: string,
+  ): Promise<ArtifactCodingActiveRunState> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run`;
+    return httpClient.get<ArtifactCodingActiveRunState>(url);
+  },
+
+  findCodingAgentChatSessionActiveRun: async (
+    sessionId: string,
+    tenantSlug?: string,
+  ): Promise<ArtifactCodingActiveRunState | null> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run`;
+    const response = await httpClient.requestRaw(url, { method: "GET" });
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      let message = "Request failed";
+      try {
+        const data = await response.json();
+        message = data?.detail || data?.message || message;
+      } catch {
+        message = response.statusText || message;
+      }
+      throw new Error(typeof message === "string" ? message : JSON.stringify(message));
+    }
+    return response.json() as Promise<ArtifactCodingActiveRunState>;
+  },
+
+  streamCodingAgentRun: async (runId: string, tenantId?: string | null): Promise<Response> => {
+    const streamBase = String(process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || "").trim();
+    const backendBase = String(process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
+    const directBackendUrl = /^https?:\/\//i.test(streamBase)
+      ? streamBase
+      : /^https?:\/\//i.test(backendBase)
+        ? backendBase
+        : "http://127.0.0.1:8000";
+    const authState = useAuthStore.getState();
+    const token = authState.token;
+    const headers: Record<string, string> = {
+      Accept: "text/event-stream",
+      "Cache-Control": "no-cache",
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    if (tenantId) {
+      headers["X-Tenant-ID"] = tenantId;
+    } else if (authState.user?.tenant_id) {
+      headers["X-Tenant-ID"] = authState.user.tenant_id;
+    }
+    const url = new URL(
+      `/admin/artifacts/coding-agent/v1/runs/${encodeURIComponent(runId)}/stream`,
+      directBackendUrl,
+    );
+    return fetch(url.toString(), {
+      method: "GET",
+      headers,
+      credentials: "include",
+    });
+  },
+
+  getCodingAgentRun: async (runId: string, tenantSlug?: string): Promise<ArtifactCodingRun> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/coding-agent/v1/runs/${runId}?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/coding-agent/v1/runs/${runId}`;
+    return httpClient.get<ArtifactCodingRun>(url);
+  },
+
+  cancelCodingAgentRun: async (runId: string, tenantSlug?: string): Promise<ArtifactCodingRun> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/coding-agent/v1/runs/${runId}/cancel?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/coding-agent/v1/runs/${runId}/cancel`;
+    return httpClient.post<ArtifactCodingRun>(url, {});
+  },
+
+  answerCodingAgentRunQuestion: async (
+    runId: string,
+    payload: ArtifactCodingAnswerQuestionRequest,
+    tenantSlug?: string,
+  ): Promise<ArtifactCodingRun> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/coding-agent/v1/runs/${runId}/answer-question?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/coding-agent/v1/runs/${runId}/answer-question`;
+    return httpClient.post<ArtifactCodingRun>(url, payload);
+  },
+
+  revertCodingAgentSession: async (
+    sessionId: string,
+    payload: ArtifactCodingRevertRequest,
+    tenantSlug?: string,
+  ): Promise<ArtifactCodingChatSessionDetail> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/revert?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/revert`;
+    return httpClient.post<ArtifactCodingChatSessionDetail>(url, payload);
+  },
+
+  listCodingAgentModels: async (): Promise<ArtifactCodingModelOption[]> => {
+    return [{ id: null, label: "Auto", description: "Use the default artifact coding model" }];
   },
 };

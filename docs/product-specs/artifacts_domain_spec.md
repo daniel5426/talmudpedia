@@ -64,6 +64,19 @@ Current admin authoring UI also includes:
 - an active-file editor surface
 - kind-specific contract editing
 - artifact-page test-run execution against unsaved source trees
+- artifact-page coding chat that edits the live draft snapshot, including unsaved form changes
+
+### Direct Coding Chat
+
+The admin artifact page now has a direct coding-agent surface for artifact authoring.
+
+Current behavior:
+- the coding agent is a public seeded tenant agent profile, but the direct UI surface is the artifact page
+- the artifact page sends the full live form draft as prompt context on each submission
+- agent tool mutations update only a persisted session working snapshot, not canonical artifact rows
+- tool mutation results are applied back into the artifact page immediately
+- Save and Publish remain explicit page actions; the coding agent does not auto-save or auto-publish
+- create mode is supported before first artifact save through a temporary `draft_key`
 
 ### Publish
 

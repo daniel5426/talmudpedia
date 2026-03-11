@@ -359,6 +359,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         _tool: Any,
         input_data: dict[str, Any],
         implementation_config: dict[str, Any],
+        node_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         function_name = implementation_config.get("function_name")
         if not function_name:
@@ -420,6 +421,25 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 for key, value in wrapper_payload.items():
                     merged_payload[key] = value
         payload = merged_payload
+        if isinstance(node_context, dict):
+            existing_context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+            payload["context"] = {
+                **dict(existing_context),
+                **{
+                    key: value
+                    for key, value in node_context.items()
+                    if value is not None
+                    and key
+                    in {
+                        "run_id",
+                        "thread_id",
+                        "tenant_id",
+                        "user_id",
+                        "initiator_user_id",
+                        "surface",
+                    }
+                },
+            }
         if function_name.startswith("coding_agent_"):
             payload = normalize_coding_agent_tool_payload(function_name, payload)
             missing_fields = validate_coding_agent_required_fields(function_name, payload)
@@ -757,7 +777,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if builtin_key == "http_request":
             return await self._execute_http_tool(tool, input_data, implementation_config, context)
         if builtin_key == "function_call":
-            return await self._execute_function_tool(tool, input_data, implementation_config)
+            return await self._execute_function_tool(tool, input_data, implementation_config, context)
         if builtin_key == "mcp_call":
             timeout_s = execution_config.get("timeout_s") if isinstance(execution_config, dict) else None
             return await self._execute_mcp_tool(tool, input_data, implementation_config, timeout_s)
@@ -1192,7 +1212,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 if impl_type == "http":
                     output_data = await self._execute_http_tool(tool, input_data, implementation_config, context)
                 elif impl_type == "function":
-                    output_data = await self._execute_function_tool(tool, input_data, implementation_config)
+                    output_data = await self._execute_function_tool(tool, input_data, implementation_config, context)
                 elif impl_type == "mcp":
                     output_data = await self._execute_mcp_tool(tool, input_data, implementation_config, timeout_s)
                 elif impl_type == "rag_retrieval":

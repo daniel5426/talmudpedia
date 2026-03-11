@@ -216,7 +216,7 @@ export function ArtifactTestPanel({
           config,
           kind,
           runtime_target: runtimeTarget,
-          capabilities: capabilities as Record<string, unknown>,
+          capabilities,
           config_schema: configSchema,
           agent_contract: agentContract || undefined,
           rag_contract: ragContract || undefined,
@@ -275,7 +275,7 @@ export function ArtifactTestPanel({
   return (
     <div
       className={cn(
-        "relative border-t bg-background flex flex-col",
+        "relative mb-2.5 rounded-lg bg-background flex flex-col",
         isResizing ? "transition-none" : "transition-[height] duration-200"
       )}
       style={{ height: isOpen ? `${openHeight}px` : `${CLOSED_HEIGHT}px` }}
@@ -290,7 +290,7 @@ export function ArtifactTestPanel({
         />
       )}
       <Tabs value={testTab} onValueChange={setTestTab} className="flex-1 flex flex-col min-h-0">
-        <div className="h-11 px-3 bg-muted/15 flex items-center gap-3">
+        <div className="h-11 mx-1 mr-3 shadow-sm px-2 rounded-md bg-sidebar flex items-center gap-3">
           <button
             type="button"
             className="flex items-center gap-3 min-w-0 flex-1 text-left"
@@ -354,12 +354,12 @@ export function ArtifactTestPanel({
         {isOpen && (
           <div className="flex-1 min-h-0 relative">
               <TabsContent value="input" className="absolute inset-0 m-0">
-                <CodeEditor value={testInput} onChange={setTestInput} language="json" className="h-full border-0 rounded-none" />
+                <CodeEditor value={testInput} onChange={setTestInput} language="json" className="h-full rounded-md border-0" />
               </TabsContent>
               <TabsContent value="config" className="absolute inset-0 m-0">
-                <CodeEditor value={testConfig} onChange={setTestConfig} language="json" className="h-full border-0 rounded-none" />
+                <CodeEditor value={testConfig} onChange={setTestConfig} language="json" className="h-full rounded-md border-0" />
               </TabsContent>
-              <TabsContent value="output" className="absolute inset-0 m-0 p-5 font-mono text-sm overflow-auto bg-background">
+              <TabsContent value="output" className="absolute inset-0 m-0 p-5 rounded-md font-mono text-sm overflow-auto bg-background">
                 {legacyResult ? (
                   <div className="space-y-4">
                     {legacyResult.success ? (

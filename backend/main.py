@@ -925,6 +925,7 @@ async def lifespan(app: FastAPI):
         seed_platform_sdk_tool,
         seed_builtin_tool_templates,
         seed_platform_architect_agent,
+        seed_artifact_coding_agent,
     )
     seed_timeout_seconds = float(os.getenv("STARTUP_SEED_TIMEOUT_SECONDS", "8"))
 
@@ -953,6 +954,7 @@ async def lifespan(app: FastAPI):
         await _safe_seed("platform sdk tool bootstrap", seed_platform_sdk_tool, db)
         await _safe_seed("builtin tool templates bootstrap", seed_builtin_tool_templates, db)
         await _safe_seed("platform architect bootstrap", seed_platform_architect_agent, db)
+        await _safe_seed("artifact coding agent bootstrap", seed_artifact_coding_agent, db)
     
     # Start LiveKit worker in separate process if credentials are configured
     # worker_process = None
@@ -1047,6 +1049,7 @@ from app.api.routers import models as models_router
 from app.api.routers import tools as tools_router
 from app.api.routers import artifacts as artifacts_router
 from app.api.routers import artifact_runs as artifact_runs_router
+from app.api.routers import artifact_coding_agent as artifact_coding_agent_router
 from app.api.routers import stats as stats_router
 from app.api.routers import settings as settings_router
 from app.api.routers import internal_auth as internal_auth_router
@@ -1069,6 +1072,7 @@ app.include_router(rag_operator_contracts_router.router, prefix="/admin/pipeline
 app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom-operators", tags=["rag-custom-operators"])
 app.include_router(artifacts_router.router, tags=["artifacts"])
 app.include_router(artifact_runs_router.router, tags=["artifacts"])
+app.include_router(artifact_coding_agent_router.router, tags=["artifacts"])
 app.include_router(stats_router.router, prefix="/admin", tags=["stats"])
 app.include_router(settings_router.router, prefix="/admin/settings", tags=["settings"])
 app.include_router(workload_security_router.router)

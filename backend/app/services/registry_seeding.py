@@ -27,6 +27,7 @@ from app.services.platform_architect_contracts import (
     build_architect_graph_definition,
     build_platform_domain_tool_schema,
 )
+from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 
 # Backward-compatible exports for tests and internal callers.
 _build_architect_graph_definition = build_architect_graph_definition
@@ -636,6 +637,17 @@ async def seed_platform_architect_agent(db):
 
     await db.rollback()
     return await _seed_platform_architect_agent_legacy(db, tenant.id, graph_definition, architect_tool_ids, agent_columns)
+
+
+async def seed_artifact_coding_agent(db):
+    tenant_result = await db.execute(select(Tenant).limit(1))
+    tenant = tenant_result.scalar_one_or_none()
+    if not tenant:
+        print("No tenant found; skipping Artifact Coding agent seed.")
+        return None
+    agent = await ensure_artifact_coding_agent_profile(db, tenant.id)
+    await db.commit()
+    return agent
 
 
 async def _resolve_default_chat_model_id(db, tenant_id):

@@ -14,6 +14,7 @@ interface CodeEditorProps {
     readOnly?: boolean
     framed?: boolean
     suppressValidationDecorations?: boolean
+    onScroll?: (isScrolled: boolean) => void
 }
 
 export function CodeEditor({
@@ -25,13 +26,20 @@ export function CodeEditor({
     readOnly = false,
     framed = true,
     suppressValidationDecorations = false,
+    onScroll,
 }: CodeEditorProps) {
     const { resolvedTheme } = useTheme()
 
     const handleMount: OnMount = useCallback((editor) => {
         // Focus the editor when it mounts
         editor.focus()
-    }, [])
+        
+        if (onScroll) {
+            editor.onDidScrollChange((e) => {
+                onScroll(e.scrollTop > 0)
+            })
+        }
+    }, [onScroll])
 
     const monacoTheme = resolvedTheme === "dark" ? "vs-dark" : "vs"
 
@@ -61,6 +69,7 @@ export function CodeEditor({
                     folding: true,
                     bracketPairColorization: { enabled: true },
                     renderValidationDecorations: suppressValidationDecorations ? "off" : "on",
+                    overviewRulerBorder: false,
                 }}
             />
         </div>

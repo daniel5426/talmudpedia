@@ -18,6 +18,7 @@ class AgentThreadSurface(str, enum.Enum):
     internal = "internal"
     published_host_runtime = "published_host_runtime"
     preview_runtime = "preview_runtime"
+    artifact_admin = "artifact_admin"
 
 
 class AgentThreadTurnStatus(str, enum.Enum):

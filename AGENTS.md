@@ -1,6 +1,6 @@
 # Agent Operating Instructions (Talmudpedia)
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 ## Documentation Hygiene (Context-dependent)
 - The repo-level documentation hub is `docs/`.
@@ -107,3 +107,10 @@ Last Updated: 2026-03-10
 - Keep fallbacks to a minimum across the app.
 - Prefer explicit canonical contracts over permissive recovery behavior.
 - Only add a fallback when it is clearly necessary, highly useful, and the tradeoff is documented.
+
+## Clean-Cut Change Policy
+- For new work, default to clean cuts over legacy compatibility.
+- Do **not** preserve old-data migrations, legacy compatibility layers, fallback behavior, or adapter shims unless the user explicitly asks for them.
+- Prefer removing obsolete code paths instead of keeping dual architectures alive.
+- Optimize for clean architecture, runtime efficiency, and maintainability over backward compatibility by default.
+- If you discover cleanup that is outside the current requested scope, do **not** silently include it; explicitly alert the user and ask whether they want that cleanup done.

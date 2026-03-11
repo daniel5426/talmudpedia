@@ -28,6 +28,7 @@ backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
 backend/app/api/routers/artifacts.py
 backend/app/api/routers/artifact_runs.py
+backend/app/api/routers/artifact_coding_agent.py
 backend/app/api/schemas/
 
 backend/app/core/
@@ -119,6 +120,10 @@ backend/app/services/model_temperature_policy.py
 backend/app/services/credentials_service.py
 backend/app/services/integration_provider_catalog.py
 backend/app/services/registry_seeding.py
+backend/app/services/artifact_coding_chat_history_service.py
+backend/app/services/artifact_coding_shared_draft_service.py
+backend/app/services/artifact_coding_agent_tools.py
+backend/app/services/artifact_coding_agent_profile.py
 backend/app/services/platform_architect_contracts.py
 backend/app/services/platform_architect_guardrails.py
 backend/app/services/graph_mutation_service.py

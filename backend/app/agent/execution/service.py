@@ -199,7 +199,10 @@ class AgentExecutorService:
             raise ValueError("Invalid thread_id")
 
         surface = AgentThreadSurface.internal
-        if runtime_context.get("published_app_preview"):
+        runtime_surface = str(runtime_context.get("surface") or "").strip().lower()
+        if runtime_surface == "artifact_coding_agent":
+            surface = AgentThreadSurface.artifact_admin
+        elif runtime_context.get("published_app_preview"):
             surface = AgentThreadSurface.preview_runtime
         elif runtime_context.get("published_app_id"):
             surface = AgentThreadSurface.published_host_runtime
@@ -235,7 +238,7 @@ class AgentExecutorService:
 
         # Reserve quota (if enabled) before creating the run record.
         quota_metadata = {"max_output_cap": None}
-        if str(runtime_context.get("surface") or "").strip().lower() != "published_app_coding_agent":
+        if runtime_surface not in {"published_app_coding_agent", "artifact_coding_agent"}:
             try:
                 quota_service = UsageQuotaService(self.db)
                 quota_metadata = await quota_service.reserve_for_run(
@@ -266,6 +269,7 @@ class AgentExecutorService:
             delegation_grant_id=resolved_grant_id,
             published_app_id=published_app_id,
             published_app_account_id=published_app_account_id,
+            surface=runtime_surface or None,
             input_params=input_params,
             status=RunStatus.queued,
             root_run_id=root_run_id,

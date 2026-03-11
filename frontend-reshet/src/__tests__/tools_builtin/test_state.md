@@ -1,6 +1,6 @@
 # Tools Built-in Frontend Tests
 
-Last Updated: 2026-02-15
+Last Updated: 2026-03-11
 
 ## Scope
 Covers built-in tools UX under the single-list architecture, plus bucket/subtype classification behavior.
@@ -16,6 +16,9 @@ Covers built-in tools UX under the single-list architecture, plus bucket/subtype
 - Form-level creation wiring tests for `rag_retrieval` and `agent_call` are currently skipped due brittle jsdom/select+editor interactions.
 
 ## Last run command + date/time + result
+- Command: `npm test -- --runInBand src/__tests__/tools_builtin/tool_bucket_filtering.test.ts src/__tests__/tools_builtin/tools_builtin_page.test.tsx`
+- Date/Time: 2026-03-11 (Asia/Hebron local)
+- Result: pass (`2 suites, 4 passed, 2 skipped`)
 - Command: `npm test -- --runInBand src/__tests__/tools_builtin/tool_bucket_filtering.test.ts`
 - Date/Time: 2026-02-15 (local)
 - Result: pass (`1 suite, 2 tests`)

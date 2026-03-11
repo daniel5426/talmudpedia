@@ -1,7 +1,7 @@
 "use client"
 
 import type { PointerEvent as ReactPointerEvent } from "react"
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CodeEditor } from "@/components/ui/code-editor"
 import { cn } from "@/lib/utils"
 import { ArtifactSourceFile } from "@/services/artifacts"
@@ -209,6 +209,14 @@ export function ArtifactWorkspaceEditor({
   // ---- drag state for file tree ----
   const [draggingNode, setDraggingNode] = useState<string | null>(null)
   const [dropTargetDir, setDropTargetDir] = useState<string | null>(null)
+
+  // ---- scroll state for tab transition effect ----
+  const [isScrolled, setIsScrolled] = useState(false)
+
+  // Reset scroll state on tab switch
+  useEffect(() => {
+    setIsScrolled(false)
+  }, [activeFilePath])
 
   /* ================================================================ */
   /*  Handlers                                                         */
@@ -570,7 +578,7 @@ export function ArtifactWorkspaceEditor({
       {/* -------- SIDEBAR -------- */}
       <div
         className={cn(
-          "flex flex-col mx-1 mr-1.5 rounded-t-md overflow-hidden",
+          "flex flex-col mx-1 mr-2 shadow-sm mb-2.5 rounded-md overflow-hidden",
           isResizingState ? "transition-none" : "transition-[width] duration-150",
           palette.sidebarBg
         )}
@@ -585,7 +593,7 @@ export function ArtifactWorkspaceEditor({
             {/* Items count header + action buttons */}
             <div
               className={cn(
-                "flex h-[28px] shrink-0 items-center justify-between pl-3 pr-1",
+                "flex h-[34px] shrink-0 items-center justify-between pl-3 pr-2 pt-1",
                 palette.subtleBorder
               )}
             >
@@ -672,23 +680,81 @@ export function ArtifactWorkspaceEditor({
 
       {/* -------- MAIN AREA -------- */}
       <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Tab bar */}
-        <div
-          className={cn(
-            "flex h-[35px] rounded-md shrink-0 mr-3 items-stretch overflow-x-auto",
-            palette.topBarBg
-          )}
-        >
-          {visibleTabs.map((filePath, idx) => {
-            if (filePath === "__CONFIG__") {
-              const isActive = activeFilePath === "__CONFIG__"
-              const isDragging = draggingTab === "__CONFIG__"
+        {/* Tab bar wrapper */}
+        <div className="relative z-10 flex h-[35px] shrink-0 mr-3 items-stretch overflow-x-auto bg-background transition-colors duration-300 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          <div
+            className={cn(
+              "flex rounded-md shrink-0 items-stretch w-max transition-colors duration-300",
+              palette.topBarBg
+            )}
+          >
+            {visibleTabs.map((filePath, idx) => {
+              if (filePath === "__CONFIG__") {
+                const isActive = activeFilePath === "__CONFIG__"
+                const isDragging = draggingTab === "__CONFIG__"
+                const isDropTarget = tabDropIndex === idx
+                return (
+                  <div
+                    key="__CONFIG__"
+                    draggable
+                    onDragStart={(e) => handleTabDragStart(e, "__CONFIG__")}
+                    onDragEnd={handleTabDragEnd}
+                    onDragOver={(e) => handleTabDragOver(e, idx)}
+                    onDrop={(e) => handleTabDrop(e, idx)}
+                    className={cn(
+                      "group relative z-10 flex min-w-[100px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md px-3 text-[12px] transition-colors duration-75",
+                      isActive
+                        ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]")
+                        : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
+                      isDragging && "opacity-40",
+                      isDropTarget && "border-l-2 border-l-[#3794ff]",
+                      idx === 0 && "rounded-tl-none"
+                    )}
+                    style={{
+                      ...(isActive
+                        ? {
+                            borderLeft: idx === 0 ? undefined : `1px solid var(--border)`,
+                            borderRight: `1px solid var(--border)`,
+                            borderTop: `1px solid var(--border)`,
+                            boxShadow: `inset 0 1px 0 0 0`,
+                          }
+                        : {}),
+                    }}
+                    onClick={() => onActiveFileChange("__CONFIG__")}
+                  >
+                    <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">Configuration</span>
+                    <button
+                      type="button"
+                      className={cn(
+                        "ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] opacity-0 transition-opacity group-hover:opacity-100",
+                        palette.muted,
+                        palette.buttonHover
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleCloseTab("__CONFIG__")
+                      }}
+                      title="Close tab"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )
+              }
+
+              const file = sourceFiles.find((f) => f.path === filePath)
+              if (!file) return null
+              const isActive = file.path === activeFile?.path
+              const isEntry = file.path === entryModulePath
+              const isDragging = draggingTab === file.path
               const isDropTarget = tabDropIndex === idx
+
               return (
                 <div
-                  key="__CONFIG__"
+                  key={file.path}
                   draggable
-                  onDragStart={(e) => handleTabDragStart(e, "__CONFIG__")}
+                  onDragStart={(e) => handleTabDragStart(e, file.path)}
                   onDragEnd={handleTabDragEnd}
                   onDragOver={(e) => handleTabDragOver(e, idx)}
                   onDrop={(e) => handleTabDrop(e, idx)}
@@ -711,92 +777,36 @@ export function ArtifactWorkspaceEditor({
                         }
                       : {}),
                   }}
-                  onClick={() => onActiveFileChange("__CONFIG__")}
+                  onClick={() => onActiveFileChange(file.path)}
                 >
-                  <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate">Configuration</span>
-                  <button
-                    type="button"
-                    className={cn(
-                      "ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] opacity-0 transition-opacity group-hover:opacity-100",
-                      palette.muted,
-                      palette.buttonHover
-                    )}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleCloseTab("__CONFIG__")
-                    }}
-                    title="Close tab"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
+                  <span className="truncate">{file.path.split("/").pop()}</span>
+                  {isEntry && (
+                    <span className={cn("text-[9px] font-medium uppercase tracking-[0.08em]", palette.accent)}>
+                      M
+                    </span>
+                  )}
+                  {!isEntry && (
+                    <button
+                      type="button"
+                      className={cn(
+                        "ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] opacity-0 transition-opacity group-hover:opacity-100",
+                        palette.muted,
+                        palette.buttonHover
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleCloseTab(file.path)
+                      }}
+                      title="Close tab"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
               )
-            }
-
-            const file = sourceFiles.find((f) => f.path === filePath)
-            if (!file) return null
-            const isActive = file.path === activeFile?.path
-            const isEntry = file.path === entryModulePath
-            const isDragging = draggingTab === file.path
-            const isDropTarget = tabDropIndex === idx
-
-            return (
-              <div
-                key={file.path}
-                draggable
-                onDragStart={(e) => handleTabDragStart(e, file.path)}
-                onDragEnd={handleTabDragEnd}
-                onDragOver={(e) => handleTabDragOver(e, idx)}
-                onDrop={(e) => handleTabDrop(e, idx)}
-                className={cn(
-                  "group relative z-10 flex min-w-[100px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md px-3 text-[12px] transition-colors duration-75",
-                  isActive
-                    ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]")
-                    : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
-                  isDragging && "opacity-40",
-                  isDropTarget && "border-l-2 border-l-[#3794ff]",
-                  idx === 0 && "rounded-tl-none"
-                )}
-                style={{
-                  ...(isActive
-                    ? {
-                        borderLeft: idx === 0 ? undefined : `1px solid var(--border)`,
-                        borderRight: `1px solid var(--border)`,
-                        borderTop: `1px solid var(--border)`,
-                        boxShadow: `inset 0 1px 0 0 0`,
-                      }
-                    : {}),
-                }}
-                onClick={() => onActiveFileChange(file.path)}
-              >
-                <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
-                <span className="truncate">{file.path.split("/").pop()}</span>
-                {isEntry && (
-                  <span className={cn("text-[9px] font-medium uppercase tracking-[0.08em]", palette.accent)}>
-                    M
-                  </span>
-                )}
-                {!isEntry && (
-                  <button
-                    type="button"
-                    className={cn(
-                      "ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] opacity-0 transition-opacity group-hover:opacity-100",
-                      palette.muted,
-                      palette.buttonHover
-                    )}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleCloseTab(file.path)
-                    }}
-                    title="Close tab"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )
-          })}
+            })}
+          </div>
           {/* Drop zone at end */}
           <div
             className="min-w-[40px] flex-1"
@@ -808,10 +818,22 @@ export function ArtifactWorkspaceEditor({
           />
         </div>
 
+        {/* Scroll shadow effect */}
+        <div
+          className={cn(
+            "pointer-events-none absolute left-0 right-3 top-[35px] z-10 h-6 bg-gradient-to-b from-border/20 via-border/5 to-transparent transition-opacity duration-300",
+            isScrolled ? "opacity-100" : "opacity-0"
+          )}
+          aria-hidden="true"
+        />
+
         {/* Editor */}
-        <div className="min-h-0 flex-1 flex flex-col">
+        <div className="min-h-0 flex-1 flex flex-col pt-1">
           {activeFilePath === "__CONFIG__" ? (
-            <div className="flex-1 overflow-auto bg-background">
+            <div 
+               className="flex-1 overflow-auto bg-background"
+               onScroll={(e) => setIsScrolled(e.currentTarget.scrollTop > 0)}
+            >
               {configContent}
             </div>
           ) : (
@@ -819,7 +841,8 @@ export function ArtifactWorkspaceEditor({
               value={activeFile?.content ?? ""}
               onChange={updateActiveContent}
               height="100%"
-              className="h-full w-full border-0 rounded-none"
+              className="h-full w-full border-0 rounded-md"
+              onScroll={setIsScrolled}
             />
           )}
         </div>

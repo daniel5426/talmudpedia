@@ -121,7 +121,10 @@ class LangGraphAdapter(RuntimeAdapter):
                         break
         finally:
             await graph_task
-            active_emitter.reset(token)
+            try:
+                active_emitter.reset(token)
+            except ValueError:
+                logger.debug("Skipping active_emitter reset after context change", exc_info=True)
             if execution_error:
                 raise execution_error
 

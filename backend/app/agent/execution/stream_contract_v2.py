@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Tuple
 
+from app.agent.execution.types import ExecutionEvent
+
 
 def build_stream_v2_event(
     *,
@@ -27,8 +29,14 @@ def build_stream_v2_event(
 
 def normalize_filtered_event_to_v2(
     *,
-    raw_event: Dict[str, Any],
+    raw_event: Dict[str, Any] | ExecutionEvent,
 ) -> Tuple[str, str, Dict[str, Any], list[dict[str, Any]]]:
+    if isinstance(raw_event, ExecutionEvent):
+        normalized_raw_event: Dict[str, Any] = raw_event.model_dump()
+    else:
+        normalized_raw_event = dict(raw_event or {})
+
+    raw_event = normalized_raw_event
     event_name = str(raw_event.get("event") or "").strip()
     event_type = str(raw_event.get("type") or "").strip()
     data = raw_event.get("data") if isinstance(raw_event.get("data"), dict) else {}
