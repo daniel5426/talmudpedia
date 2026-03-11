@@ -2,25 +2,27 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import logging
 import os
 from typing import Any
 from uuid import UUID
-import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.artifact_worker.schemas import ArtifactWorkerExecutionRequest
 from app.db.postgres.models.artifact_runtime import (
     Artifact,
-    ArtifactRevision,
     ArtifactRunDomain,
     ArtifactRunStatus,
 )
 
-from .difysandbox_client import DifySandboxWorkerClient
+from .cloudflare_dispatch_client import CloudflareDispatchClient
+from .deployment_service import ArtifactDeploymentService
+from .policy_service import ArtifactConcurrencyLimitExceeded, ArtifactRuntimePolicyService
 from .registry_service import ArtifactRegistryService
 from .revision_service import ArtifactRevisionService
+from .runtime_mode import RUNTIME_MODE_STANDARD_WORKER_TEST, artifact_cloudflare_runtime_mode
 from .run_service import ArtifactRunService
+from .source_utils import normalize_artifact_source
 
 logger = logging.getLogger("artifact.runtime")
 
@@ -38,6 +40,8 @@ class ArtifactExecutionService:
         self._registry = ArtifactRegistryService(db)
         self._revisions = ArtifactRevisionService(db)
         self._runs = ArtifactRunService(db)
+        self._deployments = ArtifactDeploymentService(db)
+        self._policies = ArtifactRuntimePolicyService(db)
 
     async def start_test_run(
         self,
@@ -45,14 +49,16 @@ class ArtifactExecutionService:
         tenant_id: UUID,
         created_by: UUID | None,
         artifact_id: UUID | None,
-        python_code: str | None,
+        python_code: str | None = None,
+        source_files: list[dict[str, Any]] | None = None,
+        entry_module_path: str | None = None,
         input_data: Any,
         config: dict[str, Any] | None,
         dependencies: list[str] | None,
         input_type: str,
         output_type: str,
     ):
-        artifact = None
+        artifact: Artifact | None = None
         revision = None
         if artifact_id is not None:
             artifact = await self._registry.get_tenant_artifact(artifact_id=artifact_id, tenant_id=tenant_id)
@@ -62,33 +68,22 @@ class ArtifactExecutionService:
             if revision is None:
                 raise ValueError("Artifact has no executable revision")
 
-        request_code = str(python_code or "").strip()
         requested_dependencies = list(dependencies or [])
-        if request_code:
-            same_code = request_code == str((revision.source_code if revision else "") or "")
-            same_dependencies = requested_dependencies == list((revision.python_dependencies if revision else []) or [])
-            if artifact is None or not (same_code and same_dependencies):
-                revision = await self._revisions.create_ephemeral_revision(
-                    tenant_id=tenant_id,
-                    created_by=created_by,
-                    artifact=artifact,
-                    display_name=artifact.display_name if artifact else "Unsaved Artifact",
-                    description=artifact.description if artifact else None,
-                    category=artifact.category if artifact else "custom",
-                    scope=(getattr(artifact.scope, "value", artifact.scope) if artifact else "rag"),
-                    input_type=input_type or (artifact.input_type if artifact else "raw_documents"),
-                    output_type=output_type or (artifact.output_type if artifact else "raw_documents"),
-                    source_code=request_code,
-                    python_dependencies=requested_dependencies or list((revision.python_dependencies if revision else []) or []),
-                    config_schema=list((revision.config_schema if revision else []) or []),
-                    inputs=list((revision.inputs if revision else []) or []),
-                    outputs=list((revision.outputs if revision else []) or []),
-                    reads=list((revision.reads if revision else []) or []),
-                    writes=list((revision.writes if revision else []) or []),
-                )
-        elif revision is None:
-            raise ValueError("A saved artifact or python_code is required for test execution")
-        elif requested_dependencies and requested_dependencies != list((revision.python_dependencies if revision else []) or []):
+        source = normalize_artifact_source(
+            source_files=source_files,
+            entry_module_path=entry_module_path or (revision.entry_module_path if revision else None),
+            source_code=python_code,
+        )
+        should_materialize = artifact is None or bool(source.source_code.strip())
+        if revision is not None and source.source_code.strip():
+            current_files = list(revision.source_files or [])
+            should_materialize = (
+                current_files != source.source_files
+                or source.entry_module_path != revision.entry_module_path
+                or requested_dependencies != list(revision.python_dependencies or [])
+            )
+
+        if should_materialize:
             revision = await self._revisions.create_ephemeral_revision(
                 tenant_id=tenant_id,
                 created_by=created_by,
@@ -99,14 +94,18 @@ class ArtifactExecutionService:
                 scope=(getattr(artifact.scope, "value", artifact.scope) if artifact else "rag"),
                 input_type=input_type or (artifact.input_type if artifact else "raw_documents"),
                 output_type=output_type or (artifact.output_type if artifact else "raw_documents"),
-                source_code=str((revision.source_code if revision else "") or ""),
-                python_dependencies=requested_dependencies,
+                source_files=source.source_files,
+                entry_module_path=source.entry_module_path,
+                source_code=source.source_code,
+                python_dependencies=requested_dependencies or list((revision.python_dependencies if revision else []) or []),
                 config_schema=list((revision.config_schema if revision else []) or []),
                 inputs=list((revision.inputs if revision else []) or []),
                 outputs=list((revision.outputs if revision else []) or []),
                 reads=list((revision.reads if revision else []) or []),
                 writes=list((revision.writes if revision else []) or []),
             )
+        elif revision is None:
+            raise ValueError("A saved artifact or source_files is required for test execution")
 
         run = await self._runs.create_test_run(
             tenant_id=tenant_id,
@@ -134,7 +133,6 @@ class ArtifactExecutionService:
                             "artifact_id": str(artifact.id) if artifact else None,
                             "revision_id": str(revision.id),
                             "is_ephemeral_revision": bool(revision.is_ephemeral),
-                            "used_unsaved_code": bool(request_code),
                             "queue_class": run.queue_class,
                         },
                     },
@@ -167,10 +165,7 @@ class ArtifactExecutionService:
         )
         artifact = None
         if revision.artifact_id is not None:
-            artifact = await self._registry.get_tenant_artifact(
-                artifact_id=revision.artifact_id,
-                tenant_id=tenant_id,
-            )
+            artifact = await self._registry.get_tenant_artifact(artifact_id=revision.artifact_id, tenant_id=tenant_id)
 
         run = await self._runs.create_run(
             tenant_id=tenant_id,
@@ -212,8 +207,33 @@ class ArtifactExecutionService:
         await self._db.commit()
 
         if queue_class == "artifact_prod_interactive":
-            logger.info("Executing interactive artifact run run_id=%s queue=%s", run.id, queue_class)
-            await self.execute_enqueued_run(run.id)
+            try:
+                await self.execute_enqueued_run(run.id)
+            except ArtifactConcurrencyLimitExceeded as exc:
+                run = await self._runs.get_run(run_id=run.id)
+                if run is not None:
+                    await self._runs.mark_failed(
+                        run,
+                        error_payload={"message": str(exc), "code": "TENANT_ARTIFACT_CAPACITY_EXCEEDED"},
+                        stdout_excerpt=None,
+                        stderr_excerpt=None,
+                        duration_ms=0,
+                    )
+                    await self._runs.add_events(
+                        run,
+                        [
+                            {
+                                "event_type": "dispatch_rejected",
+                                "payload": {
+                                    "event": "dispatch_rejected",
+                                    "name": "dispatch_rejected",
+                                    "data": {"message": str(exc), "queue_class": queue_class},
+                                },
+                            }
+                        ],
+                    )
+                    await self._db.commit()
+                raise
         else:
             await self.enqueue_run(run.id)
 
@@ -224,12 +244,10 @@ class ArtifactExecutionService:
         if run is None:
             return
         if artifact_run_task_eager():
-            logger.info("Executing artifact run eagerly run_id=%s", run_id)
             await self.execute_enqueued_run(run_id)
             return
         from app.workers.artifact_tasks import execute_artifact_run_task
 
-        logger.info("Enqueueing artifact run run_id=%s queue=%s", run_id, run.queue_class)
         execute_artifact_run_task.apply_async(args=[str(run_id)], queue=run.queue_class)
 
     async def execute_enqueued_run(self, run_id: UUID) -> None:
@@ -240,48 +258,43 @@ class ArtifactExecutionService:
             await self._db.commit()
             return
 
-        worker_request = ArtifactWorkerExecutionRequest(
-            run_id=run.id,
-            tenant_id=run.tenant_id,
-            artifact_id=run.artifact_id,
-            revision_id=run.revision_id,
-            domain=self._enum_text(run.domain),
-            inputs=run.input_payload,
-            config=dict(run.config_payload or {}),
-            context=dict(run.context_payload or {}),
-            bundle_hash=str((run.revision.bundle_hash if run.revision else "") or ""),
-            bundle_storage_key=str((run.revision.bundle_storage_key if run.revision else "") or "") or None,
-            dependency_hash=str((run.revision.dependency_hash if run.revision else "") or ""),
-            dependency_manifest=list((run.revision.python_dependencies if run.revision else []) or []),
-            resource_limits={"timeout_seconds": 30},
-        )
+        policy = await self._policies.assert_capacity(tenant_id=run.tenant_id, queue_class=run.queue_class)
+        namespace = "staging" if run.queue_class == "artifact_test" else "production"
+        deployment = await self._deployments.ensure_deployment(revision=run.revision, namespace=namespace)
 
-        client = DifySandboxWorkerClient(self._db)
-        await self._runs.mark_running(run)
+        run.runtime_metadata = {
+            **dict(run.runtime_metadata or {}),
+            "namespace": namespace,
+            "worker_name": deployment.worker_name,
+            "deployment_id": deployment.deployment_id,
+            "version_id": deployment.version_id,
+        }
+        await self._runs.mark_running(run, worker_id=deployment.worker_name, sandbox_session_id=deployment.deployment_id)
         await self._runs.add_events(
             run,
             [
                 {
-                    "event_type": "run_started",
+                    "event_type": "deployment_resolved",
                     "payload": {
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "event": "run_started",
-                        "name": "run_started",
-                        "data": {"domain": self._enum_text(run.domain)},
-                    },
-                }
-                ,
-                {
-                    "event_type": "worker_dispatch_started",
-                    "payload": {
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "event": "worker_dispatch_started",
-                        "name": "worker_dispatch_started",
+                        "event": "deployment_resolved",
+                        "name": "deployment_resolved",
                         "data": {
-                            "run_id": str(run.id),
-                            "revision_id": str(run.revision_id),
-                            "worker_client_mode": client._mode(),
+                            "namespace": namespace,
+                            "worker_name": deployment.worker_name,
+                            "build_hash": deployment.build_hash,
+                        },
+                    },
+                },
+                {
+                    "event_type": "dispatch_started",
+                    "payload": {
+                        "event": "dispatch_started",
+                        "name": "dispatch_started",
+                        "data": {
                             "queue_class": run.queue_class,
+                            "namespace": namespace,
+                            "cpu_ms": policy.cpu_ms,
+                            "subrequests": policy.subrequests,
                         },
                     },
                 },
@@ -289,21 +302,39 @@ class ArtifactExecutionService:
         )
         await self._db.commit()
 
+        request_payload = {
+            "tenant_id": str(run.tenant_id),
+            "run_id": str(run.id),
+            "artifact_id": str(run.artifact_id) if run.artifact_id else None,
+            "revision_id": str(run.revision_id),
+            "queue_class": run.queue_class,
+            "domain": self._enum_text(run.domain),
+            "namespace": namespace,
+            "worker_name": deployment.worker_name,
+            "deployment_id": deployment.deployment_id,
+            "version_id": deployment.version_id,
+            "limits": {"cpu_ms": policy.cpu_ms, "subrequests": policy.subrequests},
+            "inputs": run.input_payload,
+            "config": dict(run.config_payload or {}),
+            "context": dict(run.context_payload or {}),
+            "secret_capabilities": list((run.context_payload or {}).get("secret_capabilities") or []),
+            "allowed_hosts": list((run.context_payload or {}).get("allowed_hosts") or []),
+        }
+        if artifact_cloudflare_runtime_mode() == RUNTIME_MODE_STANDARD_WORKER_TEST:
+            request_payload["source_files"] = list(run.revision.source_files or [])
+            request_payload["entry_module_path"] = run.revision.entry_module_path
+            request_payload["python_dependencies"] = list(run.revision.python_dependencies or [])
+
+        client = CloudflareDispatchClient()
         try:
-            logger.info(
-                "Dispatching artifact run run_id=%s revision_id=%s worker_mode=%s",
-                run.id,
-                run.revision_id,
-                client._mode(),
-            )
-            response = await client.execute(worker_request)
+            response = await client.execute(request_payload)
         except Exception as exc:
             run = await self._runs.get_run(run_id=run_id)
             if run is None:
                 return
             await self._runs.mark_failed(
                 run,
-                error_payload={"message": str(exc), "code": "WORKER_REQUEST_FAILED"},
+                error_payload={"message": str(exc), "code": "CLOUDFLARE_DISPATCH_FAILED"},
                 stdout_excerpt=None,
                 stderr_excerpt=None,
                 duration_ms=None,
@@ -312,33 +343,31 @@ class ArtifactExecutionService:
                 run,
                 [
                     {
-                        "event_type": "run_failed",
+                        "event_type": "dispatch_finished",
                         "payload": {
-                            "event": "run_failed",
-                            "name": "run_failed",
-                            "data": {"message": str(exc), "phase": "worker_request"},
+                            "event": "dispatch_finished",
+                            "name": "dispatch_finished",
+                            "data": {"status": "failed", "message": str(exc)},
                         },
                     }
                 ],
             )
             await self._db.commit()
-            return
+            raise
 
         run = await self._runs.get_run(run_id=run_id)
         if run is None:
             return
-        run.worker_id = response.worker_id
-        run.sandbox_session_id = response.sandbox_session_id
-        if run.cancel_requested and run.sandbox_session_id:
-            try:
-                await client.cancel(run.sandbox_session_id)
-            except Exception:
-                pass
-
+        dispatch_request_id = getattr(response, "sandbox_session_id", None) or getattr(
+            response, "dispatch_request_id", None
+        )
+        run.worker_id = getattr(response, "worker_id", None)
+        run.sandbox_session_id = dispatch_request_id
+        run.runtime_metadata = {**dict(run.runtime_metadata or {}), **dict(response.runtime_metadata or {})}
         if response.status == "completed" and not run.cancel_requested:
             await self._runs.mark_completed(
                 run,
-                result_payload=response.result,
+                result_payload=response.result if isinstance(response.result, dict) else {"result": response.result},
                 stdout_excerpt=response.stdout_excerpt,
                 stderr_excerpt=response.stderr_excerpt,
                 duration_ms=response.duration_ms,
@@ -357,22 +386,21 @@ class ArtifactExecutionService:
             run,
             [
                 {
-                    "event_type": "worker_dispatch_finished",
+                    "event_type": "dispatch_finished",
                     "payload": {
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "event": "worker_dispatch_finished",
-                        "name": "worker_dispatch_finished",
+                        "event": "dispatch_finished",
+                        "name": "dispatch_finished",
                         "data": {
                             "status": response.status,
                             "worker_id": response.worker_id,
-                            "sandbox_session_id": response.sandbox_session_id,
+                            "dispatch_request_id": dispatch_request_id,
                             "duration_ms": response.duration_ms,
                         },
                     },
                 }
-            ],
+            ]
+            + list(response.events or []),
         )
-        await self._runs.add_events(run, response.events)
         await self._db.commit()
 
     async def wait_for_terminal_state(self, run_id: UUID, *, timeout_seconds: float = 30.0):
@@ -395,9 +423,8 @@ class ArtifactExecutionService:
             raise ValueError("Artifact run not found")
         await self._runs.mark_cancel_requested(run)
         if run.sandbox_session_id and run.status == ArtifactRunStatus.CANCEL_REQUESTED:
-            client = DifySandboxWorkerClient(self._db)
             try:
-                await client.cancel(run.sandbox_session_id)
+                await CloudflareDispatchClient().cancel(run.sandbox_session_id)
                 await self._runs.mark_cancelled(run)
             except Exception:
                 pass
@@ -423,7 +450,7 @@ class ArtifactExecutionService:
         revision_id: UUID,
         tenant_id: UUID,
         require_published: bool,
-    ) -> ArtifactRevision:
+    ):
         revision = await self._registry.get_revision(revision_id=revision_id, tenant_id=tenant_id)
         if revision is None:
             raise ValueError("Artifact revision not found")

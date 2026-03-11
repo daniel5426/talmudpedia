@@ -142,6 +142,24 @@ async def _derive_user_scopes(payload: Dict[str, Any], user: User, db: AsyncSess
     return scopes
 
 
+async def _resolve_default_user_tenant_id(user: User, db: AsyncSession) -> Optional[str]:
+    membership_res = await db.execute(
+        select(OrgMembership)
+        .where(OrgMembership.user_id == user.id)
+        .order_by(OrgMembership.created_at.asc())
+        .limit(1)
+    )
+    membership = membership_res.scalar_one_or_none()
+    if membership is not None and membership.tenant_id is not None:
+        return str(membership.tenant_id)
+    if _is_platform_admin(user):
+        tenant_res = await db.execute(select(Tenant.id).limit(1))
+        tenant_id = tenant_res.scalar_one_or_none()
+        if tenant_id is not None:
+            return str(tenant_id)
+    return None
+
+
 async def _extract_bearer_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> str:
@@ -167,7 +185,7 @@ async def get_current_principal(
     try:
         user = await get_current_user(token=token, db=db)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        tenant_id = payload.get("tenant_id")
+        tenant_id = payload.get("tenant_id") or await _resolve_default_user_tenant_id(user, db)
         if not tenant_id:
             raise HTTPException(status_code=403, detail="Tenant context required")
         scopes = await _derive_user_scopes(payload, user, db)

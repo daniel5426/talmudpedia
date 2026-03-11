@@ -2,30 +2,18 @@ from __future__ import annotations
 
 from typing import Any
 from uuid import UUID, uuid4
-import os
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres.models.artifact_runtime import (
-    Artifact,
-    ArtifactRevision,
-    ArtifactScope,
-    ArtifactStatus,
-)
+from app.db.postgres.models.artifact_runtime import Artifact, ArtifactRevision, ArtifactScope, ArtifactStatus
 
-from .bundle_builder import ArtifactBundleBuilder
-from .bundle_storage import ArtifactBundleStorage, ArtifactBundleStorageNotConfigured
+from .source_utils import normalize_artifact_source, source_tree_hash
 
 
 class ArtifactRevisionService:
     def __init__(self, db: AsyncSession):
         self._db = db
-        self._bundle_builder = ArtifactBundleBuilder()
-        try:
-            self._bundle_storage = ArtifactBundleStorage.from_env()
-        except ArtifactBundleStorageNotConfigured:
-            self._bundle_storage = None
 
     async def create_artifact(
         self,
@@ -39,7 +27,9 @@ class ArtifactRevisionService:
         scope: str,
         input_type: str,
         output_type: str,
-        source_code: str,
+        source_files: list[dict[str, Any]] | None = None,
+        entry_module_path: str | None = None,
+        source_code: str | None = None,
         python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
@@ -48,8 +38,12 @@ class ArtifactRevisionService:
         writes: list[str],
     ) -> Artifact:
         artifact_id = uuid4()
-        revision_id = uuid4()
         scope_value = self._normalize_scope(scope)
+        source = normalize_artifact_source(
+            source_files=source_files,
+            entry_module_path=entry_module_path,
+            source_code=source_code,
+        )
         artifact = Artifact(
             id=artifact_id,
             tenant_id=tenant_id,
@@ -65,9 +59,7 @@ class ArtifactRevisionService:
         )
         self._db.add(artifact)
         await self._db.flush()
-
-        revision = ArtifactRevision(
-            id=revision_id,
+        revision = self._build_revision(
             artifact_id=artifact_id,
             tenant_id=tenant_id,
             revision_number=1,
@@ -80,25 +72,18 @@ class ArtifactRevisionService:
             input_type=input_type,
             output_type=output_type,
             scope=scope_value,
-            source_code=source_code,
-            manifest_json=self._build_manifest(
-                artifact_id=artifact_id,
-                scope=scope_value,
-                category=category,
-                input_type=input_type,
-                output_type=output_type,
-                python_dependencies=python_dependencies,
-            ),
-            python_dependencies=list(python_dependencies or []),
-            config_schema=list(config_schema or []),
-            inputs=list(inputs or []),
-            outputs=list(outputs or []),
-            reads=list(reads or []),
-            writes=list(writes or []),
+            source_files=source.source_files,
+            entry_module_path=source.entry_module_path,
+            source_code=source.source_code,
+            python_dependencies=python_dependencies,
+            config_schema=config_schema,
+            inputs=inputs,
+            outputs=outputs,
+            reads=reads,
+            writes=writes,
             created_by=created_by,
         )
         self._db.add(revision)
-        await self._hydrate_bundle(revision)
         await self._db.flush()
         artifact.latest_draft_revision_id = revision.id
         artifact.latest_draft_revision = revision
@@ -116,7 +101,9 @@ class ArtifactRevisionService:
         scope: str,
         input_type: str,
         output_type: str,
-        source_code: str,
+        source_files: list[dict[str, Any]] | None = None,
+        entry_module_path: str | None = None,
+        source_code: str | None = None,
         python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
@@ -124,8 +111,11 @@ class ArtifactRevisionService:
         reads: list[str],
         writes: list[str],
     ) -> ArtifactRevision:
-        next_revision_number = await self._next_revision_number(artifact.id)
-        revision_id = uuid4()
+        source = normalize_artifact_source(
+            source_files=source_files,
+            entry_module_path=entry_module_path,
+            source_code=source_code,
+        )
         scope_value = self._normalize_scope(scope)
         artifact.display_name = display_name
         artifact.description = description
@@ -133,11 +123,10 @@ class ArtifactRevisionService:
         artifact.scope = scope_value
         artifact.input_type = input_type
         artifact.output_type = output_type
-        revision = ArtifactRevision(
-            id=revision_id,
+        revision = self._build_revision(
             artifact_id=artifact.id,
             tenant_id=artifact.tenant_id,
-            revision_number=next_revision_number,
+            revision_number=await self._next_revision_number(artifact.id),
             version_label="draft",
             is_published=False,
             is_ephemeral=False,
@@ -147,25 +136,18 @@ class ArtifactRevisionService:
             input_type=input_type,
             output_type=output_type,
             scope=scope_value,
-            source_code=source_code,
-            manifest_json=self._build_manifest(
-                artifact_id=artifact.id,
-                scope=scope_value,
-                category=category,
-                input_type=input_type,
-                output_type=output_type,
-                python_dependencies=python_dependencies,
-            ),
-            python_dependencies=list(python_dependencies or []),
-            config_schema=list(config_schema or []),
-            inputs=list(inputs or []),
-            outputs=list(outputs or []),
-            reads=list(reads or []),
-            writes=list(writes or []),
+            source_files=source.source_files,
+            entry_module_path=source.entry_module_path,
+            source_code=source.source_code,
+            python_dependencies=python_dependencies,
+            config_schema=config_schema,
+            inputs=inputs,
+            outputs=outputs,
+            reads=reads,
+            writes=writes,
             created_by=updated_by,
         )
         self._db.add(revision)
-        await self._hydrate_bundle(revision)
         await self._db.flush()
         artifact.latest_draft_revision_id = revision.id
         artifact.latest_draft_revision = revision
@@ -184,7 +166,9 @@ class ArtifactRevisionService:
         scope: str,
         input_type: str,
         output_type: str,
-        source_code: str,
+        source_files: list[dict[str, Any]] | None = None,
+        entry_module_path: str | None = None,
+        source_code: str | None = None,
         python_dependencies: list[str],
         config_schema: list[dict[str, Any]],
         inputs: list[dict[str, Any]],
@@ -192,8 +176,12 @@ class ArtifactRevisionService:
         reads: list[str],
         writes: list[str],
     ) -> ArtifactRevision:
-        revision = ArtifactRevision(
-            id=uuid4(),
+        source = normalize_artifact_source(
+            source_files=source_files,
+            entry_module_path=entry_module_path,
+            source_code=source_code,
+        )
+        revision = self._build_revision(
             artifact_id=artifact.id if artifact else None,
             tenant_id=tenant_id,
             revision_number=await self._next_revision_number(artifact.id) if artifact else 0,
@@ -206,25 +194,18 @@ class ArtifactRevisionService:
             input_type=input_type,
             output_type=output_type,
             scope=self._normalize_scope(scope),
-            source_code=source_code,
-            manifest_json=self._build_manifest(
-                artifact_id=artifact.id if artifact else None,
-                scope=scope,
-                category=category,
-                input_type=input_type,
-                output_type=output_type,
-                python_dependencies=python_dependencies,
-            ),
-            python_dependencies=list(python_dependencies or []),
-            config_schema=list(config_schema or []),
-            inputs=list(inputs or []),
-            outputs=list(outputs or []),
-            reads=list(reads or []),
-            writes=list(writes or []),
+            source_files=source.source_files,
+            entry_module_path=source.entry_module_path,
+            source_code=source.source_code,
+            python_dependencies=python_dependencies,
+            config_schema=config_schema,
+            inputs=inputs,
+            outputs=outputs,
+            reads=reads,
+            writes=writes,
             created_by=created_by,
         )
         self._db.add(revision)
-        await self._hydrate_bundle(revision)
         await self._db.flush()
         return revision
 
@@ -250,27 +231,76 @@ class ArtifactRevisionService:
         )
         return int(current or 0) + 1
 
-    async def _hydrate_bundle(self, revision: ArtifactRevision) -> None:
-        built = self._bundle_builder.build_revision_bundle(revision)
-        revision.bundle_hash = built.bundle_hash
-        revision.dependency_hash = built.dependency_hash
-        if self._bundle_storage is None:
-            if not _inline_bundle_fallback_enabled():
-                raise RuntimeError(
-                    "Artifact bundle storage is not configured and inline bundle fallback is disabled"
-                )
-            revision.bundle_inline_bytes = built.payload
-            revision.bundle_storage_key = None
-            return
-        location = self._bundle_storage.write_bundle(
-            tenant_id=str(revision.tenant_id),
-            artifact_id=str(revision.artifact_id) if revision.artifact_id else None,
-            revision_id=str(revision.id),
-            bundle_hash=built.bundle_hash,
-            payload=built.payload,
+    def _build_revision(
+        self,
+        *,
+        artifact_id: UUID | None,
+        tenant_id: UUID,
+        revision_number: int,
+        version_label: str,
+        is_published: bool,
+        is_ephemeral: bool,
+        display_name: str,
+        description: str | None,
+        category: str,
+        input_type: str,
+        output_type: str,
+        scope: ArtifactScope,
+        source_files: list[dict[str, str]],
+        entry_module_path: str,
+        source_code: str,
+        python_dependencies: list[str],
+        config_schema: list[dict[str, Any]],
+        inputs: list[dict[str, Any]],
+        outputs: list[dict[str, Any]],
+        reads: list[str],
+        writes: list[str],
+        created_by: UUID | None,
+    ) -> ArtifactRevision:
+        build_hash = source_tree_hash(
+            source_files=source_files,
+            entry_module_path=entry_module_path,
+            python_dependencies=python_dependencies,
         )
-        revision.bundle_storage_key = location.storage_key
-        revision.bundle_inline_bytes = None
+        return ArtifactRevision(
+            id=uuid4(),
+            artifact_id=artifact_id,
+            tenant_id=tenant_id,
+            revision_number=revision_number,
+            version_label=version_label,
+            is_published=is_published,
+            is_ephemeral=is_ephemeral,
+            display_name=display_name,
+            description=description,
+            category=category,
+            input_type=input_type,
+            output_type=output_type,
+            scope=scope,
+            source_code=source_code,
+            source_files=list(source_files or []),
+            entry_module_path=entry_module_path,
+            manifest_json=self._build_manifest(
+                artifact_id=artifact_id,
+                scope=scope,
+                category=category,
+                input_type=input_type,
+                output_type=output_type,
+                python_dependencies=python_dependencies,
+                entry_module_path=entry_module_path,
+            ),
+            python_dependencies=list(python_dependencies or []),
+            config_schema=list(config_schema or []),
+            inputs=list(inputs or []),
+            outputs=list(outputs or []),
+            reads=list(reads or []),
+            writes=list(writes or []),
+            created_by=created_by,
+            build_hash=build_hash,
+            bundle_hash=build_hash,
+            dependency_hash=build_hash,
+            bundle_storage_key=None,
+            bundle_inline_bytes=None,
+        )
 
     @staticmethod
     def _normalize_scope(scope: str | ArtifactScope) -> ArtifactScope:
@@ -289,6 +319,7 @@ class ArtifactRevisionService:
         input_type: str,
         output_type: str,
         python_dependencies: list[str],
+        entry_module_path: str,
     ) -> dict[str, Any]:
         return {
             "artifact_id": str(artifact_id) if artifact_id else None,
@@ -297,11 +328,5 @@ class ArtifactRevisionService:
             "input_type": input_type,
             "output_type": output_type,
             "python_dependencies": list(python_dependencies or []),
+            "entry_module_path": entry_module_path,
         }
-
-
-def _inline_bundle_fallback_enabled() -> bool:
-    raw = os.getenv("ARTIFACT_BUNDLE_INLINE_FALLBACK_ENABLED")
-    if raw is None:
-        return True
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}

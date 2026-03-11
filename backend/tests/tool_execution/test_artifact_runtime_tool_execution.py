@@ -77,6 +77,20 @@ async def test_tool_publish_pins_artifact_revision_id(client, db_session):
     artifact = await _create_published_artifact(db_session, tenant.id, user.id)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
+    async def fake_ensure_deployment(self, *, revision, namespace):
+        return SimpleNamespace(
+            worker_name="prod-worker",
+            deployment_id="dep-1",
+            version_id="ver-1",
+            build_hash=revision.build_hash,
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment",
+        fake_ensure_deployment,
+    )
+
     try:
         create_response = await client.post(
             "/tools",
@@ -97,6 +111,7 @@ async def test_tool_publish_pins_artifact_revision_id(client, db_session):
         assert publish_response.status_code == 200, publish_response.text
         assert publish_response.json()["artifact_revision_id"] == str(artifact.latest_published_revision_id)
     finally:
+        monkeypatch.undo()
         app.dependency_overrides.pop(get_current_principal, None)
 
 

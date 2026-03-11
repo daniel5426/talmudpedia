@@ -1,0 +1,8 @@
+name = "talmudpedia-artifact-outbound"
+main = "src/index.ts"
+compatibility_date = "2026-03-11"
+workers_dev = true
+
+[vars]
+BACKEND_SECRET_BROKER_URL = ""
+BACKEND_SHARED_SECRET = ""

@@ -1,6 +1,6 @@
 # Artifacts Domain Spec
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 This document is the canonical product/specification overview for the artifact domain.
 
@@ -56,7 +56,7 @@ Tenant artifacts are authored through the admin artifacts APIs.
 
 Current authoring shape includes:
 - identity and metadata
-- source code
+- source files and entry module path
 - config schema
 - inputs and outputs
 - declared reads and writes
@@ -79,7 +79,7 @@ Current pinning behavior by surface:
 Artifact test runs can use:
 - saved draft revisions
 - published revisions
-- ephemeral revisions generated from unsaved code/dependency changes
+- ephemeral revisions generated from unsaved source-tree/dependency changes
 
 ## Current Platform Usage
 
@@ -95,12 +95,14 @@ This is important because the artifact runtime is no longer just a future design
 
 Artifact configuration currently includes:
 - metadata and identity fields
+- `source_files`
+- `entry_module_path`
 - `config_schema`
 - `inputs`
 - `outputs`
 - `reads`
 - `writes`
-- source code and dependency declarations
+- dependency declarations
 
 The runtime handler contract remains:
 
@@ -128,6 +130,15 @@ Current intent:
 
 Current limit:
 - queue isolation exists, but stronger intra-queue fairness and scheduling controls are still V1
+
+## Current Runtime Constraints
+
+Tenant artifacts now execute on Cloudflare Workers for Platforms.
+
+Current practical constraints:
+- tenant revisions must be compatible with the Workers Python runtime
+- unsupported filesystem/process/socket assumptions are out of contract for tenant artifacts
+- dependency declarations are validated against the current Workers-compatible policy before deployment
 
 ## Canonical Implementation References
 

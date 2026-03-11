@@ -1,6 +1,6 @@
 # Agent Execution Current State
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 This document describes the current agent execution architecture as implemented in the backend.
 
@@ -74,6 +74,7 @@ This confirms the agent runtime is a graph runtime for heterogeneous node types,
 Current artifact-specific behavior:
 - tenant artifact nodes execute through the shared artifact runtime
 - production runs pin tenant artifact nodes to published artifact revisions during graph compile/startup
+- live tenant artifact node execution now uses the Cloudflare-backed artifact runtime path
 - that pinning is currently per run, not yet a full immutable published-agent snapshot
 
 ## Current Integrations

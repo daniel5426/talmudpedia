@@ -79,11 +79,14 @@ from .published_apps import (
 )
 from .artifact_runtime import (
     Artifact,
+    ArtifactDeployment,
+    ArtifactDeploymentStatus,
     ArtifactRevision,
     ArtifactRun,
     ArtifactRunEvent,
     ArtifactScope,
     ArtifactStatus,
+    ArtifactTenantRuntimePolicy,
     ArtifactRunDomain,
     ArtifactRunStatus,
 )

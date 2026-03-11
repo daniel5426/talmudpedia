@@ -1,6 +1,6 @@
 # Platform Current State
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 This document is the canonical current-state overview for the Talmudpedia platform. It summarizes the live platform at a domain level and points to more focused design docs for detail.
 
@@ -68,6 +68,8 @@ Current artifact runtime usage now spans:
 - tenant artifact nodes in agents
 - artifact-backed tools
 - artifact-backed RAG operators
+
+Tenant artifact execution now uses Cloudflare Workers for Platforms as the execution substrate, while the backend remains the artifact control plane.
 
 ### Published Apps
 

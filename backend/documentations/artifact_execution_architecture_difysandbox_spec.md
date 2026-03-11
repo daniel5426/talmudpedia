@@ -1,4 +1,4 @@
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 # Artifact Execution Architecture (DifySandbox)
 
@@ -8,7 +8,7 @@ For the current canonical artifact execution docs, read:
 - `docs/design-docs/artifact_execution_current.md`
 - `docs/product-specs/artifacts_domain_spec.md`
 
-Keep this file only as historical target-architecture context if needed.
+Keep this file only as historical pre-Cloudflare target-architecture context if needed.
 - create run records
 - assign queue class and runtime policy
 - enqueue work
@@ -137,12 +137,11 @@ Deliver:
 Deliver:
 - RAG artifact-operator execution on the new runtime
 
-### Phase 5
+### Historical Outcome
 
-Deliver:
-- broader runtime hardening
-- externalized DifySandbox deployment
-- scheduling and fairness improvements
+This DifySandbox target architecture was superseded.
+
+Tenant artifact execution is now implemented on Cloudflare Workers for Platforms instead.
 
 ## Relationship To Current Docs
 

@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -134,8 +134,14 @@ backend/app/services/artifact_runtime/dependency_packager.py
 backend/app/services/artifact_runtime/bundle_storage.py
 backend/app/services/artifact_runtime/execution_service.py
 backend/app/services/artifact_runtime/run_service.py
-backend/app/services/artifact_runtime/difysandbox_client.py
-backend/app/services/artifact_runtime/local_bootstrap.py
+backend/app/services/artifact_runtime/source_utils.py
+backend/app/services/artifact_runtime/workers_validation.py
+backend/app/services/artifact_runtime/cloudflare_package_builder.py
+backend/app/services/artifact_runtime/cloudflare_client.py
+backend/app/services/artifact_runtime/cloudflare_dispatch_client.py
+backend/app/services/artifact_runtime/deployment_service.py
+backend/app/services/artifact_runtime/policy_service.py
+backend/app/services/artifact_runtime/handler_runner.py
 backend/app/services/builtin_tools.py
 backend/app/services/delegation_service.py
 backend/app/services/workload_provisioning_service.py
@@ -202,12 +208,6 @@ backend/app/workers/artifact_tasks.py
 backend/app/workers/job_manager.py
 backend/app/workers/livekit_worker.py
 
-backend/app/artifact_worker/
-backend/app/artifact_worker/router.py
-backend/app/artifact_worker/executor.py
-backend/app/artifact_worker/bundle_cache.py
-backend/app/artifact_worker/difysandbox_adapter.py
-
 backend/app/templates/
 
 backend/alembic/
@@ -218,6 +218,11 @@ backend/artifacts/builtin/platform_sdk/handler.py
 backend/artifacts/builtin/platform_sdk/actions/
 backend/artifacts/builtin/platform_sdk/actions/catalog.py
 backend/artifacts/builtin/platform_sdk/actions/agents.py
+
+runtime/
+runtime/cloudflare-artifacts/
+runtime/cloudflare-artifacts/dispatch-worker/
+runtime/cloudflare-artifacts/outbound-worker/
 backend/artifacts/builtin/platform_sdk/actions/artifacts.py
 backend/artifacts/builtin/platform_sdk/actions/tools.py
 backend/artifacts/builtin/platform_sdk/actions/orchestration.py

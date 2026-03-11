@@ -60,18 +60,6 @@ def _artifact_runtime_auto_bootstrap_enabled() -> bool:
     return _auto_infra_bootstrap_enabled()
 
 
-def _configure_local_artifact_runtime_if_needed() -> None:
-    if not _artifact_runtime_auto_bootstrap_enabled():
-        return
-    from app.services.artifact_runtime.local_bootstrap import (
-        configure_local_artifact_runtime_env_if_needed,
-    )
-
-    configure_local_artifact_runtime_env_if_needed(
-        auto_bootstrap_enabled=_artifact_runtime_auto_bootstrap_enabled(),
-    )
-
-
 def _is_port_open(host: str, port: int, timeout_seconds: float = 0.35) -> bool:
     try:
         with socket.create_connection((host, int(port)), timeout=timeout_seconds):
@@ -884,20 +872,12 @@ def _bootstrap_local_infra_once() -> None:
         return
 
     logger.info("Running local infra bootstrap checks")
-    _configure_local_artifact_runtime_if_needed()
     _try_start_brew_service("postgresql@17", "127.0.0.1", 5432)
     _try_start_brew_service("redis", "127.0.0.1", 6379)
     _ensure_local_pgvector_if_needed()
     _ensure_local_crawl4ai_if_needed()
     _ensure_local_moto_server_if_needed()
     _ensure_local_bundle_bucket_if_needed()
-    from app.services.artifact_runtime.local_bootstrap import (
-        ensure_local_artifact_runtime_infra_if_needed,
-    )
-
-    ensure_local_artifact_runtime_infra_if_needed(
-        auto_bootstrap_enabled=_artifact_runtime_auto_bootstrap_enabled(),
-    )
     _ensure_celery_worker_if_needed()
     _ensure_artifact_runtime_worker_if_needed()
     _ensure_local_draft_dev_runtime_if_needed()
@@ -1006,12 +986,6 @@ async def lifespan(app: FastAPI):
     _stop_local_pgvector_if_needed()
     _stop_local_crawl4ai_if_needed()
     _stop_local_opencode_if_needed()
-    from app.services.artifact_runtime.local_bootstrap import (
-        stop_local_artifact_runtime_infra_if_needed,
-    )
-
-    stop_local_artifact_runtime_infra_if_needed()
-
     await MongoDatabase.close()
 
 
@@ -1083,8 +1057,6 @@ from app.api.routers import published_apps_public as published_apps_public_route
 from app.api.routers import published_apps_host_runtime as published_apps_host_runtime_router
 from app.api.routers import published_apps_builder_preview_proxy as published_apps_builder_preview_proxy_router
 from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
-from app.artifact_worker import router as artifact_worker_router
-
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(agents_router)
 app.include_router(agent_run_logs_router.router)
@@ -1108,8 +1080,6 @@ app.include_router(published_apps_public_router.router)
 app.include_router(published_apps_host_runtime_router.router)
 app.include_router(published_apps_builder_preview_proxy_router.router)
 app.include_router(sandbox_controller_dev_shim_router.router)
-app.include_router(artifact_worker_router.router)
-
 from app.api.routers import knowledge_stores as knowledge_stores_router
 app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stores", tags=["knowledge-stores"])
 

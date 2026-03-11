@@ -1,0 +1,12 @@
+name = "talmudpedia-artifact-dispatch"
+main = "src/index.ts"
+compatibility_date = "2026-03-11"
+workers_dev = true
+
+dispatch_namespaces = [
+  { binding = "DISPATCHER_PRODUCTION", namespace = "talmudpedia-artifacts-production" },
+  { binding = "DISPATCHER_STAGING", namespace = "talmudpedia-artifacts-staging" },
+]
+
+[vars]
+BACKEND_SHARED_SECRET = ""

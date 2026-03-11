@@ -126,7 +126,9 @@ class ArtifactRevision(Base):
         default=ArtifactScope.RAG,
     )
 
-    source_code = Column(Text, nullable=False)
+    source_code = Column(Text, nullable=True)
+    source_files = Column(JSONB, nullable=False, default=list)
+    entry_module_path = Column(String, nullable=False, default="handler.py")
     manifest_json = Column(JSONB, nullable=False, default=dict)
     python_dependencies = Column(JSONB, nullable=False, default=list)
     config_schema = Column(JSONB, nullable=False, default=list)
@@ -135,6 +137,7 @@ class ArtifactRevision(Base):
     reads = Column(JSONB, nullable=False, default=list)
     writes = Column(JSONB, nullable=False, default=list)
 
+    build_hash = Column(String(64), nullable=False, default="", index=True)
     dependency_hash = Column(String(64), nullable=False, default="")
     bundle_hash = Column(String(64), nullable=False, default="", index=True)
     bundle_storage_key = Column(String, nullable=True)
@@ -168,7 +171,7 @@ class ArtifactRun(Base):
         index=True,
     )
     queue_class = Column(String, nullable=False, default="artifact_test")
-    sandbox_backend = Column(String, nullable=False, default="difysandbox")
+    sandbox_backend = Column(String, nullable=False, default="cloudflare_workers")
     worker_id = Column(String, nullable=True)
     sandbox_session_id = Column(String, nullable=True)
     cancel_requested = Column(Boolean, nullable=False, default=False)
@@ -180,6 +183,7 @@ class ArtifactRun(Base):
     error_payload = Column(JSONB, nullable=True)
     stdout_excerpt = Column(Text, nullable=True)
     stderr_excerpt = Column(Text, nullable=True)
+    runtime_metadata = Column(JSONB, nullable=False, default=dict)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_at = Column(DateTime(timezone=True), nullable=True)
@@ -207,3 +211,58 @@ class ArtifactRunEvent(Base):
     __table_args__ = (
         Index("uq_artifact_run_events_run_sequence", "run_id", "sequence", unique=True),
     )
+
+
+class ArtifactDeploymentStatus(str, enum.Enum):
+    PENDING = "pending"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class ArtifactDeployment(Base):
+    __tablename__ = "artifact_deployments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision_id = Column(UUID(as_uuid=True), ForeignKey("artifact_revisions.id", ondelete="CASCADE"), nullable=False, index=True)
+    namespace = Column(String, nullable=False)
+    build_hash = Column(String(64), nullable=False, index=True)
+    status = Column(
+        SQLEnum(ArtifactDeploymentStatus, values_callable=_enum_values),
+        nullable=False,
+        default=ArtifactDeploymentStatus.PENDING,
+    )
+    worker_name = Column(String, nullable=False)
+    script_name = Column(String, nullable=False)
+    deployment_id = Column(String, nullable=True)
+    version_id = Column(String, nullable=True)
+    runtime_metadata = Column(JSONB, nullable=False, default=dict)
+    error_payload = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    tenant = relationship("Tenant")
+    revision = relationship("ArtifactRevision")
+
+    __table_args__ = (
+        Index("uq_artifact_deployments_namespace_build_hash", "tenant_id", "namespace", "build_hash", unique=True),
+    )
+
+
+class ArtifactTenantRuntimePolicy(Base):
+    __tablename__ = "artifact_tenant_runtime_policies"
+
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    interactive_concurrency_limit = Column(Integer, nullable=False, default=5)
+    background_concurrency_limit = Column(Integer, nullable=False, default=2)
+    test_concurrency_limit = Column(Integer, nullable=False, default=2)
+    interactive_cpu_ms = Column(Integer, nullable=False, default=30000)
+    background_cpu_ms = Column(Integer, nullable=False, default=60000)
+    test_cpu_ms = Column(Integer, nullable=False, default=30000)
+    interactive_subrequests = Column(Integer, nullable=False, default=50)
+    background_subrequests = Column(Integer, nullable=False, default=100)
+    test_subrequests = Column(Integer, nullable=False, default=50)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    tenant = relationship("Tenant")

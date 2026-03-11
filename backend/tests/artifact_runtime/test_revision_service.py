@@ -1,13 +1,13 @@
-import os
-import uuid
-import zipfile
 import io
+import json
+import uuid
 
 import pytest
 
 from app.db.postgres.models.artifact_runtime import ArtifactStatus
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
 from app.services.artifact_runtime.bundle_builder import ArtifactBundleBuilder
+from app.services.artifact_runtime.cloudflare_package_builder import CloudflareArtifactPackageBuilder
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 
@@ -36,9 +36,7 @@ async def _seed_tenant_context(db_session):
 
 
 @pytest.mark.asyncio
-async def test_revision_service_creates_updates_and_publishes_with_bundle_inline(db_session, monkeypatch):
-    monkeypatch.delenv("ARTIFACT_BUNDLE_BUCKET", raising=False)
-    monkeypatch.delenv("APPS_BUNDLE_BUCKET", raising=False)
+async def test_revision_service_creates_updates_and_publishes_multifile_revisions(db_session):
     tenant, user = await _seed_tenant_context(db_session)
 
     service = ArtifactRevisionService(db_session)
@@ -52,7 +50,11 @@ async def test_revision_service_creates_updates_and_publishes_with_bundle_inline
         scope="agent",
         input_type="any",
         output_type="any",
-        source_code="def execute(context):\n    return {'echo': context.input_data, 'cfg': context.config}\n",
+        source_files=[
+            {"path": "handler.py", "content": "from helpers import answer\n\ndef execute(context):\n    return answer(context.input_data)\n"},
+            {"path": "helpers.py", "content": "def answer(data):\n    return {'echo': data}\n"},
+        ],
+        entry_module_path="handler.py",
         python_dependencies=["requests>=2.0"],
         config_schema=[{"name": "enabled", "type": "boolean", "default": True}],
         inputs=[{"name": "text", "type": "string"}],
@@ -66,10 +68,10 @@ async def test_revision_service_creates_updates_and_publishes_with_bundle_inline
     assert artifact.latest_draft_revision_id is not None
     assert artifact.status == ArtifactStatus.DRAFT
     assert artifact.latest_published_revision_id is None
-    assert artifact.latest_draft_revision.bundle_inline_bytes is not None
+    assert artifact.latest_draft_revision.source_files[0]["path"] == "handler.py"
+    assert artifact.latest_draft_revision.entry_module_path == "handler.py"
     assert artifact.latest_draft_revision.python_dependencies == ["requests>=2.0"]
-    assert artifact.latest_draft_revision.dependency_hash
-    first_hash = artifact.latest_draft_revision.bundle_hash
+    first_hash = artifact.latest_draft_revision.build_hash
 
     await service.update_artifact(
         artifact,
@@ -80,7 +82,10 @@ async def test_revision_service_creates_updates_and_publishes_with_bundle_inline
         scope="tool",
         input_type="any",
         output_type="any",
-        source_code="def execute(context):\n    return {'updated': True, 'echo': context.input_data}\n",
+        source_files=[
+            {"path": "main.py", "content": "def execute(context):\n    return {'updated': True, 'echo': context.input_data}\n"},
+        ],
+        entry_module_path="main.py",
         python_dependencies=["httpx>=0.27"],
         config_schema=[{"name": "wpm", "type": "integer", "default": 200}],
         inputs=[{"name": "text", "type": "string"}],
@@ -92,8 +97,8 @@ async def test_revision_service_creates_updates_and_publishes_with_bundle_inline
     artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
 
     assert artifact.latest_draft_revision.revision_number == 2
-    assert artifact.latest_draft_revision.bundle_hash != first_hash
-    assert artifact.latest_draft_revision.bundle_inline_bytes is not None
+    assert artifact.latest_draft_revision.build_hash != first_hash
+    assert artifact.latest_draft_revision.entry_module_path == "main.py"
     assert artifact.latest_draft_revision.python_dependencies == ["httpx>=0.27"]
 
     published_revision = await service.publish_latest_draft(artifact)
@@ -126,7 +131,8 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
         version_label = "draft"
         is_published = False
         is_ephemeral = False
-        source_code = "def execute(context):\n    return {'ok': True}\n"
+        entry_module_path = "handler.py"
+        source_files = [{"path": "handler.py", "content": "def execute(context):\n    return {'ok': True}\n"}]
 
     builder = ArtifactBundleBuilder()
     first = builder.build_revision_bundle(_Revision())
@@ -135,6 +141,21 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
     assert first.payload == second.payload
     assert first.dependency_hash == second.dependency_hash
 
-    archive = zipfile.ZipFile(io.BytesIO(first.payload), "r")
-    assert "dependencies.json" in archive.namelist()
-    assert "runtime/runner.py" in archive.namelist()
+    manifest = json.loads(io.BytesIO(first.payload).getvalue().decode("utf-8"))
+    assert manifest["entry_module_path"] == "handler.py"
+    assert manifest["source_files"][0]["path"] == "handler.py"
+
+
+def test_cloudflare_package_builder_emits_runtime_main_wrapper():
+    class _Revision:
+        id = uuid.uuid4()
+        artifact_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        entry_module_path = "handler.py"
+        python_dependencies = []
+        source_files = [{"path": "handler.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}]
+
+    package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
+    module_names = {module["name"] for module in package.modules}
+    assert "main.py" in module_names
+    assert "handler.py" in module_names

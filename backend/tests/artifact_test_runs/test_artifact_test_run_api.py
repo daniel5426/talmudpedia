@@ -1,10 +1,8 @@
 import uuid
 
-import httpx
 import pytest
 
 from app.api.dependencies import get_current_principal
-from app.artifact_worker.difysandbox_adapter import DifySandboxExecutionResult
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
 from main import app
 
@@ -17,25 +15,6 @@ ARTIFACT_CODE = """def execute(context):
         "count": len(payload or []),
     }
 """
-
-
-def _mock_adapter_execute(self, *, bundle_dir, payload, timeout_seconds, sandbox_session_id):
-    _ = self, bundle_dir, timeout_seconds
-    return DifySandboxExecutionResult(
-        status="completed",
-        result={
-            "received": payload.get("inputs", {}).get("value"),
-            "config": payload.get("config", {}),
-            "count": len(payload.get("inputs", {}).get("value") or []),
-        },
-        error=None,
-        stdout_excerpt="artifact stdout",
-        stderr_excerpt="",
-        duration_ms=5,
-        sandbox_session_id=sandbox_session_id,
-        worker_id="mock-worker",
-        sandbox_metadata={"provider": "mock-difysandbox"},
-    )
 
 
 async def _seed_tenant_context(db_session):
@@ -75,14 +54,51 @@ def _override_principal(tenant_id, user):
     return _inner
 
 
+def _mock_dispatch_result(payload):
+    value = payload.get("inputs", {}).get("value")
+    return {
+        "status": "completed",
+        "result": {
+            "received": value,
+            "config": payload.get("config", {}),
+            "count": len(value or []),
+        },
+        "error": None,
+        "stdout_excerpt": "artifact stdout",
+        "stderr_excerpt": "",
+        "duration_ms": 5,
+        "worker_id": "cf-worker",
+        "dispatch_request_id": "dispatch-1",
+        "events": [
+            {"event_type": "user_worker_invoked", "payload": {"data": {"worker_name": payload.get("worker_name")}}},
+        ],
+        "runtime_metadata": {"provider": "cloudflare_workers"},
+    }
+
+
 @pytest.mark.asyncio
 async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db_session, monkeypatch):
     monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
-    monkeypatch.setenv("ARTIFACT_WORKER_CLIENT_MODE", "direct")
-    from app.artifact_worker.difysandbox_adapter import DifySandboxAdapter
-    monkeypatch.setattr(DifySandboxAdapter, "execute", _mock_adapter_execute)
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    async def fake_ensure_deployment(self, *, revision, namespace):
+        return type(
+            "_Deployment",
+            (),
+            {
+                "worker_name": "staging-worker",
+                "deployment_id": "dep-1",
+                "version_id": "ver-1",
+                "build_hash": revision.build_hash,
+            },
+        )()
+
+    async def fake_execute(self, payload):
+        return type("_DispatchResult", (), _mock_dispatch_result(payload))()
+
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+    monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
 
     try:
         create_response = await client.post(
@@ -95,7 +111,8 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
                 "scope": "rag",
                 "input_type": "raw_documents",
                 "output_type": "raw_documents",
-                "python_code": ARTIFACT_CODE,
+                "source_files": [{"path": "handler.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "handler.py",
                 "config_schema": [],
                 "inputs": [],
                 "outputs": [],
@@ -127,6 +144,7 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
         assert run_payload["queue_class"] == "artifact_test"
         assert run_payload["result_payload"]["count"] == 1
         assert run_payload["result_payload"]["config"] == {"mode": "demo"}
+        assert run_payload["runtime_metadata"]["provider"] == "cloudflare_workers"
 
         events_response = await client.get(f"/admin/artifact-runs/{run_id}/events?tenant_slug={tenant.slug}")
         assert events_response.status_code == 200, events_response.text
@@ -134,17 +152,17 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
         assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
         event_types = [event["event_type"] for event in events]
         assert "run_prepared" in event_types
-        assert "worker_dispatch_started" in event_types
-        assert "revision_loaded" in event_types
-        assert "bundle_ready" in event_types
-        assert "run_started" in event_types
-        assert "run_completed" in event_types
+        assert "deployment_resolved" in event_types
+        assert "dispatch_started" in event_types
+        assert "dispatch_finished" in event_types
+        assert "user_worker_invoked" in event_types
 
         legacy_response = await client.post(
             f"/admin/artifacts/test?tenant_slug={tenant.slug}",
             json={
                 "artifact_id": artifact["id"],
-                "python_code": ARTIFACT_CODE,
+                "source_files": [{"path": "handler.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "handler.py",
                 "input_data": [{"text": "legacy"}],
                 "config": {"legacy": True},
                 "input_type": "raw_documents",
@@ -161,9 +179,58 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
 
 
 @pytest.mark.asyncio
+async def test_unsaved_artifact_test_run_uses_principal_tenant_context_without_tenant_slug(client, db_session, monkeypatch):
+    monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    async def fake_ensure_deployment(self, *, revision, namespace):
+        return type(
+            "_Deployment",
+            (),
+            {
+                "worker_name": "staging-worker",
+                "deployment_id": "dep-1",
+                "version_id": "ver-1",
+                "build_hash": revision.build_hash,
+            },
+        )()
+
+    async def fake_execute(self, payload):
+        return type("_DispatchResult", (), _mock_dispatch_result(payload))()
+
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+    monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
+
+    try:
+        run_response = await client.post(
+            "/admin/artifacts/test-runs",
+            json={
+                "source_files": [{"path": "handler.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "handler.py",
+                "input_data": {"value": ["hello"]},
+                "config": {"mode": "demo"},
+                "dependencies": [],
+                "input_type": "raw_documents",
+                "output_type": "raw_documents",
+            },
+        )
+        assert run_response.status_code == 200, run_response.text
+        run_id = run_response.json()["run_id"]
+
+        status_response = await client.get(f"/admin/artifact-runs/{run_id}")
+        assert status_response.status_code == 200, status_response.text
+        run_payload = status_response.json()
+        assert run_payload["status"] == "completed"
+        assert run_payload["queue_class"] == "artifact_test"
+        assert run_payload["result_payload"]["count"] == 1
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
 async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_session, monkeypatch):
     monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "0")
-    monkeypatch.setenv("ARTIFACT_WORKER_CLIENT_MODE", "direct")
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
@@ -178,7 +245,8 @@ async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_sessio
                 "scope": "rag",
                 "input_type": "raw_documents",
                 "output_type": "raw_documents",
-                "python_code": ARTIFACT_CODE,
+                "source_files": [{"path": "handler.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "handler.py",
                 "config_schema": [],
                 "inputs": [],
                 "outputs": [],
@@ -208,97 +276,5 @@ async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_sessio
         status_response = await client.get(f"/admin/artifact-runs/{run_id}?tenant_slug={tenant.slug}")
         assert status_response.status_code == 200, status_response.text
         assert status_response.json()["status"] == "cancelled"
-    finally:
-        app.dependency_overrides.pop(get_current_principal, None)
-
-
-@pytest.mark.asyncio
-async def test_artifact_test_run_http_worker_mode_uses_worker_api(client, db_session, monkeypatch):
-    monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
-    monkeypatch.setenv("ARTIFACT_WORKER_CLIENT_MODE", "http")
-    monkeypatch.setenv("ARTIFACT_WORKER_BASE_URL", "http://artifact-worker.local")
-    monkeypatch.setenv("ARTIFACT_WORKER_INTERNAL_TOKEN", "secret-token")
-
-    from app.artifact_worker.main import app as artifact_worker_app
-    from app.artifact_worker.difysandbox_adapter import DifySandboxAdapter
-    from app.services.artifact_runtime import difysandbox_client as worker_client_module
-
-    real_async_client = httpx.AsyncClient
-
-    class _ArtifactWorkerAsyncClient:
-        def __init__(self, *args, **kwargs):
-            timeout = kwargs.get("timeout")
-            self._client = real_async_client(
-                transport=httpx.ASGITransport(app=artifact_worker_app),
-                base_url="http://artifact-worker.local",
-                timeout=timeout,
-            )
-
-        async def __aenter__(self):
-            await self._client.__aenter__()
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return await self._client.__aexit__(exc_type, exc, tb)
-
-        async def post(self, url, *args, **kwargs):
-            path = httpx.URL(url).path
-            return await self._client.post(path, *args, **kwargs)
-
-    monkeypatch.setattr(worker_client_module.httpx, "AsyncClient", _ArtifactWorkerAsyncClient)
-    monkeypatch.setattr(DifySandboxAdapter, "execute", _mock_adapter_execute)
-
-    tenant, user = await _seed_tenant_context(db_session)
-    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
-
-    try:
-        create_response = await client.post(
-            f"/admin/artifacts?tenant_slug={tenant.slug}",
-            json={
-                "name": "http_worker_runtime_test",
-                "display_name": "HTTP Worker Runtime Test",
-                "description": "artifact runtime over worker http",
-                "category": "custom",
-                "scope": "rag",
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
-                "python_code": ARTIFACT_CODE,
-                "dependencies": ["requests>=2.0"],
-                "config_schema": [],
-                "inputs": [],
-                "outputs": [],
-                "reads": [],
-                "writes": [],
-            },
-        )
-        assert create_response.status_code == 200, create_response.text
-        artifact = create_response.json()
-
-        run_response = await client.post(
-            f"/admin/artifacts/{artifact['id']}/test-runs?tenant_slug={tenant.slug}",
-            json={
-                "artifact_id": artifact["id"],
-                "input_data": [{"text": "http"}],
-                "config": {"path": "http"},
-                "dependencies": ["requests>=2.0"],
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
-            },
-        )
-        assert run_response.status_code == 200, run_response.text
-        run_id = run_response.json()["run_id"]
-
-        status_response = await client.get(f"/admin/artifact-runs/{run_id}?tenant_slug={tenant.slug}")
-        assert status_response.status_code == 200, status_response.text
-        payload = status_response.json()
-        assert payload["status"] == "completed"
-        assert payload["result_payload"]["count"] == 1
-
-        events_response = await client.get(f"/admin/artifact-runs/{run_id}/events?tenant_slug={tenant.slug}")
-        assert events_response.status_code == 200, events_response.text
-        event_types = [event["event_type"] for event in events_response.json()["events"]]
-        assert "sandbox_session_created" in event_types
-        assert "sandbox_execution_started" in event_types
-        assert "sandbox_execution_finished" in event_types
     finally:
         app.dependency_overrides.pop(get_current_principal, None)

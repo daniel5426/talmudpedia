@@ -31,6 +31,7 @@ def _serialize_run(run) -> ArtifactRunSchema:
         stdout_excerpt=run.stdout_excerpt,
         stderr_excerpt=run.stderr_excerpt,
         duration_ms=run.duration_ms,
+        runtime_metadata=dict(run.runtime_metadata or {}),
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,

@@ -1,6 +1,6 @@
 # Tools Domain Spec
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 This document is the canonical product/specification overview for the tools domain.
 
@@ -71,6 +71,7 @@ Current artifact-backed tools resolve a tenant artifact revision and execute thr
 Current publish/runtime rules:
 - draft editing may still point at a tenant `artifact_id`
 - tool publish pins the live execution target into `artifact_revision_id`
+- tool publish also ensures the pinned revision has a production deployment
 - published production execution uses that pinned `artifact_revision_id`
 - if the backing tenant artifact has no published revision, tool publish should fail
 

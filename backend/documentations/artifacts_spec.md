@@ -1,4 +1,4 @@
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 # Artifacts Spec
 
@@ -57,15 +57,15 @@ Used for:
 
 ### Tools
 
-Artifacts are already part of the conceptual tool model, but full live tool execution through the new revision runtime is still a follow-up phase.
+Artifact-backed tools now publish against a pinned tenant artifact revision and execute through the shared runtime.
 
 ### Agents
 
-Agent-side artifact usage exists, but live agent execution is not yet fully migrated to the new shared runtime everywhere.
+Tenant artifact nodes now execute through the shared runtime with published-revision pinning at agent run compile/start time.
 
 ### RAG pipelines
 
-RAG custom logic is the historical origin of the feature, but live RAG execution still contains legacy paths and compatibility assumptions.
+Artifact-backed RAG operators now execute through the shared runtime with published artifact revision pinning.
 
 ## Current Contradictions And Transitional Reality
 
@@ -89,18 +89,20 @@ The platform model already recognizes `tool` as an artifact scope in code and ma
 
 Older docs and parts of the historical API language were narrower and focused on `rag` and `agent`.
 
-### 4. Runtime migration is incomplete
+### 4. Runtime migration status
 
-Artifact-page testing is on the new runtime.
+Artifact-page testing and the main live tenant Agent/Tool/RAG paths now use the shared runtime.
 
-Full live execution for Agents, RAG, and Tools is not yet completely migrated to the same runtime service.
+Remaining compatibility scope is mostly:
+- builtin repo artifacts
+- older terminology/docs that still say custom operator or DifySandbox
 
 ## Current Limitations
 
 - builtin repo artifacts are not yet migrated into runtime revision tables
-- live agent/tool/RAG execution is not yet uniformly routed through the new execution service
-- artifact-page and worker execution now use a real DifySandbox-backed adapter, but deployment is still V1 rather than a fully scheduled sandbox pool
-- bundle building is now dependency-aware and emits runtime metadata plus vendored dependency payloads when available locally
+- tenant artifact execution now depends on Cloudflare Workers-compatible Python/runtime constraints
+- queue fairness remains queue-class based rather than governed by a dedicated scheduler
+- backend secret-broker and outbound-policy hardening still need deeper end-to-end coverage
 - the platform still carries some legacy custom-operator concepts and routes during migration
 
 ## Canonical Direction
@@ -109,7 +111,7 @@ The intended direction is:
 - one artifact domain across Agents, RAG, and Tools
 - tenant artifacts stored as immutable revisions
 - test and production execution using one shared runtime contract
-- execution isolated behind the artifact worker / DifySandbox boundary
+- execution isolated behind the Cloudflare Workers runtime boundary for tenant artifacts
 - builtin artifacts eventually reconciled with the same broader model
 
 ## Companion Doc

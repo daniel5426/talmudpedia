@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -43,6 +43,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - `agent_call` timeout returns failed payload and marks child run failed
 - tool publish pins `artifact_revision_id` for tenant artifact-backed tools
 - tenant artifact-backed tools execute via `ArtifactExecutionService` on `artifact_prod_interactive`
+- tenant artifact-backed tool publish ensures the pinned revision has a production deployment
 - builtin `platform_sdk` stays on the compatibility artifact executor path
 
 ## Last Run
@@ -83,7 +84,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Date/Time: 2026-02-18 00:45 UTC
 - Result: PASS (`11 passed`)
 - Command: `PYTHONPATH=backend python3 -m pytest backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py -q`
-- Date/Time: 2026-03-10 22:09 EET
+- Date/Time: 2026-03-11 02:38 Asia/Hebron
 - Result: PASS (`19 passed`)
 
 ## Known Gaps / Follow-ups

@@ -1,6 +1,6 @@
 # Backend Architecture Current State
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 This document is the current backend architecture overview for Talmudpedia. It is intended to replace the older backend architecture summary in `backend/ARCHITECTURE.md`.
 
@@ -43,7 +43,6 @@ Key route groups currently registered in `backend/main.py` include:
 - published app admin, public, host runtime, builder preview, and sandbox dev shim routes
 - models, tools, knowledge stores, settings, stats, RBAC, audit, org units
 - library, texts, search, STT, TTS, and voice websocket routes
-- artifact worker routes mounted into the main backend surface
 
 This means the backend acts as both:
 - the platform control plane for internal/admin operations
@@ -63,7 +62,7 @@ Important service areas:
 - `graph_mutation_service.py`, `agent_graph_mutation_service.py`, `rag_graph_mutation_service.py`
   - Graph editing and mutation workflows.
 - `artifact_runtime/`
-  - Bundle building, dependency packaging, revision management, storage, and run execution.
+  - revision management, build packaging, deployment resolution, runtime policy, and run execution.
 - published app services
   - builder, preview, runtime, publish, revision, auth shell, coding agent runtime, and sandbox backend orchestration.
 - governance and platform services
@@ -128,10 +127,9 @@ Artifacts are a first-class extension and execution surface.
 
 Current runtime responsibilities include:
 - artifact discovery and registry integration
-- revision storage and bundle construction
-- dependency packaging and runtime bootstrap
-- isolated execution through sandbox/runtime adapters
-- dedicated artifact-worker execution paths
+- revision storage and source-tree packaging
+- deployment resolution and dispatch to Cloudflare Workers for Platforms
+- backend-side tenant runtime policy enforcement
 - shared execution for artifact test runs and live agent/tool/RAG artifact surfaces
 
 Current queue policy is implemented through queue classes rather than a separate scheduler:
@@ -143,9 +141,9 @@ This provides workload separation, but stronger fairness inside a queue is still
 
 Architecture-critical locations:
 - `backend/app/services/artifact_runtime/`
-- `backend/app/artifact_worker/`
 - `backend/app/api/routers/artifacts.py`
 - `backend/app/api/routers/artifact_runs.py`
+- `runtime/cloudflare-artifacts/`
 
 ### Published Apps and Coding Runtime
 
@@ -172,8 +170,6 @@ The backend uses multiple persistence and runtime mechanisms:
   - still present for Sefaria/text-oriented data paths
 - Celery workers
   - background processing for longer-running jobs
-- artifact worker runtime
-  - dedicated execution path for artifact workloads
 
 Important worker modules:
 - `backend/app/workers/celery_app.py`

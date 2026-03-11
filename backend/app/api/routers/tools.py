@@ -26,6 +26,7 @@ from app.db.postgres.models.registry import (
     ToolVersion,
 )
 from app.db.postgres.session import get_db
+from app.services.artifact_runtime.deployment_service import ArtifactDeploymentService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.builtin_tools import is_builtin_tools_v1_enabled
 
@@ -449,6 +450,14 @@ async def _publish_tool(
         tenant_id=tenant_id,
         tool=tool,
     )
+    if tool.artifact_revision_id:
+        revision = await ArtifactRegistryService(db).get_revision(
+            revision_id=tool.artifact_revision_id,
+            tenant_id=tenant_id,
+        )
+        if revision is None:
+            raise HTTPException(status_code=400, detail="Artifact-backed tool revision is unavailable")
+        await ArtifactDeploymentService(db).ensure_deployment(revision=revision, namespace="production")
     tool.status = ToolStatus.PUBLISHED
     tool.is_active = True
     tool.published_at = tool.published_at or datetime.utcnow()

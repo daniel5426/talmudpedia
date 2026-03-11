@@ -1,0 +1,8 @@
+name = "artifact-free-plan-runtime"
+main = "src/main.py"
+compatibility_date = "2026-03-11"
+compatibility_flags = ["python_workers"]
+workers_dev = true
+
+[vars]
+BACKEND_SHARED_SECRET = "NqxIrkThKFLWjg2KYX_hM7WHGo_ndQWfZGT_5HOXaWE"

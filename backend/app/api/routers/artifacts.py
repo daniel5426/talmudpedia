@@ -16,6 +16,7 @@ from app.api.schemas.artifacts import (
     ArtifactRunCreateResponse,
     ArtifactSchema,
     ArtifactScope as ArtifactScopeSchema,
+    ArtifactSourceFile,
     ArtifactTestRequest,
     ArtifactTestResponse,
     ArtifactType,
@@ -26,10 +27,42 @@ from app.db.postgres.models.artifact_runtime import ArtifactRunStatus, ArtifactS
 from app.db.postgres.models.identity import OrgMembership, Tenant
 from app.db.postgres.session import get_db
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
+from app.services.artifact_runtime.deployment_service import ArtifactDeploymentService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
+from app.services.artifact_runtime.source_utils import normalize_artifact_source
 
 router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
+
+
+async def _resolve_tenant_from_artifact_if_missing(
+    *,
+    tenant,
+    user,
+    db: AsyncSession,
+    artifact_id: str | None,
+):
+    if tenant is not None or not artifact_id:
+        return tenant
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        return tenant
+    artifact = await db.scalar(select(ArtifactModel).where(ArtifactModel.id == artifact_uuid))
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    resolved_tenant = await db.scalar(select(Tenant).where(Tenant.id == artifact.tenant_id))
+    if resolved_tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if user is not None and getattr(user, "role", None) != "admin":
+        membership = await db.scalar(
+            select(OrgMembership).where(
+                OrgMembership.tenant_id == resolved_tenant.id,
+                OrgMembership.user_id == user.id,
+            )
+        )
+        if membership is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+    return resolved_tenant
 
 
 async def get_artifact_context(
@@ -53,6 +86,27 @@ async def get_artifact_context(
     current_user = context.get("user")
     if current_user is None:
         raise HTTPException(status_code=403, detail="Not authorized")
+
+    principal_tenant_id = context.get("tenant_id")
+    if principal_tenant_id:
+        try:
+            principal_tenant_uuid = UUID(str(principal_tenant_id))
+        except Exception:
+            raise HTTPException(status_code=403, detail="Invalid tenant context")
+        principal_tenant = await db.scalar(select(Tenant).where(Tenant.id == principal_tenant_uuid))
+        if principal_tenant is None:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        if tenant_slug and principal_tenant.slug != tenant_slug:
+            membership = await db.scalar(
+                select(OrgMembership).where(
+                    OrgMembership.tenant_id == principal_tenant.id,
+                    OrgMembership.user_id == current_user.id,
+                )
+            )
+            if membership is None and getattr(current_user, "role", None) != "admin":
+                raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        if not tenant_slug or principal_tenant.slug == tenant_slug:
+            return principal_tenant, current_user, db
 
     if not tenant_slug:
         if getattr(current_user, "role", None) != "admin":
@@ -151,6 +205,13 @@ def _tenant_artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = 
         created_at=artifact.created_at,
         updated_at=artifact.updated_at,
         python_code=active_revision.source_code if include_code else None,
+        source_files=[
+            ArtifactSourceFile(path=str(item.get("path") or ""), content=str(item.get("content") or ""))
+            for item in list(active_revision.source_files or [])
+        ]
+        if include_code
+        else [],
+        entry_module_path=active_revision.entry_module_path if include_code else None,
         dependencies=list(active_revision.python_dependencies or []),
         reads=list(active_revision.reads or []),
         writes=list(active_revision.writes or []),
@@ -164,6 +225,19 @@ def _parse_artifact_uuid(raw: str) -> UUID | None:
         return UUID(str(raw))
     except Exception:
         return None
+
+
+def _request_source_payload(*, source_files, entry_module_path, python_code):
+    normalized = normalize_artifact_source(
+        source_files=[_model_dump(item) if hasattr(item, "model_dump") else item for item in (source_files or [])],
+        entry_module_path=entry_module_path,
+        source_code=python_code,
+    )
+    return {
+        "source_files": normalized.source_files,
+        "entry_module_path": normalized.entry_module_path,
+        "source_code": normalized.source_code,
+    }
 
 
 @router.get("", response_model=List[ArtifactSchema])
@@ -244,6 +318,11 @@ async def create_artifact_draft(
         raise HTTPException(status_code=400, detail="Artifact with this slug already exists")
 
     service = ArtifactRevisionService(db)
+    source_payload = _request_source_payload(
+        source_files=request.source_files,
+        entry_module_path=request.entry_module_path,
+        python_code=request.python_code,
+    )
     artifact = await service.create_artifact(
         tenant_id=tenant.id,
         created_by=user.id if user else None,
@@ -254,7 +333,9 @@ async def create_artifact_draft(
         scope=request.scope.value if request.scope else "rag",
         input_type=request.input_type,
         output_type=request.output_type,
-        source_code=request.python_code,
+        source_files=source_payload["source_files"],
+        entry_module_path=source_payload["entry_module_path"],
+        source_code=source_payload["source_code"],
         python_dependencies=list(request.dependencies or []),
         config_schema=list(request.config_schema or []),
         inputs=list(request.inputs or []),
@@ -292,6 +373,11 @@ async def update_artifact(
     if current_revision is None:
         raise HTTPException(status_code=409, detail="Artifact is missing a current revision")
     payload = _model_dump(update_data, exclude_unset=True)
+    source_payload = _request_source_payload(
+        source_files=payload.get("source_files", current_revision.source_files),
+        entry_module_path=payload.get("entry_module_path", current_revision.entry_module_path),
+        python_code=payload.get("python_code", current_revision.source_code),
+    )
     revision_service = ArtifactRevisionService(db)
     await revision_service.update_artifact(
         artifact,
@@ -302,7 +388,9 @@ async def update_artifact(
         scope=(payload.get("scope").value if hasattr(payload.get("scope"), "value") else payload.get("scope", getattr(artifact.scope, "value", artifact.scope))),
         input_type=payload.get("input_type", artifact.input_type),
         output_type=payload.get("output_type", artifact.output_type),
-        source_code=payload.get("python_code", current_revision.source_code),
+        source_files=source_payload["source_files"],
+        entry_module_path=source_payload["entry_module_path"],
+        source_code=source_payload["source_code"],
         python_dependencies=list(payload.get("dependencies", current_revision.python_dependencies or [])),
         config_schema=list(payload.get("config_schema", current_revision.config_schema or [])),
         inputs=list(payload.get("inputs", current_revision.inputs or [])),
@@ -376,12 +464,14 @@ async def promote_artifact(
     )
 
     revision = await ArtifactRevisionService(db).publish_latest_draft(artifact)
+    await ArtifactDeploymentService(db).ensure_deployment(revision=revision, namespace="production")
     await db.commit()
     return {
         "status": "published",
         "artifact_id": str(artifact.id),
         "revision_id": str(revision.id),
         "version": revision.version_label,
+        "deployment_namespace": "production",
     }
 
 
@@ -393,6 +483,12 @@ async def create_unsaved_test_run(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, user, db = artifact_ctx
+    tenant = await _resolve_tenant_from_artifact_if_missing(
+        tenant=tenant,
+        user=user,
+        db=db,
+        artifact_id=request.artifact_id,
+    )
     if tenant is None:
         raise HTTPException(status_code=400, detail="Tenant context required")
     artifact_uuid = _parse_artifact_uuid(request.artifact_id) if request.artifact_id else None
@@ -402,6 +498,8 @@ async def create_unsaved_test_run(
         created_by=user.id if user else None,
         artifact_id=artifact_uuid,
         python_code=request.python_code,
+        source_files=[_model_dump(item) for item in request.source_files],
+        entry_module_path=request.entry_module_path,
         input_data=request.input_data,
         config=request.config or {},
         dependencies=list(request.dependencies or []),
@@ -430,6 +528,12 @@ async def test_artifact(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, user, db = artifact_ctx
+    tenant = await _resolve_tenant_from_artifact_if_missing(
+        tenant=tenant,
+        user=user,
+        db=db,
+        artifact_id=request.artifact_id,
+    )
     if tenant is None:
         raise HTTPException(status_code=400, detail="Tenant context required")
 
@@ -439,6 +543,8 @@ async def test_artifact(
         created_by=user.id if user else None,
         artifact_id=_parse_artifact_uuid(request.artifact_id) if request.artifact_id else None,
         python_code=request.python_code,
+        source_files=[_model_dump(item) for item in request.source_files],
+        entry_module_path=request.entry_module_path,
         input_data=request.input_data,
         config=request.config or {},
         dependencies=list(request.dependencies or []),

@@ -1,6 +1,6 @@
 # Artifact Execution Current State
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-11
 
 This document is the canonical current-state architecture overview for artifact execution.
 
@@ -20,15 +20,17 @@ The current execution path centers on:
 - `ArtifactExecutionService`
 - `ArtifactRevisionService`
 - `ArtifactRunService`
-- `DifySandboxWorkerClient`
-- artifact worker executor/adapter boundaries
+- `ArtifactDeploymentService`
+- `CloudflareArtifactClient`
+- `CloudflareDispatchClient`
+- backend-side tenant runtime policy enforcement
 
 The current backend supports:
 - revision-backed execution
-- bundle generation and storage
+- source-tree revision packaging and build-hash computation
+- deployment resolution and reuse by namespace + build hash
 - artifact run/event persistence
-- worker client direct mode and HTTP mode
-- DifySandbox-backed execution through the worker layer
+- Cloudflare Workers dispatch for tenant artifacts
 
 ## Current Execution Surfaces
 
@@ -37,9 +39,10 @@ The current backend supports:
 Artifact admin test runs use `ArtifactExecutionService.start_test_run()`.
 
 Current behavior:
-- resolve saved or ephemeral revision
+- resolve saved draft/published revision or materialize an ephemeral revision from request source files
+- resolve or create a `staging` deployment by build hash
 - create run and initial events
-- dispatch eagerly or through Celery depending on runtime mode
+- dispatch through the Cloudflare Dispatch Worker eagerly or through Celery depending on queue mode
 
 ### Live agent execution
 
@@ -66,7 +69,7 @@ Current code already routes these live surfaces into the shared artifact runtime
 
 The more accurate current statement is:
 - the shared artifact runtime is already used by test runs and several live execution paths
-- the broader worker scheduling/hardening story is still evolving
+- tenant artifacts now execute on Cloudflare Workers for Platforms
 - repo builtin artifacts and some compatibility paths still remain in the system
 
 ## Current Runtime Flow
@@ -75,8 +78,8 @@ The more accurate current statement is:
 2. create an artifact run record
 3. persist initial run events
 4. dispatch execution eagerly or through Celery
-5. send worker execution request through direct or HTTP worker mode
-6. execute bundle through the DifySandbox-backed worker path
+5. resolve or create a Cloudflare deployment in `staging` or `production`
+6. send a dispatch request to the platform Dispatch Worker
 7. persist final run state and ordered run events
 
 ## Current Worker/Queue Model
@@ -96,14 +99,11 @@ Current intent for those queue classes is:
 
 In platform terms, this means the system now has separate lanes for test traffic, interactive production traffic, and background production traffic.
 
-Current runtime choices include:
-- direct mode for local/embedded execution path
-- HTTP mode for internal worker-service execution path
-
-Local development bootstrap can also auto-start:
-- the artifact queue worker
-- the artifact worker service
-- a local DifySandbox container
+Current namespace/runtime choices include:
+- `staging` namespace for artifact-page author testing
+- `production` namespace for live published execution
+- synchronous dispatch for `artifact_prod_interactive`
+- Celery-dispatched background execution for queued workloads
 
 ## Current Limits And Transitional Reality
 
@@ -118,14 +118,16 @@ Important current reality:
 - queue fairness still relies on the existing queue classes and worker consumption behavior
 - there is not yet a separate platform scheduler enforcing stronger tenant-level fairness, weighted priorities, or admission control inside a queue class
 - interactive traffic is better isolated than before because it uses a separate queue class, but fairness within a queue is still limited by the current Celery/worker model
+- tenant artifacts are now constrained to a Workers-compatible Python model rather than the previous backend bundle/worker sandbox assumptions
 
 ## Canonical Implementation References
 
 - `backend/app/services/artifact_runtime/execution_service.py`
 - `backend/app/services/artifact_runtime/revision_service.py`
 - `backend/app/services/artifact_runtime/run_service.py`
-- `backend/app/services/artifact_runtime/difysandbox_client.py`
-- `backend/app/artifact_worker/executor.py`
-- `backend/app/artifact_worker/difysandbox_adapter.py`
+- `backend/app/services/artifact_runtime/deployment_service.py`
+- `backend/app/services/artifact_runtime/cloudflare_client.py`
+- `backend/app/services/artifact_runtime/cloudflare_dispatch_client.py`
 - `backend/app/workers/artifact_tasks.py`
-- `backend/main.py`
+- `runtime/cloudflare-artifacts/dispatch-worker/`
+- `runtime/cloudflare-artifacts/outbound-worker/`

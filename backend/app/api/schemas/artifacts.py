@@ -41,6 +41,11 @@ class ArtifactOutputField(BaseModel):
     type: str  # string, object, array, normalized_documents, etc.
     description: Optional[str] = None
 
+
+class ArtifactSourceFile(BaseModel):
+    path: str
+    content: str
+
 class ArtifactSchema(BaseModel):
     id: str  # UUID for drafts, string slug for promoted/builtin
     name: str # The internal slug name
@@ -58,6 +63,8 @@ class ArtifactSchema(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: datetime
     python_code: Optional[str] = None
+    source_files: List[ArtifactSourceFile] = []
+    entry_module_path: Optional[str] = None
     reads: List[str] = []
     writes: List[str] = []
     dependencies: List[str] = []
@@ -77,7 +84,9 @@ class ArtifactCreate(BaseModel):
     input_type: str = "raw_documents"
     output_type: str = "raw_documents"
     scope: ArtifactScope = ArtifactScope.RAG
-    python_code: str
+    python_code: Optional[str] = None
+    source_files: List[ArtifactSourceFile] = []
+    entry_module_path: Optional[str] = None
     config_schema: List[Dict[str, Any]] = []
     reads: List[str] = []
     writes: List[str] = []
@@ -93,14 +102,20 @@ class ArtifactUpdate(BaseModel):
     output_type: Optional[str] = None
     scope: Optional[ArtifactScope] = None
     python_code: Optional[str] = None
+    source_files: Optional[List[ArtifactSourceFile]] = None
+    entry_module_path: Optional[str] = None
     config_schema: Optional[List[Dict[str, Any]]] = None
     reads: Optional[List[str]] = None
     writes: Optional[List[str]] = None
     dependencies: Optional[List[str]] = None
+    inputs: Optional[List[Dict[str, Any]]] = None
+    outputs: Optional[List[Dict[str, Any]]] = None
 
 class ArtifactTestRequest(BaseModel):
     artifact_id: Optional[str] = None # If testing existing one
     python_code: Optional[str] = None # If testing with unsaved code
+    source_files: List[ArtifactSourceFile] = []
+    entry_module_path: Optional[str] = None
     input_data: Any
     config: Dict[str, Any] = {}
     dependencies: List[str] = []
@@ -143,6 +158,7 @@ class ArtifactRunSchema(BaseModel):
     stdout_excerpt: Optional[str] = None
     stderr_excerpt: Optional[str] = None
     duration_ms: Optional[int] = None
+    runtime_metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None

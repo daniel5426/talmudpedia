@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import {
   ArtifactRun,
   ArtifactRunEvent,
+  ArtifactSourceFile,
   artifactsService,
   ArtifactTestResponse,
 } from "@/services/artifacts"
@@ -27,6 +28,8 @@ interface ArtifactTestPanelProps {
   tenantSlug?: string
   artifactId?: string
   pythonCode: string
+  sourceFiles?: ArtifactSourceFile[]
+  entryModulePath?: string
   inputType: string
   outputType: string
   onOpenChange?: (isOpen: boolean) => void
@@ -63,6 +66,8 @@ export function ArtifactTestPanel({
   tenantSlug,
   artifactId,
   pythonCode,
+  sourceFiles,
+  entryModulePath,
   inputType,
   outputType,
   onOpenChange,
@@ -195,6 +200,8 @@ export function ArtifactTestPanel({
         {
           artifact_id: artifactId,
           python_code: pythonCode,
+          source_files: sourceFiles,
+          entry_module_path: entryModulePath,
           input_data: inputData,
           config,
           input_type: inputType,

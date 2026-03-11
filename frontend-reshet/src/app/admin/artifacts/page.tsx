@@ -44,92 +44,22 @@ import {
     Minimize2,
     Package,
 } from "lucide-react"
-import { CodeEditor } from "@/components/ui/code-editor"
 import { JsonEditor } from "@/components/ui/json-editor"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
+import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWorkspaceEditor"
+import {
+    ArtifactFormData,
+    CATEGORIES,
+    DATA_TYPES,
+    DEFAULT_PYTHON_CODE,
+    initialFormData,
+    SCOPES,
+} from "@/components/admin/artifacts/artifactEditorState"
 
 type ViewMode = "list" | "create" | "edit"
-
-const CATEGORIES = [
-    { value: "source", label: "Source" },
-    { value: "normalization", label: "Normalization" },
-    { value: "enrichment", label: "Enrichment" },
-    { value: "chunking", label: "Chunking" },
-    { value: "transform", label: "Transform" },
-    { value: "custom", label: "Custom" },
-]
-
-const SCOPES = [
-    { value: "rag", label: "RAG" },
-    { value: "agent", label: "Agent" },
-    { value: "both", label: "Both" },
-    { value: "tool", label: "Tool" },
-]
-
-const DATA_TYPES = [
-    { value: "none", label: "None" },
-    { value: "raw_documents", label: "Raw" },
-    { value: "normalized_documents", label: "Normalized" },
-    { value: "enriched_documents", label: "Enriched" },
-    { value: "chunks", label: "Chunks" },
-    { value: "embeddings", label: "Embeddings" },
-    { value: "any", label: "Any (Agent)" },
-]
-
-const DEFAULT_PYTHON_CODE = `def execute(context):
-    """
-    Process input data and return transformed output.
-    
-    Args:
-        context: ArtifactContext with:
-            - input_data: List of input items
-            - config: Dict of configuration values
-            - logger: Logger instance
-    
-    Returns:
-        Processed data (matches output_type)
-    """
-    # Access input data
-    items = context.input_data
-    
-    # Your transformation logic here
-    return items
-`
-
-interface ArtifactFormData {
-    name: string
-    display_name: string
-    description: string
-    category: string
-    scope: ArtifactScope
-    input_type: string
-    output_type: string
-    python_code: string
-    config_schema: string
-    inputs: string
-    outputs: string
-    reads: string[]
-    writes: string[]
-}
-
-const initialFormData: ArtifactFormData = {
-    name: "",
-    display_name: "",
-    description: "",
-    category: "custom",
-    scope: "rag",
-    input_type: "raw_documents",
-    output_type: "raw_documents",
-    python_code: DEFAULT_PYTHON_CODE,
-    config_schema: "[]",
-    inputs: "[]",
-    outputs: "[]",
-    reads: [],
-    writes: [],
-}
 
 export default function ArtifactsPage() {
     const { currentTenant } = useTenant()
@@ -148,6 +78,7 @@ export default function ArtifactsPage() {
     const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false)
     const [slugError, setSlugError] = useState<string | null>(null)
     const [isSchemaMaximized, setIsSchemaMaximized] = useState(false)
+    const [activeFilePath, setActiveFilePath] = useState("handler.py")
 
     const [promotingId, setPromotingId] = useState<string | null>(null)
 
@@ -208,6 +139,7 @@ export default function ArtifactsPage() {
 
     const handleCreate = () => {
         setFormData(initialFormData)
+        setActiveFilePath(initialFormData.entry_module_path)
         setSelectedArtifact(null)
         setConfigExpanded(true)
         setIsSlugManuallyEdited(false)
@@ -223,6 +155,10 @@ export default function ArtifactsPage() {
         }
 
         setSelectedArtifact(fullArtifact)
+        const sourceFiles =
+            fullArtifact.source_files && fullArtifact.source_files.length > 0
+                ? fullArtifact.source_files
+                : [{ path: fullArtifact.entry_module_path || "handler.py", content: fullArtifact.python_code || DEFAULT_PYTHON_CODE }]
         setFormData({
             name: fullArtifact.name,
             display_name: fullArtifact.display_name,
@@ -231,13 +167,15 @@ export default function ArtifactsPage() {
             scope: fullArtifact.scope,
             input_type: fullArtifact.input_type,
             output_type: fullArtifact.output_type,
-            python_code: fullArtifact.python_code || DEFAULT_PYTHON_CODE,
+            source_files: sourceFiles,
+            entry_module_path: fullArtifact.entry_module_path || sourceFiles[0]?.path || "handler.py",
             config_schema: JSON.stringify(fullArtifact.config_schema || [], null, 2),
             inputs: JSON.stringify(fullArtifact.inputs || [], null, 2),
             outputs: JSON.stringify(fullArtifact.outputs || [], null, 2),
             reads: (fullArtifact as any).reads || [],
             writes: (fullArtifact as any).writes || [],
         })
+        setActiveFilePath(fullArtifact.entry_module_path || sourceFiles[0]?.path || "handler.py")
         setConfigExpanded(true)
         setIsSlugManuallyEdited(true)
         setSlugError(null)
@@ -284,6 +222,7 @@ export default function ArtifactsPage() {
 
             const payload = {
                 ...formData,
+                python_code: formData.source_files.find((file) => file.path === formData.entry_module_path)?.content || "",
                 config_schema: configSchema,
                 inputs: inputs,
                 outputs: outputs,
@@ -404,7 +343,7 @@ export default function ArtifactsPage() {
                 <div className="flex items-center gap-2">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground mr-2">
                         <Code2 className="h-4 w-4" />
-                        <span className="font-mono text-xs">{formData.name || "artifact"}.py</span>
+                        <span className="font-mono text-xs">{activeFilePath || formData.entry_module_path}</span>
                     </div>
                     {viewMode === "edit" && selectedArtifact && selectedArtifact.type === "draft" && (
                         <Button
@@ -780,11 +719,17 @@ export default function ArtifactsPage() {
     const renderEditor = () => (
         <div className="relative flex-1 min-w-0 overflow-hidden flex flex-col">
             <div className="flex-1 relative min-h-0">
-                <CodeEditor
-                    value={formData.python_code}
-                    onChange={(val) => updateFormData("python_code", val)}
-                    height="100%"
-                    className="h-full w-full border-0 rounded-none"
+                <ArtifactWorkspaceEditor
+                    sourceFiles={formData.source_files}
+                    activeFilePath={activeFilePath}
+                    entryModulePath={formData.entry_module_path}
+                    onActiveFileChange={setActiveFilePath}
+                    onSourceFilesChange={(files) =>
+                        updateFormData(
+                            "source_files",
+                            files.length > 0 ? files : [{ path: "handler.py", content: DEFAULT_PYTHON_CODE }]
+                        )
+                    }
                 />
             </div>
         </div>
@@ -817,7 +762,12 @@ export default function ArtifactsPage() {
                         <ArtifactTestPanel
                             tenantSlug={currentTenant?.slug}
                             artifactId={selectedArtifact?.id}
-                            pythonCode={formData.python_code}
+                            pythonCode={
+                                formData.source_files.find((file) => file.path === formData.entry_module_path)?.content ||
+                                DEFAULT_PYTHON_CODE
+                            }
+                            sourceFiles={formData.source_files}
+                            entryModulePath={formData.entry_module_path}
                             inputType={formData.input_type}
                             outputType={formData.output_type}
                             onOpenChange={handleTestPanelOpenChange}

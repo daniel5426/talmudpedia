@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import io
 import json
-import zipfile
 from dataclasses import dataclass
 from hashlib import sha256
-from pathlib import Path
 from typing import Any
 
 from app.db.postgres.models.artifact_runtime import ArtifactRevision
 
-from .dependency_packager import build_dependency_manifest_payload, package_python_dependencies
+from .source_utils import source_tree_hash
 
 
 @dataclass(frozen=True)
@@ -23,8 +20,7 @@ class BuiltArtifactBundle:
 
 class ArtifactBundleBuilder:
     def build_revision_bundle(self, revision: ArtifactRevision) -> BuiltArtifactBundle:
-        packaged_dependencies = package_python_dependencies(revision.python_dependencies or [])
-        dependency_manifest = build_dependency_manifest_payload(packaged_dependencies)
+        source_files = list(revision.source_files or [])
         manifest = {
             "artifact_id": str(revision.artifact_id) if revision.artifact_id else None,
             "revision_id": str(revision.id),
@@ -44,30 +40,21 @@ class ArtifactBundleBuilder:
             "version_label": revision.version_label,
             "is_published": bool(revision.is_published),
             "is_ephemeral": bool(revision.is_ephemeral),
-            "dependency_manifest": dependency_manifest,
+            "entry_module_path": revision.entry_module_path,
+            "source_files": source_files,
         }
-
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("artifact.json", json.dumps(manifest, sort_keys=True, separators=(",", ":")))
-            archive.writestr(
-                "dependencies.json",
-                json.dumps(dependency_manifest, sort_keys=True, separators=(",", ":")),
-            )
-            archive.writestr("handler.py", revision.source_code or "")
-            archive.writestr("runtime/runner.py", self._runner_source())
-            for packaged_file in packaged_dependencies.files:
-                archive.write(packaged_file.source_path, packaged_file.archive_path)
-        payload = buffer.getvalue()
-        bundle_hash = sha256(payload).hexdigest()
+        bundle_hash = source_tree_hash(
+            source_files=source_files,
+            entry_module_path=revision.entry_module_path,
+            python_dependencies=list(revision.python_dependencies or []),
+        )
+        payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        dependency_hash = sha256(
+            json.dumps(list(revision.python_dependencies or []), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         return BuiltArtifactBundle(
             bundle_hash=bundle_hash,
-            dependency_hash=packaged_dependencies.dependency_hash,
+            dependency_hash=dependency_hash,
             payload=payload,
             manifest=manifest,
         )
-
-    @staticmethod
-    def _runner_source() -> str:
-        runner_path = Path(__file__).resolve().parents[2] / "artifact_worker" / "runner.py"
-        return runner_path.read_text(encoding="utf-8")

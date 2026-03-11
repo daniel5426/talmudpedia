@@ -4,6 +4,11 @@ export type ArtifactType = "draft" | "promoted" | "builtin";
 export type ArtifactScope = "rag" | "agent" | "both" | "tool";
 export type ArtifactRunStatus = "queued" | "running" | "completed" | "failed" | "cancel_requested" | "cancelled";
 
+export interface ArtifactSourceFile {
+  path: string;
+  content: string;
+}
+
 export interface Artifact {
   id: string;
   name: string;
@@ -21,6 +26,9 @@ export interface Artifact {
   created_at?: string;
   updated_at: string;
   python_code?: string;
+  source_files?: ArtifactSourceFile[];
+  entry_module_path?: string;
+  dependencies?: string[];
   path?: string;
   reads: string[];
   writes: string[];
@@ -36,7 +44,10 @@ export interface ArtifactCreateRequest {
   input_type?: string;
   output_type?: string;
   scope?: ArtifactScope;
-  python_code: string;
+  python_code?: string;
+  source_files?: ArtifactSourceFile[];
+  entry_module_path?: string;
+  dependencies?: string[];
   config_schema?: any[];
   reads?: string[];
   writes?: string[];
@@ -52,6 +63,9 @@ export interface ArtifactUpdateRequest {
   output_type?: string;
   scope?: ArtifactScope;
   python_code?: string;
+  source_files?: ArtifactSourceFile[];
+  entry_module_path?: string;
+  dependencies?: string[];
   config_schema?: any[];
   reads?: string[];
   writes?: string[];
@@ -62,6 +76,9 @@ export interface ArtifactUpdateRequest {
 export interface ArtifactTestRequest {
   artifact_id?: string;
   python_code?: string;
+  source_files?: ArtifactSourceFile[];
+  entry_module_path?: string;
+  dependencies?: string[];
   input_data: any;
   config?: Record<string, any>;
   input_type?: string;

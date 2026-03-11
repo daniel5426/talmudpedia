@@ -42,10 +42,11 @@ class ArtifactRunService:
             domain=normalized_domain,
             status=ArtifactRunStatus.QUEUED,
             queue_class=queue_class,
-            sandbox_backend="difysandbox",
+            sandbox_backend="cloudflare_workers",
             input_payload=input_payload,
             config_payload=dict(config_payload or {}),
             context_payload=dict(context_payload or {}),
+            runtime_metadata={},
         )
         self._db.add(run)
         await self._db.flush()
