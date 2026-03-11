@@ -82,17 +82,14 @@ export function ArtifactTestPanel({
   const [legacyResult, setLegacyResult] = useState<ArtifactTestResponse | null>(null)
   const pollTimerRef = useRef<number | null>(null)
   const resizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null)
-  const [openHeight, setOpenHeight] = useState(DEFAULT_OPEN_HEIGHT)
-  const [isResizing, setIsResizing] = useState(false)
-
-  useEffect(() => {
-    if (typeof window === "undefined") return
+  const [openHeight, setOpenHeight] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_OPEN_HEIGHT
     const storedHeight = window.localStorage.getItem(RUNTIME_PANEL_HEIGHT_STORAGE_KEY)
     const parsedHeight = storedHeight ? Number.parseInt(storedHeight, 10) : Number.NaN
-    if (Number.isFinite(parsedHeight)) {
-      setOpenHeight(Math.min(MAX_OPEN_HEIGHT, Math.max(MIN_OPEN_HEIGHT, parsedHeight)))
-    }
-  }, [])
+    if (!Number.isFinite(parsedHeight)) return DEFAULT_OPEN_HEIGHT
+    return Math.min(MAX_OPEN_HEIGHT, Math.max(MIN_OPEN_HEIGHT, parsedHeight))
+  })
+  const [isResizing, setIsResizing] = useState(false)
 
   useEffect(() => {
     return () => {

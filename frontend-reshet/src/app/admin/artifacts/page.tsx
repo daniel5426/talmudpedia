@@ -35,7 +35,7 @@ import {
     Edit,
     Loader2,
     Save,
-    Code2,
+    PanelLeft,
     Settings2,
     X,
     Play,
@@ -79,12 +79,13 @@ export default function ArtifactsPage() {
     const [slugError, setSlugError] = useState<string | null>(null)
     const [isSchemaMaximized, setIsSchemaMaximized] = useState(false)
     const [activeFilePath, setActiveFilePath] = useState("handler.py")
+    const [sidebarOpen, setSidebarOpen] = useState(true)
 
     const [promotingId, setPromotingId] = useState<string | null>(null)
 
     const slugify = (text: string) => text.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/__+/g, "_").replace(/^_|_$/g, "")
     const configCollapsedWidth = 100
-    const configCollapsedHeight = 40
+    const configCollapsedHeight = 35
     const configExpandedWidth = isSchemaMaximized ? "500px" : "384px"
     const configContentRef = useRef<HTMLDivElement | null>(null)
     const [configMeasuredHeight, setConfigMeasuredHeight] = useState<number>(configCollapsedHeight)
@@ -111,33 +112,16 @@ export default function ArtifactsPage() {
         fetchArtifacts()
     }, [fetchArtifacts])
 
-    useEffect(() => {
-        if (loading) return
-
-        if (modeParam === "create") {
-            handleCreate()
-        } else if (modeParam === "edit" && idParam) {
-            const artifact = artifacts.find(art => art.id === idParam)
-            if (artifact) {
-                handleEdit(artifact)
-            } else {
-                setViewModeWithUrl("list")
-            }
-        } else {
-            setViewMode("list")
-        }
-    }, [modeParam, idParam, loading, artifacts])
-
-    const setViewModeWithUrl = (mode: ViewMode, id?: string) => {
+    const setViewModeWithUrl = useCallback((mode: ViewMode, id?: string) => {
         const params = new URLSearchParams()
         if (mode !== "list") params.set("mode", mode)
         if (id) params.set("id", id)
         const queryString = params.toString()
         router.push(`/admin/artifacts${queryString ? `?${queryString}` : ""}`)
         setViewMode(mode)
-    }
+    }, [router])
 
-    const handleCreate = () => {
+    const handleCreate = useCallback(() => {
         setFormData(initialFormData)
         setActiveFilePath(initialFormData.entry_module_path)
         setSelectedArtifact(null)
@@ -145,9 +129,9 @@ export default function ArtifactsPage() {
         setIsSlugManuallyEdited(false)
         setSlugError(null)
         setViewMode("create")
-    }
+    }, [])
 
-    const handleEdit = async (artifact: Artifact) => {
+    const handleEdit = useCallback(async (artifact: Artifact) => {
         // Fetch full details (including code if not loaded)
         let fullArtifact = artifact;
         if (!artifact.python_code) {
@@ -180,7 +164,24 @@ export default function ArtifactsPage() {
         setIsSlugManuallyEdited(true)
         setSlugError(null)
         setViewMode("edit")
-    }
+    }, [currentTenant?.slug])
+
+    useEffect(() => {
+        if (loading) return
+
+        if (modeParam === "create") {
+            handleCreate()
+        } else if (modeParam === "edit" && idParam) {
+            const artifact = artifacts.find(art => art.id === idParam)
+            if (artifact) {
+                handleEdit(artifact)
+            } else {
+                setViewModeWithUrl("list")
+            }
+        } else {
+            setViewMode("list")
+        }
+    }, [modeParam, idParam, loading, artifacts, handleCreate, handleEdit, setViewModeWithUrl])
 
     const handleSave = async () => {
         if (!formData.display_name.trim()) {
@@ -341,10 +342,15 @@ export default function ArtifactsPage() {
             </div>
             {viewMode !== "list" && (
                 <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground mr-2">
-                        <Code2 className="h-4 w-4" />
-                        <span className="font-mono text-xs">{activeFilePath || formData.entry_module_path}</span>
-                    </div>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setSidebarOpen((prev) => !prev)}
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                        title={sidebarOpen ? "Hide file explorer" : "Show file explorer"}
+                    >
+                        <PanelLeft className="h-4 w-4" />
+                    </Button>
                     {viewMode === "edit" && selectedArtifact && selectedArtifact.type === "draft" && (
                         <Button
                             size="sm"
@@ -494,225 +500,223 @@ export default function ArtifactsPage() {
         </div>
     )
 
-    const renderConfigBubble = () => (
-        <div className="absolute top-4 right-6 z-[80]">
-            <div className="relative h-10 w-[88px]">
+    const renderConfigTabBarSlot = () => (
+        <div className="relative flex items-center h-full">
+            <motion.div
+                initial={false}
+                animate={{
+                    width: configExpanded ? configExpandedWidth : configCollapsedWidth,
+                    height: configExpanded ? configMeasuredHeight : configCollapsedHeight,
+                    borderRadius: configExpanded ? 10 : 10,
+                }}
+                transition={{
+                    type: "spring",
+                    stiffness: 340,
+                    damping: 28,
+                    mass: 0.9,
+                }}
+                style={{ transformOrigin: "top right" }}
+                className="absolute right-0 top-0 z-[80] overflow-hidden border border-border/50 bg-background"
+            >
+                <button
+                    type="button"
+                    onClick={() => setConfigExpanded(true)}
+                    className={cn(
+                        "absolute left-0 top-0 z-10 flex h-full self-center items-center text-foreground transition-colors outline-none",
+                        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                        configExpanded ? "pointer-events-none opacity-0" : " gap-2 px-4 hover:bg-muted/60"
+                    )}
+                    aria-label="Open artifact config"
+                    aria-hidden={configExpanded}
+                    tabIndex={configExpanded ? -1 : 0}
+                >
+                    <Settings2 className="h-4 w-4" />
+                    <span className="text-xs font-semibold uppercase tracking-tight">Config</span>
+                </button>
+
                 <motion.div
                     initial={false}
                     animate={{
-                        width: configExpanded ? configExpandedWidth : configCollapsedWidth,
-                        height: configExpanded ? configMeasuredHeight : configCollapsedHeight,
-                        borderRadius: configExpanded ? 12 : 12,
+                        opacity: configExpanded ? 1 : 0,
+                        y: configExpanded ? 0 : -8,
                     }}
                     transition={{
-                        type: "spring",
-                        stiffness: 340,
-                        damping: 28,
-                        mass: 0.9,
+                        duration: configExpanded ? 0.2 : 0.12,
+                        ease: "easeOut",
                     }}
-                    style={{ transformOrigin: "top right" }}
-                    className="absolute right-0 top-0 overflow-hidden border border-border/50 bg-background/95 backdrop-blur-sm shadow-sm"
+                    className={cn(
+                        "pointer-events-none",
+                        configExpanded && "pointer-events-auto"
+                    )}
                 >
-                        <button
-                            type="button"
-                            onClick={() => setConfigExpanded(true)}
-                            className={cn(
-                                "absolute left-0 top-0 z-10 flex h-10 items-center text-foreground transition-colors outline-none",
-                                "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                                configExpanded ? "pointer-events-none opacity-0" : "w-[100px] gap-2 px-4 hover:bg-muted/60"
-                            )}
-                            aria-label="Open artifact config"
-                            aria-hidden={configExpanded}
-                            tabIndex={configExpanded ? -1 : 0}
-                        >
-                            <Settings2 className="h-4 w-4" />
-                            <span className="text-xs font-semibold uppercase tracking-tight">Config</span>
-                        </button>
-
-                    <motion.div
-                        initial={false}
-                        animate={{
-                            opacity: configExpanded ? 1 : 0,
-                            y: configExpanded ? 0 : -8,
-                        }}
-                        transition={{
-                            duration: configExpanded ? 0.2 : 0.12,
-                            ease: "easeOut",
-                        }}
-                        className={cn(
-                            "pointer-events-none",
-                            configExpanded && "pointer-events-auto"
-                        )}
-                    >
-                        <div ref={configContentRef}>
-                            <Card className="h-auto gap-0 border-0 bg-transparent py-0 shadow-none">
-                                <div className="p-3 flex items-center justify-between border-b border-border/30">
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center">
-                                            <Settings2 className="h-3.5 w-3.5 text-primary" />
-                                        </div>
-                                        <span className="text-xs font-semibold uppercase tracking-tight">Artifact Config</span>
+                    <div ref={configContentRef}>
+                        <Card className="h-auto gap-0 border-0 bg-transparent py-0 shadow-none">
+                            <div className="p-3 flex items-center justify-between border-b border-border/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center">
+                                        <Settings2 className="h-3.5 w-3.5 text-primary" />
                                     </div>
-                                    <Button variant="ghost" size="icon" onClick={() => setConfigExpanded(false)} className="h-6 w-6 rounded-md">
-                                        <X className="h-3.5 w-3.5" />
-                                    </Button>
+                                    <span className="text-xs font-semibold uppercase tracking-tight">Artifact Config</span>
+                                </div>
+                                <Button variant="ghost" size="icon" onClick={() => setConfigExpanded(false)} className="h-6 w-6 rounded-md">
+                                    <X className="h-3.5 w-3.5" />
+                                </Button>
+                            </div>
+
+                            <Tabs defaultValue="general" className="w-full gap-0">
+                                <div className="px-3 py-2">
+                                    <TabsList className="grid w-full grid-cols-3">
+                                        <TabsTrigger value="general" className="text-xs">Properties</TabsTrigger>
+                                        <TabsTrigger value="io" className="text-xs">I/O Schema</TabsTrigger>
+                                        <TabsTrigger value="parameters" className="text-xs">Parameters</TabsTrigger>
+                                    </TabsList>
                                 </div>
 
-                                <Tabs defaultValue="general" className="w-full gap-0">
-                                    <div className="px-3 py-2">
-                                        <TabsList className="grid w-full grid-cols-3">
-                                            <TabsTrigger value="general" className="text-xs">Properties</TabsTrigger>
-                                            <TabsTrigger value="io" className="text-xs">I/O Schema</TabsTrigger>
-                                            <TabsTrigger value="parameters" className="text-xs">Parameters</TabsTrigger>
-                                        </TabsList>
+                                <TabsContent value="general" className="p-4 space-y-4 m-0 max-h-[65vh] overflow-y-auto outline-none">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-1.5">
+                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Display Name</Label>
+                                            <Input value={formData.display_name} onChange={(e) => updateFormData("display_name", e.target.value)} className="h-8 text-xs" />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Category</Label>
+                                            <Select value={formData.category} onValueChange={(v) => updateFormData("category", v)}>
+                                                <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    {CATEGORIES.map((cat) => <SelectItem key={cat.value} value={cat.value} className="text-xs">{cat.label}</SelectItem>)}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
                                     </div>
 
-                                    <TabsContent value="general" className="p-4 space-y-4 m-0 max-h-[65vh] overflow-y-auto outline-none">
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div className="space-y-1.5">
-                                                <Label className="text-[10px] font-bold uppercase text-foreground/50">Display Name</Label>
-                                                <Input value={formData.display_name} onChange={(e) => updateFormData("display_name", e.target.value)} className="h-8 text-xs" />
-                                            </div>
-                                            <div className="space-y-1.5">
-                                                <Label className="text-[10px] font-bold uppercase text-foreground/50">Category</Label>
-                                                <Select value={formData.category} onValueChange={(v) => updateFormData("category", v)}>
-                                                    <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
-                                                    <SelectContent>
-                                                        {CATEGORIES.map((cat) => <SelectItem key={cat.value} value={cat.value} className="text-xs">{cat.label}</SelectItem>)}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
+                                    <div className="space-y-1.5">
+                                        <div className="flex items-center justify-between">
+                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Identifier (ID)</Label>
+                                            <Badge variant="outline" className="h-4 text-[9px] font-medium">{isSlugManuallyEdited ? 'Manual' : 'Auto-linked'}</Badge>
                                         </div>
+                                        <Input value={formData.name} onChange={(e) => updateFormData("name", e.target.value)} className={cn("h-8 text-xs font-mono", slugError && "ring-1 ring-destructive/50")} />
+                                        {slugError && <p className="text-[10px] text-destructive font-medium mt-1">{slugError}</p>}
+                                    </div>
 
+                                    <div className="grid grid-cols-2 gap-3">
                                         <div className="space-y-1.5">
+                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Scope</Label>
+                                            <Select value={formData.scope} onValueChange={(v) => updateFormData("scope", v as ArtifactScope)}>
+                                                <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    {SCOPES.map((s) => <SelectItem key={s.value} value={s.value} className="text-xs">{s.label}</SelectItem>)}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Version</Label>
+                                            <Input value={selectedArtifact?.version || "1.0.0"} disabled className="h-8 text-xs font-mono" />
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <Label className="text-[10px] font-bold uppercase text-foreground/50">Description</Label>
+                                        <Textarea value={formData.description} onChange={(e) => updateFormData("description", e.target.value)} className="text-xs resize-none" rows={2} />
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-1.5">
+                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Input Type</Label>
+                                            <Select value={formData.input_type} onValueChange={(v) => updateFormData("input_type", v)}>
+                                                <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    {DATA_TYPES.map((dt) => <SelectItem key={dt.value} value={dt.value} className="text-xs">{dt.label}</SelectItem>)}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Output Type</Label>
+                                            <Select value={formData.output_type} onValueChange={(v) => updateFormData("output_type", v)}>
+                                                <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    {DATA_TYPES.map((dt) => <SelectItem key={dt.value} value={dt.value} className="text-xs">{dt.label}</SelectItem>)}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <Label className="text-[10px] font-bold uppercase text-foreground/50">Reads (Agent State Fields)</Label>
+                                        <Input
+                                            placeholder="messages, transform_output, etc. (comma-separated)"
+                                            value={formData.reads.join(", ")}
+                                            onChange={(e) => updateFormData("reads", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                                            className="h-8 text-xs font-mono"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <Label className="text-[10px] font-bold uppercase text-foreground/50">Writes (Agent State Fields)</Label>
+                                        <Input
+                                            placeholder="transform_output, etc. (comma-separated)"
+                                            value={formData.writes.join(", ")}
+                                            onChange={(e) => updateFormData("writes", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                                            className="h-8 text-xs font-mono"
+                                        />
+                                    </div>
+                                </TabsContent>
+
+                                <TabsContent value="io" className="p-0 m-0 outline-none">
+                                    <div className="p-4 space-y-4 max-h-[65vh] overflow-y-auto">
+                                        <div className="space-y-2">
                                             <div className="flex items-center justify-between">
-                                                <Label className="text-[10px] font-bold uppercase text-foreground/50">Identifier (ID)</Label>
-                                                <Badge variant="outline" className="h-4 text-[9px] font-medium">{isSlugManuallyEdited ? 'Manual' : 'Auto-linked'}</Badge>
-                                            </div>
-                                            <Input value={formData.name} onChange={(e) => updateFormData("name", e.target.value)} className={cn("h-8 text-xs font-mono", slugError && "ring-1 ring-destructive/50")} />
-                                            {slugError && <p className="text-[10px] text-destructive font-medium mt-1">{slugError}</p>}
-                                        </div>
-
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div className="space-y-1.5">
-                                                <Label className="text-[10px] font-bold uppercase text-foreground/50">Scope</Label>
-                                                <Select value={formData.scope} onValueChange={(v) => updateFormData("scope", v as ArtifactScope)}>
-                                                    <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
-                                                    <SelectContent>
-                                                        {SCOPES.map((s) => <SelectItem key={s.value} value={s.value} className="text-xs">{s.label}</SelectItem>)}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-                                            <div className="space-y-1.5">
-                                                <Label className="text-[10px] font-bold uppercase text-foreground/50">Version</Label>
-                                                <Input value={selectedArtifact?.version || "1.0.0"} disabled className="h-8 text-xs font-mono" />
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-1.5">
-                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Description</Label>
-                                            <Textarea value={formData.description} onChange={(e) => updateFormData("description", e.target.value)} className="text-xs resize-none" rows={2} />
-                                        </div>
-
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div className="space-y-1.5">
-                                                <Label className="text-[10px] font-bold uppercase text-foreground/50">Input Type</Label>
-                                                <Select value={formData.input_type} onValueChange={(v) => updateFormData("input_type", v)}>
-                                                    <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
-                                                    <SelectContent>
-                                                        {DATA_TYPES.map((dt) => <SelectItem key={dt.value} value={dt.value} className="text-xs">{dt.label}</SelectItem>)}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-                                            <div className="space-y-1.5">
-                                                <Label className="text-[10px] font-bold uppercase text-foreground/50">Output Type</Label>
-                                                <Select value={formData.output_type} onValueChange={(v) => updateFormData("output_type", v)}>
-                                                    <SelectTrigger className="w-full h-8 text-xs"><SelectValue /></SelectTrigger>
-                                                    <SelectContent>
-                                                        {DATA_TYPES.map((dt) => <SelectItem key={dt.value} value={dt.value} className="text-xs">{dt.label}</SelectItem>)}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-1.5">
-                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Reads (Agent State Fields)</Label>
-                                            <Input
-                                                placeholder="messages, transform_output, etc. (comma-separated)"
-                                                value={formData.reads.join(", ")}
-                                                onChange={(e) => updateFormData("reads", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
-                                                className="h-8 text-xs font-mono"
-                                            />
-                                        </div>
-
-                                        <div className="space-y-1.5">
-                                            <Label className="text-[10px] font-bold uppercase text-foreground/50">Writes (Agent State Fields)</Label>
-                                            <Input
-                                                placeholder="transform_output, etc. (comma-separated)"
-                                                value={formData.writes.join(", ")}
-                                                onChange={(e) => updateFormData("writes", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
-                                                className="h-8 text-xs font-mono"
-                                            />
-                                        </div>
-                                    </TabsContent>
-
-                                    <TabsContent value="io" className="p-0 m-0 outline-none">
-                                        <div className="p-4 space-y-4 max-h-[65vh] overflow-y-auto">
-                                            <div className="space-y-2">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-[10px] font-bold uppercase text-foreground/50">Inputs Definition (JSON)</span>
-                                                    <Badge variant="outline" className="h-4 text-[8px]">Field Mapping</Badge>
-                                                </div>
-                                                <JsonEditor
-                                                    value={formData.inputs}
-                                                    onChange={(val) => updateFormData("inputs", val)}
-                                                    height="180px"
-                                                    className="border-border/30 rounded-md overflow-hidden"
-                                                />
-                                                <p className="text-[9px] text-muted-foreground italic">
-                                                    {'Example: [{"name": "query", "type": "string", "required": true}]'}
-                                                </p>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-[10px] font-bold uppercase text-foreground/50">Outputs Definition (JSON)</span>
-                                                </div>
-                                                <JsonEditor
-                                                    value={formData.outputs}
-                                                    onChange={(val) => updateFormData("outputs", val)}
-                                                    height="180px"
-                                                    className="border-border/30 rounded-md overflow-hidden"
-                                                />
-                                                <p className="text-[9px] text-muted-foreground italic">
-                                                    {'Example: [{"name": "result", "type": "string"}]'}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </TabsContent>
-
-                                    <TabsContent value="parameters" className="p-0 m-0 outline-none">
-                                        <div className="p-4 space-y-2">
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-[10px] font-bold uppercase text-foreground/50">JSON Schema (Config)</span>
-                                                <Button variant="ghost" size="icon" onClick={() => setIsSchemaMaximized(!isSchemaMaximized)} className="h-6 w-6">
-                                                    {isSchemaMaximized ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
-                                                </Button>
+                                                <span className="text-[10px] font-bold uppercase text-foreground/50">Inputs Definition (JSON)</span>
+                                                <Badge variant="outline" className="h-4 text-[8px]">Field Mapping</Badge>
                                             </div>
                                             <JsonEditor
-                                                value={formData.config_schema}
-                                                onChange={(val) => updateFormData("config_schema", val)}
-                                                height={isSchemaMaximized ? "500px" : "250px"}
+                                                value={formData.inputs}
+                                                onChange={(val) => updateFormData("inputs", val)}
+                                                height="180px"
                                                 className="border-border/30 rounded-md overflow-hidden"
                                             />
+                                            <p className="text-[9px] text-muted-foreground italic">
+                                                {'Example: [{"name": "query", "type": "string", "required": true}]'}
+                                            </p>
                                         </div>
-                                    </TabsContent>
-                                </Tabs>
-                            </Card>
-                        </div>
-                    </motion.div>
+
+                                        <div className="space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[10px] font-bold uppercase text-foreground/50">Outputs Definition (JSON)</span>
+                                            </div>
+                                            <JsonEditor
+                                                value={formData.outputs}
+                                                onChange={(val) => updateFormData("outputs", val)}
+                                                height="180px"
+                                                className="border-border/30 rounded-md overflow-hidden"
+                                            />
+                                            <p className="text-[9px] text-muted-foreground italic">
+                                                {'Example: [{"name": "result", "type": "string"}]'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </TabsContent>
+
+                                <TabsContent value="parameters" className="p-0 m-0 outline-none">
+                                    <div className="p-4 space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-bold uppercase text-foreground/50">JSON Schema (Config)</span>
+                                            <Button variant="ghost" size="icon" onClick={() => setIsSchemaMaximized(!isSchemaMaximized)} className="h-6 w-6">
+                                                {isSchemaMaximized ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+                                            </Button>
+                                        </div>
+                                        <JsonEditor
+                                            value={formData.config_schema}
+                                            onChange={(val) => updateFormData("config_schema", val)}
+                                            height={isSchemaMaximized ? "500px" : "250px"}
+                                            className="border-border/30 rounded-md overflow-hidden"
+                                        />
+                                    </div>
+                                </TabsContent>
+                            </Tabs>
+                        </Card>
+                    </div>
                 </motion.div>
-            </div>
+            </motion.div>
         </div>
     )
 
@@ -730,6 +734,9 @@ export default function ArtifactsPage() {
                             files.length > 0 ? files : [{ path: "handler.py", content: DEFAULT_PYTHON_CODE }]
                         )
                     }
+                    sidebarOpen={sidebarOpen}
+                    onSidebarOpenChange={setSidebarOpen}
+                    tabBarEndSlot={renderConfigTabBarSlot()}
                 />
             </div>
         </div>
@@ -755,7 +762,6 @@ export default function ArtifactsPage() {
                     <div className="h-full overflow-auto" data-admin-page-scroll>{renderList()}</div>
                 ) : (
                     <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
-                        {renderConfigBubble()}
                         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                             {renderEditor()}
                         </div>
