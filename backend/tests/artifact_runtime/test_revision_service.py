@@ -43,24 +43,26 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
     artifact = await service.create_artifact(
         tenant_id=tenant.id,
         created_by=user.id,
-        name="reading_time",
+        slug="reading_time",
         display_name="Reading Time",
         description="Estimate reading time",
-        category="custom",
-        scope="agent",
-        input_type="any",
-        output_type="any",
+        kind="agent_node",
         source_files=[
             {"path": "main.py", "content": "from helpers import answer\n\ndef execute(inputs, config, context):\n    return answer(inputs)\n"},
             {"path": "helpers.py", "content": "def answer(data):\n    return {'echo': data}\n"},
         ],
         entry_module_path="main.py",
         python_dependencies=["requests>=2.0"],
-        config_schema=[{"name": "enabled", "type": "boolean", "default": True}],
-        inputs=[{"name": "text", "type": "string"}],
-        outputs=[{"name": "echo", "type": "object"}],
-        reads=["messages"],
-        writes=["tool_outputs"],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={"type": "object", "properties": {"enabled": {"type": "boolean", "default": True}}},
+        agent_contract={
+            "state_reads": ["messages"],
+            "state_writes": ["tool_outputs"],
+            "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
+            "output_schema": {"type": "object", "properties": {"echo": {"type": "object"}}},
+            "node_ui": {"icon": "Sparkles"},
+        },
     )
     await db_session.commit()
     artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
@@ -78,20 +80,21 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
         updated_by=user.id,
         display_name="Reading Time v2",
         description="Estimate reading time better",
-        category="custom",
-        scope="tool",
-        input_type="any",
-        output_type="any",
         source_files=[
             {"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'updated': True, 'echo': inputs}\n"},
         ],
         entry_module_path="main.py",
         python_dependencies=["httpx>=0.27"],
-        config_schema=[{"name": "wpm", "type": "integer", "default": 200}],
-        inputs=[{"name": "text", "type": "string"}],
-        outputs=[{"name": "updated", "type": "boolean"}],
-        reads=["state"],
-        writes=["tool_outputs"],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": True},
+        config_schema={"type": "object", "properties": {"wpm": {"type": "integer", "default": 200}}},
+        agent_contract={
+            "state_reads": ["state"],
+            "state_writes": ["tool_outputs"],
+            "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
+            "output_schema": {"type": "object", "properties": {"updated": {"type": "boolean"}}},
+            "node_ui": {"icon": "Clock3"},
+        },
     )
     await db_session.commit()
     artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
@@ -100,6 +103,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
     assert artifact.latest_draft_revision.build_hash != first_hash
     assert artifact.latest_draft_revision.entry_module_path == "main.py"
     assert artifact.latest_draft_revision.python_dependencies == ["httpx>=0.27"]
+    assert artifact.kind.value == "agent_node"
 
     published_revision = await service.publish_latest_draft(artifact)
     await db_session.commit()
@@ -118,16 +122,16 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
         tenant_id = uuid.uuid4()
         display_name = "Stable"
         description = "Stable bundle"
-        category = "custom"
-        scope = "rag"
+        kind = "rag_operator"
         input_type = "raw_documents"
         output_type = "raw_documents"
         python_dependencies = ["requests>=2.0"]
-        config_schema = []
-        inputs = []
-        outputs = []
-        reads = []
-        writes = []
+        runtime_target = "cloudflare_workers"
+        capabilities = {}
+        config_schema = {}
+        agent_contract = None
+        rag_contract = {"operator_category": "transform", "pipeline_role": "ingestion", "input_schema": {}, "output_schema": {}}
+        tool_contract = None
         version_label = "draft"
         is_published = False
         is_ephemeral = False
@@ -151,9 +155,11 @@ def test_cloudflare_package_builder_emits_runtime_main_wrapper():
         id = uuid.uuid4()
         artifact_id = uuid.uuid4()
         tenant_id = uuid.uuid4()
+        kind = "tool_impl"
         entry_module_path = "main.py"
         python_dependencies = []
         source_files = [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}]
+        runtime_target = "cloudflare_workers"
 
     package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
     module_names = {module["name"] for module in package.modules}

@@ -1,6 +1,6 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-08
+Last Updated: 2026-03-11
 
 Scope:
 - Platform SDK tool action dispatch, explicit-action behavior, and strict canonical input enforcement.
@@ -69,16 +69,16 @@ Key scenarios covered:
   - `tools.create_or_update` (create)
   - `tools.create_or_update` (update)
   - `tools.publish`
-  - `artifacts.promote`
+- `artifacts.publish`
   - `agents.create_or_update` (create)
   - `agents.publish`
   - `agents.start_run`
   - `agents.resume_run` (error-path parity on nonexistent run)
   These validate persisted-state equivalence across UI HTTP path, SDK path, and tool-action path.
 
-Last run command: `cd backend && pytest -q tests/platform_sdk_tool/test_platform_sdk_actions.py tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py tests/platform_architect_runtime/test_architect_seeding.py tests/platform_architect_runtime/test_platform_architect_runtime.py`
-Last run date/time: 2026-03-08
-Last run result: passed (`94 passed, 1 warning`)
+Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_sdk_tool`
+Last run date/time: 2026-03-11 18:18 EET
+Last run result: passed (`97 passed, 11 skipped`)
 
 Known gaps / follow-ups:
-- Promote env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.
+- Publish env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.

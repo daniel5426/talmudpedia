@@ -2284,24 +2284,6 @@ def register_standard_operators():
 
 
 def _register_artifact_operators():
-    """Register all agent-scoped artifacts as operators."""
-    from app.services.artifact_registry import get_artifact_registry
-    from app.agent.executors.artifact import ArtifactNodeExecutor
-    
-    registry = get_artifact_registry()
-    # Refresh to ensure we have latest artifacts
-    registry.refresh()
-    
-    agent_artifacts = registry.get_agent_artifacts()
-    
-    for artifact_spec in agent_artifacts:
-        try:
-            operator_spec = artifact_spec.to_agent_operator_spec()
-            AgentOperatorRegistry.register(operator_spec)
-            AgentExecutorRegistry.register(operator_spec.type, ArtifactNodeExecutor)
-            logger.info(f"Registered artifact operator: {operator_spec.type}")
-        except Exception as e:
-            logger.error(f"Failed to register artifact {artifact_spec.artifact_id}: {e}")
-            
-    logger.info(f"Registered {len(agent_artifacts)} artifact operators for Agent Builder")
+    """Repo-backed artifact operator registration has been removed."""
+    return None
  

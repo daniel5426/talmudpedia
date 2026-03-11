@@ -4,7 +4,7 @@ import uuid
 import pytest
 import requests
 
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 
 
 def _require_env():
@@ -49,13 +49,12 @@ def test_artifact_draft_promote_create_tool_flow():
     draft_id = draft_resp.json().get("id")
 
     promote_resp = requests.post(
-        f"{base_url}/admin/artifacts/{draft_id}/promote",
-        json={"namespace": "custom"},
+        f"{base_url}/admin/artifacts/{draft_id}/publish",
         headers=headers,
         timeout=30,
     )
     if promote_resp.status_code >= 400:
-        pytest.skip(f"Artifact promote unavailable: {promote_resp.status_code} {promote_resp.text}")
+        pytest.skip(f"Artifact publish unavailable: {promote_resp.status_code} {promote_resp.text}")
     artifact_id = promote_resp.json().get("artifact_id")
 
     tool_payload = {

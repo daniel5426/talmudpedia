@@ -671,7 +671,7 @@ export function ArtifactWorkspaceEditor({
       </div>
 
       {/* -------- MAIN AREA -------- */}
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
         {/* Tab bar */}
         <div
           className={cn(

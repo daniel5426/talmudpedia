@@ -6,17 +6,38 @@ providing full tracing, error handling, and state management.
 """
 import asyncio
 import logging
-import importlib
 from typing import Any, Dict, Optional
 from uuid import UUID
 
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
-from app.db.postgres.models.artifact_runtime import ArtifactRunDomain, ArtifactRunStatus
+from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRunDomain, ArtifactRunStatus
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
-from app.services.artifact_registry import get_artifact_registry
 
 logger = logging.getLogger(__name__)
+
+
+def _input_specs_from_schema(schema: Dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(schema, dict):
+        return []
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return []
+    required = set(schema.get("required") or [])
+    specs = []
+    for name, value in properties.items():
+        if not isinstance(value, dict):
+            value = {}
+        specs.append(
+            {
+                "name": name,
+                "type": value.get("type", "any"),
+                "required": name in required,
+                "default": value.get("default"),
+                "description": value.get("description"),
+            }
+        )
+    return specs
 
 
 class ArtifactNodeExecutor(BaseNodeExecutor):
@@ -65,6 +86,8 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
         artifact = await registry.get_tenant_artifact(artifact_id=artifact_id, tenant_id=self.tenant_id)
         if artifact is None:
             raise ValueError(f"Artifact '{artifact_id}' not found")
+        if artifact.kind != ArtifactKind.AGENT_NODE:
+            raise ValueError(f"Artifact '{artifact_id}' is not an agent_node artifact")
         revision = artifact.latest_published_revision if require_published else (artifact.latest_draft_revision or artifact.latest_published_revision)
         if revision is None:
             raise ValueError(f"Artifact '{artifact_id}' has no executable revision")
@@ -78,13 +101,16 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
         if not artifact_id:
             return ValidationResult(valid=False, errors=["Missing artifact ID in config"])
 
-        if self._parse_uuid(artifact_id) is not None:
+        artifact_uuid = self._parse_uuid(artifact_id)
+        if artifact_uuid is None:
+            return ValidationResult(valid=False, errors=["Artifact nodes now require a UUID artifact id"])
+        if self.db is None:
             return ValidationResult(valid=True)
-
-        registry = get_artifact_registry()
-        if not registry.get_artifact(artifact_id):
+        artifact = await ArtifactRegistryService(self.db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=self.tenant_id)
+        if artifact is None:
             return ValidationResult(valid=False, errors=[f"Artifact '{artifact_id}' not found"])
-
+        if artifact.kind != ArtifactKind.AGENT_NODE:
+            return ValidationResult(valid=False, errors=[f"Artifact '{artifact_id}' is not an agent_node artifact"])
         return ValidationResult(valid=True)
     
     async def execute(
@@ -105,7 +131,6 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
             State update dictionary to merge with agent state.
         """
         artifact_id = config.get("_artifact_id")
-        artifact_version = config.get("_artifact_version")
         artifact_revision_id = self._parse_uuid(config.get("_artifact_revision_id"))
         
         if not artifact_id:
@@ -125,7 +150,6 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
         if emitter:
             emitter.emit_node_start(node_id, node_name, f"artifact:{artifact_id}", {
                 "artifact_id": artifact_id,
-                "version": artifact_version,
                 "config_keys": list(config.keys())
             })
         
@@ -141,22 +165,7 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
                     pinned_revision_id=artifact_revision_id,
                     require_published=production_mode,
                 )
-                artifact_inputs = list(revision.inputs or [])
-            else:
-                registry = get_artifact_registry()
-                spec = registry.get_artifact(artifact_id, artifact_version)
-                if not spec:
-                    raise ValueError(f"Artifact '{artifact_id}' not found")
-                node_name = config.get("label", spec.display_name)
-                artifact_path = registry.get_artifact_path(artifact_id, artifact_version)
-                if artifact_path:
-                    import yaml
-
-                    manifest_path = artifact_path / "artifact.yaml"
-                    if manifest_path.exists():
-                        with open(manifest_path) as f:
-                            manifest = yaml.safe_load(f)
-                        artifact_inputs = manifest.get("inputs", [])
+                artifact_inputs = _input_specs_from_schema((revision.agent_contract or {}).get("input_schema"))
 
             # Resolve inputs from state using mappings
             resolved_inputs = resolve_artifact_inputs(
@@ -169,7 +178,6 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
             exec_context = {
                 **(context or {}),
                 "artifact_id": artifact_id,
-                "artifact_version": artifact_version,
                 "artifact_revision_id": str(artifact_revision_id) if artifact_revision_id else None,
                 "emitter": emitter,
                 "tenant_id": self.tenant_id,
@@ -184,48 +192,23 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
                 },
             }
 
-            if artifact_uuid is not None:
-                run = await ArtifactExecutionService(self.db).execute_live_run(
-                    tenant_id=self.tenant_id,
-                    created_by=self._parse_uuid((context or {}).get("initiator_user_id")),
-                    revision_id=revision.id,
-                    domain=ArtifactRunDomain.AGENT,
-                    queue_class="artifact_prod_interactive",
-                    input_payload=resolved_inputs,
-                    config_payload=handler_config,
-                    context_payload=exec_context,
-                    require_published=production_mode,
-                )
-                if run is None:
-                    raise RuntimeError("Artifact execution did not return a run")
-                if run.status != ArtifactRunStatus.COMPLETED:
-                    error_message = ((run.error_payload or {}).get("message") if isinstance(run.error_payload, dict) else None) or "Artifact execution failed"
-                    raise RuntimeError(error_message)
-                result = run.result_payload or {}
-            else:
-                registry = get_artifact_registry()
-                spec = registry.get_artifact(artifact_id, artifact_version)
-                module_path = registry.get_handler_module_path(artifact_id, artifact_version)
-                if not spec or not module_path:
-                    raise ValueError(f"No handler found for artifact '{artifact_id}'")
-
-                logger.debug(f"Loading artifact handler: {module_path}")
-                try:
-                    module = importlib.import_module(module_path)
-                except ImportError as e:
-                    raise ValueError(f"Failed to import artifact handler '{module_path}': {e}")
-                execute_fn = getattr(module, "execute", None)
-                if not execute_fn:
-                    raise ValueError(f"Artifact '{artifact_id}' handler missing execute() function")
-
-                if asyncio.iscoroutinefunction(execute_fn):
-                    result = await execute_fn(state, handler_config, exec_context)
-                else:
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda: execute_fn(state, handler_config, exec_context)
-                    )
+            run = await ArtifactExecutionService(self.db).execute_live_run(
+                tenant_id=self.tenant_id,
+                created_by=self._parse_uuid((context or {}).get("initiator_user_id")),
+                revision_id=revision.id,
+                domain=ArtifactRunDomain.AGENT,
+                queue_class="artifact_prod_interactive",
+                input_payload=resolved_inputs,
+                config_payload=handler_config,
+                context_payload=exec_context,
+                require_published=production_mode,
+            )
+            if run is None:
+                raise RuntimeError("Artifact execution did not return a run")
+            if run.status != ArtifactRunStatus.COMPLETED:
+                error_message = ((run.error_payload or {}).get("message") if isinstance(run.error_payload, dict) else None) or "Artifact execution failed"
+                raise RuntimeError(error_message)
+            result = run.result_payload or {}
             
             # Ensure result is a dict
             if not isinstance(result, dict):

@@ -1,4 +1,4 @@
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 
 
 class _FakeArtifactsAPI:
@@ -272,8 +272,10 @@ def test_artifacts_create_or_update_draft_contract_parity(monkeypatch):
     assert out["context"]["result"] == {"id": "draft-1"}
     call = fake.artifacts.calls[0]
     assert call["method"] == "create_draft"
-    assert call["spec"]["name"] == "demo"
-    assert call["spec"]["python_code"].startswith("def execute")
+    assert call["spec"]["slug"] == "demo"
+    assert call["spec"]["kind"] == "rag_operator"
+    assert call["spec"]["runtime"]["entry_module_path"] == "main.py"
+    assert call["spec"]["runtime"]["source_files"][0]["content"].startswith("def execute")
     assert call["options"]["dry_run"] is False
 
 

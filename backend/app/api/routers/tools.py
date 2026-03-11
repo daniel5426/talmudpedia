@@ -28,6 +28,7 @@ from app.db.postgres.models.registry import (
 from app.db.postgres.session import get_db
 from app.services.artifact_runtime.deployment_service import ArtifactDeploymentService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
+from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.services.builtin_tools import is_builtin_tools_v1_enabled
 
 router = APIRouter(prefix="/tools", tags=["tools"])
@@ -423,6 +424,8 @@ async def _resolve_tool_artifact_revision_id(
     )
     if artifact is None:
         raise HTTPException(status_code=400, detail="Artifact-backed tool references an artifact outside tenant scope")
+    if artifact.kind != ArtifactKind.TOOL_IMPL:
+        raise HTTPException(status_code=400, detail="Artifact-backed tool requires a tool_impl artifact")
     if artifact.latest_published_revision_id is None:
         raise HTTPException(status_code=400, detail="Artifact-backed tool requires a published artifact revision before publish")
     return artifact.latest_published_revision_id

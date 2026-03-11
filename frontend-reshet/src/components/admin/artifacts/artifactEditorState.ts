@@ -1,30 +1,26 @@
-import { ArtifactScope, ArtifactSourceFile } from "@/services/artifacts"
+import { ArtifactKind, ArtifactSourceFile } from "@/services/artifacts";
 
-export const CATEGORIES = [
-  { value: "source", label: "Source" },
-  { value: "normalization", label: "Normalization" },
-  { value: "enrichment", label: "Enrichment" },
-  { value: "chunking", label: "Chunking" },
-  { value: "transform", label: "Transform" },
-  { value: "custom", label: "Custom" },
-]
+export const ARTIFACT_KIND_OPTIONS: Array<{ value: ArtifactKind; label: string; description: string }> = [
+  {
+    value: "agent_node",
+    label: "Agent Node",
+    description: "Reads and writes agent state and participates in builder graphs.",
+  },
+  {
+    value: "rag_operator",
+    label: "RAG Operator",
+    description: "Runs inside retrieval and ingestion pipelines with typed pipeline IO.",
+  },
+  {
+    value: "tool_impl",
+    label: "Tool Implementation",
+    description: "Backs published tools with invocation schemas and explicit side effects.",
+  },
+];
 
-export const SCOPES = [
-  { value: "rag", label: "RAG" },
-  { value: "agent", label: "Agent" },
-  { value: "both", label: "Both" },
-  { value: "tool", label: "Tool" },
-]
-
-export const DATA_TYPES = [
-  { value: "none", label: "None" },
-  { value: "raw_documents", label: "Raw" },
-  { value: "normalized_documents", label: "Normalized" },
-  { value: "enriched_documents", label: "Enriched" },
-  { value: "chunks", label: "Chunks" },
-  { value: "embeddings", label: "Embeddings" },
-  { value: "any", label: "Any (Agent)" },
-]
+export const RUNTIME_TARGET_OPTIONS = [
+  { value: "cloudflare_workers", label: "Cloudflare Workers" },
+];
 
 export const DEFAULT_PYTHON_CODE = `async def execute(inputs, config, context):
     """
@@ -36,38 +32,97 @@ export const DEFAULT_PYTHON_CODE = `async def execute(inputs, config, context):
         "config": config,
         "tenant_id": context.get("tenant_id"),
     }
-`
+`;
 
 export interface ArtifactFormData {
-  name: string
-  display_name: string
-  description: string
-  category: string
-  scope: ArtifactScope
-  input_type: string
-  output_type: string
-  source_files: ArtifactSourceFile[]
-  entry_module_path: string
-  config_schema: string
-  inputs: string
-  outputs: string
-  reads: string[]
-  writes: string[]
+  slug: string;
+  display_name: string;
+  description: string;
+  kind: ArtifactKind;
+  source_files: ArtifactSourceFile[];
+  entry_module_path: string;
+  python_dependencies: string;
+  runtime_target: string;
+  capabilities: string;
+  config_schema: string;
+  agent_contract: string;
+  rag_contract: string;
+  tool_contract: string;
 }
 
-export const initialFormData: ArtifactFormData = {
-  name: "",
-  display_name: "",
-  description: "",
-  category: "custom",
-  scope: "rag",
-  input_type: "raw_documents",
-  output_type: "raw_documents",
-  source_files: [{ path: "main.py", content: DEFAULT_PYTHON_CODE }],
-  entry_module_path: "main.py",
-  config_schema: "[]",
-  inputs: "[]",
-  outputs: "[]",
-  reads: [],
-  writes: [],
+const defaultCapabilities = {
+  network_access: false,
+  allowed_hosts: [],
+  secret_refs: [],
+  storage_access: [],
+  side_effects: [],
+};
+
+const defaultAgentContract = {
+  state_reads: [],
+  state_writes: [],
+  input_schema: {
+    type: "object",
+    properties: {
+      items: { type: "array" },
+    },
+    additionalProperties: true,
+  },
+  output_schema: {
+    type: "object",
+    additionalProperties: true,
+  },
+  node_ui: {
+    title: "Agent Node",
+  },
+};
+
+const defaultRagContract = {
+  operator_category: "transform",
+  pipeline_role: "processor",
+  input_schema: {
+    type: "object",
+    additionalProperties: true,
+  },
+  output_schema: {
+    type: "object",
+    additionalProperties: true,
+  },
+  execution_mode: "background",
+};
+
+const defaultToolContract = {
+  input_schema: {
+    type: "object",
+    additionalProperties: true,
+  },
+  output_schema: {
+    type: "object",
+    additionalProperties: true,
+  },
+  side_effects: [],
+  execution_mode: "interactive",
+  tool_ui: {
+    title: "Tool",
+  },
+};
+
+export function createFormDataForKind(kind: ArtifactKind): ArtifactFormData {
+  return {
+    slug: "",
+    display_name: "",
+    description: "",
+    kind,
+    source_files: [{ path: "main.py", content: DEFAULT_PYTHON_CODE }],
+    entry_module_path: "main.py",
+    python_dependencies: "",
+    runtime_target: "cloudflare_workers",
+    capabilities: JSON.stringify(defaultCapabilities, null, 2),
+    config_schema: JSON.stringify({ type: "object", properties: {}, additionalProperties: true }, null, 2),
+    agent_contract: JSON.stringify(defaultAgentContract, null, 2),
+    rag_contract: JSON.stringify(defaultRagContract, null, 2),
+    tool_contract: JSON.stringify(defaultToolContract, null, 2),
+  };
 }
+
+export const initialFormData = createFormDataForKind("agent_node");

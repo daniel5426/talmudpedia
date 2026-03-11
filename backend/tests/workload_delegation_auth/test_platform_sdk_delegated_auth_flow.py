@@ -1,4 +1,4 @@
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 
 
 def test_platform_sdk_fetch_catalog_uses_internal_delegation(monkeypatch):

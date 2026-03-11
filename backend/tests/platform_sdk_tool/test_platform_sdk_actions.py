@@ -1,6 +1,6 @@
 import json
 
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 
 
 class DummyClient:

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 
 # Coverage marker for dispatch parity guard (string presence is intentional).
 _ADDITIONAL_DISPATCH_COVERAGE = [
@@ -258,14 +258,14 @@ def _patch_auth(monkeypatch):
         ("artifacts.list", {}, "artifacts", "list", None, None),
         ("artifacts.get", {"artifact_id": "a1"}, "artifacts", "get", "a1", None),
         (
-            "artifacts.promote",
-            {"artifact_id": "a1", "namespace": "custom", "objective_flags": {"allow_publish": True}},
+            "artifacts.publish",
+            {"artifact_id": "a1", "objective_flags": {"allow_publish": True}},
             "artifacts",
-            "promote",
+            "publish",
             "a1",
             "options",
         ),
-        ("artifacts.test", {"request": {"artifact_id": "a1", "input": {}}}, "artifacts", "test", None, None),
+        ("artifacts.create_test_run", {"request": {"artifact_id": "a1", "input": {}}}, "artifacts", "create_test_run", None, None),
         ("tools.list", {}, "tools", "list", None, None),
         ("tools.get", {"tool_id": "t1"}, "tools", "get", "t1", None),
         (
@@ -538,16 +538,16 @@ def test_rag_update_visual_pipeline_translates_graph_definition_patch(monkeypatc
 
 
 def test_dispatch_actions_have_parity_test_coverage():
-    handler_text = Path("artifacts/builtin/platform_sdk/handler.py").read_text()
+    handler_text = Path("backend/app/system_artifacts/platform_sdk/handler.py").read_text()
     dispatched = set(re.findall(r'"([a-z_]+(?:\.[a-z_]+)+)": lambda:', handler_text))
 
     parity_text = "\n".join(
         Path(p).read_text()
         for p in [
-            "tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py",
-            "tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py",
-            "tests/platform_sdk_tool/test_platform_sdk_actions.py",
-            "tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py",
+            "backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py",
+            "backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py",
+            "backend/tests/platform_sdk_tool/test_platform_sdk_actions.py",
+            "backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py",
         ]
     )
     covered = set(re.findall(r"([a-z_]+(?:\.[a-z_]+)+)", parity_text))

@@ -4,7 +4,7 @@ import pytest
 
 from app.agent.execution.emitter import EventEmitter
 from app.agent.executors.orchestration import JoinNodeExecutor, SpawnRunNodeExecutor
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 
 
 def _drain_events(queue: asyncio.Queue):

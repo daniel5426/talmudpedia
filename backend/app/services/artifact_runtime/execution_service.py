@@ -54,8 +54,13 @@ class ArtifactExecutionService:
         input_data: Any,
         config: dict[str, Any] | None,
         dependencies: list[str] | None,
-        input_type: str,
-        output_type: str,
+        kind: str | None,
+        runtime_target: str | None,
+        capabilities: dict[str, Any] | None,
+        config_schema: dict[str, Any] | None,
+        agent_contract: dict[str, Any] | None,
+        rag_contract: dict[str, Any] | None,
+        tool_contract: dict[str, Any] | None,
     ):
         artifact: Artifact | None = None
         revision = None
@@ -90,18 +95,16 @@ class ArtifactExecutionService:
                 artifact=artifact,
                 display_name=artifact.display_name if artifact else "Unsaved Artifact",
                 description=artifact.description if artifact else None,
-                category=artifact.category if artifact else "custom",
-                scope=(getattr(artifact.scope, "value", artifact.scope) if artifact else "rag"),
-                input_type=input_type or (artifact.input_type if artifact else "raw_documents"),
-                output_type=output_type or (artifact.output_type if artifact else "raw_documents"),
+                kind=(getattr(artifact.kind, "value", artifact.kind) if artifact else kind),
                 source_files=source.source_files if source is not None else None,
                 entry_module_path=source.entry_module_path if source is not None else None,
                 python_dependencies=requested_dependencies or list((revision.python_dependencies if revision else []) or []),
-                config_schema=list((revision.config_schema if revision else []) or []),
-                inputs=list((revision.inputs if revision else []) or []),
-                outputs=list((revision.outputs if revision else []) or []),
-                reads=list((revision.reads if revision else []) or []),
-                writes=list((revision.writes if revision else []) or []),
+                runtime_target=runtime_target or str((revision.runtime_target if revision else None) or "cloudflare_workers"),
+                capabilities=dict(capabilities or dict((revision.capabilities if revision else {}) or {})),
+                config_schema=dict(config_schema or dict((revision.config_schema if revision else {}) or {})),
+                agent_contract=agent_contract if agent_contract is not None else (dict(revision.agent_contract or {}) if revision and revision.agent_contract is not None else None),
+                rag_contract=rag_contract if rag_contract is not None else (dict(revision.rag_contract or {}) if revision and revision.rag_contract is not None else None),
+                tool_contract=tool_contract if tool_contract is not None else (dict(revision.tool_contract or {}) if revision and revision.tool_contract is not None else None),
             )
         elif revision is None:
             raise ValueError("A saved artifact or source_files is required for test execution")
@@ -164,7 +167,7 @@ class ArtifactExecutionService:
         )
         artifact = None
         if revision.artifact_id is not None:
-            artifact = await self._registry.get_tenant_artifact(artifact_id=revision.artifact_id, tenant_id=tenant_id)
+            artifact = await self._registry.get_accessible_artifact(artifact_id=revision.artifact_id, tenant_id=tenant_id)
 
         run = await self._runs.create_run(
             tenant_id=tenant_id,

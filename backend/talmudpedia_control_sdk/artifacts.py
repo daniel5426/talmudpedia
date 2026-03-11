@@ -73,31 +73,25 @@ class ArtifactsAPI:
             mutation=True,
         )
 
-    def promote(
+    def publish(
         self,
         artifact_id: str,
         *,
-        namespace: str,
-        version: Optional[str] = None,
         tenant_slug: Optional[str] = None,
         options: Optional[RequestOptions] = None,
     ) -> ResponseEnvelope:
-        payload: Dict[str, Any] = {"namespace": namespace}
-        if version:
-            payload["version"] = version
         return self._client.request(
             "POST",
-            f"/admin/artifacts/{artifact_id}/promote",
+            f"/admin/artifacts/{artifact_id}/publish",
             params=_tenant_params(tenant_slug),
-            json_body=payload,
             options=options,
             mutation=True,
         )
 
-    def test(self, request: Dict[str, Any], tenant_slug: Optional[str] = None) -> ResponseEnvelope:
+    def create_test_run(self, request: Dict[str, Any], tenant_slug: Optional[str] = None) -> ResponseEnvelope:
         return self._client.request(
             "POST",
-            "/admin/artifacts/test",
+            "/admin/artifacts/test-runs",
             params=_tenant_params(tenant_slug),
             json_body=request,
         )

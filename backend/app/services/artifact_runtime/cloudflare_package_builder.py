@@ -67,6 +67,8 @@ class CloudflareArtifactPackageBuilder:
             "dependency_manifest": python_dependencies,
             "revision_id": str(revision.id),
             "artifact_id": str(revision.artifact_id) if revision.artifact_id else None,
+            "kind": getattr(revision.kind, "value", revision.kind),
+            "runtime_target": str(getattr(revision, "runtime_target", "") or "cloudflare_workers"),
         }
         return CloudflareArtifactPackage(
             build_hash=build_hash,

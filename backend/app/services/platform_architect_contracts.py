@@ -693,10 +693,10 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 ),
                 "contract": {"summary": "Create or update draft artifact.", "required_fields": ["namespace", "content|files"], "example_payload": {"namespace": "custom", "content": "print('hello')"}, "failure_codes": ["VALIDATION_ERROR"]},
             },
-            "artifacts.promote": {
+            "artifacts.publish": {
                 "mutation": True,
-                "payload_schema": _payload_schema(properties={"artifact_id": {"type": "string"}, "id": {"type": "string"}, "namespace": {"type": "string"}}),
-                "contract": {"summary": "Promote artifact draft (explicit publish intent required).", "required_fields": ["artifact_id|id"], "example_payload": {"artifact_id": "artifact-123", "namespace": "custom"}, "failure_codes": ["DRAFT_FIRST_POLICY_DENIED", "SENSITIVE_ACTION_APPROVAL_REQUIRED"]},
+                "payload_schema": _payload_schema(properties={"artifact_id": {"type": "string"}, "id": {"type": "string"}}),
+                "contract": {"summary": "Publish artifact draft (explicit publish intent required).", "required_fields": ["artifact_id|id"], "example_payload": {"artifact_id": "artifact-123"}, "failure_codes": ["DRAFT_FIRST_POLICY_DENIED", "SENSITIVE_ACTION_APPROVAL_REQUIRED"]},
             },
             "models.list": {
                 "mutation": False,

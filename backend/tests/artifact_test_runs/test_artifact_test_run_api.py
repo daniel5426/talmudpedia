@@ -104,20 +104,24 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "name": "runtime_test",
+                "slug": "runtime_test",
                 "display_name": "Runtime Test",
                 "description": "artifact runtime test",
-                "category": "custom",
-                "scope": "rag",
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
-                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
-                "entry_module_path": "main.py",
-                "config_schema": [],
-                "inputs": [],
-                "outputs": [],
-                "reads": [],
-                "writes": [],
+                "kind": "rag_operator",
+                "runtime": {
+                    "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
+                    "entry_module_path": "main.py",
+                    "python_dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "config_schema": {},
+                "rag_contract": {
+                    "operator_category": "transform",
+                    "pipeline_role": "processor",
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "execution_mode": "background",
+                },
             },
         )
         assert create_response.status_code == 200, create_response.text
@@ -129,8 +133,6 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
                 "artifact_id": artifact["id"],
                 "input_data": [{"text": "hello"}],
                 "config": {"mode": "demo"},
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
             },
         )
         assert run_response.status_code == 200, run_response.text
@@ -157,23 +159,6 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
         assert "dispatch_finished" in event_types
         assert "user_worker_invoked" in event_types
 
-        legacy_response = await client.post(
-            f"/admin/artifacts/test?tenant_slug={tenant.slug}",
-            json={
-                "artifact_id": artifact["id"],
-                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
-                "entry_module_path": "main.py",
-                "input_data": [{"text": "legacy"}],
-                "config": {"legacy": True},
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
-            },
-        )
-        assert legacy_response.status_code == 200, legacy_response.text
-        legacy_payload = legacy_response.json()
-        assert legacy_payload["success"] is True
-        assert legacy_payload["run_id"]
-        assert legacy_payload["data"]["count"] == 1
     finally:
         app.dependency_overrides.pop(get_current_principal, None)
 
@@ -211,8 +196,16 @@ async def test_unsaved_artifact_test_run_uses_principal_tenant_context_without_t
                 "input_data": {"value": ["hello"]},
                 "config": {"mode": "demo"},
                 "dependencies": [],
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
+                "kind": "rag_operator",
+                "runtime_target": "cloudflare_workers",
+                "config_schema": {},
+                "rag_contract": {
+                    "operator_category": "transform",
+                    "pipeline_role": "processor",
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "execution_mode": "background",
+                },
             },
         )
         assert run_response.status_code == 200, run_response.text
@@ -238,22 +231,27 @@ async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_sessio
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "name": "queued_runtime_test",
+                "slug": "queued_runtime_test",
                 "display_name": "Queued Runtime Test",
                 "description": "artifact runtime cancel test",
-                "category": "custom",
-                "scope": "rag",
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
-                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
-                "entry_module_path": "main.py",
-                "config_schema": [],
-                "inputs": [],
-                "outputs": [],
-                "reads": [],
-                "writes": [],
+                "kind": "rag_operator",
+                "runtime": {
+                    "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
+                    "entry_module_path": "main.py",
+                    "python_dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "config_schema": {},
+                "rag_contract": {
+                    "operator_category": "transform",
+                    "pipeline_role": "processor",
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "execution_mode": "background",
+                },
             },
         )
+        assert create_response.status_code == 200, create_response.text
         artifact = create_response.json()
 
         run_response = await client.post(
@@ -262,8 +260,6 @@ async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_sessio
                 "artifact_id": artifact["id"],
                 "input_data": [{"text": "queued"}],
                 "config": {},
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
             },
         )
         assert run_response.status_code == 200, run_response.text

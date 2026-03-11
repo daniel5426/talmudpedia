@@ -1,7 +1,8 @@
 import { httpClient } from "./http";
 
-export type ArtifactType = "draft" | "promoted" | "builtin";
-export type ArtifactScope = "rag" | "agent" | "both" | "tool";
+export type ArtifactType = "draft" | "published";
+export type ArtifactKind = "agent_node" | "rag_operator" | "tool_impl";
+export type ArtifactOwnerType = "tenant" | "system";
 export type ArtifactRunStatus = "queued" | "running" | "completed" | "failed" | "cancel_requested" | "cancelled";
 
 export interface ArtifactSourceFile {
@@ -9,65 +10,103 @@ export interface ArtifactSourceFile {
   content: string;
 }
 
+export interface ArtifactRuntimeConfig {
+  source_files: ArtifactSourceFile[];
+  entry_module_path: string;
+  python_dependencies: string[];
+  runtime_target: string;
+}
+
+export interface ArtifactCapabilityConfig {
+  network_access: boolean;
+  allowed_hosts: string[];
+  secret_refs: string[];
+  storage_access: string[];
+  side_effects: string[];
+}
+
+export interface AgentArtifactContract {
+  state_reads: string[];
+  state_writes: string[];
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  node_ui: Record<string, unknown>;
+}
+
+export interface RAGArtifactContract {
+  operator_category: string;
+  pipeline_role: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  execution_mode: string;
+}
+
+export interface ToolArtifactContract {
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  side_effects: string[];
+  execution_mode: string;
+  tool_ui: Record<string, unknown>;
+}
+
 export interface Artifact {
   id: string;
-  name: string;
+  slug: string;
   display_name: string;
   description?: string;
-  category: string;
-  input_type: string;
-  output_type: string;
-  version: string;
+  kind: ArtifactKind;
+  owner_type: ArtifactOwnerType;
   type: ArtifactType;
-  scope: ArtifactScope;
-  author?: string;
-  tags: string[];
-  config_schema: any[];
+  version: string;
+  config_schema: Record<string, unknown>;
+  runtime: ArtifactRuntimeConfig;
+  capabilities: ArtifactCapabilityConfig;
+  agent_contract?: AgentArtifactContract | null;
+  rag_contract?: RAGArtifactContract | null;
+  tool_contract?: ToolArtifactContract | null;
   created_at?: string;
   updated_at: string;
-  source_files?: ArtifactSourceFile[];
-  entry_module_path?: string;
-  dependencies?: string[];
-  path?: string;
-  reads: string[];
-  writes: string[];
-  inputs: any[];
-  outputs: any[];
+  system_key?: string | null;
+  author?: string | null;
+  tags: string[];
 }
 
 export interface ArtifactCreateRequest {
-  name: string;
+  slug: string;
   display_name: string;
   description?: string;
-  category?: string;
-  input_type?: string;
-  output_type?: string;
-  scope?: ArtifactScope;
-  source_files: ArtifactSourceFile[];
-  entry_module_path: string;
-  dependencies?: string[];
-  config_schema?: any[];
-  reads?: string[];
-  writes?: string[];
-  inputs?: any[];
-  outputs?: any[];
+  kind: ArtifactKind;
+  runtime: ArtifactRuntimeConfig;
+  capabilities: ArtifactCapabilityConfig;
+  config_schema: Record<string, unknown>;
+  agent_contract?: AgentArtifactContract;
+  rag_contract?: RAGArtifactContract;
+  tool_contract?: ToolArtifactContract;
 }
 
 export interface ArtifactUpdateRequest {
   display_name?: string;
   description?: string;
-  category?: string;
-  input_type?: string;
-  output_type?: string;
-  scope?: ArtifactScope;
-  source_files?: ArtifactSourceFile[];
-  entry_module_path?: string;
-  dependencies?: string[];
-  config_schema?: any[];
-  reads?: string[];
-  writes?: string[];
-  inputs?: any[];
-  outputs?: any[];
+  runtime?: ArtifactRuntimeConfig;
+  capabilities?: ArtifactCapabilityConfig;
+  config_schema?: Record<string, unknown>;
+  agent_contract?: AgentArtifactContract;
+  rag_contract?: RAGArtifactContract;
+  tool_contract?: ToolArtifactContract;
+}
+
+export interface ArtifactConvertKindRequest {
+  kind: ArtifactKind;
+  agent_contract?: AgentArtifactContract;
+  rag_contract?: RAGArtifactContract;
+  tool_contract?: ToolArtifactContract;
+}
+
+export interface ArtifactPublishResponse {
+  artifact_id: string;
+  revision_id: string;
+  version: string;
+  status: "published";
 }
 
 export interface ArtifactTestRequest {
@@ -75,19 +114,24 @@ export interface ArtifactTestRequest {
   source_files?: ArtifactSourceFile[];
   entry_module_path?: string;
   dependencies?: string[];
-  input_data: any;
-  config?: Record<string, any>;
-  input_type?: string;
-  output_type?: string;
+  input_data: unknown;
+  config?: Record<string, unknown>;
+  kind?: ArtifactKind;
+  runtime_target?: string;
+  capabilities?: Record<string, unknown>;
+  config_schema?: Record<string, unknown>;
+  agent_contract?: AgentArtifactContract;
+  rag_contract?: RAGArtifactContract;
+  tool_contract?: ToolArtifactContract;
 }
 
 export interface ArtifactTestResponse {
   success: boolean;
-  data?: any;
+  data?: unknown;
   error_message?: string;
   execution_time_ms: number;
   run_id?: string;
-  error_payload?: Record<string, any>;
+  error_payload?: Record<string, unknown>;
   stdout_excerpt?: string;
   stderr_excerpt?: string;
 }
@@ -99,11 +143,12 @@ export interface ArtifactRun {
   domain: string;
   status: ArtifactRunStatus;
   queue_class: string;
-  result_payload?: Record<string, any>;
-  error_payload?: Record<string, any>;
+  result_payload?: Record<string, unknown>;
+  error_payload?: Record<string, unknown>;
   stdout_excerpt?: string;
   stderr_excerpt?: string;
   duration_ms?: number;
+  runtime_metadata?: Record<string, unknown>;
   created_at: string;
   started_at?: string;
   finished_at?: string;
@@ -114,7 +159,7 @@ export interface ArtifactRunEvent {
   sequence: number;
   timestamp?: string;
   event_type: string;
-  payload: Record<string, any>;
+  payload: Record<string, unknown>;
 }
 
 export interface ArtifactRunCreateResponse {
@@ -149,21 +194,19 @@ export const artifactsService = {
     return httpClient.put<Artifact>(url, data);
   },
 
+  publish: async (id: string, tenantSlug?: string): Promise<ArtifactPublishResponse> => {
+    const url = tenantSlug ? `/admin/artifacts/${id}/publish?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/publish`;
+    return httpClient.post<ArtifactPublishResponse>(url, {});
+  },
+
+  convertKind: async (id: string, data: ArtifactConvertKindRequest, tenantSlug?: string): Promise<Artifact> => {
+    const url = tenantSlug ? `/admin/artifacts/${id}/convert-kind?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/convert-kind`;
+    return httpClient.post<Artifact>(url, data);
+  },
+
   delete: async (id: string, tenantSlug?: string): Promise<void> => {
     const url = tenantSlug ? `/admin/artifacts/${id}?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}`;
     await httpClient.delete(url);
-  },
-
-  promote: async (id: string, namespace: string = "custom", version?: string, tenantSlug?: string): Promise<any> => {
-    const params = new URLSearchParams();
-    if (tenantSlug) params.set("tenant_slug", tenantSlug);
-    const url = `/admin/artifacts/${id}/promote?${params.toString()}`;
-    return httpClient.post(url, { namespace, version });
-  },
-
-  test: async (data: ArtifactTestRequest, tenantSlug?: string): Promise<ArtifactTestResponse> => {
-    const url = tenantSlug ? `/admin/artifacts/test?tenant_slug=${tenantSlug}` : "/admin/artifacts/test";
-    return httpClient.post<ArtifactTestResponse>(url, data);
   },
 
   createTestRun: async (data: ArtifactTestRequest, tenantSlug?: string): Promise<ArtifactRunCreateResponse> => {

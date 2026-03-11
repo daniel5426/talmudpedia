@@ -14,25 +14,19 @@ Artifacts are reusable Python execution units used across the platform by:
 
 They exist as the shared extension mechanism for executable tenant and platform logic.
 
-## Current Artifact Classes
+## Artifact Ownership And Kinds
 
-### Builtin repo artifacts
+Artifacts now share one revision-backed runtime substrate with two ownership modes:
+- tenant-owned artifacts
+- system-owned artifacts
 
-Filesystem-backed artifacts under `backend/artifacts/`.
+Artifacts also have one explicit kind:
+- `agent_node`
+- `rag_operator`
+- `tool_impl`
 
-Current role:
-- platform-owned logic
-- registry/discovery path through the registry
-- not the main editable admin CRUD path for tenant artifact authoring
-
-### Tenant artifacts
-
-Revision-backed artifacts stored in runtime tables.
-
-Current role:
-- first-class tenant-authored executable logic
-- admin CRUD target
-- testable and executable through the shared runtime
+There is no longer a repo-backed runtime artifact class in the canonical model.
+`platform_sdk` is now treated as a system-owned artifact seeded into the same runtime tables.
 
 ## Current Data Model
 
@@ -56,16 +50,19 @@ Tenant artifacts are authored through the admin artifacts APIs.
 
 Current authoring shape includes:
 - identity and metadata
+- explicit `kind`
 - source files and entry module path
-- `main.py` as the default starter entry file in the admin editor
+- runtime target and dependency declarations
 - config schema
-- inputs and outputs
-- declared reads and writes
+- capability declarations
+- exactly one kind-specific contract payload
 - revision tracking
 
 Current admin authoring UI also includes:
+- kind-first creation flow
 - a source-tree editor with a file explorer/workspace panel
 - an active-file editor surface
+- kind-specific contract editing
 - artifact-page test-run execution against unsaved source trees
 
 ### Publish
@@ -99,16 +96,36 @@ This is important because the artifact runtime is no longer just a future design
 
 ## Current Contract Shape
 
-Artifact configuration currently includes:
+Shared runtime/base configuration now includes:
 - metadata and identity fields
+- `kind`
+- `owner_type`
 - `source_files`
 - `entry_module_path`
+- `python_dependencies`
+- `runtime_target`
+- `capabilities`
 - `config_schema`
-- `inputs`
-- `outputs`
-- `reads`
-- `writes`
-- dependency declarations
+
+Kind-specific contract payloads are:
+- `agent_contract`
+  - `state_reads`
+  - `state_writes`
+  - `input_schema`
+  - `output_schema`
+  - `node_ui`
+- `rag_contract`
+  - `operator_category`
+  - `pipeline_role`
+  - `input_schema`
+  - `output_schema`
+  - `execution_mode`
+- `tool_contract`
+  - `input_schema`
+  - `output_schema`
+  - `side_effects`
+  - `execution_mode`
+  - `tool_ui`
 
 The runtime handler contract remains:
 
@@ -152,4 +169,4 @@ Current transitional reality:
 - `backend/app/api/schemas/artifacts.py`
 - `backend/app/db/postgres/models/artifact_runtime.py`
 - `backend/app/services/artifact_runtime/`
-- `backend/app/services/artifact_registry.py`
+- `backend/app/services/registry_seeding.py`

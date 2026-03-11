@@ -5,6 +5,7 @@ from sqlalchemy import select, text, and_, or_
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.db.postgres.models.registry import ToolRegistry
 from app.db.postgres.models.rag import ExecutablePipeline, VisualPipeline, PipelineType
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
@@ -157,15 +158,7 @@ class ArtifactResolver(ComponentResolver):
     async def resolve(self, artifact_ref: str, require_published: bool = False) -> Dict[str, Any]:
         artifact_uuid = self._parse_uuid(artifact_ref)
         if artifact_uuid is None:
-            spec = self._registry.get_repo_artifact(str(artifact_ref))
-            if spec is None:
-                raise ResolutionError(f"Artifact {artifact_ref} not found")
-            return {
-                "artifact_kind": "repo",
-                "artifact_id": str(artifact_ref),
-                "artifact_version": str(getattr(spec, "version", "") or ""),
-                "display_name": str(getattr(spec, "display_name", artifact_ref) or artifact_ref),
-            }
+            raise ResolutionError("Artifact nodes now require UUID artifact ids")
 
         if self.tenant_id is None:
             raise ResolutionError("Tenant context required for tenant artifact resolution")
@@ -176,6 +169,8 @@ class ArtifactResolver(ComponentResolver):
         )
         if artifact is None:
             raise ResolutionError(f"Artifact {artifact_ref} not found")
+        if artifact.kind != ArtifactKind.AGENT_NODE:
+            raise ResolutionError(f"Artifact {artifact_ref} is not an agent_node artifact")
 
         revision = artifact.latest_published_revision
         if not require_published:

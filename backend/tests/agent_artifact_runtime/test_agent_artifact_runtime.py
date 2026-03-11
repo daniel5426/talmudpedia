@@ -38,21 +38,23 @@ async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool):
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
         created_by=created_by,
-        name=f"agent_artifact_{uuid.uuid4().hex[:8]}",
+        slug=f"agent_artifact_{uuid.uuid4().hex[:8]}",
         display_name="Agent Artifact",
         description=None,
-        category="custom",
-        scope="agent",
-        input_type="any",
-        output_type="any",
+        kind="agent_node",
         source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
         entry_module_path="main.py",
         python_dependencies=[],
-        config_schema=[],
-        inputs=[{"name": "query", "type": "string"}],
-        outputs=[],
-        reads=[],
-        writes=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={},
+        agent_contract={
+            "state_reads": [],
+            "state_writes": [],
+            "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
+            "output_schema": {"type": "object"},
+            "node_ui": {"icon": "Sparkles"},
+        },
     )
     if publish:
         await revisions.publish_latest_draft(artifact)
@@ -127,7 +129,16 @@ async def test_artifact_node_executor_routes_tenant_artifacts_through_shared_run
             "pinned_revision_id": str(pinned_revision_id) if pinned_revision_id else None,
             "require_published": require_published,
         }
-        return SimpleNamespace(id=revision_id, inputs=[{"name": "query", "type": "string"}])
+        return SimpleNamespace(
+            id=revision_id,
+            agent_contract={
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                }
+            },
+        )
 
     async def fake_execute_live_run(self, **kwargs):
         captured["runtime"] = kwargs

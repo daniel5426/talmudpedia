@@ -51,21 +51,23 @@ async def _create_published_artifact(db_session, tenant_id, created_by):
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
         created_by=created_by,
-        name=f"tool_artifact_{uuid.uuid4().hex[:8]}",
+        slug=f"tool_artifact_{uuid.uuid4().hex[:8]}",
         display_name="Tool Artifact",
         description=None,
-        category="custom",
-        scope="tool",
-        input_type="any",
-        output_type="any",
+        kind="tool_impl",
         source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
         entry_module_path="main.py",
         python_dependencies=[],
-        config_schema=[],
-        inputs=[],
-        outputs=[],
-        reads=[],
-        writes=[],
+        runtime_target="cloudflare_workers",
+        capabilities={},
+        config_schema={},
+        tool_contract={
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "side_effects": [],
+            "execution_mode": "interactive",
+            "tool_ui": {},
+        },
     )
     await revisions.publish_latest_draft(artifact)
     await db_session.commit()
@@ -162,15 +164,15 @@ async def test_tool_executor_routes_tenant_artifact_tools_through_shared_runtime
 
 
 @pytest.mark.asyncio
-async def test_tool_executor_keeps_builtin_artifact_path(monkeypatch):
+async def test_tool_executor_rejects_non_uuid_artifact_bindings(monkeypatch):
     tool_id = uuid.uuid4()
 
     async def fake_load_tool(self, tool_id_arg):
         assert tool_id_arg == tool_id
         return SimpleNamespace(
             id=tool_id,
-            name="Builtin Tool",
-            slug="builtin-tool",
+            name="Legacy Tool",
+            slug="legacy-tool",
             config_schema={},
             implementation_type="artifact",
             status="published",
@@ -180,22 +182,8 @@ async def test_tool_executor_keeps_builtin_artifact_path(monkeypatch):
             artifact_revision_id=None,
         )
 
-    async def fake_artifact_execute(self, state, config, context):
-        return {"compat": True, "artifact_id": config["_artifact_id"]}
-
-    async def fail_execute_live_run(self, **kwargs):
-        raise AssertionError("Shared runtime should not be used for builtin artifacts")
-
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
-    monkeypatch.setattr(
-        "app.agent.executors.artifact.ArtifactNodeExecutor.execute",
-        fake_artifact_execute,
-    )
-    monkeypatch.setattr(
-        "app.agent.executors.tool.ArtifactExecutionService.execute_live_run",
-        fail_execute_live_run,
-    )
 
     executor = ToolNodeExecutor(tenant_id=uuid.uuid4(), db=None)
-    result = await executor.execute({}, {"tool_id": str(tool_id), "input": {"x": 1}}, {"mode": "production"})
-    assert result == {"compat": True, "artifact_id": "builtin/platform_sdk"}
+    with pytest.raises(ValueError, match="UUID artifact id"):
+        await executor.execute({}, {"tool_id": str(tool_id), "input": {"x": 1}}, {"mode": "production"})

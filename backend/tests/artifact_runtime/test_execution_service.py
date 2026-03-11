@@ -33,26 +33,24 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool):
+async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool, kind: str):
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
         created_by=created_by,
-        name=f"artifact_{uuid.uuid4().hex[:8]}",
+        slug=f"artifact_{uuid.uuid4().hex[:8]}",
         display_name="Runtime Artifact",
         description=None,
-        category="custom",
-        scope="rag",
-        input_type="any",
-        output_type="any",
+        kind=kind,
         source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True, 'input': inputs}\n"}],
         entry_module_path="main.py",
         python_dependencies=[],
-        config_schema=[],
-        inputs=[],
-        outputs=[],
-        reads=[],
-        writes=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={},
+        agent_contract={"state_reads": [], "state_writes": [], "input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "node_ui": {}} if kind == "agent_node" else None,
+        rag_contract={"operator_category": "transform", "pipeline_role": "retrieval", "input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "execution_mode": "background"} if kind == "rag_operator" else None,
+        tool_contract={"input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "side_effects": [], "execution_mode": "interactive", "tool_ui": {}} if kind == "tool_impl" else None,
     )
     if publish:
         await revisions.publish_latest_draft(artifact)
@@ -63,7 +61,7 @@ async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool):
 @pytest.mark.asyncio
 async def test_execute_live_run_records_domain_queue_and_raw_inputs(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
-    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="agent_node")
 
     captured = {}
 
@@ -118,7 +116,7 @@ async def test_execute_live_run_records_domain_queue_and_raw_inputs(db_session, 
 @pytest.mark.asyncio
 async def test_execute_live_run_standard_worker_test_mode_includes_source_tree(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
-    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
     captured = {}
 
     async def fake_ensure_deployment(self, *, revision, namespace):
@@ -168,7 +166,7 @@ async def test_execute_live_run_standard_worker_test_mode_includes_source_tree(d
 @pytest.mark.asyncio
 async def test_execute_live_run_background_routes_to_requested_queue(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
-    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="rag_operator")
     captured = {}
 
     def fake_apply_async(*, args, queue):
@@ -204,7 +202,7 @@ async def test_execute_live_run_background_routes_to_requested_queue(db_session,
 @pytest.mark.asyncio
 async def test_execute_live_run_rejects_unpublished_revision_for_live_domains(db_session):
     tenant, user = await _seed_tenant_context(db_session)
-    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=False)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=False, kind="tool_impl")
 
     service = ArtifactExecutionService(db_session)
     with pytest.raises(PermissionError):
@@ -223,7 +221,7 @@ async def test_execute_live_run_rejects_unpublished_revision_for_live_domains(db
 @pytest.mark.asyncio
 async def test_interactive_run_fails_fast_when_tenant_capacity_is_exhausted(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
-    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="agent_node")
 
     async def deny_capacity(self, *, tenant_id, queue_class):
         raise ArtifactConcurrencyLimitExceeded("capacity exceeded")

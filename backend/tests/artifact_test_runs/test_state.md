@@ -14,7 +14,7 @@ Artifact test-run APIs and queued execution lifecycle on the modern run-based ar
 
 - create artifact through the new tenant artifact CRUD path
 - execute a run-based artifact test and inspect run/events APIs
-- verify `POST /admin/artifacts/test` remains a thin wrapper over the same run-based runtime path
+- execute only the run-based `/admin/artifacts/test-runs` surface; the legacy wrapper is removed
 - execute an unsaved `/admin/artifacts/test-runs` request without `tenant_slug` by using principal tenant context
 - cancel a queued test run
 - resolve or reuse a `staging` deployment and dispatch through the Cloudflare runtime path
@@ -30,6 +30,9 @@ Artifact test-run APIs and queued execution lifecycle on the modern run-based ar
 - Result: Pass (19 passed)
 - Command: `PYTHONPATH=backend python3 -m pytest backend/tests/artifact_test_runs/test_artifact_test_run_api.py -q`
 - Date: 2026-03-11 03:20 Asia/Hebron
+- Result: Pass (3 passed)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_test_runs/test_artifact_test_run_api.py`
+- Date: 2026-03-11 18:18 EET
 - Result: Pass (3 passed)
 
 ## Known Gaps

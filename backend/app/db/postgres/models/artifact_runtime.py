@@ -33,6 +33,17 @@ class ArtifactScope(str, enum.Enum):
     TOOL = "tool"
 
 
+class ArtifactKind(str, enum.Enum):
+    AGENT_NODE = "agent_node"
+    RAG_OPERATOR = "rag_operator"
+    TOOL_IMPL = "tool_impl"
+
+
+class ArtifactOwnerType(str, enum.Enum):
+    TENANT = "tenant"
+    SYSTEM = "system"
+
+
 class ArtifactStatus(str, enum.Enum):
     DRAFT = "draft"
     PUBLISHED = "published"
@@ -59,18 +70,20 @@ class Artifact(Base):
     __tablename__ = "artifacts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
 
     slug = Column(String, nullable=False)
     display_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
-    category = Column(String, nullable=False, default="custom")
-    input_type = Column(String, nullable=False, default="raw_documents")
-    output_type = Column(String, nullable=False, default="raw_documents")
-    scope = Column(
-        SQLEnum(ArtifactScope, values_callable=_enum_values),
+    kind = Column(
+        SQLEnum(ArtifactKind, values_callable=_enum_values),
         nullable=False,
-        default=ArtifactScope.RAG,
+        default=ArtifactKind.RAG_OPERATOR,
+    )
+    owner_type = Column(
+        SQLEnum(ArtifactOwnerType, values_callable=_enum_values),
+        nullable=False,
+        default=ArtifactOwnerType.TENANT,
     )
     status = Column(
         SQLEnum(ArtifactStatus, values_callable=_enum_values),
@@ -83,6 +96,7 @@ class Artifact(Base):
 
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     legacy_custom_operator_id = Column(UUID(as_uuid=True), ForeignKey("custom_operators.id", ondelete="SET NULL"), nullable=True)
+    system_key = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -100,6 +114,7 @@ class Artifact(Base):
 
     __table_args__ = (
         Index("uq_artifacts_tenant_slug", "tenant_id", "slug", unique=True),
+        Index("uq_artifacts_system_key", "system_key", unique=True),
     )
 
 
@@ -108,7 +123,7 @@ class ArtifactRevision(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=True, index=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
 
     revision_number = Column(Integer, nullable=False, default=1)
     version_label = Column(String, nullable=False, default="draft")
@@ -117,24 +132,22 @@ class ArtifactRevision(Base):
 
     display_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
-    category = Column(String, nullable=False, default="custom")
-    input_type = Column(String, nullable=False, default="raw_documents")
-    output_type = Column(String, nullable=False, default="raw_documents")
-    scope = Column(
-        SQLEnum(ArtifactScope, values_callable=_enum_values),
+    kind = Column(
+        SQLEnum(ArtifactKind, values_callable=_enum_values),
         nullable=False,
-        default=ArtifactScope.RAG,
+        default=ArtifactKind.RAG_OPERATOR,
     )
 
     source_files = Column(JSONB, nullable=False, default=list)
     entry_module_path = Column(String, nullable=False, default="main.py")
     manifest_json = Column(JSONB, nullable=False, default=dict)
     python_dependencies = Column(JSONB, nullable=False, default=list)
-    config_schema = Column(JSONB, nullable=False, default=list)
-    inputs = Column(JSONB, nullable=False, default=list)
-    outputs = Column(JSONB, nullable=False, default=list)
-    reads = Column(JSONB, nullable=False, default=list)
-    writes = Column(JSONB, nullable=False, default=list)
+    runtime_target = Column(String, nullable=False, default="cloudflare_workers")
+    capabilities = Column(JSONB, nullable=False, default=dict)
+    config_schema = Column(JSONB, nullable=False, default=dict)
+    agent_contract = Column(JSONB, nullable=True)
+    rag_contract = Column(JSONB, nullable=True)
+    tool_contract = Column(JSONB, nullable=True)
 
     build_hash = Column(String(64), nullable=False, default="", index=True)
     dependency_hash = Column(String(64), nullable=False, default="")
@@ -154,7 +167,7 @@ class ArtifactRun(Base):
     __tablename__ = "artifact_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
     revision_id = Column(UUID(as_uuid=True), ForeignKey("artifact_revisions.id", ondelete="CASCADE"), nullable=False, index=True)
 

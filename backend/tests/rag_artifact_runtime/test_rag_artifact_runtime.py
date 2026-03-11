@@ -64,21 +64,23 @@ async def _create_artifact_for_operator(db_session, tenant_id, created_by, opera
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
         created_by=created_by,
-        name=f"rag_artifact_{uuid.uuid4().hex[:8]}",
+        slug=f"rag_artifact_{uuid.uuid4().hex[:8]}",
         display_name="RAG Artifact",
         description=None,
-        category="custom",
-        scope="rag",
-        input_type="query",
-        output_type="search_results",
+        kind="rag_operator",
         source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'data': inputs, 'metadata': {'source': 'artifact'}}\n"}],
         entry_module_path="main.py",
         python_dependencies=[],
-        config_schema=[],
-        inputs=[],
-        outputs=[],
-        reads=[],
-        writes=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={},
+        rag_contract={
+            "operator_category": "custom",
+            "pipeline_role": "retrieval",
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "execution_mode": "background",
+        },
     )
     artifact.legacy_custom_operator_id = operator_id
     if publish:

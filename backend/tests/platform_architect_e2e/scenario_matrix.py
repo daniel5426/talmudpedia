@@ -24,7 +24,7 @@ class ScenarioDefinition:
 EXPECTED_BLOCK_BY_ACTION = {
     "agents.publish": "DRAFT_FIRST_POLICY_DENIED",
     "tools.publish": "DRAFT_FIRST_POLICY_DENIED",
-    "artifacts.promote": "DRAFT_FIRST_POLICY_DENIED",
+    "artifacts.publish": "DRAFT_FIRST_POLICY_DENIED",
 }
 
 MODEL_REQUIRED_ACTIONS = {

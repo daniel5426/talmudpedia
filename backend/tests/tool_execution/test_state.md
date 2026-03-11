@@ -44,7 +44,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - tool publish pins `artifact_revision_id` for tenant artifact-backed tools
 - tenant artifact-backed tools execute via `ArtifactExecutionService` on `artifact_prod_interactive`
 - tenant artifact-backed tool publish ensures the pinned revision has a production deployment
-- builtin `platform_sdk` stays on the separate builtin artifact executor path
+- non-UUID artifact bindings are rejected; artifact-backed tools must resolve to UUID-backed tenant or system artifacts
 
 ## Last Run
 - Command: `pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_runtime_guardrails.py backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py`
@@ -86,6 +86,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py -q`
 - Date/Time: 2026-03-11 03:35 Asia/Hebron
 - Result: PASS (`22 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py backend/tests/platform_sdk_tool backend/tests/control_plane_sdk/test_client_and_modules.py`
+- Date/Time: 2026-03-11 18:18 EET
+- Result: PASS (`127 passed, 11 skipped`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

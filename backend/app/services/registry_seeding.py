@@ -1,6 +1,7 @@
 
 import os
 import json
+from pathlib import Path
 from datetime import datetime
 import uuid
 from sqlalchemy import select, or_, text
@@ -15,9 +16,12 @@ from app.db.postgres.models.registry import (
     ToolStatus,
     ToolImplementationType,
 )
+from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactOwnerType
 from app.db.postgres.models.identity import Tenant
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.services.builtin_tools import BUILTIN_TEMPLATE_SPECS, is_builtin_tools_v1_enabled
+from app.services.artifact_runtime.registry_service import ArtifactRegistryService
+from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.platform_architect_contracts import (
     PLATFORM_ARCHITECT_DOMAIN_TOOLS,
     build_architect_graph_definition,
@@ -152,59 +156,9 @@ async def _normalize_tool_impl_values(db):
 
 
 async def seed_platform_sdk_tool(db):
-    """
-    Seeds the Platform SDK tool (artifact-backed, system tool).
-    """
-    # Ensure legacy lowercase statuses don't break enum deserialization
+    """Seed the Platform SDK system artifact and the global tool that binds to it."""
     await _normalize_tool_status_values(db)
     await _normalize_tool_impl_values(db)
-
-    slug = "platform-sdk"
-    tool = None
-    tool_columns = await _get_table_columns(db, "tool_registry")
-    if not tool_columns:
-        print("Unable to inspect tool_registry columns; skipping Platform SDK tool seed.")
-        return None
-    required_cols = {
-        "id",
-        "tenant_id",
-        "name",
-        "slug",
-        "description",
-        "scope",
-        "schema",
-        "config_schema",
-        "status",
-        "version",
-        "implementation_type",
-        "published_at",
-        "artifact_id",
-        "artifact_version",
-        "is_active",
-        "is_system",
-        "created_at",
-        "updated_at",
-    }
-    use_orm = required_cols.issubset(tool_columns)
-    enum_labels = await _get_enum_labels(db, "tooldefinitionscope")
-    scope_value = _resolve_enum_value(enum_labels, "global")
-    if enum_labels and scope_value not in {"global", "GLOBAL"}:
-        scope_value = enum_labels[0]
-    if enum_labels and "global" not in enum_labels:
-        use_orm = False
-
-    if use_orm:
-        try:
-            result = await db.execute(
-                select(ToolRegistry).where(
-                    ToolRegistry.slug == slug,
-                    ToolRegistry.tenant_id == None,
-                )
-            )
-            tool = result.scalars().first()
-        except ProgrammingError:
-            await db.rollback()
-            use_orm = False
 
     input_schema = {
         "type": "object",
@@ -242,61 +196,144 @@ async def seed_platform_sdk_tool(db):
     }
     schema = {"input": input_schema, "output": output_schema}
 
+    artifact = await _seed_platform_sdk_system_artifact(
+        db,
+        input_schema=input_schema,
+        output_schema=output_schema,
+    )
+
+    result = await db.execute(
+        select(ToolRegistry).where(
+            ToolRegistry.slug == "platform-sdk",
+            ToolRegistry.tenant_id == None,
+        )
+    )
+    tool = result.scalars().first()
+
     config_schema = {
-        "implementation": {
-            "type": "artifact",
-            "artifact_id": "builtin/platform_sdk",
-            "artifact_version": "1.0.0",
+        "artifact_binding": {
+            "artifact_id": str(artifact.id),
+            "revision_id": str(artifact.latest_published_revision_id),
+            "system_key": "platform_sdk",
         }
     }
 
-    if use_orm:
-        if tool is None:
-            tool = ToolRegistry(
-                tenant_id=None,
-                name="Platform SDK",
-                slug=slug,
-                description="SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.",
-                scope=ToolDefinitionScope.GLOBAL,
-                schema=schema,
-                config_schema=config_schema,
-                status=ToolStatus.PUBLISHED,
-                version="1.0.0",
-                implementation_type=ToolImplementationType.ARTIFACT,
-                artifact_id="builtin/platform_sdk",
-                artifact_version="1.0.0",
-                builtin_key="platform_sdk",
-                builtin_template_id=None,
-                is_builtin_template=False,
-                is_active=True,
-                is_system=True,
-                published_at=datetime.utcnow(),
-            )
-            db.add(tool)
-        else:
-            tool.name = "Platform SDK"
-            tool.description = "SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests."
-            tool.scope = ToolDefinitionScope.GLOBAL
-            tool.schema = schema
-            tool.config_schema = config_schema
-            tool.status = ToolStatus.PUBLISHED
-            tool.version = "1.0.0"
-            tool.implementation_type = ToolImplementationType.ARTIFACT
-            tool.artifact_id = "builtin/platform_sdk"
-            tool.artifact_version = "1.0.0"
-            tool.builtin_key = "platform_sdk"
-            tool.builtin_template_id = None
-            tool.is_builtin_template = False
-            tool.is_active = True
-            tool.is_system = True
-            tool.published_at = tool.published_at or datetime.utcnow()
+    if tool is None:
+        tool = ToolRegistry(
+            tenant_id=None,
+            name="Platform SDK",
+            slug="platform-sdk",
+            description="SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.",
+            scope=ToolDefinitionScope.GLOBAL,
+            schema=schema,
+            config_schema=config_schema,
+            status=ToolStatus.PUBLISHED,
+            version="1.0.0",
+            implementation_type=ToolImplementationType.ARTIFACT,
+            artifact_id=str(artifact.id),
+            artifact_version=None,
+            artifact_revision_id=artifact.latest_published_revision_id,
+            builtin_key="platform_sdk",
+            builtin_template_id=None,
+            is_builtin_template=False,
+            is_active=True,
+            is_system=True,
+            published_at=datetime.utcnow(),
+        )
+        db.add(tool)
+    else:
+        tool.name = "Platform SDK"
+        tool.description = "SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests."
+        tool.scope = ToolDefinitionScope.GLOBAL
+        tool.schema = schema
+        tool.config_schema = config_schema
+        tool.status = ToolStatus.PUBLISHED
+        tool.version = "1.0.0"
+        tool.implementation_type = ToolImplementationType.ARTIFACT
+        tool.artifact_id = str(artifact.id)
+        tool.artifact_version = None
+        tool.artifact_revision_id = artifact.latest_published_revision_id
+        tool.builtin_key = "platform_sdk"
+        tool.builtin_template_id = None
+        tool.is_builtin_template = False
+        tool.is_active = True
+        tool.is_system = True
+        tool.published_at = tool.published_at or datetime.utcnow()
 
+    await db.flush()
+    await db.commit()
+    return tool
+
+
+async def _seed_platform_sdk_system_artifact(db, *, input_schema: dict, output_schema: dict):
+    registry = ArtifactRegistryService(db)
+    artifact = await registry.get_system_artifact(system_key="platform_sdk")
+    source_files = _load_platform_sdk_source_files()
+    revision_service = ArtifactRevisionService(db)
+
+    if artifact is None:
+        artifact = await revision_service.create_artifact(
+            tenant_id=None,
+            created_by=None,
+            slug="platform_sdk",
+            display_name="Platform SDK",
+            description="SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.",
+            kind=ArtifactKind.TOOL_IMPL.value,
+            owner_type=ArtifactOwnerType.SYSTEM.value,
+            system_key="platform_sdk",
+            source_files=source_files,
+            entry_module_path="platform_sdk/handler.py",
+            python_dependencies=[],
+            runtime_target="cloudflare_workers",
+            capabilities={"network_access": True, "side_effects": ["control_plane_mutation"]},
+            config_schema={},
+            tool_contract={
+                "input_schema": input_schema,
+                "output_schema": output_schema,
+                "side_effects": ["control_plane_mutation"],
+                "execution_mode": "interactive",
+                "tool_ui": {"icon": "Wrench", "color": "#0ea5e9"},
+            },
+        )
+        await revision_service.publish_latest_draft(artifact)
         await db.flush()
-        await db.commit()
-        return tool
+        return artifact
 
-    await db.rollback()
-    return await _seed_platform_sdk_tool_legacy(db, schema, config_schema, tool_columns, scope_value)
+    current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
+    if current_revision is None:
+        raise RuntimeError("Platform SDK system artifact is missing a revision")
+    await revision_service.update_artifact(
+        artifact,
+        updated_by=None,
+        display_name="Platform SDK",
+        description="SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.",
+        source_files=source_files,
+        entry_module_path="platform_sdk/handler.py",
+        python_dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": True, "side_effects": ["control_plane_mutation"]},
+        config_schema={},
+        tool_contract={
+            "input_schema": input_schema,
+            "output_schema": output_schema,
+            "side_effects": ["control_plane_mutation"],
+            "execution_mode": "interactive",
+            "tool_ui": {"icon": "Wrench", "color": "#0ea5e9"},
+        },
+    )
+    artifact.latest_published_revision_id = None
+    await revision_service.publish_latest_draft(artifact)
+    await db.flush()
+    return artifact
+
+
+def _load_platform_sdk_source_files() -> list[dict[str, str]]:
+    base_dir = Path(__file__).resolve().parents[1] / "system_artifacts" / "platform_sdk"
+    source_files: list[dict[str, str]] = []
+    for path in sorted(base_dir.rglob("*.py")):
+        relative_path = path.relative_to(base_dir.parent).as_posix()
+        source_files.append({"path": relative_path, "content": path.read_text()})
+    return source_files
 
 
 async def seed_builtin_tool_templates(db):
@@ -415,14 +452,21 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
         print("tool_registry missing required columns; skipping platform architect domain tool seed.")
         return {}
 
+    platform_sdk_artifact = await ArtifactRegistryService(db).get_system_artifact(system_key="platform_sdk")
+    if platform_sdk_artifact is None:
+        platform_sdk_tool = await seed_platform_sdk_tool(db)
+        platform_sdk_artifact = await ArtifactRegistryService(db).get_system_artifact(system_key="platform_sdk")
+        if platform_sdk_tool is None or platform_sdk_artifact is None:
+            raise RuntimeError("Platform SDK artifact seed failed")
+
     seeded: dict[str, str] = {}
     for slug, spec in PLATFORM_ARCHITECT_DOMAIN_TOOLS.items():
         schema = build_platform_domain_tool_schema(slug, spec)
         config_schema = {
             "implementation": {
                 "type": "artifact",
-                "artifact_id": "builtin/platform_sdk",
-                "artifact_version": "1.0.0",
+                "artifact_id": str(platform_sdk_artifact.id),
+                "revision_id": str(platform_sdk_artifact.latest_published_revision_id),
             },
             "execution": {
                 "allowed_actions": list(spec["actions"].keys()),
@@ -448,8 +492,9 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
                 status=ToolStatus.PUBLISHED,
                 version="1.0.0",
                 implementation_type=ToolImplementationType.ARTIFACT,
-                artifact_id="builtin/platform_sdk",
-                artifact_version="1.0.0",
+                artifact_id=str(platform_sdk_artifact.id),
+                artifact_version=None,
+                artifact_revision_id=platform_sdk_artifact.latest_published_revision_id,
                 builtin_key=f"platform_architect_{slug.replace('-', '_')}",
                 builtin_template_id=None,
                 is_builtin_template=False,
@@ -467,8 +512,9 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
             tool.status = ToolStatus.PUBLISHED
             tool.version = "1.0.0"
             tool.implementation_type = ToolImplementationType.ARTIFACT
-            tool.artifact_id = "builtin/platform_sdk"
-            tool.artifact_version = "1.0.0"
+            tool.artifact_id = str(platform_sdk_artifact.id)
+            tool.artifact_version = None
+            tool.artifact_revision_id = platform_sdk_artifact.latest_published_revision_id
             tool.builtin_key = f"platform_architect_{slug.replace('-', '_')}"
             tool.builtin_template_id = None
             tool.is_builtin_template = False
@@ -649,93 +695,6 @@ async def _get_table_columns(db, table_name: str) -> set:
         return {row[1] for row in result.all()}
     except Exception:
         return set()
-
-
-async def _seed_platform_sdk_tool_legacy(db, schema: dict, config_schema: dict, columns: set, scope_value: str):
-    if not columns:
-        print("No tool_registry columns available; skipping legacy Platform SDK seed.")
-        return None
-    slug = "platform-sdk"
-    name = "Platform SDK"
-    description = "SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests."
-    now = datetime.utcnow()
-    tool_status_labels = await _get_enum_labels(db, "toolstatus")
-    impl_labels = await _get_enum_labels(db, "toolimplementationtype")
-    status_value = _resolve_enum_value(tool_status_labels, "published")
-    impl_value = _resolve_enum_value(impl_labels, "artifact")
-
-    where_clause = "slug = :slug"
-    if "tenant_id" in columns:
-        where_clause += " AND tenant_id IS NULL"
-
-    select_sql = f"SELECT id FROM tool_registry WHERE {where_clause} LIMIT 1"
-    result = await db.execute(text(select_sql), {"slug": slug})
-    row = result.first()
-
-    values = {
-        "id": uuid.uuid4(),
-        "tenant_id": None,
-        "name": name,
-        "slug": slug,
-        "description": description,
-        "scope": scope_value,
-        "schema": schema,
-        "config_schema": config_schema,
-        "status": status_value,
-        "version": "1.0.0",
-        "implementation_type": impl_value,
-        "published_at": now,
-        "artifact_id": "builtin/platform_sdk",
-        "artifact_version": "1.0.0",
-        "is_active": True,
-        "is_system": True,
-        "created_at": now,
-        "updated_at": now,
-    }
-
-    filtered = {k: v for k, v in values.items() if k in columns}
-    filtered = _coerce_json_columns(filtered)
-    if not filtered:
-        print("No compatible tool_registry columns found; skipping legacy Platform SDK seed.")
-        return None
-
-    if row:
-        tool_id = row[0]
-        updates = []
-        for key in filtered.keys():
-            if key in {"id", "slug", "tenant_id", "created_at"}:
-                continue
-            updates.append(f"{key} = :{key}")
-        if updates:
-            update_sql = f"UPDATE tool_registry SET {', '.join(updates)} WHERE id = :id"
-            params = {**filtered, "id": tool_id}
-            await db.execute(text(update_sql), params)
-        await db.commit()
-        return {"id": tool_id}
-
-    columns_list = list(filtered.keys())
-    placeholders = [f":{col}" for col in columns_list]
-    insert_sql = f"INSERT INTO tool_registry ({', '.join(columns_list)}) VALUES ({', '.join(placeholders)})"
-    await db.execute(text(insert_sql), filtered)
-    await db.commit()
-    return {"id": filtered.get("id")}
-
-
-async def _get_platform_sdk_tool_id(db) -> str | None:
-    tool_columns = await _get_table_columns(db, "tool_registry")
-    where_clause = "slug = :slug"
-    if "tenant_id" in tool_columns:
-        where_clause += " AND tenant_id IS NULL"
-
-    try:
-        if {"id", "slug"}.issubset(tool_columns):
-            result = await db.execute(text(f"SELECT id FROM tool_registry WHERE {where_clause} LIMIT 1"), {"slug": "platform-sdk"})
-            row = result.first()
-            return str(row[0]) if row else None
-    except Exception:
-        return None
-
-    return None
 
 
 async def _seed_platform_architect_agent_legacy(

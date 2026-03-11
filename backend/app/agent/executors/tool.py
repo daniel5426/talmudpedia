@@ -19,7 +19,7 @@ from sqlalchemy.exc import ProgrammingError
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
-from app.db.postgres.models.artifact_runtime import ArtifactRunDomain
+from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRunDomain
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
@@ -890,6 +890,11 @@ class ToolNodeExecutor(BaseNodeExecutor):
             return str(artifact_id), artifact_version
 
         config_schema = getattr(tool, "config_schema", {}) or {}
+        artifact_binding = config_schema.get("artifact_binding") if isinstance(config_schema, dict) else {}
+        if isinstance(artifact_binding, dict):
+            artifact_ref = artifact_binding.get("artifact_id")
+            if artifact_ref:
+                return str(artifact_ref), artifact_binding.get("artifact_version")
         implementation = config_schema.get("implementation") if isinstance(config_schema, dict) else {}
         if isinstance(implementation, dict):
             artifact_ref = implementation.get("artifact_id")
@@ -926,6 +931,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
         artifact = await registry.get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=self.tenant_id)
         if artifact is None:
             raise ValueError("Artifact-backed tool references an artifact outside tenant scope")
+        if artifact.kind != ArtifactKind.TOOL_IMPL:
+            raise ValueError("Artifact-backed tools require a tool_impl artifact")
         revision = artifact.latest_published_revision if require_published else (artifact.latest_draft_revision or artifact.latest_published_revision)
         if revision is None:
             raise ValueError("Artifact-backed tool has no executable revision")
@@ -1151,31 +1158,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 return result
 
             if artifact_id:
-                from app.agent.executors.artifact import ArtifactNodeExecutor
-
-                artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
-                strict_validation = str(artifact_id or "") != "builtin/platform_sdk"
-                artifact_config = {
-                    **config,
-                    "tool_slug": getattr(tool, "slug", None),
-                    "_artifact_id": artifact_id,
-                    "_artifact_version": artifact_version,
-                    "label": tool.name,
-                    "input_mappings": self._build_literal_input_mappings(input_data),
-                    "_strict_validation": strict_validation,
-                    "_literal_inputs": True,
-                }
-                result = await artifact_executor.execute(state, artifact_config, context)
-                enforce_platform_architect_guardrails(
-                    tool_slug=getattr(tool, "slug", None),
-                    tool_result=result,
-                    input_data=input_data,
-                    node_context=context,
-                    emitter=emitter,
-                )
-                if emitter:
-                    emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
-                return result
+                raise ValueError("Artifact-backed tools require a UUID artifact id")
 
             if impl_type == "artifact" and implementation_config.get("artifact_id"):
                 implementation_artifact_id = str(implementation_config.get("artifact_id"))
@@ -1196,31 +1179,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                         emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
                     return result
 
-                from app.agent.executors.artifact import ArtifactNodeExecutor
-
-                artifact_executor = ArtifactNodeExecutor(self.tenant_id, self.db)
-                strict_validation = implementation_artifact_id != "builtin/platform_sdk"
-                artifact_config = {
-                    **config,
-                    "tool_slug": getattr(tool, "slug", None),
-                    "_artifact_id": implementation_artifact_id,
-                    "_artifact_version": implementation_config.get("artifact_version"),
-                    "label": tool.name,
-                    "input_mappings": self._build_literal_input_mappings(input_data),
-                    "_strict_validation": strict_validation,
-                    "_literal_inputs": True,
-                }
-                result = await artifact_executor.execute(state, artifact_config, context)
-                enforce_platform_architect_guardrails(
-                    tool_slug=getattr(tool, "slug", None),
-                    tool_result=result,
-                    input_data=input_data,
-                    node_context=context,
-                    emitter=emitter,
-                )
-                if emitter:
-                    emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
-                return result
+                raise ValueError("Artifact-backed tools require a UUID artifact id")
 
             output_data = await self._execute_builtin_dispatch(
                 tool=tool,

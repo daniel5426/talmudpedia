@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List
 from uuid import UUID
 
+from app.db.postgres.models.artifact_runtime import ArtifactKind
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +37,8 @@ async def sync_custom_operators(db: AsyncSession, tenant_id: UUID) -> list[Opera
             tenant_id=tenant_id,
             custom_operator_id=op.id,
         )
+        if artifact is not None and artifact.kind != ArtifactKind.RAG_OPERATOR:
+            artifact = None
         specs.append(
             OperatorSpec(
                 operator_id=op.name,

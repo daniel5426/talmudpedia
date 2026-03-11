@@ -1135,21 +1135,8 @@ class OperatorRegistry:
         for op in OUTPUT_OPERATORS.values():
             self._operators[op.operator_id] = op
         
-        # Load artifacts from filesystem
-        self._load_artifact_operators()
-    
     def _load_artifact_operators(self):
-        """Load operators from the ArtifactRegistryService."""
-        try:
-            from app.services.artifact_registry import get_artifact_registry
-            artifact_registry = get_artifact_registry()
-            artifacts = artifact_registry.get_all_artifacts()
-            for artifact_id, spec in artifacts.items():
-                # Artifacts can override built-in operators of the same ID
-                self._operators[artifact_id] = spec
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Failed to load artifact operators: {e}")
+        return None
 
     def register(self, spec: OperatorSpec):
         """Register a new operator."""

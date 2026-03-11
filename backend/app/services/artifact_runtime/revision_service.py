@@ -6,7 +6,13 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres.models.artifact_runtime import Artifact, ArtifactRevision, ArtifactScope, ArtifactStatus
+from app.db.postgres.models.artifact_runtime import (
+    Artifact,
+    ArtifactKind,
+    ArtifactOwnerType,
+    ArtifactRevision,
+    ArtifactStatus,
+)
 
 from .source_utils import normalize_artifact_source, source_tree_hash
 
@@ -18,26 +24,33 @@ class ArtifactRevisionService:
     async def create_artifact(
         self,
         *,
-        tenant_id: UUID,
+        tenant_id: UUID | None,
         created_by: UUID | None,
-        name: str,
+        slug: str,
         display_name: str,
         description: str | None,
-        category: str,
-        scope: str,
-        input_type: str,
-        output_type: str,
+        kind: str,
+        owner_type: str = "tenant",
+        system_key: str | None = None,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
         python_dependencies: list[str],
-        config_schema: list[dict[str, Any]],
-        inputs: list[dict[str, Any]],
-        outputs: list[dict[str, Any]],
-        reads: list[str],
-        writes: list[str],
+        runtime_target: str,
+        capabilities: dict[str, Any],
+        config_schema: dict[str, Any],
+        agent_contract: dict[str, Any] | None = None,
+        rag_contract: dict[str, Any] | None = None,
+        tool_contract: dict[str, Any] | None = None,
     ) -> Artifact:
         artifact_id = uuid4()
-        scope_value = self._normalize_scope(scope)
+        kind_value = self._normalize_kind(kind)
+        owner_type_value = self._normalize_owner_type(owner_type)
+        self._validate_contracts(
+            kind=kind_value,
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
+        )
         source = normalize_artifact_source(
             source_files=source_files,
             entry_module_path=entry_module_path,
@@ -45,15 +58,14 @@ class ArtifactRevisionService:
         artifact = Artifact(
             id=artifact_id,
             tenant_id=tenant_id,
-            slug=name,
+            slug=slug,
             display_name=display_name,
             description=description,
-            category=category,
-            input_type=input_type,
-            output_type=output_type,
-            scope=scope_value,
+            kind=kind_value,
+            owner_type=owner_type_value,
             status=ArtifactStatus.DRAFT,
             created_by=created_by,
+            system_key=system_key,
         )
         self._db.add(artifact)
         await self._db.flush()
@@ -66,18 +78,16 @@ class ArtifactRevisionService:
             is_ephemeral=False,
             display_name=display_name,
             description=description,
-            category=category,
-            input_type=input_type,
-            output_type=output_type,
-            scope=scope_value,
+            kind=kind_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
             python_dependencies=python_dependencies,
+            runtime_target=runtime_target,
+            capabilities=capabilities,
             config_schema=config_schema,
-            inputs=inputs,
-            outputs=outputs,
-            reads=reads,
-            writes=writes,
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
             created_by=created_by,
         )
         self._db.add(revision)
@@ -94,30 +104,28 @@ class ArtifactRevisionService:
         updated_by: UUID | None,
         display_name: str,
         description: str | None,
-        category: str,
-        scope: str,
-        input_type: str,
-        output_type: str,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
         python_dependencies: list[str],
-        config_schema: list[dict[str, Any]],
-        inputs: list[dict[str, Any]],
-        outputs: list[dict[str, Any]],
-        reads: list[str],
-        writes: list[str],
+        runtime_target: str,
+        capabilities: dict[str, Any],
+        config_schema: dict[str, Any],
+        agent_contract: dict[str, Any] | None = None,
+        rag_contract: dict[str, Any] | None = None,
+        tool_contract: dict[str, Any] | None = None,
     ) -> ArtifactRevision:
         source = normalize_artifact_source(
             source_files=source_files,
             entry_module_path=entry_module_path,
         )
-        scope_value = self._normalize_scope(scope)
+        self._validate_contracts(
+            kind=artifact.kind,
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
+        )
         artifact.display_name = display_name
         artifact.description = description
-        artifact.category = category
-        artifact.scope = scope_value
-        artifact.input_type = input_type
-        artifact.output_type = output_type
         revision = self._build_revision(
             artifact_id=artifact.id,
             tenant_id=artifact.tenant_id,
@@ -127,18 +135,67 @@ class ArtifactRevisionService:
             is_ephemeral=False,
             display_name=display_name,
             description=description,
-            category=category,
-            input_type=input_type,
-            output_type=output_type,
-            scope=scope_value,
+            kind=artifact.kind,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
             python_dependencies=python_dependencies,
+            runtime_target=runtime_target,
+            capabilities=capabilities,
             config_schema=config_schema,
-            inputs=inputs,
-            outputs=outputs,
-            reads=reads,
-            writes=writes,
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
+            created_by=updated_by,
+        )
+        self._db.add(revision)
+        await self._db.flush()
+        artifact.latest_draft_revision_id = revision.id
+        artifact.latest_draft_revision = revision
+        await self._db.flush()
+        return revision
+
+    async def convert_kind(
+        self,
+        artifact: Artifact,
+        *,
+        updated_by: UUID | None,
+        kind: str,
+        agent_contract: dict[str, Any] | None = None,
+        rag_contract: dict[str, Any] | None = None,
+        tool_contract: dict[str, Any] | None = None,
+    ) -> ArtifactRevision:
+        if artifact.latest_published_revision_id is not None:
+            raise ValueError("Published artifacts cannot change kind in place")
+        target_kind = self._normalize_kind(kind)
+        self._validate_contracts(
+            kind=target_kind,
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
+        )
+        current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
+        if current_revision is None:
+            raise ValueError("Artifact is missing a current revision")
+        artifact.kind = target_kind
+        revision = self._build_revision(
+            artifact_id=artifact.id,
+            tenant_id=artifact.tenant_id,
+            revision_number=await self._next_revision_number(artifact.id),
+            version_label="draft",
+            is_published=False,
+            is_ephemeral=False,
+            display_name=artifact.display_name,
+            description=artifact.description,
+            kind=target_kind,
+            source_files=list(current_revision.source_files or []),
+            entry_module_path=current_revision.entry_module_path,
+            python_dependencies=list(current_revision.python_dependencies or []),
+            runtime_target=str(current_revision.runtime_target or "cloudflare_workers"),
+            capabilities=dict(current_revision.capabilities or {}),
+            config_schema=dict(current_revision.config_schema or {}),
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
             created_by=updated_by,
         )
         self._db.add(revision)
@@ -151,27 +208,32 @@ class ArtifactRevisionService:
     async def create_ephemeral_revision(
         self,
         *,
-        tenant_id: UUID,
+        tenant_id: UUID | None,
         created_by: UUID | None,
         artifact: Artifact | None,
         display_name: str,
         description: str | None,
-        category: str,
-        scope: str,
-        input_type: str,
-        output_type: str,
+        kind: str,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
         python_dependencies: list[str],
-        config_schema: list[dict[str, Any]],
-        inputs: list[dict[str, Any]],
-        outputs: list[dict[str, Any]],
-        reads: list[str],
-        writes: list[str],
+        runtime_target: str,
+        capabilities: dict[str, Any],
+        config_schema: dict[str, Any],
+        agent_contract: dict[str, Any] | None = None,
+        rag_contract: dict[str, Any] | None = None,
+        tool_contract: dict[str, Any] | None = None,
     ) -> ArtifactRevision:
         source = normalize_artifact_source(
             source_files=source_files,
             entry_module_path=entry_module_path,
+        )
+        kind_value = self._normalize_kind(kind)
+        self._validate_contracts(
+            kind=kind_value,
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
         )
         revision = self._build_revision(
             artifact_id=artifact.id if artifact else None,
@@ -182,18 +244,16 @@ class ArtifactRevisionService:
             is_ephemeral=True,
             display_name=display_name,
             description=description,
-            category=category,
-            input_type=input_type,
-            output_type=output_type,
-            scope=self._normalize_scope(scope),
+            kind=kind_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
             python_dependencies=python_dependencies,
+            runtime_target=runtime_target,
+            capabilities=capabilities,
             config_schema=config_schema,
-            inputs=inputs,
-            outputs=outputs,
-            reads=reads,
-            writes=writes,
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
             created_by=created_by,
         )
         self._db.add(revision)
@@ -226,25 +286,23 @@ class ArtifactRevisionService:
         self,
         *,
         artifact_id: UUID | None,
-        tenant_id: UUID,
+        tenant_id: UUID | None,
         revision_number: int,
         version_label: str,
         is_published: bool,
         is_ephemeral: bool,
         display_name: str,
         description: str | None,
-        category: str,
-        input_type: str,
-        output_type: str,
-        scope: ArtifactScope,
+        kind: ArtifactKind,
         source_files: list[dict[str, str]],
         entry_module_path: str,
         python_dependencies: list[str],
-        config_schema: list[dict[str, Any]],
-        inputs: list[dict[str, Any]],
-        outputs: list[dict[str, Any]],
-        reads: list[str],
-        writes: list[str],
+        runtime_target: str,
+        capabilities: dict[str, Any],
+        config_schema: dict[str, Any],
+        agent_contract: dict[str, Any] | None,
+        rag_contract: dict[str, Any] | None,
+        tool_contract: dict[str, Any] | None,
         created_by: UUID | None,
     ) -> ArtifactRevision:
         build_hash = source_tree_hash(
@@ -262,27 +320,23 @@ class ArtifactRevisionService:
             is_ephemeral=is_ephemeral,
             display_name=display_name,
             description=description,
-            category=category,
-            input_type=input_type,
-            output_type=output_type,
-            scope=scope,
+            kind=kind,
             source_files=list(source_files or []),
             entry_module_path=entry_module_path,
             manifest_json=self._build_manifest(
                 artifact_id=artifact_id,
-                scope=scope,
-                category=category,
-                input_type=input_type,
-                output_type=output_type,
+                kind=kind,
                 python_dependencies=python_dependencies,
                 entry_module_path=entry_module_path,
+                runtime_target=runtime_target,
             ),
             python_dependencies=list(python_dependencies or []),
-            config_schema=list(config_schema or []),
-            inputs=list(inputs or []),
-            outputs=list(outputs or []),
-            reads=list(reads or []),
-            writes=list(writes or []),
+            runtime_target=runtime_target or "cloudflare_workers",
+            capabilities=dict(capabilities or {}),
+            config_schema=dict(config_schema or {}),
+            agent_contract=dict(agent_contract or {}) if agent_contract is not None else None,
+            rag_contract=dict(rag_contract or {}) if rag_contract is not None else None,
+            tool_contract=dict(tool_contract or {}) if tool_contract is not None else None,
             created_by=created_by,
             build_hash=build_hash,
             bundle_hash=build_hash,
@@ -292,30 +346,47 @@ class ArtifactRevisionService:
         )
 
     @staticmethod
-    def _normalize_scope(scope: str | ArtifactScope) -> ArtifactScope:
-        raw = getattr(scope, "value", scope)
-        try:
-            return ArtifactScope(str(raw or "rag").strip().lower())
-        except Exception:
-            return ArtifactScope.RAG
+    def _normalize_kind(kind: str | ArtifactKind) -> ArtifactKind:
+        raw = getattr(kind, "value", kind)
+        return ArtifactKind(str(raw or ArtifactKind.RAG_OPERATOR.value).strip().lower())
+
+    @staticmethod
+    def _normalize_owner_type(owner_type: str | ArtifactOwnerType) -> ArtifactOwnerType:
+        raw = getattr(owner_type, "value", owner_type)
+        return ArtifactOwnerType(str(raw or ArtifactOwnerType.TENANT.value).strip().lower())
+
+    @staticmethod
+    def _validate_contracts(
+        *,
+        kind: ArtifactKind,
+        agent_contract: dict[str, Any] | None,
+        rag_contract: dict[str, Any] | None,
+        tool_contract: dict[str, Any] | None,
+    ) -> None:
+        if kind == ArtifactKind.AGENT_NODE:
+            if agent_contract is None or rag_contract is not None or tool_contract is not None:
+                raise ValueError("agent_node artifacts require only agent_contract")
+            return
+        if kind == ArtifactKind.RAG_OPERATOR:
+            if rag_contract is None or agent_contract is not None or tool_contract is not None:
+                raise ValueError("rag_operator artifacts require only rag_contract")
+            return
+        if tool_contract is None or agent_contract is not None or rag_contract is not None:
+            raise ValueError("tool_impl artifacts require only tool_contract")
 
     @staticmethod
     def _build_manifest(
         *,
         artifact_id: UUID | None,
-        scope: str | ArtifactScope,
-        category: str,
-        input_type: str,
-        output_type: str,
+        kind: ArtifactKind,
         python_dependencies: list[str],
         entry_module_path: str,
+        runtime_target: str,
     ) -> dict[str, Any]:
         return {
             "artifact_id": str(artifact_id) if artifact_id else None,
-            "scope": getattr(scope, "value", scope),
-            "category": category,
-            "input_type": input_type,
-            "output_type": output_type,
+            "kind": kind.value,
             "python_dependencies": list(python_dependencies or []),
             "entry_module_path": entry_module_path,
+            "runtime_target": runtime_target,
         }

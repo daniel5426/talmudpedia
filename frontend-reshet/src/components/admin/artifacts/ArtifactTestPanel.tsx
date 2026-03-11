@@ -8,11 +8,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CodeEditor } from "@/components/ui/code-editor"
 import { cn } from "@/lib/utils"
 import {
+  AgentArtifactContract,
+  ArtifactCapabilityConfig,
+  ArtifactKind,
   ArtifactRun,
   ArtifactRunEvent,
   ArtifactSourceFile,
+  RAGArtifactContract,
   artifactsService,
   ArtifactTestResponse,
+  ToolArtifactContract,
 } from "@/services/artifacts"
 import {
   CheckCircle2,
@@ -29,8 +34,13 @@ interface ArtifactTestPanelProps {
   artifactId?: string
   sourceFiles?: ArtifactSourceFile[]
   entryModulePath?: string
-  inputType: string
-  outputType: string
+  kind: ArtifactKind
+  runtimeTarget: string
+  capabilities: ArtifactCapabilityConfig
+  configSchema: Record<string, unknown>
+  agentContract?: AgentArtifactContract | null
+  ragContract?: RAGArtifactContract | null
+  toolContract?: ToolArtifactContract | null
   onOpenChange?: (isOpen: boolean) => void
 }
 
@@ -53,8 +63,9 @@ function formatPhase(event: ArtifactRunEvent | null): string {
 
 function summarizeFailure(run: ArtifactRun | null): string {
   if (!run) return "Artifact test run failed"
+  const errorPayload = (run.error_payload || {}) as Record<string, unknown>
   return (
-    run.error_payload?.message ||
+    (typeof errorPayload.message === "string" ? errorPayload.message : null) ||
     run.stderr_excerpt ||
     run.stdout_excerpt ||
     "Artifact test run failed"
@@ -66,8 +77,13 @@ export function ArtifactTestPanel({
   artifactId,
   sourceFiles,
   entryModulePath,
-  inputType,
-  outputType,
+  kind,
+  runtimeTarget,
+  capabilities,
+  configSchema,
+  agentContract,
+  ragContract,
+  toolContract,
   onOpenChange,
 }: ArtifactTestPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
@@ -198,8 +214,13 @@ export function ArtifactTestPanel({
           entry_module_path: entryModulePath,
           input_data: inputData,
           config,
-          input_type: inputType,
-          output_type: outputType,
+          kind,
+          runtime_target: runtimeTarget,
+          capabilities: capabilities as Record<string, unknown>,
+          config_schema: configSchema,
+          agent_contract: agentContract || undefined,
+          rag_contract: ragContract || undefined,
+          tool_contract: toolContract || undefined,
         },
         tenantSlug
       )
@@ -397,9 +418,9 @@ export function ArtifactTestPanel({
                                   <span className="text-foreground">{formatPhase(event)}</span>
                                   <span className="text-[10px] text-muted-foreground">#{event.sequence}</span>
                                 </div>
-                                {event.payload?.data && (
+                                {event.payload && "data" in event.payload && (
                                   <pre className="mt-2 whitespace-pre-wrap text-[11px] text-muted-foreground">
-                                    {JSON.stringify(event.payload.data, null, 2)}
+                                    {JSON.stringify((event.payload as Record<string, unknown>).data, null, 2)}
                                   </pre>
                                 )}
                               </div>
@@ -425,9 +446,9 @@ export function ArtifactTestPanel({
                             <span className="text-foreground">{formatPhase(event)}</span>
                             <span className="text-[10px] text-muted-foreground">#{event.sequence}</span>
                           </div>
-                          {event.payload?.data && (
+                          {event.payload && "data" in event.payload && (
                             <pre className="mt-2 whitespace-pre-wrap text-[11px] text-muted-foreground">
-                              {JSON.stringify(event.payload.data, null, 2)}
+                              {JSON.stringify((event.payload as Record<string, unknown>).data, null, 2)}
                             </pre>
                           )}
                         </div>

@@ -1427,19 +1427,12 @@ class ExecutorRegistry:
         """Create an executor instance for an operator.
         
         Routing order:
-        1. Artifacts (file-based operators from /backend/artifacts)
+        1. Runtime artifacts (DB-stored artifact revisions)
         2. Custom operators (DB-stored python_code)
         3. Built-in executors (hardcoded in ExecutorRegistry)
         """
         if spec.artifact_id:
             return ArtifactRuntimeExecutor(spec)
-
-        # Check if this operator is an artifact
-        from app.services.artifact_registry import get_artifact_registry
-        artifact_registry = get_artifact_registry()
-        
-        if artifact_registry.get_artifact(spec.operator_id, spec.version):
-            return ArtifactExecutor(spec, spec.operator_id, spec.version)
 
         
         # Custom operators with inline code

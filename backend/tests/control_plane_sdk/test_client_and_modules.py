@@ -128,24 +128,20 @@ def test_agents_update_uses_patch_route_by_default() -> None:
     assert call["url"].endswith("/agents/agent-1")
 
 
-def test_artifact_promote_serialization_includes_tenant_slug_and_version() -> None:
-    session = _RecordingSession(_FakeResponse(payload={"artifact_id": "custom/demo:1.0.0"}))
+def test_artifact_publish_serialization_includes_tenant_slug() -> None:
+    session = _RecordingSession(_FakeResponse(payload={"artifact_id": "draft-1"}))
     client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
 
-    client.artifacts.promote(
+    client.artifacts.publish(
         "draft-1",
-        namespace="custom",
-        version="1.0.0",
         tenant_slug="tenant-a",
         options={"idempotency_key": "idem-promote"},
     )
 
     call = session.calls[0]
     assert call["method"] == "POST"
-    assert call["url"].endswith("/admin/artifacts/draft-1/promote")
+    assert call["url"].endswith("/admin/artifacts/draft-1/publish")
     assert call["params"]["tenant_slug"] == "tenant-a"
-    assert call["json"]["namespace"] == "custom"
-    assert call["json"]["version"] == "1.0.0"
     assert call["headers"]["X-Idempotency-Key"] == "idem-promote"
 
 

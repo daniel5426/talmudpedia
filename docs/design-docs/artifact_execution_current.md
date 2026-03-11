@@ -86,7 +86,8 @@ Current code already routes these live surfaces into the shared artifact runtime
 The more accurate current statement is:
 - the shared artifact runtime is already used by test runs and several live execution paths
 - tenant artifacts execute on Cloudflare Workers-compatible runtime paths
-- repo builtin artifacts still remain on their separate backend-local path
+- `platform_sdk` is seeded as a system-owned artifact inside the same revision/runtime model
+- repo-backed runtime artifact execution paths have been removed from the canonical control plane
 
 ## Current Runtime Flow
 

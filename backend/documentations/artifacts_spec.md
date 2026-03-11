@@ -23,10 +23,9 @@ Current run endpoints:
 - `GET /admin/artifact-runs/{run_id}/events`
 - `POST /admin/artifact-runs/{run_id}/cancel`
 
-Legacy wrapper endpoint kept over the run-based path:
-- `POST /admin/artifacts/test`
-
-That legacy endpoint still routes through the same run-based runtime.
+Current artifact lifecycle endpoints:
+- `POST /admin/artifacts/{artifact_id}/publish`
+- `POST /admin/artifacts/{artifact_id}/convert-kind`
 
 ### Publish
 
@@ -70,11 +69,9 @@ Artifact-backed RAG operators now execute through the shared runtime with publis
 
 This domain currently has some intentional overlap between legacy and new systems.
 
-### 1. Filesystem versus revision-backed storage
+### 1. System versus tenant ownership
 
-Builtin artifacts are still repo-backed and scanned from disk.
-
-Tenant artifacts are now revision-backed in Postgres.
+Artifacts are revision-backed in Postgres for both tenant-owned and system-owned cases.
 
 ### 2. Legacy operator language versus artifact language
 
@@ -82,28 +79,27 @@ Some older docs and code still use "custom operator" terminology, especially for
 
 The current canonical domain term should be "artifact" for the shared system.
 
-### 3. Scope model drift
+### 3. Kind model hard cut
 
-The platform model already recognizes `tool` as an artifact scope in code and manifests.
-
-Older docs and parts of the historical API language were narrower and focused on `rag` and `agent`.
+The canonical model is now explicit `kind` discrimination:
+- `agent_node`
+- `rag_operator`
+- `tool_impl`
 
 ### 4. Runtime migration status
 
 Artifact-page testing and the main live tenant Agent/Tool/RAG paths now use the shared runtime.
 
 Remaining migration scope is mostly:
-- builtin repo artifacts
 - older terminology/docs that still say custom operator or DifySandbox
 - temporary free-plan runtime mode versus the intended Workers for Platforms production mode
 
 ## Current Limitations
 
-- builtin repo artifacts are not yet migrated into runtime revision tables
 - tenant artifact execution now depends on Cloudflare Workers-compatible Python/runtime constraints
 - queue fairness remains queue-class based rather than governed by a dedicated scheduler
 - backend secret-broker and outbound-policy hardening still need deeper end-to-end coverage
-- the platform still carries some legacy custom-operator concepts and routes during migration
+- the platform still carries some legacy custom-operator terminology during migration
 
 ## Canonical Direction
 

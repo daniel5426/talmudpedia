@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 import pytest
 
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 from app.services.platform_architect_guardrails import (
     PlatformArchitectBlockedError,
     enforce_platform_architect_guardrails,

@@ -1,122 +1,180 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from __future__ import annotations
+
 from datetime import datetime
-import uuid
 from enum import Enum
+from typing import Any, Dict, Literal, Optional
+
+from pydantic import BaseModel, Field, model_validator
+
 
 class ArtifactType(str, Enum):
     DRAFT = "draft"
-    PROMOTED = "promoted"
-    BUILTIN = "builtin"
-
-class ArtifactScope(str, Enum):
-    RAG = "rag"
-    AGENT = "agent"
-    BOTH = "both"
-    TOOL = "tool"
-
-class ArtifactConfigField(BaseModel):
-    name: str
-    type: str # string, integer, float, boolean, json, select, etc.
-    label: Optional[str] = None
-    required: bool = False
-    default: Any = None
-    description: Optional[str] = None
-    options: Optional[List[Any]] = None
-    placeholder: Optional[str] = None
+    PUBLISHED = "published"
 
 
-class ArtifactInputField(BaseModel):
-    """Defines an expected input field for an artifact."""
-    name: str
-    type: str  # string, object, array, raw_documents, message, etc.
-    required: bool = False
-    default: Any = None
-    description: Optional[str] = None
-    
+class ArtifactKind(str, Enum):
+    AGENT_NODE = "agent_node"
+    RAG_OPERATOR = "rag_operator"
+    TOOL_IMPL = "tool_impl"
 
-class ArtifactOutputField(BaseModel):
-    """Defines an output field produced by an artifact."""
-    name: str
-    type: str  # string, object, array, normalized_documents, etc.
-    description: Optional[str] = None
+
+class ArtifactOwnerType(str, Enum):
+    TENANT = "tenant"
+    SYSTEM = "system"
 
 
 class ArtifactSourceFile(BaseModel):
     path: str
     content: str
 
+
+class ArtifactRuntimeConfig(BaseModel):
+    source_files: list[ArtifactSourceFile]
+    entry_module_path: str
+    python_dependencies: list[str] = Field(default_factory=list)
+    runtime_target: str = "cloudflare_workers"
+
+
+class ArtifactCapabilityConfig(BaseModel):
+    network_access: bool = False
+    allowed_hosts: list[str] = Field(default_factory=list)
+    secret_refs: list[str] = Field(default_factory=list)
+    storage_access: list[str] = Field(default_factory=list)
+    side_effects: list[str] = Field(default_factory=list)
+
+
+class AgentArtifactContract(BaseModel):
+    state_reads: list[str] = Field(default_factory=list)
+    state_writes: list[str] = Field(default_factory=list)
+    input_schema: Dict[str, Any] = Field(default_factory=dict)
+    output_schema: Dict[str, Any] = Field(default_factory=dict)
+    node_ui: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RAGArtifactContract(BaseModel):
+    operator_category: str
+    pipeline_role: str
+    input_schema: Dict[str, Any] = Field(default_factory=dict)
+    output_schema: Dict[str, Any] = Field(default_factory=dict)
+    execution_mode: str = "background"
+
+
+class ToolArtifactContract(BaseModel):
+    input_schema: Dict[str, Any] = Field(default_factory=dict)
+    output_schema: Dict[str, Any] = Field(default_factory=dict)
+    side_effects: list[str] = Field(default_factory=list)
+    execution_mode: str = "interactive"
+    tool_ui: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactContractEnvelope(BaseModel):
+    kind: ArtifactKind
+    agent_contract: Optional[AgentArtifactContract] = None
+    rag_contract: Optional[RAGArtifactContract] = None
+    tool_contract: Optional[ToolArtifactContract] = None
+
+    @model_validator(mode="after")
+    def validate_contract_shape(self) -> "ArtifactContractEnvelope":
+        if self.kind == ArtifactKind.AGENT_NODE:
+            if self.agent_contract is None or self.rag_contract is not None or self.tool_contract is not None:
+                raise ValueError("agent_node artifacts require only agent_contract")
+        elif self.kind == ArtifactKind.RAG_OPERATOR:
+            if self.rag_contract is None or self.agent_contract is not None or self.tool_contract is not None:
+                raise ValueError("rag_operator artifacts require only rag_contract")
+        elif self.kind == ArtifactKind.TOOL_IMPL:
+            if self.tool_contract is None or self.agent_contract is not None or self.rag_contract is not None:
+                raise ValueError("tool_impl artifacts require only tool_contract")
+        return self
+
+
 class ArtifactSchema(BaseModel):
-    id: str  # UUID for drafts, string slug for promoted/builtin
-    name: str # The internal slug name
+    id: str
+    slug: str
     display_name: str
     description: Optional[str] = None
-    category: str
-    input_type: str
-    output_type: str
-    version: str
+    kind: ArtifactKind
+    owner_type: ArtifactOwnerType
     type: ArtifactType
-    scope: ArtifactScope
-    author: Optional[str] = None
-    tags: List[str] = []
-    config_schema: List[Dict[str, Any]] = [] # Flexible list of config fields
+    version: str
+    config_schema: Dict[str, Any] = Field(default_factory=dict)
+    runtime: ArtifactRuntimeConfig
+    capabilities: ArtifactCapabilityConfig = Field(default_factory=ArtifactCapabilityConfig)
+    agent_contract: Optional[AgentArtifactContract] = None
+    rag_contract: Optional[RAGArtifactContract] = None
+    tool_contract: Optional[ToolArtifactContract] = None
     created_at: Optional[datetime] = None
     updated_at: datetime
-    source_files: List[ArtifactSourceFile] = []
-    entry_module_path: Optional[str] = None
-    reads: List[str] = []
-    writes: List[str] = []
-    dependencies: List[str] = []
-    
-    # Input/output field definitions for field mapping
-    inputs: List[Dict[str, Any]] = []  # List of ArtifactInputField dicts
-    outputs: List[Dict[str, Any]] = [] # List of ArtifactOutputField dicts
-    
-    # For promoted artifacts
-    path: Optional[str] = None 
-    
+    system_key: Optional[str] = None
+    author: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+
+
 class ArtifactCreate(BaseModel):
-    name: str
+    slug: str
     display_name: str
     description: Optional[str] = None
-    category: str = "custom"
-    input_type: str = "raw_documents"
-    output_type: str = "raw_documents"
-    scope: ArtifactScope = ArtifactScope.RAG
-    source_files: List[ArtifactSourceFile]
-    entry_module_path: str
-    config_schema: List[Dict[str, Any]] = []
-    reads: List[str] = []
-    writes: List[str] = []
-    dependencies: List[str] = []
-    inputs: List[Dict[str, Any]] = []
-    outputs: List[Dict[str, Any]] = []
+    kind: ArtifactKind
+    runtime: ArtifactRuntimeConfig
+    capabilities: ArtifactCapabilityConfig = Field(default_factory=ArtifactCapabilityConfig)
+    config_schema: Dict[str, Any] = Field(default_factory=dict)
+    agent_contract: Optional[AgentArtifactContract] = None
+    rag_contract: Optional[RAGArtifactContract] = None
+    tool_contract: Optional[ToolArtifactContract] = None
+
+    @model_validator(mode="after")
+    def validate_contracts(self) -> "ArtifactCreate":
+        ArtifactContractEnvelope(
+            kind=self.kind,
+            agent_contract=self.agent_contract,
+            rag_contract=self.rag_contract,
+            tool_contract=self.tool_contract,
+        )
+        return self
+
 
 class ArtifactUpdate(BaseModel):
     display_name: Optional[str] = None
     description: Optional[str] = None
-    category: Optional[str] = None
-    input_type: Optional[str] = None
-    output_type: Optional[str] = None
-    scope: Optional[ArtifactScope] = None
-    source_files: Optional[List[ArtifactSourceFile]] = None
-    entry_module_path: Optional[str] = None
-    config_schema: Optional[List[Dict[str, Any]]] = None
-    reads: Optional[List[str]] = None
-    writes: Optional[List[str]] = None
-    dependencies: Optional[List[str]] = None
-    inputs: Optional[List[Dict[str, Any]]] = None
-    outputs: Optional[List[Dict[str, Any]]] = None
+    runtime: Optional[ArtifactRuntimeConfig] = None
+    capabilities: Optional[ArtifactCapabilityConfig] = None
+    config_schema: Optional[Dict[str, Any]] = None
+    agent_contract: Optional[AgentArtifactContract] = None
+    rag_contract: Optional[RAGArtifactContract] = None
+    tool_contract: Optional[ToolArtifactContract] = None
+
+
+class ArtifactConvertKindRequest(BaseModel):
+    kind: ArtifactKind
+    agent_contract: Optional[AgentArtifactContract] = None
+    rag_contract: Optional[RAGArtifactContract] = None
+    tool_contract: Optional[ToolArtifactContract] = None
+
+    @model_validator(mode="after")
+    def validate_contracts(self) -> "ArtifactConvertKindRequest":
+        ArtifactContractEnvelope(
+            kind=self.kind,
+            agent_contract=self.agent_contract,
+            rag_contract=self.rag_contract,
+            tool_contract=self.tool_contract,
+        )
+        return self
+
 
 class ArtifactTestRequest(BaseModel):
-    artifact_id: Optional[str] = None # If testing existing one
-    source_files: List[ArtifactSourceFile] = []
+    artifact_id: Optional[str] = None
+    source_files: list[ArtifactSourceFile] = Field(default_factory=list)
     entry_module_path: Optional[str] = None
     input_data: Any
-    config: Dict[str, Any] = {}
-    dependencies: List[str] = []
-    input_type: str = "raw_documents"
-    output_type: str = "raw_documents"
+    config: Dict[str, Any] = Field(default_factory=dict)
+    dependencies: list[str] = Field(default_factory=list)
+    kind: Optional[ArtifactKind] = None
+    runtime_target: Optional[str] = None
+    capabilities: Dict[str, Any] = Field(default_factory=dict)
+    config_schema: Dict[str, Any] = Field(default_factory=dict)
+    agent_contract: Optional[AgentArtifactContract] = None
+    rag_contract: Optional[RAGArtifactContract] = None
+    tool_contract: Optional[ToolArtifactContract] = None
+
 
 class ArtifactTestResponse(BaseModel):
     success: bool
@@ -128,9 +186,12 @@ class ArtifactTestResponse(BaseModel):
     stdout_excerpt: Optional[str] = None
     stderr_excerpt: Optional[str] = None
 
-class ArtifactPromoteRequest(BaseModel):
-    namespace: str = "custom"
-    version: Optional[str] = None
+
+class ArtifactPublishResponse(BaseModel):
+    artifact_id: str
+    revision_id: str
+    version: str
+    status: Literal["published"] = "published"
 
 
 class ArtifactRunStatus(str, Enum):

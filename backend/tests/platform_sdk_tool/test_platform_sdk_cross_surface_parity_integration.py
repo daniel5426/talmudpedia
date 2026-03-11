@@ -7,7 +7,7 @@ from typing import Any, Dict
 import pytest
 import requests
 
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 from talmudpedia_control_sdk import ControlPlaneClient
 
 
@@ -664,26 +664,25 @@ def test_cross_surface_artifacts_promote_parity() -> None:
         )["context"]["result"]).get("id"))
 
         ui_promote = requests.post(
-            f"{base_url}/admin/artifacts/{ui_artifact_id}/promote",
-            json={"namespace": "custom"},
+            f"{base_url}/admin/artifacts/{ui_artifact_id}/publish",
             headers=headers,
             timeout=30,
         )
         if ui_promote.status_code >= 400:
-            pytest.skip(f"Artifacts promote endpoint unavailable: {ui_promote.status_code} {ui_promote.text}")
+            pytest.skip(f"Artifacts publish endpoint unavailable: {ui_promote.status_code} {ui_promote.text}")
         ui_promoted_id = str(_unwrap_data(ui_promote.json()).get("artifact_id"))
 
-        sdk_promoted_id = str(_unwrap_data(sdk_client.artifacts.promote(sdk_artifact_id, namespace="custom")).get("artifact_id"))
+        sdk_promoted_id = str(_unwrap_data(sdk_client.artifacts.publish(sdk_artifact_id)).get("artifact_id"))
         tool_promote = handler.execute(
             state={},
             config={},
             context={
                 "inputs": {
-                    "action": "artifacts.promote",
+                    "action": "artifacts.publish",
                     "tenant_id": tenant_id,
                     "token": api_key,
                     "base_url": base_url,
-                    "payload": {"artifact_id": tool_artifact_id, "namespace": "custom"},
+                    "payload": {"artifact_id": tool_artifact_id},
                 }
             },
         )

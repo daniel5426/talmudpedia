@@ -8,7 +8,7 @@ from typing import Any, Dict
 import pytest
 import requests
 
-from artifacts.builtin.platform_sdk import handler
+from app.system_artifacts.platform_sdk import handler
 from talmudpedia_control_sdk import ControlPlaneClient
 
 
