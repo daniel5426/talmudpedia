@@ -80,7 +80,7 @@ export function ArtifactCodingChatTimeline(props: ArtifactCodingChatTimelineProp
                   }}
                   aria-label="Copy message"
                 >
-                  {copiedMessageId === item.id ? <Check className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
+                  {copiedMessageId === item.id ? <Check className="!size-3" /> : <Copy className="!size-3" />}
                 </Button>
                 <Button
                   type="button"
@@ -91,7 +91,7 @@ export function ArtifactCodingChatTimeline(props: ArtifactCodingChatTimelineProp
                   disabled={revertingRunId === item.runId}
                   aria-label="Revert to this message"
                 >
-                  <RotateCcw className={cn("h-2.5 w-2.5", revertingRunId === item.runId ? "animate-spin" : "")} />
+                  <RotateCcw className={cn(" !size-3", revertingRunId === item.runId ? "animate-spin" : "")} />
                 </Button>
               </div>
             </div>

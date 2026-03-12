@@ -22,11 +22,20 @@ class ArtifactDeploymentService:
         self._builder = CloudflareArtifactPackageBuilder()
         self._client = CloudflareArtifactClient()
 
-    async def ensure_deployment(self, *, revision: ArtifactRevision, namespace: str) -> ArtifactDeployment:
+    async def ensure_deployment(
+        self,
+        *,
+        revision: ArtifactRevision,
+        namespace: str,
+        tenant_id: UUID | None = None,
+    ) -> ArtifactDeployment:
+        effective_tenant_id = revision.tenant_id or tenant_id
+        if effective_tenant_id is None:
+            raise ValueError("Artifact deployments require tenant_id for deployment ownership")
         package = self._builder.build_revision_package(revision, namespace=namespace)
         deployment = await self._db.scalar(
             select(ArtifactDeployment).where(
-                ArtifactDeployment.tenant_id == revision.tenant_id,
+                ArtifactDeployment.tenant_id == effective_tenant_id,
                 ArtifactDeployment.namespace == namespace,
                 ArtifactDeployment.build_hash == package.build_hash,
             )
@@ -39,7 +48,7 @@ class ArtifactDeploymentService:
         if deployment is None:
             deployment = ArtifactDeployment(
                 id=uuid4(),
-                tenant_id=revision.tenant_id,
+                tenant_id=effective_tenant_id,
                 revision_id=revision.id,
                 namespace=namespace,
                 build_hash=package.build_hash,

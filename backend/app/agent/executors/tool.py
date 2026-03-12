@@ -435,7 +435,17 @@ class ToolNodeExecutor(BaseNodeExecutor):
                         "thread_id",
                         "tenant_id",
                         "user_id",
+                        "grant_id",
+                        "principal_id",
                         "initiator_user_id",
+                        "requested_scopes",
+                        "root_run_id",
+                        "parent_run_id",
+                        "parent_node_id",
+                        "depth",
+                        "agent_id",
+                        "agent_slug",
+                        "mode",
                         "surface",
                     }
                 },
@@ -790,7 +800,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if builtin_key == "datetime_utils":
             return await self._execute_datetime_utils_builtin(input_data, implementation_config)
 
-        raise NotImplementedError(f"Unsupported built-in tool key: {builtin_key}")
+        return None
 
     def _resolve_input_data(self, state: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
         prefer_last = False

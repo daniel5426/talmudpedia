@@ -18,8 +18,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { KesherLogo } from "@/components/kesher-logo"
 import {
     Select,
     SelectContent,
@@ -37,7 +37,14 @@ import {
 } from "@/components/ui/table"
 import { JsonEditor } from "@/components/ui/json-editor"
 import { Textarea } from "@/components/ui/textarea"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
 import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWorkspaceEditor"
@@ -54,7 +61,6 @@ import {
     buildArtifactPayload,
     buildArtifactUpdatePayload,
     buildConvertPayload,
-    contractEditorDescription,
     contractEditorTitle,
     formDataFromArtifact,
     kindLabel,
@@ -62,20 +68,17 @@ import {
     tryParseObject,
 } from "@/components/admin/artifacts/artifactPageUtils"
 import {
-    ArrowRightLeft,
     Bot,
     Database,
+    ChevronDown,
     Edit,
     Loader2,
     Package,
     PanelLeft,
-    PanelRightClose,
     Play,
     Plus,
     RefreshCw,
     Save,
-    Settings2,
-    Sparkles,
     Trash2,
     Upload,
     Wrench,
@@ -83,6 +86,10 @@ import {
 
 type ViewMode = "list" | "create" | "edit"
 const ARTIFACT_CODING_DRAFT_KEY_STORAGE_KEY = "artifact-coding-agent:create-draft-key"
+
+function getDefaultActiveFilePath(formData: ArtifactFormData): string {
+    return formData.entry_module_path || formData.source_files[0]?.path || "__CONFIG__"
+}
 
 function kindIcon(kind: ArtifactKind) {
     if (kind === "agent_node") return Bot
@@ -105,11 +112,10 @@ export default function ArtifactsPage() {
     const [artifacts, setArtifacts] = useState<Artifact[]>([])
     const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
     const [formData, setFormData] = useState<ArtifactFormData>(initialFormData)
-    const [kindSelectionPending, setKindSelectionPending] = useState(false)
     const [convertTargetKind, setConvertTargetKind] = useState<ArtifactKind>("rag_operator")
     const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false)
     const [slugError, setSlugError] = useState<string | null>(null)
-    const [activeFilePath, setActiveFilePath] = useState("__CONFIG__")
+    const [activeFilePath, setActiveFilePath] = useState(() => getDefaultActiveFilePath(initialFormData))
     const [sidebarOpen, setSidebarOpen] = useState(true)
     const [artifactChatDraftKey, setArtifactChatDraftKey] = useState("")
     const [chatError, setChatError] = useState<string | null>(null)
@@ -170,47 +176,32 @@ export default function ArtifactsPage() {
         setViewMode(mode)
     }, [router])
 
-    const handleCreate = useCallback(() => {
-        setSelectedArtifact(null)
-        setFormData(initialFormData)
-        setActiveFilePath("__CONFIG__")
-        setIsSlugManuallyEdited(false)
-        setSlugError(null)
-        setKindSelectionPending(true)
-        setViewMode("create")
-        persistNewDraftKey()
-    }, [persistNewDraftKey])
-
-    const handleChooseKind = useCallback((kind: ArtifactKind) => {
+    const handleCreate = useCallback((kind: ArtifactKind) => {
         const next = createFormDataForKind(kind)
         setFormData(next)
         setSelectedArtifact(null)
-        setActiveFilePath("__CONFIG__")
+        setActiveFilePath(getDefaultActiveFilePath(next))
         setIsSlugManuallyEdited(false)
         setSlugError(null)
         setConvertTargetKind(kind === "agent_node" ? "rag_operator" : "agent_node")
-        setKindSelectionPending(false)
-        setViewMode("create")
-    }, [])
+        setViewModeWithUrl("create")
+        persistNewDraftKey()
+    }, [persistNewDraftKey, setViewModeWithUrl])
 
     const handleEdit = useCallback(async (artifact: Artifact) => {
         const fullArtifact = await artifactsService.get(artifact.id, currentTenant?.slug)
+        const nextFormData = formDataFromArtifact(fullArtifact)
         setSelectedArtifact(fullArtifact)
-        setFormData(formDataFromArtifact(fullArtifact))
-        setActiveFilePath("__CONFIG__")
+        setFormData(nextFormData)
+        setActiveFilePath(getDefaultActiveFilePath(nextFormData))
         setIsSlugManuallyEdited(true)
         setSlugError(null)
-        setKindSelectionPending(false)
         setConvertTargetKind(fullArtifact.kind === "agent_node" ? "rag_operator" : "agent_node")
         setViewMode("edit")
     }, [currentTenant?.slug])
 
     useEffect(() => {
         if (loading) return
-        if (modeParam === "create") {
-            handleCreate()
-            return
-        }
         if (modeParam === "edit" && idParam) {
             const artifact = artifacts.find((item) => item.id === idParam)
             if (artifact) {
@@ -221,7 +212,7 @@ export default function ArtifactsPage() {
             return
         }
         setViewMode("list")
-    }, [artifacts, handleCreate, handleEdit, idParam, loading, modeParam, setViewModeWithUrl])
+    }, [artifacts, handleEdit, idParam, loading, modeParam, setViewModeWithUrl])
 
     const updateFormData = useCallback((field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactFormData["source_files"]) => {
         setFormData((prev) => {
@@ -267,7 +258,6 @@ export default function ArtifactsPage() {
     }, [activeFilePath, formData.entry_module_path, formData.source_files])
 
     const handleSave = async () => {
-        if (kindSelectionPending) return
         if (!formData.display_name.trim()) {
             alert("Please enter a display name")
             return
@@ -285,7 +275,6 @@ export default function ArtifactsPage() {
         try {
             if (viewMode === "create") {
                 const created = await artifactsService.create(buildArtifactPayload(formData), currentTenant?.slug)
-                setKindSelectionPending(false)
                 await fetchArtifacts()
                 setViewModeWithUrl("edit", created.id)
             } else if (selectedArtifact) {
@@ -383,7 +372,7 @@ export default function ArtifactsPage() {
                 <CustomBreadcrumb
                     items={[
                         { label: "Artifacts", href: "/admin/artifacts", active: viewMode === "list" },
-                        ...(viewMode === "create" ? [{ label: kindSelectionPending ? "Choose Kind" : "New Artifact", active: true }] : []),
+                        ...(viewMode === "create" ? [{ label: "New Artifact", active: true }] : []),
                         ...(viewMode === "edit" ? [{ label: formData.display_name || "Edit Artifact", active: true }] : []),
                     ]}
                 />
@@ -394,84 +383,92 @@ export default function ArtifactsPage() {
                         <RefreshCw className="mr-2 h-4 w-4" />
                         Refresh
                     </Button>
-                    <Button size="sm" onClick={() => setViewModeWithUrl("create")}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        New Artifact
-                    </Button>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button size="sm">
+                                <Plus className="mr-2 h-4 w-4" />
+                                New Artifact
+                                <ChevronDown className="ml-1 h-4 w-4 opacity-50" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-64">
+                            <DropdownMenuLabel>Select Artifact Type</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            {ARTIFACT_KIND_OPTIONS.map((option) => {
+                                const Icon = kindIcon(option.value)
+                                return (
+                                    <DropdownMenuItem
+                                        key={option.value}
+                                        className="flex cursor-pointer flex-col items-start gap-1 py-3"
+                                        onClick={() => handleCreate(option.value)}
+                                    >
+                                        <div className="flex items-center gap-2 font-medium text-foreground">
+                                            <Icon className="h-4 w-4 text-muted-foreground" />
+                                            <span>{option.label}</span>
+                                        </div>
+                                        <span className="text-[11px] leading-tight text-muted-foreground">
+                                            {option.description}
+                                        </span>
+                                    </DropdownMenuItem>
+                                )
+                            })}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
             ) : (
                 <div className="flex items-center gap-2">
-                    {!kindSelectionPending && (
-                        <>
-                            <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setSidebarOpen((prev) => !prev)}
-                                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                                title={sidebarOpen ? "Hide file explorer" : "Show file explorer"}
-                            >
-                                <PanelLeft className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => artifactCodingChat.setIsAgentPanelOpen(!artifactCodingChat.isAgentPanelOpen)}
-                                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                                title={artifactCodingChat.isAgentPanelOpen ? "Close coding agent panel" : "Open coding agent panel"}
-                            >
-                                {artifactCodingChat.isAgentPanelOpen ? <PanelRightClose className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-                            </Button>
-                            {viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant" && (
-                                <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handlePublish(selectedArtifact)}
-                                    disabled={publishingId === selectedArtifact.id}
-                                >
-                                    {publishingId === selectedArtifact.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                                    Publish
-                                </Button>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setSidebarOpen((prev) => !prev)}
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                        title={sidebarOpen ? "Hide file explorer" : "Show file explorer"}
+                    >
+                        <PanelLeft className="!size-[17px]" />
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => artifactCodingChat.setIsAgentPanelOpen(!artifactCodingChat.isAgentPanelOpen)}
+                        className="h-8 w-8 mr-1 text-muted-foreground hover:text-foreground"
+                        title={artifactCodingChat.isAgentPanelOpen ? "Close coding agent panel" : "Open coding agent panel"}
+                    >
+                        <KesherLogo
+                            size={23}
+                            className={cn(
+                                "h-4 w-4 transition-transform duration-200",
+                                artifactCodingChat.isAgentPanelOpen
+                                    ? "rotate-90 text-foreground"
+                                    : "text-sky-600"
                             )}
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => document.getElementById("artifact-test-panel-execute")?.click()}
-                            >
-                                <Play className="mr-2 h-4 w-4 fill-current" />
-                                Test
-                            </Button>
-                            <Button size="sm" onClick={handleSave} disabled={saving || !!slugError}>
-                                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                                Save
-                            </Button>
-                        </>
+                        />
+                    </Button>
+                    {viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant" && (
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handlePublish(selectedArtifact)}
+                            disabled={publishingId === selectedArtifact.id}
+                        >
+                            {publishingId === selectedArtifact.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                            Publish
+                        </Button>
                     )}
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => document.getElementById("artifact-test-panel-execute")?.click()}
+                    >
+                        <Play className="mr-2 h-4 w-4 fill-current" />
+                        Test
+                    </Button>
+                    <Button size="sm" onClick={handleSave} disabled={saving || !!slugError}>
+                        {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                        Save
+                    </Button>
                 </div>
             )}
         </AdminPageHeader>
-    )
-
-    const renderKindChooser = () => (
-        <div className="grid gap-4 p-4 md:grid-cols-3">
-            {ARTIFACT_KIND_OPTIONS.map((option) => {
-                const Icon = kindIcon(option.value)
-                return (
-                    <Card
-                        key={option.value}
-                        className="cursor-pointer border-border/60 p-6 transition hover:border-primary/40 hover:bg-primary/5"
-                        onClick={() => handleChooseKind(option.value)}
-                    >
-                        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                            <Icon className="h-6 w-6" />
-                        </div>
-                        <div className="space-y-2">
-                            <h3 className="text-lg font-semibold">{option.label}</h3>
-                            <p className="text-sm text-muted-foreground">{option.description}</p>
-                        </div>
-                    </Card>
-                )
-            })}
-        </div>
     )
 
     const renderList = () => (
@@ -788,8 +785,6 @@ export default function ArtifactsPage() {
             <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
                 {viewMode === "list" ? (
                     <div className="h-full overflow-auto" data-admin-page-scroll>{renderList()}</div>
-                ) : kindSelectionPending ? (
-                    renderKindChooser()
                 ) : (
                     <div className="relative flex min-h-0 w-full flex-1 overflow-hidden">
                         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -808,6 +803,7 @@ export default function ArtifactsPage() {
                                 agentContract={formData.kind === "agent_node" ? testAgentContract : undefined}
                                 ragContract={formData.kind === "rag_operator" ? testRagContract : undefined}
                                 toolContract={formData.kind === "tool_impl" ? testToolContract : undefined}
+                                agentPanelOpen={artifactCodingChat.isAgentPanelOpen}
                             />
                         </div>
                         <ArtifactCodingChatPanel

@@ -1,6 +1,6 @@
 # Platform Control Plane SDK Contract Specification (v1)
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-12
 
 ## Document Control
 - Status: In implementation (normative for new SDK work)
@@ -517,26 +517,32 @@ The method list below is normative for v1 SDK surface. Each method maps to one c
   - Sensitive action approval for workload principals
 
 ### 11.4 `artifacts`
+- Current hard-cut note:
+  - Artifact authoring is now canonical revision-backed CRUD/test/publish.
+  - Do not use legacy draft/promote method names in new work.
 - `artifacts.list(tenant_slug?)`
   - Route: `GET /admin/artifacts`
 - `artifacts.get(artifact_id, tenant_slug?)`
   - Route: `GET /admin/artifacts/{artifact_id}`
-- `artifacts.create_draft(spec, tenant_slug, options)`
+- `artifacts.create(spec, tenant_slug?, options)`
   - Route: `POST /admin/artifacts`
   - Scope: `artifacts.write`
-- `artifacts.update_draft(artifact_id, patch, tenant_slug?, options)`
+- `artifacts.update(artifact_id, patch, tenant_slug?, options)`
   - Route: `PUT /admin/artifacts/{artifact_id}`
+  - Scope: `artifacts.write`
+- `artifacts.convert_kind(artifact_id, request, tenant_slug?, options)`
+  - Route: `POST /admin/artifacts/{artifact_id}/convert-kind`
   - Scope: `artifacts.write`
 - `artifacts.delete(artifact_id, tenant_slug?, options)`
   - Route: `DELETE /admin/artifacts/{artifact_id}`
   - Scope: `artifacts.write`
   - Sensitive action approval for workload principals
-- `artifacts.promote(artifact_id, namespace, version?, tenant_slug?, options)`
-  - Route: `POST /admin/artifacts/{artifact_id}/promote`
+- `artifacts.publish(artifact_id, tenant_slug?, options)`
+  - Route: `POST /admin/artifacts/{artifact_id}/publish`
   - Scope: `artifacts.write`
   - Sensitive action approval for workload principals
-- `artifacts.test(request, tenant_slug?)`
-  - Route: `POST /admin/artifacts/test`
+- `artifacts.create_test_run(request, tenant_slug?)`
+  - Route: `POST /admin/artifacts/test-runs`
 
 ### 11.5 `rag`
 - `rag.get_operator_catalog(tenant_slug?)`
@@ -817,7 +823,7 @@ The following action IDs are recommended as stable domain actions for parity:
 - `catalog.list_capabilities`
 - `agents.list`, `agents.get`, `agents.create_or_update`, `agents.publish`, `agents.validate`, `agents.execute`, `agents.start_run`, `agents.resume_run`, `agents.get_run`, `agents.get_run_tree`
 - `tools.list`, `tools.get`, `tools.create_or_update`, `tools.publish`, `tools.create_version`, `tools.delete`
-- `artifacts.list`, `artifacts.get`, `artifacts.create_or_update_draft`, `artifacts.promote`, `artifacts.delete`, `artifacts.test`
+- `artifacts.list`, `artifacts.get`, `artifacts.create`, `artifacts.update`, `artifacts.convert_kind`, `artifacts.publish`, `artifacts.delete`, `artifacts.create_test_run`
 - `rag.list_pipelines`, `rag.create_or_update_pipeline`, `rag.compile_pipeline`, `rag.create_job`, `rag.get_job`, `rag.get_step_data`
 - `models.list`, `models.create_or_update`, `models.add_provider`, `models.update_provider`, `models.delete_provider`
 - `credentials.list`, `credentials.create_or_update`, `credentials.delete`, `credentials.usage`, `credentials.status`
@@ -885,11 +891,11 @@ Completed in this increment:
 - Added env-gated cross-surface parity integration test scaffold:
   - `backend/tests/platform_sdk_tool/test_platform_sdk_cross_surface_parity_integration.py`
   - Current coverage validates persisted-state equivalence for core mutations across UI HTTP path, SDK path, and tool-action path:
-    - `artifacts.create_draft`
+    - `artifacts.create`
     - `tools.create_or_update` (create)
     - `tools.create_or_update` (update)
     - `tools.publish`
-    - `artifacts.promote`
+    - `artifacts.publish`
     - `agents.create_or_update` (create)
     - `agents.publish`
 - Added execution-focused cross-surface parity integration module:

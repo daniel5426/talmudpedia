@@ -163,5 +163,7 @@ def test_cloudflare_package_builder_emits_runtime_main_wrapper():
 
     package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
     module_names = {module["name"] for module in package.modules}
+    main_module = next(module for module in package.modules if module["name"] == "main.py")
     assert "main.py" in module_names
-    assert "main.py" in module_names
+    assert "from main import execute as artifact_execute" in main_module["content"]
+    assert "traceback.format_exception" in main_module["content"]

@@ -309,7 +309,11 @@ async def publish_artifact(
         db=db,
     )
     revision = await ArtifactRevisionService(db).publish_latest_draft(artifact)
-    await ArtifactDeploymentService(db).ensure_deployment(revision=revision, namespace="production")
+    await ArtifactDeploymentService(db).ensure_deployment(
+        revision=revision,
+        namespace="production",
+        tenant_id=tenant.id,
+    )
     await db.commit()
     return ArtifactPublishResponse(
         artifact_id=str(artifact.id),

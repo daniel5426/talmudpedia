@@ -1,7 +1,7 @@
 "use client"
 
 import type { PointerEvent as ReactPointerEvent } from "react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { CodeEditor } from "@/components/ui/code-editor"
 import { cn } from "@/lib/utils"
 import { ArtifactSourceFile } from "@/services/artifacts"
@@ -200,7 +200,7 @@ export function ArtifactWorkspaceEditor({
   )
 
   // ---- open tabs: ordered list of paths, independent of selection ----
-  const [openTabs, setOpenTabs] = useState<string[]>(() => [...sourceFiles.map((f) => f.path), "__CONFIG__"])
+  const [openTabs, setOpenTabs] = useState<string[]>(() => sourceFiles.map((f) => f.path))
 
   // ---- drag state for tabs ----
   const [draggingTab, setDraggingTab] = useState<string | null>(null)
@@ -213,10 +213,10 @@ export function ArtifactWorkspaceEditor({
   // ---- scroll state for tab transition effect ----
   const [isScrolled, setIsScrolled] = useState(false)
 
-  // Reset scroll state on tab switch
-  useEffect(() => {
+  const activatePath = (path: string) => {
     setIsScrolled(false)
-  }, [activeFilePath])
+    onActiveFileChange(path)
+  }
 
   /* ================================================================ */
   /*  Handlers                                                         */
@@ -230,16 +230,16 @@ export function ArtifactWorkspaceEditor({
     )
   }
 
-  const handleAddFile = useCallback(() => {
+  const handleAddFile = () => {
     const path = nextAvailablePath(sourceFiles, "")
     onSourceFilesChange([
       ...sourceFiles,
       { path, content: 'def helper():\n    return "new helper"\n' },
     ])
     setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]))
-    onActiveFileChange(path)
+    activatePath(path)
     if (!isTreeOpen) setIsTreeOpen(true)
-  }, [sourceFiles, onSourceFilesChange, onActiveFileChange, isTreeOpen, setIsTreeOpen])
+  }
 
   const handleAddDir = useCallback(() => {
     const dirName = nextAvailableDirPath(sourceFiles, "")
@@ -252,33 +252,26 @@ export function ArtifactWorkspaceEditor({
     if (!isTreeOpen) setIsTreeOpen(true)
   }, [sourceFiles, onSourceFilesChange, isTreeOpen, setIsTreeOpen])
 
-  const handleDeleteFile = useCallback(
-    (path: string) => {
-      if (path === entryModulePath || sourceFiles.length <= 1) return
-      const next = sourceFiles.filter((f) => f.path !== path)
-      onSourceFilesChange(next)
-      if (activeFilePath === path) {
-        onActiveFileChange(next[0]?.path ?? "")
-      }
-    },
-    [sourceFiles, entryModulePath, activeFilePath, onActiveFileChange, onSourceFilesChange]
-  )
+  const handleDeleteFile = (path: string) => {
+    if (path === entryModulePath || sourceFiles.length <= 1) return
+    const next = sourceFiles.filter((f) => f.path !== path)
+    onSourceFilesChange(next)
+    if (activeFilePath === path) {
+      activatePath(next[0]?.path ?? "")
+    }
+  }
 
-  const handleCloseTab = useCallback(
-    (path: string) => {
-      if (path === entryModulePath) return
-      setOpenTabs((prev) => {
-        const next = prev.filter((p) => p !== path)
-        if (activeFilePath === path && next.length > 0) {
-          const closedIdx = prev.indexOf(path)
-          const newActive = next[Math.min(closedIdx, next.length - 1)]
-          onActiveFileChange(newActive)
-        }
-        return next.length > 0 ? next : prev
-      })
-    },
-    [entryModulePath, activeFilePath, onActiveFileChange]
-  )
+  const handleCloseTab = (path: string) => {
+    if (path === entryModulePath) return
+    const next = openTabs.filter((p) => p !== path)
+    if (next.length === 0) return
+    if (activeFilePath === path) {
+      const closedIdx = openTabs.indexOf(path)
+      const newActive = next[Math.min(closedIdx, next.length - 1)]
+      activatePath(newActive)
+    }
+    setOpenTabs(next)
+  }
 
   const toggleDir = (path: string) => {
     setExpandedDirs((cur) =>
@@ -411,7 +404,7 @@ export function ArtifactWorkspaceEditor({
         onSourceFilesChange(
           sourceFiles.map((f) => (f.path === draggingNode ? { ...f, path: newPath } : f))
         )
-        if (activeFilePath === draggingNode) onActiveFileChange(newPath)
+        if (activeFilePath === draggingNode) activatePath(newPath)
       }
     } else {
       // Moving a directory — all files under it
@@ -428,7 +421,7 @@ export function ArtifactWorkspaceEditor({
         })
         onSourceFilesChange(updated)
         if (activeFilePath.startsWith(prefix)) {
-          onActiveFileChange(newDirPath + activeFilePath.slice(draggingNode.length))
+          activatePath(newDirPath + activeFilePath.slice(draggingNode.length))
         }
       }
     }
@@ -514,7 +507,7 @@ export function ArtifactWorkspaceEditor({
           )}
           style={{ paddingLeft: `${10 + depth * 16}px` }}
           onClick={() => {
-            onActiveFileChange(node.path)
+            activatePath(node.path)
             setOpenTabs((prev) =>
               prev.includes(node.path) ? prev : [...prev, node.path]
             )
@@ -559,18 +552,17 @@ export function ArtifactWorkspaceEditor({
     const sourcePaths = sourceFiles.map((f) => f.path)
     const sourcePathSet = new Set(sourcePaths)
     const kept = openTabs.filter((path) => path === "__CONFIG__" || sourcePathSet.has(path))
-    const withConfig = kept.includes("__CONFIG__") ? kept : [...kept, "__CONFIG__"]
     const withActive =
-      activeFilePath !== "__CONFIG__" && sourcePathSet.has(activeFilePath) && !withConfig.includes(activeFilePath)
-        ? [...withConfig, activeFilePath]
-        : withConfig
+      (activeFilePath === "__CONFIG__" || sourcePathSet.has(activeFilePath)) && !kept.includes(activeFilePath)
+        ? [...kept, activeFilePath]
+        : kept
 
     if (sourcePaths.length === 0) {
       return withActive
     }
 
     const hasFileTab = withActive.some((path) => path !== "__CONFIG__")
-    return hasFileTab ? withActive : [...sourcePaths, "__CONFIG__"]
+    return hasFileTab ? withActive : sourcePaths
   }, [activeFilePath, openTabs, sourceFiles])
 
   return (
@@ -645,7 +637,7 @@ export function ArtifactWorkspaceEditor({
                   )}
                   style={{ paddingLeft: `10px` }}
                   onClick={() => {
-                    onActiveFileChange("__CONFIG__")
+                    activatePath("__CONFIG__")
                     setOpenTabs((prev) =>
                       prev.includes("__CONFIG__") ? prev : [...prev, "__CONFIG__"]
                     )
@@ -720,7 +712,7 @@ export function ArtifactWorkspaceEditor({
                           }
                         : {}),
                     }}
-                    onClick={() => onActiveFileChange("__CONFIG__")}
+                    onClick={() => activatePath("__CONFIG__")}
                   >
                     <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     <span className="truncate">Configuration</span>
@@ -777,7 +769,7 @@ export function ArtifactWorkspaceEditor({
                         }
                       : {}),
                   }}
-                  onClick={() => onActiveFileChange(file.path)}
+                  onClick={() => activatePath(file.path)}
                 >
                   <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
                   <span className="truncate">{file.path.split("/").pop()}</span>

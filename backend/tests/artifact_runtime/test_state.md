@@ -1,4 +1,4 @@
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 # Test State
 
@@ -19,6 +19,8 @@ Artifact runtime revision and bundle lifecycle.
 - verify bundle builder hash stability
 - verify build-hash stability across source-tree revisions
 - verify Cloudflare package builder emits a runnable `main.py` worker entrypoint
+- serialize free-plan worker module-load crashes as JSON detail payloads
+- support package-style multi-file imports in the free-plan worker loader
 - resolve Cloudflare deployment/dispatch flow for live runs
 - create live artifact runs for `agent` and `rag` domains
 - enforce published-only execution for live domains
@@ -37,9 +39,13 @@ Artifact runtime revision and bundle lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py backend/tests/platform_sdk_tool backend/tests/control_plane_sdk/test_client_and_modules.py`
 - Date: 2026-03-11 18:18 EET
 - Result: Pass (127 passed, 11 skipped)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_runtime/test_free_plan_runtime_worker.py`
+- Date: 2026-03-12 01:58 Asia/Hebron
+- Result: Pass (13 passed)
 
 ## Known Gaps
 
 - no real Cloudflare deploy API integration coverage yet
 - no migration script execution coverage yet
 - no outbound worker / secret-broker end-to-end coverage yet
+- no deployed free-plan worker smoke test yet after wrapper changes

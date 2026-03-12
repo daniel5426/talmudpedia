@@ -2,10 +2,13 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
+from app.db.postgres.models.artifact_runtime import ArtifactRun
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.handler_runner import invoke_artifact_handler
+from app.services.artifact_runtime.cloudflare_dispatch_client import CloudflareDispatchHTTPError
 from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimitExceeded
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 
@@ -65,8 +68,8 @@ async def test_execute_live_run_records_domain_queue_and_raw_inputs(db_session, 
 
     captured = {}
 
-    async def fake_ensure_deployment(self, *, revision, namespace):
-        captured["deployment"] = {"revision_id": revision.id, "namespace": namespace}
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        captured["deployment"] = {"revision_id": revision.id, "namespace": namespace, "tenant_id": tenant_id}
         return SimpleNamespace(
             worker_name="cf-worker",
             deployment_id="dep-1",
@@ -108,6 +111,7 @@ async def test_execute_live_run_records_domain_queue_and_raw_inputs(db_session, 
     assert str(getattr(run.domain, "value", run.domain)) == "agent"
     assert run.queue_class == "artifact_prod_interactive"
     assert captured["deployment"]["namespace"] == "production"
+    assert captured["deployment"]["tenant_id"] == tenant.id
     assert captured["request"]["inputs"] == ["raw", {"nested": True}]
     assert run.result_payload == {"echo": ["raw", {"nested": True}]}
     assert run.runtime_metadata["provider"] == "cloudflare_workers"
@@ -119,7 +123,7 @@ async def test_execute_live_run_standard_worker_test_mode_includes_source_tree(d
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
     captured = {}
 
-    async def fake_ensure_deployment(self, *, revision, namespace):
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
         return SimpleNamespace(
             worker_name="artifact-free-plan-runtime",
             deployment_id="dep-inline",
@@ -161,6 +165,75 @@ async def test_execute_live_run_standard_worker_test_mode_includes_source_tree(d
     assert run is not None
     assert captured["request"]["entry_module_path"] == "main.py"
     assert captured["request"]["source_files"][0]["path"] == "main.py"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_run_passes_execution_tenant_for_system_revision(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_context(db_session)
+    revisions = ArtifactRevisionService(db_session)
+    artifact = await revisions.create_artifact(
+        tenant_id=None,
+        created_by=None,
+        slug=f"system-artifact-{uuid.uuid4().hex[:8]}",
+        display_name="System Runtime Artifact",
+        description=None,
+        kind="tool_impl",
+        owner_type="system",
+        system_key=f"system-runtime-{uuid.uuid4().hex[:6]}",
+        source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
+        entry_module_path="main.py",
+        python_dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={},
+        config_schema={},
+        tool_contract={"input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "side_effects": [], "execution_mode": "interactive", "tool_ui": {}},
+    )
+    await revisions.publish_latest_draft(artifact)
+    await db_session.commit()
+
+    captured = {}
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        captured["tenant_id"] = tenant_id
+        captured["revision_tenant_id"] = revision.tenant_id
+        return SimpleNamespace(
+            worker_name="cf-worker",
+            deployment_id="dep-system",
+            version_id="ver-system",
+            build_hash=revision.build_hash,
+        )
+
+    async def fake_execute(self, payload):
+        return SimpleNamespace(
+            status="completed",
+            result={"ok": True},
+            error=None,
+            stdout_excerpt="",
+            stderr_excerpt="",
+            duration_ms=3,
+            worker_id="cf-worker",
+            sandbox_session_id="dispatch-system",
+            events=[],
+            runtime_metadata={"provider": "cloudflare_workers"},
+        )
+
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+    monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
+
+    run = await ArtifactExecutionService(db_session).execute_live_run(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        revision_id=artifact.latest_published_revision_id,
+        domain="tool",
+        queue_class="artifact_prod_interactive",
+        input_payload={"value": 1},
+        config_payload={},
+        context_payload={},
+    )
+
+    assert run is not None
+    assert captured["revision_tenant_id"] is None
+    assert captured["tenant_id"] == tenant.id
 
 
 @pytest.mark.asyncio
@@ -243,6 +316,53 @@ async def test_interactive_run_fails_fast_when_tenant_capacity_is_exhausted(db_s
             config_payload={},
             context_payload={},
         )
+
+
+@pytest.mark.asyncio
+async def test_execute_live_run_persists_worker_http_500_details(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_context(db_session)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return SimpleNamespace(
+            worker_name="artifact-free-plan-runtime",
+            deployment_id="dep-500",
+            version_id="ver-500",
+            build_hash=revision.build_hash,
+        )
+
+    async def fake_execute(self, payload):
+        raise CloudflareDispatchHTTPError(
+            status_code=500,
+            message="Dispatch worker returned HTTP 500 for https://artifact-free-plan-runtime.example/execute: worker crashed",
+            response_text='{"detail":{"code":"WORKER_CRASH","message":"worker crashed","traceback":"boom"}}',
+            response_json={"detail": {"code": "WORKER_CRASH", "message": "worker crashed", "traceback": "boom"}},
+            url="https://artifact-free-plan-runtime.example/execute",
+        )
+
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+    monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
+
+    with pytest.raises(CloudflareDispatchHTTPError):
+        await ArtifactExecutionService(db_session).execute_live_run(
+            tenant_id=tenant.id,
+            created_by=user.id,
+            revision_id=artifact.latest_published_revision_id,
+            domain="tool",
+            queue_class="artifact_prod_interactive",
+            input_payload={"hello": "world"},
+            config_payload={},
+            context_payload={},
+        )
+
+    result = await db_session.execute(
+        select(ArtifactRun).where(ArtifactRun.tenant_id == tenant.id).order_by(ArtifactRun.created_at.desc())
+    )
+    failed_run = next(run for run in result.scalars().all() if str(getattr(run.status, "value", run.status)) == "failed")
+    assert failed_run.error_payload["code"] == "CLOUDFLARE_DISPATCH_HTTP_ERROR"
+    assert failed_run.error_payload["http_status"] == 500
+    assert failed_run.error_payload["dispatch_detail"]["code"] == "WORKER_CRASH"
+    assert "worker crashed" in failed_run.error_payload["message"]
 
 
 @pytest.mark.asyncio

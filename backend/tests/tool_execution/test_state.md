@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -36,6 +36,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Coding-agent content resolution now supports nested/wrapped aliases (`code`, `text`, `body`, `fileContent`) for write-file calls.
 - Required-field validation for coding-agent string fields now resolves wrappers/aliases before reporting missing fields.
 - Function-tool execution now flattens wrapper payloads (`args`, `input`, `parameters`, `payload`, `data`, `arguments`, `value`) before validation and dispatch.
+- Function-tool execution now propagates delegation/runtime context fields (`tenant_id`, `grant_id`, `requested_scopes`, agent metadata) into the nested function payload context.
 - Reasoning tool-call normalization now preserves direct argument fields when no `input/args/parameters` wrapper is present.
 - `agent_call` success returns compact sync payload with child output/context
 - `agent_call` rejects draft/unpublished targets
@@ -89,6 +90,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py backend/tests/platform_sdk_tool backend/tests/control_plane_sdk/test_client_and_modules.py`
 - Date/Time: 2026-03-11 18:18 EET
 - Result: PASS (`127 passed, 11 skipped`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime backend/tests/tool_execution/test_function_tool_execution.py::test_function_tool_execution backend/tests/tool_execution/test_function_tool_execution.py::test_function_tool_propagates_delegation_context`
+- Date/Time: 2026-03-12 02:04 EET
+- Result: PASS (`20 passed, 5 warnings`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

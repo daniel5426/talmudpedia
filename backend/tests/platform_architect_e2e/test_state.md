@@ -1,6 +1,6 @@
 # Platform Architect E2E Tests State
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-12
 
 ## Scope of the feature
 Live end-to-end validation of the seeded `platform-architect` agent against the full domain action matrix, with API and DB-backed evidence checks.
@@ -19,6 +19,7 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Session report persisted as JSON for run review.
 - Session preflight validates delegated scope coverage (required action scopes vs architect workload policy and initiator effective scopes) before running matrix scenarios.
 - Architect run start now sends explicit `context.requested_scopes` derived from scenario matrix required scopes to stabilize delegated grant minting.
+- Artifact-create side-effect verification now checks canonical artifact fields (`slug` / `display_name`) for `artifacts.create`.
 
 ## Last run command + date/time + result
 - Command: `cd backend && TEST_USE_REAL_DB=1 pytest -q tests/platform_architect_e2e/test_architect_e2e_live.py -m real_db`

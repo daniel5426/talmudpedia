@@ -685,18 +685,157 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "payload_schema": _payload_schema(properties={"artifact_id": {"type": "string"}, "id": {"type": "string"}}),
                 "contract": {"summary": "Get artifact.", "required_fields": ["artifact_id|id"], "example_payload": {"artifact_id": "artifact-123"}, "failure_codes": ["NOT_FOUND"]},
             },
-            "artifacts.create_or_update_draft": {
+            "artifacts.create": {
                 "mutation": True,
                 "payload_schema": _payload_schema(
-                    properties={"artifact_id": {"type": "string"}, "id": {"type": "string"}, "namespace": {"type": "string"}, "version": {"type": "string"}, "content": {"type": ["string", "object", "array"]}},
-                    additional_properties=True,
+                    properties={
+                        "slug": {"type": "string"},
+                        "display_name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["agent_node", "rag_operator", "tool_impl"]},
+                        "runtime": {"type": "object"},
+                        "capabilities": {"type": "object"},
+                        "config_schema": {"type": "object"},
+                        "agent_contract": {"type": "object"},
+                        "rag_contract": {"type": "object"},
+                        "tool_contract": {"type": "object"},
+                    },
+                    required=["slug", "display_name", "kind", "runtime"],
+                    additional_properties=False,
                 ),
-                "contract": {"summary": "Create or update draft artifact.", "required_fields": ["namespace", "content|files"], "example_payload": {"namespace": "custom", "content": "print('hello')"}, "failure_codes": ["VALIDATION_ERROR"]},
+                "contract": {
+                    "summary": "Create a canonical draft artifact.",
+                    "required_fields": ["slug", "display_name", "kind", "runtime"],
+                    "example_payload": {
+                        "slug": "normalize-docs",
+                        "display_name": "Normalize Docs",
+                        "description": "Tool implementation artifact.",
+                        "kind": "tool_impl",
+                        "runtime": {
+                            "source_files": [{"path": "main.py", "content": "async def execute(inputs, config, context):\n    return {\"ok\": True}"}],
+                            "entry_module_path": "main.py",
+                            "python_dependencies": [],
+                            "runtime_target": "cloudflare_workers",
+                        },
+                        "capabilities": {"network_access": False, "allowed_hosts": [], "secret_refs": [], "storage_access": [], "side_effects": []},
+                        "config_schema": {"type": "object", "properties": {}, "additionalProperties": True},
+                        "tool_contract": {
+                            "input_schema": {"type": "object", "additionalProperties": True},
+                            "output_schema": {"type": "object", "additionalProperties": True},
+                            "side_effects": [],
+                            "execution_mode": "interactive",
+                            "tool_ui": {},
+                        },
+                    },
+                    "failure_codes": ["VALIDATION_ERROR"],
+                },
+            },
+            "artifacts.update": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "artifact_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "patch": {"type": "object"},
+                    },
+                    required=["patch"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Patch an existing draft artifact with canonical artifact fields.",
+                    "required_fields": ["artifact_id|id", "patch"],
+                    "example_payload": {
+                        "artifact_id": "artifact-123",
+                        "patch": {
+                            "description": "Updated description",
+                            "runtime": {
+                                "source_files": [{"path": "main.py", "content": "async def execute(inputs, config, context):\n    return inputs"}],
+                                "entry_module_path": "main.py",
+                                "python_dependencies": [],
+                                "runtime_target": "cloudflare_workers",
+                            },
+                        },
+                    },
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "artifacts.convert_kind": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "artifact_id": {"type": "string"},
+                        "id": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["agent_node", "rag_operator", "tool_impl"]},
+                        "agent_contract": {"type": "object"},
+                        "rag_contract": {"type": "object"},
+                        "tool_contract": {"type": "object"},
+                    },
+                    required=["kind"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Convert a draft artifact to a different canonical kind with the matching contract payload.",
+                    "required_fields": ["artifact_id|id", "kind"],
+                    "example_payload": {
+                        "artifact_id": "artifact-123",
+                        "kind": "tool_impl",
+                        "tool_contract": {
+                            "input_schema": {"type": "object", "additionalProperties": True},
+                            "output_schema": {"type": "object", "additionalProperties": True},
+                            "side_effects": [],
+                            "execution_mode": "interactive",
+                            "tool_ui": {},
+                        },
+                    },
+                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                },
+            },
+            "artifacts.create_test_run": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "artifact_id": {"type": "string"},
+                        "source_files": {"type": "array", "items": {"type": "object"}},
+                        "entry_module_path": {"type": "string"},
+                        "input_data": {},
+                        "config": {"type": "object"},
+                        "dependencies": {"type": "array", "items": {"type": "string"}},
+                        "kind": {"type": "string", "enum": ["agent_node", "rag_operator", "tool_impl"]},
+                        "runtime_target": {"type": "string"},
+                        "capabilities": {"type": "object"},
+                        "config_schema": {"type": "object"},
+                        "agent_contract": {"type": "object"},
+                        "rag_contract": {"type": "object"},
+                        "tool_contract": {"type": "object"},
+                    },
+                    required=["input_data"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Create a canonical artifact test run from a saved or ephemeral revision payload.",
+                    "required_fields": ["input_data"],
+                    "example_payload": {
+                        "artifact_id": "artifact-123",
+                        "input_data": {"items": [1, 2, 3]},
+                        "config": {},
+                    },
+                    "failure_codes": ["VALIDATION_ERROR"],
+                },
             },
             "artifacts.publish": {
                 "mutation": True,
                 "payload_schema": _payload_schema(properties={"artifact_id": {"type": "string"}, "id": {"type": "string"}}),
                 "contract": {"summary": "Publish artifact draft (explicit publish intent required).", "required_fields": ["artifact_id|id"], "example_payload": {"artifact_id": "artifact-123"}, "failure_codes": ["DRAFT_FIRST_POLICY_DENIED", "SENSITIVE_ACTION_APPROVAL_REQUIRED"]},
+            },
+            "artifacts.delete": {
+                "mutation": True,
+                "payload_schema": _payload_schema(properties={"artifact_id": {"type": "string"}, "id": {"type": "string"}}, additional_properties=False),
+                "contract": {
+                    "summary": "Delete an artifact.",
+                    "required_fields": ["artifact_id|id"],
+                    "example_payload": {"artifact_id": "artifact-123"},
+                    "failure_codes": ["NOT_FOUND"],
+                },
             },
             "models.list": {
                 "mutation": False,
@@ -842,10 +981,11 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
     instructions = (
         "You are Platform Architect v1.2. "
         "You must plan and execute directly through visible domain tools only: platform-rag, platform-agents, "
-        "platform-assets, platform-governance. "
+        "platform-assets, platform-governance, artifact-coding-agent-call, artifact-coding-session-prepare, "
+        "artifact-coding-session-get-state. "
         "Never call architect.run or any meta action. "
         "Use only exact canonical action IDs from tool schemas (for example: agents.create, rag.create_visual_pipeline, "
-        "artifacts.create_or_update_draft). Never invent aliases like create_agent/register_asset. "
+        "artifacts.create, artifacts.update, artifacts.create_test_run). Never invent aliases like create_agent/register_asset. "
         "Every Platform SDK call must use canonical top-level action and payload fields. "
         "Never wrap a tool call inside query, text, value, or markdown. "
         "Workflow policy: extract intent and constraints, build a step plan, execute one tool call at a time, "
@@ -865,6 +1005,12 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "Before introducing unfamiliar RAG operators, call rag.operators.catalog first and rag.operators.schema for all operator_ids[] in one call. "
         "After each draft graph mutation, call agents.nodes.validate on the target agent id and repair based on "
         "returned structured errors/warnings. "
+        "For artifact metadata/runtime/contract lifecycle work, use platform-assets canonical artifact actions directly. "
+        "For code-heavy or multi-file artifact authoring, use artifact-coding-session-prepare, then artifact-coding-agent-call, "
+        "then artifact-coding-session-get-state, and persist the returned canonical artifact payload through platform-assets. "
+        "Artifact Coding Agent runs only mutate the shared draft snapshot; they never save or publish canonical artifacts by themselves. "
+        "After delegated artifact changes, persist with artifacts.create or artifacts.update, optionally run artifacts.create_test_run, "
+        "and only then publish if explicit publish intent is present. "
         "For RAG pipeline creation, first discover supported operators, then build one canonical rag.create_visual_pipeline payload from advertised operator contracts, inspect the response, and stop immediately on repeated contract-shape failures. "
         "If the same mutation action fails twice with the same normalized error, stop mutating, summarize the blocker, "
         "and report the target resource, attempted action, normalized failure code, last validation details, whether any "

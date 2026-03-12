@@ -40,8 +40,6 @@ ACTION_ALIASES = {
     "create_pipeline": "rag.create_visual_pipeline",
     "update_pipeline": "rag.update_visual_pipeline",
     "compile_pipeline": "rag.compile_visual_pipeline",
-    "register_asset": "artifacts.create_or_update_draft",
-    "create_artifact_draft": "artifacts.create_or_update_draft",
     "publish_artifact": "artifacts.publish",
     "create_tool": "tools.create_or_update",
     "run_agent": "agents.execute",
@@ -675,8 +673,28 @@ def _catalog_list_agent_operators(client: Client) -> Tuple[List[Dict[str, Any]],
     return catalog_actions.list_agent_operators(client, control_client_factory=_control_client)
 
 
-def _create_artifact_draft(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-    return artifact_actions.create_or_update_draft(
+def _create_artifact(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return artifact_actions.create(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
+    )
+
+
+def _update_artifact(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return artifact_actions.update(
+        client,
+        payload,
+        dry_run,
+        control_client_factory=_control_client,
+        request_options_builder=_request_options,
+    )
+
+
+def _convert_artifact_kind(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    return artifact_actions.convert_kind(
         client,
         payload,
         dry_run,
@@ -881,7 +899,9 @@ def _dispatch_action(
         "rag.get_step_data": lambda: rag_actions.get_step_data(client, payload, control_client_factory=_control_client),
         "artifacts.list": lambda: artifact_actions.list_artifacts(client, payload, control_client_factory=_control_client),
         "artifacts.get": lambda: artifact_actions.get_artifact(client, payload, control_client_factory=_control_client),
-        "artifacts.create_or_update_draft": lambda: _create_artifact_draft(client, payload, dry_run),
+        "artifacts.create": lambda: _create_artifact(client, payload, dry_run),
+        "artifacts.update": lambda: _update_artifact(client, payload, dry_run),
+        "artifacts.convert_kind": lambda: _convert_artifact_kind(client, payload, dry_run),
         "artifacts.publish": lambda: _publish_artifact(client, payload, dry_run),
         "artifacts.delete": lambda: artifact_actions.delete(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "artifacts.create_test_run": lambda: artifact_actions.create_test_run(client, payload, control_client_factory=_control_client),

@@ -375,9 +375,16 @@ def _action_specific_api_check(
             found = [m for m in models if isinstance(m, dict) and str(m.get("slug", "")).startswith(unique_prefix)]
             return (len(found) > 0, "No created model with expected prefix")
 
-        if action == "artifacts.create_or_update_draft" and tenant_slug:
+        if action == "artifacts.create" and tenant_slug:
             artifacts = _unwrap_data(sdk_client.artifacts.list(tenant_slug=tenant_slug)).get("data", [])
-            found = [a for a in artifacts if isinstance(a, dict) and str(a.get("name", "")).startswith(unique_prefix)]
+            found = [
+                a for a in artifacts
+                if isinstance(a, dict)
+                and (
+                    str(a.get("slug", "")).startswith(unique_prefix)
+                    or str(a.get("display_name", "")).startswith(unique_prefix)
+                )
+            ]
             return (len(found) > 0, "No created artifact with expected prefix")
 
         if action == "knowledge_stores.create_or_update" and tenant_slug:

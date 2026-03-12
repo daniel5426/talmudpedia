@@ -1,6 +1,6 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 Scope:
 - Platform SDK tool action dispatch, explicit-action behavior, and strict canonical input enforcement.
@@ -21,11 +21,12 @@ Key scenarios covered:
 - Wrapped tool input in `value`/`query`/`text` is rejected with `NON_CANONICAL_PLATFORM_SDK_INPUT`.
 - Unsupported invented RAG actions like `rag.nodes.catalog` return explicit structured `unknown_action` errors.
 - Deprecated planner-centric actions (`validate_plan`, `execute_plan`) fail with explicit `deprecated_action` validation errors.
-- Legacy action aliases normalize to canonical domain action IDs.
+- Legacy artifact draft aliases are removed and now fail explicitly.
+- Non-artifact architect-safety aliases still normalize to canonical domain action IDs where intentionally supported.
 - Additional architect-safety aliases now map common non-canonical planner outputs to canonical IDs (e.g. `create_agent` -> `agents.create`) to prevent avoidable scope mismatch failures.
 - `run_tests` evaluates `contains` and `jsonpath` assertions.
 - Runtime primitive action dispatch routes through canonical orchestration action IDs.
-- Action-to-SDK parity for `artifacts.create_or_update_draft`, `artifacts.delete`, `tools.create_or_update`, `tools.publish`, `agents.execute`, `agents.start_run`, `agents.get_run_tree`, `orchestration.spawn_run`, and `catalog.list_capabilities`.
+- Action-to-SDK parity for `artifacts.create`, `artifacts.update`, `artifacts.convert_kind`, `artifacts.create_test_run`, `artifacts.delete`, `tools.create_or_update`, `tools.publish`, `agents.execute`, `agents.start_run`, `agents.get_run_tree`, `orchestration.spawn_run`, and `catalog.list_capabilities`.
 - Action-to-SDK parity now also covers non-start-set canonical domains:
   - `rag.create_job`
   - `models.update_provider`
@@ -65,11 +66,11 @@ Key scenarios covered:
   - `agents.nodes.validate`
 - Parity-coverage guard asserts every currently dispatched canonical action has a corresponding parity test reference.
 - Cross-surface integration parity coverage now includes env-gated core mutation paths:
-  - `artifacts.create_draft`
+  - `artifacts.create`
   - `tools.create_or_update` (create)
   - `tools.create_or_update` (update)
   - `tools.publish`
-- `artifacts.publish`
+  - `artifacts.publish`
   - `agents.create_or_update` (create)
   - `agents.publish`
   - `agents.start_run`
@@ -77,8 +78,8 @@ Key scenarios covered:
   These validate persisted-state equivalence across UI HTTP path, SDK path, and tool-action path.
 
 Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_sdk_tool`
-Last run date/time: 2026-03-11 18:18 EET
-Last run result: passed (`97 passed, 11 skipped`)
+Last run date/time: 2026-03-12 00:57 EET
+Last run result: passed (`103 passed, 11 skipped`)
 
 Known gaps / follow-ups:
 - Publish env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.

@@ -64,7 +64,8 @@ async def test_function_tool_execution(monkeypatch):
         {"node_id": "tool-node"},
     )
 
-    assert result["context"]["echo"] == {"x": 1}
+    assert result["context"]["echo"]["x"] == 1
+    assert result["context"]["echo"]["context"] == {}
 
 
 @pytest.mark.asyncio
@@ -198,6 +199,49 @@ async def test_function_tool_merges_input_wrapper_with_context(monkeypatch):
     assert captured["run_id"] == "run-input-789"
     assert captured["filePath"] == "src/Sidebar.tsx"
     assert captured["code"] == "next-from-input"
+
+
+@pytest.mark.asyncio
+async def test_function_tool_propagates_delegation_context(monkeypatch):
+    captured = {}
+
+    @register_tool_function("unit_test_capture_delegation_context")
+    def unit_test_capture_delegation_context(payload):
+        captured.update(payload)
+        return {"ok": True}
+
+    tool_id = uuid4()
+    config_schema = {"implementation": {"type": "function", "function_name": "unit_test_capture_delegation_context"}}
+    tool = make_tool(tool_id, config_schema)
+    db = FakeDB(tool)
+
+    executor = ToolNodeExecutor(tenant_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    await executor.execute(
+        {"context": {"args": {"action": "agents.list"}}},
+        {"tool_id": str(tool_id)},
+        {
+            "node_id": "tool-node",
+            "tenant_id": "tenant-123",
+            "grant_id": "grant-123",
+            "principal_id": "principal-123",
+            "requested_scopes": ["agents.read"],
+            "agent_slug": "platform-architect",
+            "mode": "debug",
+        },
+    )
+
+    assert captured["context"]["tenant_id"] == "tenant-123"
+    assert captured["context"]["grant_id"] == "grant-123"
+    assert captured["context"]["principal_id"] == "principal-123"
+    assert captured["context"]["requested_scopes"] == ["agents.read"]
+    assert captured["context"]["agent_slug"] == "platform-architect"
+    assert captured["context"]["mode"] == "debug"
 
 
 @pytest.mark.asyncio

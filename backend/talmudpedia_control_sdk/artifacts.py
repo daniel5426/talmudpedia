@@ -25,7 +25,7 @@ class ArtifactsAPI:
             params=_tenant_params(tenant_slug),
         )
 
-    def create_draft(
+    def create(
         self,
         spec: Dict[str, Any],
         *,
@@ -41,7 +41,7 @@ class ArtifactsAPI:
             mutation=True,
         )
 
-    def update_draft(
+    def update(
         self,
         artifact_id: str,
         patch: Dict[str, Any],
@@ -69,6 +69,23 @@ class ArtifactsAPI:
             "DELETE",
             f"/admin/artifacts/{artifact_id}",
             params=_tenant_params(tenant_slug),
+            options=options,
+            mutation=True,
+        )
+
+    def convert_kind(
+        self,
+        artifact_id: str,
+        request: Dict[str, Any],
+        *,
+        tenant_slug: Optional[str] = None,
+        options: Optional[RequestOptions] = None,
+    ) -> ResponseEnvelope:
+        return self._client.request(
+            "POST",
+            f"/admin/artifacts/{artifact_id}/convert-kind",
+            params=_tenant_params(tenant_slug),
+            json_body=request,
             options=options,
             mutation=True,
         )

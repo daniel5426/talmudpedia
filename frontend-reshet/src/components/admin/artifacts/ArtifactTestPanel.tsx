@@ -42,6 +42,7 @@ interface ArtifactTestPanelProps {
   ragContract?: RAGArtifactContract | null
   toolContract?: ToolArtifactContract | null
   onOpenChange?: (isOpen: boolean) => void
+  agentPanelOpen?: boolean
 }
 
 const INITIAL_INPUT = '[\n  {\n    "text": "Hello world",\n    "metadata": {}\n  }\n]'
@@ -85,6 +86,7 @@ export function ArtifactTestPanel({
   ragContract,
   toolContract,
   onOpenChange,
+  agentPanelOpen,
 }: ArtifactTestPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
@@ -290,7 +292,7 @@ export function ArtifactTestPanel({
         />
       )}
       <Tabs value={testTab} onValueChange={setTestTab} className="flex-1 flex flex-col min-h-0">
-        <div className="h-11 mx-1 mr-3 shadow-sm px-2 rounded-md bg-sidebar flex items-center gap-3">
+        <div className={cn("h-11 mx-1 shadow-sm px-2 rounded-md bg-sidebar flex items-center gap-3", !agentPanelOpen && "mr-3")}>
           <button
             type="button"
             className="flex items-center gap-3 min-w-0 flex-1 text-left"

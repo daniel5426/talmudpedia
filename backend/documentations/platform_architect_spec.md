@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-12
 
 ## Purpose
 This is the single authoritative spec for the Platform Architect.
@@ -124,7 +124,7 @@ Current architect-facing policy:
 - Mutation idempotency and request metadata may be synthesized by runtime/control-plane layers when absent.
 
 ### Draft-first policy
-- `agents.publish`, `tools.publish`, and `artifacts.promote` are blocked unless explicit publish intent is set.
+- `agents.publish`, `tools.publish`, and `artifacts.publish` are blocked unless explicit publish intent is set.
 - Publish intent flag: `objective_flags.allow_publish=true`
 - Policy denial code: `DRAFT_FIRST_POLICY_DENIED`
 

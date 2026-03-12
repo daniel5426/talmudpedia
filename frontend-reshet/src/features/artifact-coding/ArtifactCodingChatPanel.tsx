@@ -192,7 +192,6 @@ export function ArtifactCodingChatPanel({
           aria-hidden="true"
         />
         <div className="flex min-w-0 flex-1 items-center gap-2 px-1">
-          <span className="truncate text-[12px] text-foreground">{activeSessionTitle}</span>
           {activeSessionIsRunning ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /> : null}
         </div>
         <div className="flex mr-1 border rounded-md items-center gap-1">
@@ -214,7 +213,7 @@ export function ArtifactCodingChatPanel({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-1">
+      <div className="flex min-h-0 flex-1 flex-col px-3 pb-2 pt-1">
         <Conversation className="flex min-h-0 flex-1 flex-col transition-all">
           <ArtifactCodingChatScrollBindings onScrollContainerChange={handleScrollContainerChange} />
           <ConversationContent className="gap-2 px-0 py-0 pb-3">

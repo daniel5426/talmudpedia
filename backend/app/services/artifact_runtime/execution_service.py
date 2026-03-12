@@ -16,6 +16,7 @@ from app.db.postgres.models.artifact_runtime import (
 )
 
 from .cloudflare_dispatch_client import CloudflareDispatchClient
+from .cloudflare_dispatch_client import CloudflareDispatchHTTPError
 from .deployment_service import ArtifactDeploymentService
 from .policy_service import ArtifactConcurrencyLimitExceeded, ArtifactRuntimePolicyService
 from .registry_service import ArtifactRegistryService
@@ -262,7 +263,11 @@ class ArtifactExecutionService:
 
         policy = await self._policies.assert_capacity(tenant_id=run.tenant_id, queue_class=run.queue_class)
         namespace = "staging" if run.queue_class == "artifact_test" else "production"
-        deployment = await self._deployments.ensure_deployment(revision=run.revision, namespace=namespace)
+        deployment = await self._deployments.ensure_deployment(
+            revision=run.revision,
+            namespace=namespace,
+            tenant_id=run.tenant_id,
+        )
 
         run.runtime_metadata = {
             **dict(run.runtime_metadata or {}),
@@ -334,9 +339,13 @@ class ArtifactExecutionService:
             run = await self._runs.get_run(run_id=run_id)
             if run is None:
                 return
+            if isinstance(exc, CloudflareDispatchHTTPError):
+                error_payload = exc.to_error_payload()
+            else:
+                error_payload = {"message": str(exc), "code": "CLOUDFLARE_DISPATCH_FAILED"}
             await self._runs.mark_failed(
                 run,
-                error_payload={"message": str(exc), "code": "CLOUDFLARE_DISPATCH_FAILED"},
+                error_payload=error_payload,
                 stdout_excerpt=None,
                 stderr_excerpt=None,
                 duration_ms=None,
@@ -349,7 +358,11 @@ class ArtifactExecutionService:
                         "payload": {
                             "event": "dispatch_finished",
                             "name": "dispatch_finished",
-                            "data": {"status": "failed", "message": str(exc)},
+                            "data": {
+                                "status": "failed",
+                                "message": str(exc),
+                                "error_payload": error_payload,
+                            },
                         },
                     }
                 ],

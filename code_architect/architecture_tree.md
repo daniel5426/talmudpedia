@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -124,7 +124,10 @@ backend/app/services/artifact_coding_chat_history_service.py
 backend/app/services/artifact_coding_shared_draft_service.py
 backend/app/services/artifact_coding_agent_tools.py
 backend/app/services/artifact_coding_agent_profile.py
+backend/app/services/artifact_coding_runtime_service.py
 backend/app/services/platform_architect_contracts.py
+backend/app/services/platform_architect_artifact_delegation_tools.py
+backend/app/services/platform_sdk_local_tools.py
 backend/app/services/platform_architect_guardrails.py
 backend/app/services/graph_mutation_service.py
 backend/app/services/agent_graph_mutation_service.py

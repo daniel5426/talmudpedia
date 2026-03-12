@@ -460,7 +460,11 @@ async def _publish_tool(
         )
         if revision is None:
             raise HTTPException(status_code=400, detail="Artifact-backed tool revision is unavailable")
-        await ArtifactDeploymentService(db).ensure_deployment(revision=revision, namespace="production")
+        await ArtifactDeploymentService(db).ensure_deployment(
+            revision=revision,
+            namespace="production",
+            tenant_id=tenant_id,
+        )
     tool.status = ToolStatus.PUBLISHED
     tool.is_active = True
     tool.published_at = tool.published_at or datetime.utcnow()

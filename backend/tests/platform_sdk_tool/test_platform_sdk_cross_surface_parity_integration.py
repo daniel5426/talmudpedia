@@ -44,14 +44,14 @@ def _fetch_artifact(base_url: str, headers: Dict[str, str], artifact_id: str) ->
 
 
 def _normalize_artifact(record: Dict[str, Any]) -> Dict[str, Any]:
+    runtime = record.get("runtime") if isinstance(record.get("runtime"), dict) else {}
     return {
-        "name": record.get("name"),
+        "slug": record.get("slug"),
         "display_name": record.get("display_name"),
         "description": record.get("description"),
-        "category": record.get("category"),
-        "input_type": record.get("input_type"),
-        "output_type": record.get("output_type"),
-        "python_code": record.get("python_code"),
+        "kind": record.get("kind"),
+        "entry_module_path": runtime.get("entry_module_path"),
+        "runtime_target": runtime.get("runtime_target"),
     }
 
 
@@ -68,13 +68,25 @@ def _delete_artifact(base_url: str, headers: Dict[str, str], artifact_id: str) -
 
 def _create_artifact_for_tools(base_url: str, headers: Dict[str, str], name_prefix: str) -> str:
     payload = {
-        "name": f"{name_prefix}-artifact",
+        "slug": f"{name_prefix}-artifact",
         "display_name": f"{name_prefix}-artifact",
         "description": "Tool backing artifact",
-        "category": "custom",
-        "input_type": "raw_documents",
-        "output_type": "raw_documents",
-        "python_code": "def execute(input_data, config=None):\n    return input_data",
+        "kind": "tool_impl",
+        "runtime": {
+            "source_files": [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return inputs"}],
+            "entry_module_path": "main.py",
+            "python_dependencies": [],
+            "runtime_target": "cloudflare_workers",
+        },
+        "capabilities": {"network_access": False},
+        "config_schema": {"type": "object"},
+        "tool_contract": {
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "side_effects": [],
+            "execution_mode": "interactive",
+            "tool_ui": {},
+        },
     }
     response = requests.post(
         f"{base_url}/admin/artifacts",
@@ -191,18 +203,30 @@ def _delete_agent(base_url: str, headers: Dict[str, str], agent_id: str) -> None
 
 
 @pytest.mark.real_db
-def test_cross_surface_create_draft_parity() -> None:
+def test_cross_surface_artifacts_create_parity() -> None:
     base_url, headers, tenant_id, api_key = _require_env()
 
-    artifact_name = f"sdk-parity-{uuid.uuid4().hex[:8]}"
+    artifact_slug = f"sdk-parity-{uuid.uuid4().hex[:8]}"
     payload = {
-        "name": artifact_name,
-        "display_name": f"{artifact_name}-display",
+        "slug": artifact_slug,
+        "display_name": f"{artifact_slug}-display",
         "description": "Cross-surface parity test artifact",
-        "category": "custom",
-        "input_type": "raw_documents",
-        "output_type": "raw_documents",
-        "python_code": "def execute(input_data, config=None):\n    return input_data",
+        "kind": "tool_impl",
+        "runtime": {
+            "source_files": [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return inputs"}],
+            "entry_module_path": "main.py",
+            "python_dependencies": ["httpx>=0.27"],
+            "runtime_target": "cloudflare_workers",
+        },
+        "capabilities": {"network_access": False},
+        "config_schema": {"type": "object"},
+        "tool_contract": {
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "side_effects": [],
+            "execution_mode": "interactive",
+            "tool_ui": {},
+        },
     }
 
     ui_artifact_id = None
@@ -227,7 +251,7 @@ def test_cross_surface_create_draft_parity() -> None:
             token=api_key,
             tenant_id=tenant_id,
         )
-        sdk_result = sdk_client.artifacts.create_draft(payload)
+        sdk_result = sdk_client.artifacts.create(payload)
         sdk_entity = _unwrap_data(sdk_result)
         sdk_artifact_id = sdk_entity.get("id")
         assert sdk_artifact_id
@@ -237,7 +261,7 @@ def test_cross_surface_create_draft_parity() -> None:
             config={},
             context={
                 "inputs": {
-                    "action": "artifacts.create_or_update_draft",
+                    "action": "artifacts.create",
                     "tenant_id": tenant_id,
                     "token": api_key,
                     "base_url": base_url,
@@ -621,7 +645,7 @@ def test_cross_surface_tools_publish_parity() -> None:
 
 
 @pytest.mark.real_db
-def test_cross_surface_artifacts_promote_parity() -> None:
+def test_cross_surface_artifacts_publish_parity() -> None:
     base_url, headers, tenant_id, api_key = _require_env()
     sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
 
@@ -631,15 +655,27 @@ def test_cross_surface_artifacts_promote_parity() -> None:
     tool_artifact_id = None
 
     try:
-        def _draft_payload(name: str) -> Dict[str, Any]:
+        def _draft_payload(slug: str) -> Dict[str, Any]:
             return {
-                "name": name,
-                "display_name": name,
-                "description": "promote parity draft",
-                "category": "custom",
-                "input_type": "raw_documents",
-                "output_type": "raw_documents",
-                "python_code": "def execute(input_data, config=None):\n    return input_data",
+                "slug": slug,
+                "display_name": slug,
+                "description": "publish parity draft",
+                "kind": "tool_impl",
+                "runtime": {
+                    "source_files": [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return inputs"}],
+                    "entry_module_path": "main.py",
+                    "python_dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "capabilities": {"network_access": False},
+                "config_schema": {"type": "object"},
+                "tool_contract": {
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": {},
+                },
             }
 
         ui_artifact_id = str(_unwrap_data(requests.post(
@@ -648,17 +684,17 @@ def test_cross_surface_artifacts_promote_parity() -> None:
             headers=headers,
             timeout=30,
         ).json()).get("id"))
-        sdk_artifact_id = str(_unwrap_data(sdk_client.artifacts.create_draft(_draft_payload(f"promote-sdk-{unique}"))).get("id"))
+        sdk_artifact_id = str(_unwrap_data(sdk_client.artifacts.create(_draft_payload(f"publish-sdk-{unique}"))).get("id"))
         tool_artifact_id = str(_unwrap_data(handler.execute(
             state={},
             config={},
             context={
                 "inputs": {
-                    "action": "artifacts.create_or_update_draft",
+                    "action": "artifacts.create",
                     "tenant_id": tenant_id,
                     "token": api_key,
                     "base_url": base_url,
-                    "payload": _draft_payload(f"promote-tool-{unique}"),
+                    "payload": _draft_payload(f"publish-tool-{unique}"),
                 }
             },
         )["context"]["result"]).get("id"))
@@ -683,6 +719,7 @@ def test_cross_surface_artifacts_promote_parity() -> None:
                     "token": api_key,
                     "base_url": base_url,
                     "payload": {"artifact_id": tool_artifact_id},
+                    "objective_flags": {"allow_publish": True},
                 }
             },
         )

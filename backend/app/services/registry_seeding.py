@@ -27,6 +27,10 @@ from app.services.platform_architect_contracts import (
     build_architect_graph_definition,
     build_platform_domain_tool_schema,
 )
+from app.services.platform_architect_artifact_delegation_tools import (
+    ensure_platform_architect_artifact_delegation_tools,
+)
+from app.services.platform_sdk_local_tools import PLATFORM_SDK_LOCAL_FUNCTIONS
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 
 # Backward-compatible exports for tests and internal callers.
@@ -166,15 +170,13 @@ async def seed_platform_sdk_tool(db):
         "properties": {
             "action": {
                 "type": "string",
-                "enum": [
-                    "fetch_catalog",
-                    "validate_plan",
-                    "execute_plan",
-                    "create_artifact_draft",
-                    "promote_artifact",
-                    "create_tool",
-                    "run_agent",
-                    "run_tests",
+                "description": "Canonical platform-sdk action id. The runtime validates the concrete action contract.",
+                "examples": [
+                    "artifacts.create",
+                    "artifacts.update",
+                    "artifacts.publish",
+                    "tools.create_or_update",
+                    "agents.execute",
                     "respond",
                 ],
             },
@@ -430,6 +432,8 @@ async def seed_builtin_tool_templates(db):
 
 
 async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
+    import app.services.platform_sdk_local_tools  # noqa: F401
+
     required_cols = {
         "id",
         "tenant_id",
@@ -453,23 +457,19 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
         print("tool_registry missing required columns; skipping platform architect domain tool seed.")
         return {}
 
-    platform_sdk_artifact = await ArtifactRegistryService(db).get_system_artifact(system_key="platform_sdk")
-    if platform_sdk_artifact is None:
-        platform_sdk_tool = await seed_platform_sdk_tool(db)
-        platform_sdk_artifact = await ArtifactRegistryService(db).get_system_artifact(system_key="platform_sdk")
-        if platform_sdk_tool is None or platform_sdk_artifact is None:
-            raise RuntimeError("Platform SDK artifact seed failed")
-
     seeded: dict[str, str] = {}
     for slug, spec in PLATFORM_ARCHITECT_DOMAIN_TOOLS.items():
         schema = build_platform_domain_tool_schema(slug, spec)
         config_schema = {
             "implementation": {
-                "type": "artifact",
-                "artifact_id": str(platform_sdk_artifact.id),
-                "revision_id": str(platform_sdk_artifact.latest_published_revision_id),
+                "type": "function",
+                "function_name": PLATFORM_SDK_LOCAL_FUNCTIONS[slug],
             },
             "execution": {
+                "timeout_s": 60,
+                "is_pure": False,
+                "concurrency_group": "platform_sdk_local",
+                "max_concurrency": 4,
                 "allowed_actions": list(spec["actions"].keys()),
             },
         }
@@ -492,11 +492,11 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
                 config_schema=config_schema,
                 status=ToolStatus.PUBLISHED,
                 version="1.0.0",
-                implementation_type=ToolImplementationType.ARTIFACT,
-                artifact_id=str(platform_sdk_artifact.id),
+                implementation_type=ToolImplementationType.FUNCTION,
+                artifact_id=None,
                 artifact_version=None,
-                artifact_revision_id=platform_sdk_artifact.latest_published_revision_id,
-                builtin_key=f"platform_architect_{slug.replace('-', '_')}",
+                artifact_revision_id=None,
+                builtin_key=None,
                 builtin_template_id=None,
                 is_builtin_template=False,
                 is_active=True,
@@ -512,11 +512,11 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
             tool.config_schema = config_schema
             tool.status = ToolStatus.PUBLISHED
             tool.version = "1.0.0"
-            tool.implementation_type = ToolImplementationType.ARTIFACT
-            tool.artifact_id = str(platform_sdk_artifact.id)
+            tool.implementation_type = ToolImplementationType.FUNCTION
+            tool.artifact_id = None
             tool.artifact_version = None
-            tool.artifact_revision_id = platform_sdk_artifact.latest_published_revision_id
-            tool.builtin_key = f"platform_architect_{slug.replace('-', '_')}"
+            tool.artifact_revision_id = None
+            tool.builtin_key = None
             tool.builtin_template_id = None
             tool.is_builtin_template = False
             tool.is_active = True
@@ -548,13 +548,20 @@ async def seed_platform_architect_agent(db):
     if not all(tool_ids.get(slug) for slug in expected_slugs):
         print("Platform architect domain tools missing; skipping Platform Architect agent seed.")
         return None
+    delegation_tool_ids = await ensure_platform_architect_artifact_delegation_tools(
+        db,
+        tenant_id=tenant.id,
+    )
 
     model_id = await _resolve_default_chat_model_id(db, tenant.id)
     if not model_id:
         print("No chat model available; skipping Platform Architect agent seed.")
         return None
 
-    architect_tool_ids = [tool_ids[slug] for slug in expected_slugs]
+    architect_tool_ids = [
+        *[tool_ids[slug] for slug in expected_slugs],
+        *delegation_tool_ids,
+    ]
     graph_definition = build_architect_graph_definition(
         model_id=model_id,
         tool_ids=architect_tool_ids,

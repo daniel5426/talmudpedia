@@ -13,14 +13,14 @@ class _FakeArtifactsAPI:
         self.calls.append({"method": "get", "artifact_id": artifact_id, "tenant_slug": tenant_slug})
         return {"data": {"id": artifact_id}}
 
-    def create_draft(self, spec, *, tenant_slug=None, options=None):
-        self.calls.append({"method": "create_draft", "spec": spec, "tenant_slug": tenant_slug, "options": options})
+    def create(self, spec, *, tenant_slug=None, options=None):
+        self.calls.append({"method": "create", "spec": spec, "tenant_slug": tenant_slug, "options": options})
         return {"data": {"id": "draft-1"}}
 
-    def update_draft(self, artifact_id, patch, *, tenant_slug=None, options=None):
+    def update(self, artifact_id, patch, *, tenant_slug=None, options=None):
         self.calls.append(
             {
-                "method": "update_draft",
+                "method": "update",
                 "artifact_id": artifact_id,
                 "patch": patch,
                 "tenant_slug": tenant_slug,
@@ -28,6 +28,33 @@ class _FakeArtifactsAPI:
             }
         )
         return {"data": {"id": artifact_id, "updated": True}}
+
+    def convert_kind(self, artifact_id, request, *, tenant_slug=None, options=None):
+        self.calls.append(
+            {
+                "method": "convert_kind",
+                "artifact_id": artifact_id,
+                "request": request,
+                "tenant_slug": tenant_slug,
+                "options": options,
+            }
+        )
+        return {"data": {"id": artifact_id, "kind": request.get("kind")}}
+
+    def publish(self, artifact_id, *, tenant_slug=None, options=None):
+        self.calls.append(
+            {
+                "method": "publish",
+                "artifact_id": artifact_id,
+                "tenant_slug": tenant_slug,
+                "options": options,
+            }
+        )
+        return {"data": {"artifact_id": artifact_id, "status": "published"}}
+
+    def create_test_run(self, request, tenant_slug=None):
+        self.calls.append({"method": "create_test_run", "request": request, "tenant_slug": tenant_slug})
+        return {"data": {"run_id": "artifact-run-1", "status": "queued"}}
 
     def delete(self, artifact_id, tenant_slug=None, options=None):
         self.calls.append(
@@ -250,7 +277,7 @@ def _patch_auth(monkeypatch):
     )
 
 
-def test_artifacts_create_or_update_draft_contract_parity(monkeypatch):
+def test_artifacts_create_contract_parity(monkeypatch):
     _patch_auth(monkeypatch)
     fake = _FakeControlClient()
     monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
@@ -260,10 +287,30 @@ def test_artifacts_create_or_update_draft_contract_parity(monkeypatch):
         config={},
         context={
             "inputs": {
-                "action": "artifacts.create_or_update_draft",
+                "action": "artifacts.create",
                 "tenant_id": "tenant-1",
                 "token": "token",
-                "payload": {"name": "demo", "python_code": "def execute(x, y=None):\n    return x"},
+                "payload": {
+                    "slug": "demo",
+                    "display_name": "Demo Artifact",
+                    "description": "artifact create parity",
+                    "kind": "tool_impl",
+                    "runtime": {
+                        "source_files": [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return inputs"}],
+                        "entry_module_path": "main.py",
+                        "python_dependencies": ["httpx>=0.27"],
+                        "runtime_target": "cloudflare_workers",
+                    },
+                    "capabilities": {"network_access": False},
+                    "config_schema": {"type": "object"},
+                    "tool_contract": {
+                        "input_schema": {"type": "object"},
+                        "output_schema": {"type": "object"},
+                        "side_effects": [],
+                        "execution_mode": "interactive",
+                        "tool_ui": {},
+                    },
+                },
             }
         },
     )
@@ -271,15 +318,15 @@ def test_artifacts_create_or_update_draft_contract_parity(monkeypatch):
     assert out["context"]["errors"] == []
     assert out["context"]["result"] == {"id": "draft-1"}
     call = fake.artifacts.calls[0]
-    assert call["method"] == "create_draft"
+    assert call["method"] == "create"
     assert call["spec"]["slug"] == "demo"
-    assert call["spec"]["kind"] == "rag_operator"
+    assert call["spec"]["kind"] == "tool_impl"
     assert call["spec"]["runtime"]["entry_module_path"] == "main.py"
-    assert call["spec"]["runtime"]["source_files"][0]["content"].startswith("def execute")
+    assert call["spec"]["runtime"]["source_files"][0]["path"] == "main.py"
     assert call["options"]["dry_run"] is False
 
 
-def test_artifacts_update_draft_contract_parity(monkeypatch):
+def test_artifacts_update_contract_parity(monkeypatch):
     _patch_auth(monkeypatch)
     fake = _FakeControlClient()
     monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
@@ -289,10 +336,16 @@ def test_artifacts_update_draft_contract_parity(monkeypatch):
         config={},
         context={
             "inputs": {
-                "action": "artifacts.create_or_update_draft",
+                "action": "artifacts.update",
                 "tenant_id": "tenant-1",
                 "token": "token",
-                "payload": {"artifact_id": "draft-42", "description": "updated"},
+                "payload": {
+                    "artifact_id": "draft-42",
+                    "patch": {
+                        "display_name": "Updated Artifact",
+                        "description": "updated",
+                    },
+                },
             }
         },
     )
@@ -300,9 +353,89 @@ def test_artifacts_update_draft_contract_parity(monkeypatch):
     assert out["context"]["errors"] == []
     assert out["context"]["result"] == {"id": "draft-42", "updated": True}
     call = fake.artifacts.calls[0]
-    assert call["method"] == "update_draft"
+    assert call["method"] == "update"
     assert call["artifact_id"] == "draft-42"
     assert call["patch"]["description"] == "updated"
+    assert call["patch"]["display_name"] == "Updated Artifact"
+
+
+def test_artifacts_convert_kind_contract_parity(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _FakeControlClient()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    out = handler.execute(
+        state={},
+        config={},
+        context={
+            "inputs": {
+                "action": "artifacts.convert_kind",
+                "tenant_id": "tenant-1",
+                "token": "token",
+                "payload": {
+                    "artifact_id": "artifact-9",
+                    "kind": "agent_node",
+                    "agent_contract": {
+                        "state_reads": ["messages"],
+                        "state_writes": ["tool_outputs"],
+                        "input_schema": {"type": "object"},
+                        "output_schema": {"type": "object"},
+                        "node_ui": {},
+                    },
+                },
+            }
+        },
+    )
+
+    assert out["context"]["errors"] == []
+    assert out["context"]["result"] == {"id": "artifact-9", "kind": "agent_node"}
+    call = fake.artifacts.calls[0]
+    assert call["method"] == "convert_kind"
+    assert call["artifact_id"] == "artifact-9"
+    assert call["request"]["kind"] == "agent_node"
+    assert call["request"]["agent_contract"]["state_reads"] == ["messages"]
+
+
+def test_artifacts_create_test_run_contract_parity(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _FakeControlClient()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    out = handler.execute(
+        state={},
+        config={},
+        context={
+            "inputs": {
+                "action": "artifacts.create_test_run",
+                "tenant_id": "tenant-1",
+                "token": "token",
+                "payload": {
+                    "artifact_id": "artifact-7",
+                    "input_data": {"message": "hello"},
+                    "config": {"mode": "test"},
+                },
+            }
+        },
+    )
+
+    assert out["context"]["errors"] == []
+    assert out["context"]["result"] == {"run_id": "artifact-run-1", "status": "queued"}
+    call = fake.artifacts.calls[0]
+    assert call["method"] == "create_test_run"
+    assert call["request"]["artifact_id"] == "artifact-7"
+    assert call["request"]["input_data"] == {"message": "hello"}
+
+
+def test_removed_legacy_artifact_action_fails_explicitly():
+    out = handler.execute(
+        state={},
+        config={},
+        context={"inputs": {"action": "artifacts.create_or_update_draft", "tenant_id": "tenant-1", "token": "t"}},
+    )
+
+    assert out["context"]["action"] == "artifacts.create_or_update_draft"
+    assert out["context"]["result"]["message"] == "Unknown action 'artifacts.create_or_update_draft'."
+    assert any(err.get("error") == "unknown_action" for err in out["context"]["errors"])
 
 
 def test_tools_create_or_update_contract_parity(monkeypatch):

@@ -258,6 +258,39 @@ def _patch_auth(monkeypatch):
         ("artifacts.list", {}, "artifacts", "list", None, None),
         ("artifacts.get", {"artifact_id": "a1"}, "artifacts", "get", "a1", None),
         (
+            "artifacts.create",
+            {
+                "slug": "artifact-a1",
+                "display_name": "Artifact A1",
+                "kind": "tool_impl",
+                "runtime": {
+                    "source_files": [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return inputs"}],
+                    "entry_module_path": "main.py",
+                },
+                "tool_contract": {"input_schema": {}, "output_schema": {}},
+            },
+            "artifacts",
+            "create",
+            None,
+            "options",
+        ),
+        (
+            "artifacts.update",
+            {"artifact_id": "a1", "patch": {"display_name": "Artifact A1 Updated"}},
+            "artifacts",
+            "update",
+            "a1",
+            "options",
+        ),
+        (
+            "artifacts.convert_kind",
+            {"artifact_id": "a1", "kind": "agent_node", "agent_contract": {"input_schema": {}, "output_schema": {}}},
+            "artifacts",
+            "convert_kind",
+            "a1",
+            "options",
+        ),
+        (
             "artifacts.publish",
             {"artifact_id": "a1", "objective_flags": {"allow_publish": True}},
             "artifacts",
@@ -265,7 +298,7 @@ def _patch_auth(monkeypatch):
             "a1",
             "options",
         ),
-        ("artifacts.create_test_run", {"request": {"artifact_id": "a1", "input": {}}}, "artifacts", "create_test_run", None, None),
+        ("artifacts.create_test_run", {"artifact_id": "a1", "input_data": {}}, "artifacts", "create_test_run", None, None),
         ("tools.list", {}, "tools", "list", None, None),
         ("tools.get", {"tool_id": "t1"}, "tools", "get", "t1", None),
         (

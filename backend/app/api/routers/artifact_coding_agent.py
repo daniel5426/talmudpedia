@@ -25,11 +25,10 @@ from app.db.postgres.models.artifact_runtime import ArtifactCodingSession
 from app.db.postgres.models.identity import Tenant
 from app.db.postgres.engine import sessionmaker as db_sessionmaker
 from app.db.postgres.session import get_db
-from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_agent_tools import ARTIFACT_CODING_AGENT_SURFACE
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
+from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
-from app.services.thread_service import ThreadService
 
 router = APIRouter(prefix="/admin/artifacts/coding-agent/v1", tags=["artifacts"])
 
@@ -357,151 +356,41 @@ async def submit_artifact_coding_prompt(
     user_prompt = str(payload.input or "").strip()
     if not user_prompt:
         raise HTTPException(status_code=400, detail="input is required")
-    history = ArtifactCodingChatHistoryService(db)
-    shared_drafts = ArtifactCodingSharedDraftService(db)
-    agent = await ensure_artifact_coding_agent_profile(db, tenant.id, actor_user_id=user.id)
-    draft_snapshot = dict(payload.draft_snapshot or {})
-    session: ArtifactCodingSession
-    session_id: UUID
-    agent_thread_id: UUID
-    if payload.chat_session_id is not None:
-        session = await _get_session_for_user_or_404(
-            db=db,
+    requested_model_id = str(payload.model_id or "").strip() or None
+    runtime = ArtifactCodingRuntimeService(db)
+    try:
+        session, _shared_draft, run = await runtime.start_prompt_run(
             tenant_id=tenant.id,
             user_id=user.id,
-            session_id=payload.chat_session_id,
-        )
-        await history.update_session_scope(
-            session=session,
+            user_prompt=user_prompt,
             artifact_id=payload.artifact_id,
             draft_key=str(payload.draft_key or "").strip() or None,
+            chat_session_id=payload.chat_session_id,
+            draft_snapshot=dict(payload.draft_snapshot or {}),
+            model_id=requested_model_id,
         )
-        shared_draft = await shared_drafts.get_or_create_for_scope(
-            tenant_id=tenant.id,
-            artifact_id=payload.artifact_id or session.artifact_id or session.linked_artifact_id,
-            draft_key=str(payload.draft_key or "").strip() or session.draft_key or None,
-            initial_snapshot=draft_snapshot,
-        )
-        await shared_drafts.update_snapshot(
-            shared_draft=shared_draft,
-            draft_snapshot=draft_snapshot,
-            artifact_id=payload.artifact_id,
-            draft_key=str(payload.draft_key or "").strip() or None,
-        )
-        session_id = session.id
-        agent_thread_id = session.agent_thread_id
-    else:
-        thread = (
-            await ThreadService(db).resolve_or_create_thread(
+    except RuntimeError as exc:
+        if str(exc) == "CODING_AGENT_RUN_ACTIVE":
+            session = await _get_session_for_user_or_404(
+                db=db,
                 tenant_id=tenant.id,
                 user_id=user.id,
-                app_account_id=None,
-                agent_id=agent.id,
-                published_app_id=None,
-                surface=AgentThreadSurface.artifact_admin,
-                thread_id=None,
-                input_text=user_prompt,
+                session_id=payload.chat_session_id,
             )
-        ).thread
-        session = await history.create_session(
-            tenant_id=tenant.id,
-            artifact_id=payload.artifact_id,
-            draft_key=str(payload.draft_key or "").strip() or None,
-            agent_thread_id=thread.id,
-            title_prompt=user_prompt,
-        )
-        shared_draft = await shared_drafts.get_or_create_for_scope(
-            tenant_id=tenant.id,
-            artifact_id=payload.artifact_id,
-            draft_key=str(payload.draft_key or "").strip() or None,
-            initial_snapshot=draft_snapshot,
-        )
-        await shared_drafts.update_snapshot(
-            shared_draft=shared_draft,
-            draft_snapshot=draft_snapshot,
-            artifact_id=payload.artifact_id,
-            draft_key=str(payload.draft_key or "").strip() or None,
-        )
-        session_id = session.id
-        agent_thread_id = thread.id
-    if payload.artifact_id is not None and payload.draft_key:
-        await history.link_sessions_to_artifact(
-            tenant_id=tenant.id,
-            draft_key=str(payload.draft_key),
-            artifact_id=payload.artifact_id,
-        )
-        await shared_drafts.link_scope_to_artifact(
-            tenant_id=tenant.id,
-            draft_key=str(payload.draft_key),
-            artifact_id=payload.artifact_id,
-        )
-    if session.active_run_id is not None:
-        active_run = await db.get(AgentRun, session.active_run_id)
-        if active_run is not None and str(getattr(active_run.status, "value", active_run.status)) not in {
-            RunStatus.completed.value,
-            RunStatus.failed.value,
-            RunStatus.cancelled.value,
-        }:
+            active_run = await db.get(AgentRun, session.active_run_id) if session.active_run_id else None
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "CODING_AGENT_RUN_ACTIVE",
                     "message": "An artifact coding run is already active for this chat session.",
-                    "active_run_id": str(active_run.id),
+                    "active_run_id": str(active_run.id) if active_run else None,
                     "chat_session_id": str(session.id),
                 },
-            )
-    run_messages = await history.build_run_messages(
-        session_id=session.id,
-        current_user_prompt=user_prompt,
-    )
-    requested_model_id = str(payload.model_id or "").strip() or None
-    request_context = {
-        "surface": ARTIFACT_CODING_AGENT_SURFACE,
-        "artifact_coding_session_id": str(session_id),
-        "artifact_id": str(payload.artifact_id) if payload.artifact_id else None,
-        "draft_key": str(payload.draft_key or "").strip() or None,
-        "requested_model_id": requested_model_id,
-        "thread_id": str(agent_thread_id),
-        "tenant_id": str(tenant.id),
-        "user_id": str(user.id),
-        "initiator_user_id": str(user.id),
-    }
-    input_params = {
-        "messages": run_messages,
-        "input": user_prompt,
-        "thread_id": str(agent_thread_id),
-        "context": request_context,
-    }
-    executor = AgentExecutorService(db=db)
-    run_id = await executor.start_run(
-        agent_id=agent.id,
-        input_params=input_params,
-        user_id=user.id,
-        background=False,
-        mode=ExecutionMode.DEBUG,
-        requested_scopes=[],
-        thread_id=agent_thread_id,
-    )
-    run = await db.get(AgentRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=500, detail="Artifact coding run was not created")
-    run.surface = ARTIFACT_CODING_AGENT_SURFACE
-    if requested_model_id:
-        try:
-            run.requested_model_id = UUID(requested_model_id)
-        except Exception:
-            pass
-    await history.mark_run_started(session=session, run_id=run.id)
-    await shared_drafts.set_last_run(shared_draft=shared_draft, run_id=run.id)
-    await shared_drafts.create_run_snapshot(shared_draft=shared_draft, run_id=run.id, session_id=session.id)
-    await history.persist_user_message(session_id=session_id, run_id=run.id, content=user_prompt)
-    await db.commit()
-    await db.refresh(run)
-    await db.refresh(session)
+            ) from exc
+        raise
     session_scope = _session_scope_snapshot(session)
     return ArtifactCodingPromptSubmissionResponse(
-        chat_session_id=str(session_id),
+        chat_session_id=str(session.id),
         run=_run_response_from_snapshot(run, session_scope=session_scope),
     )
 

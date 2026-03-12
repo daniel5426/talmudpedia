@@ -82,7 +82,7 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def fake_ensure_deployment(self, *, revision, namespace):
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
         return type(
             "_Deployment",
             (),
@@ -169,7 +169,7 @@ async def test_unsaved_artifact_test_run_uses_principal_tenant_context_without_t
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def fake_ensure_deployment(self, *, revision, namespace):
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
         return type(
             "_Deployment",
             (),

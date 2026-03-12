@@ -21,6 +21,38 @@ class CloudflareDispatchResult:
     runtime_metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class CloudflareDispatchHTTPError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        message: str,
+        response_text: str,
+        response_json: dict[str, Any] | None,
+        url: str,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_text = response_text
+        self.response_json = response_json
+        self.url = url
+
+    def to_error_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "code": "CLOUDFLARE_DISPATCH_HTTP_ERROR",
+            "message": str(self),
+            "http_status": self.status_code,
+            "url": self.url,
+            "response_text": self.response_text,
+        }
+        if isinstance(self.response_json, dict):
+            payload["response_json"] = self.response_json
+            detail = self.response_json.get("detail")
+            if isinstance(detail, dict):
+                payload["dispatch_detail"] = detail
+        return payload
+
+
 class CloudflareDispatchClient:
     async def execute(self, payload: dict[str, Any]) -> CloudflareDispatchResult:
         base_url = str(os.getenv("ARTIFACT_CF_DISPATCH_BASE_URL") or "").strip().rstrip("/")
@@ -33,8 +65,28 @@ class CloudflareDispatchClient:
                 headers={"Authorization": f"Bearer {token}"} if token else {},
                 json=payload,
             )
-        response.raise_for_status()
-        body = response.json()
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        if response.status_code >= 400:
+            response_text = response.text
+            message = f"Dispatch worker returned HTTP {response.status_code} for {response.request.url}"
+            if isinstance(body, dict):
+                detail = body.get("detail")
+                if isinstance(detail, dict):
+                    detail_message = detail.get("message") or detail.get("error") or detail.get("code")
+                    if detail_message:
+                        message = f"{message}: {detail_message}"
+                elif isinstance(detail, str) and detail.strip():
+                    message = f"{message}: {detail.strip()}"
+            raise CloudflareDispatchHTTPError(
+                status_code=response.status_code,
+                message=message,
+                response_text=response_text,
+                response_json=body if isinstance(body, dict) else None,
+                url=str(response.request.url),
+            )
         data = body.get("data") if isinstance(body, dict) else None
         if not isinstance(data, dict):
             raise RuntimeError("Dispatch response is invalid")

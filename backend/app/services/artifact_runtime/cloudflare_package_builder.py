@@ -92,10 +92,8 @@ def _runtime_main_module(entry_module_path: str) -> str:
     module_name = _entry_module_name(entry_module_path)
     return f"""import inspect
 import json
+import traceback
 from js import Response
-
-from {module_name} import execute as artifact_execute
-
 
 async def on_fetch(request, env):
     try:
@@ -103,6 +101,7 @@ async def on_fetch(request, env):
         inputs = payload.get("inputs")
         config = payload.get("config") or {{}}
         context = payload.get("context") or {{}}
+        from {module_name} import execute as artifact_execute
         result = artifact_execute(inputs, config, context)
         if inspect.isawaitable(result):
             result = await result
@@ -126,17 +125,29 @@ async def on_fetch(request, env):
             headers={{"content-type": "application/json"}},
         )
     except Exception as exc:
+        detail = {{
+            "message": str(exc),
+            "code": "WORKER_EXECUTION_FAILED",
+            "error_class": type(exc).__name__,
+            "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+        }}
         return Response.new(
             json.dumps({{
+                "detail": detail,
                 "status": "failed",
                 "result": None,
-                "error": {{"message": str(exc), "code": "WORKER_EXECUTION_FAILED"}},
+                "error": detail,
                 "stdout_excerpt": "",
-                "stderr_excerpt": str(exc),
+                "stderr_excerpt": detail["traceback"],
                 "duration_ms": 0,
                 "worker_id": "{module_name}",
                 "runtime_metadata": {{"provider": "cloudflare_workers"}},
-                "events": [],
+                "events": [
+                    {{
+                        "event_type": "worker_exception",
+                        "payload": {{"data": {{"code": "WORKER_EXECUTION_FAILED", "error_class": type(exc).__name__}}}},
+                    }}
+                ],
             }}),
             status=500,
             headers={{"content-type": "application/json"}},

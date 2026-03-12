@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-12
 
 ## Scope
 - Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
@@ -9,6 +9,7 @@ Last Updated: 2026-03-10
 ## Test files present
 - test_platform_architect_runtime.py
 - test_architect_seeding.py
+- test_local_platform_sdk_tools.py
 
 ## Key scenarios covered
 - Happy path executes direct `rag.*` and `agents.*` calls for create/compile/validate/execute.
@@ -29,11 +30,16 @@ Last Updated: 2026-03-10
 - Platform architect domain schema now includes `rag.operators.catalog/schema` action contracts for RAG-native discovery.
 - Seeded architect runtime no longer forces JSON-only output in prompt or node config.
 - Seeded architect runtime now defaults `temperature` to `1`.
+- Architect domain tools bind to local `platform_sdk` function dispatch instead of artifact-worker execution.
+- Local `platform_sdk` function dispatch forwards the correct architect domain tool slug.
 
 ## Last run command + date/time + result
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-03-10 19:02 EET
 - Result: passed (`3 passed, 1 warning`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime backend/tests/tool_execution/test_function_tool_execution.py::test_function_tool_execution backend/tests/tool_execution/test_function_tool_execution.py::test_function_tool_propagates_delegation_context`
+- Date/Time: 2026-03-12 02:04 EET
+- Result: passed (`20 passed, 5 warnings`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.

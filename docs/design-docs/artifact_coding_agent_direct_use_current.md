@@ -1,6 +1,6 @@
 # Artifact Coding Agent Direct Use Current State
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 This document describes the current direct-use artifact coding agent surface on the admin artifact page.
 
@@ -20,6 +20,7 @@ The current implementation uses:
 - a public seeded tenant agent profile: `artifact-coding-agent`
 - shared `AgentExecutorService` runs and `AgentThread` threads
 - artifact-scoped wrapper APIs under `/admin/artifacts/coding-agent/v1/*`
+- shared runtime/session orchestration in `ArtifactCodingRuntimeService`
 - persisted artifact coding sessions in `artifact_coding_sessions`
 - persisted artifact coding chat messages in `artifact_coding_messages`
 
@@ -56,6 +57,8 @@ Mutation tools update only the session working snapshot and return:
 - the normalized next draft snapshot
 
 The frontend uses those tool results to update the live artifact editor state immediately.
+
+The same session/shared-draft runtime is now also reused by Platform Architect delegation tools so architect-led artifact coding stays on the exact same draft substrate as direct artifact-page use.
 
 ## Validation Path
 

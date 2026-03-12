@@ -80,7 +80,7 @@ async def test_tool_publish_pins_artifact_revision_id(client, db_session):
     artifact = await _create_published_artifact(db_session, tenant.id, user.id)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def fake_ensure_deployment(self, *, revision, namespace):
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
         return SimpleNamespace(
             worker_name="prod-worker",
             deployment_id="dep-1",

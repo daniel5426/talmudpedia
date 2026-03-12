@@ -1,6 +1,6 @@
 # Design Docs Index
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-12
 
 This section is for architecture and design documents that explain system shape, constraints, and tradeoffs.
 
@@ -38,5 +38,7 @@ This section is for architecture and design documents that explain system shape,
   - Current authentication, authorization, and workload-security overview.
 - `artifact_execution_current.md`
   - Current artifact execution architecture and runtime surfaces.
+- `platform_architect_artifact_delegation_current.md`
+  - Current architect artifact lifecycle and artifact-coding delegation flow.
 - `voice_runtime_current.md`
   - Current voice websocket/provider runtime shape and security reality.

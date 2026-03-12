@@ -1,6 +1,6 @@
 # Control Plane SDK Tests
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-12
 
 Scope:
 - Python `talmudpedia_control_sdk` client transport contract.
@@ -21,15 +21,16 @@ Key scenarios covered:
 - Non-envelope API responses are wrapped into SDK response envelopes.
 - Structured backend errors are converted into `ControlPlaneSDKError`.
 - Route + parameter serialization for representative methods across all implemented modules.
+- Canonical artifact SDK serialization for `artifacts.create`, `artifacts.convert_kind`, and `artifacts.publish`.
 - Agents node-intelligence SDK route serialization (`/agents/nodes/catalog`, `/agents/nodes/schema`, `/agents/{id}/validate` via `validate_nodes`).
 - RAG file upload request serialization (`/admin/pipelines/pipeline-inputs/upload`).
 - Orchestration/internal auth/workload security endpoint route coverage.
 - Env-gated HTTP smoke coverage for SDK read surfaces (`catalog`, `agents`, `tools`, `models`, `credentials`, `auth`) and tenant-slug surfaces (`artifacts`, `rag`, `knowledge_stores`).
 - Guardrail test blocks `/api/agents` references in control-plane SDK/tool Python code.
 
-Last run command: `pytest -q backend/tests/control_plane_sdk/test_additional_modules.py`
-Last run date/time: 2026-03-06 (local run during this change set)
-Last run result: pass (`9 passed`)
+Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/control_plane_sdk`
+Last run date/time: 2026-03-12 00:57 EET
+Last run result: pass (`20 passed, 2 skipped`)
 
 Known gaps / follow-ups:
 - Add real HTTP integration tests (env-gated) against each implemented module route set.

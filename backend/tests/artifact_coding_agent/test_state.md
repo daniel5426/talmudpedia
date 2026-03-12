@@ -1,6 +1,6 @@
 # Artifact Coding Agent Tests
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 ## Scope
 
@@ -8,24 +8,22 @@ Track backend coverage for the direct-use artifact coding agent wrapper, session
 
 ## Test Files Present
 
-- none yet
+- test_runtime_service.py
 
-## Key Scenarios Intended
+## Key Scenarios Covered
 
-- seeded public `artifact-coding-agent` exists and is published
-- wrapper prompt submission creates shared runs and `artifact_admin` threads
 - create-mode session scoping via `draft_key`
-- saved artifact session scoping via `artifact_id`
-- relinking from `draft_key` to `artifact_id`
-- session snapshot mutation without direct artifact row writes
-- canonical artifact test execution from session draft state
+- relinking from `draft_key` to `artifact_id` without creating a second shared draft
+- helper-tool/session state export returns canonical `artifact_create_payload` and `artifact_update_payload`
+- saved artifact session hydration rebuilds the working snapshot from the canonical artifact row
 
 ## Last Run
 
-- Command: not run yet
-- Date: 2026-03-11
-- Result: pending
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent`
+- Date: 2026-03-12 00:57 EET
+- Result: passed (`2 passed`)
 
 ## Known Gaps
 
-- backend automated tests for the new session/router/tool flow still need to be added
+- router prompt-run execution is still not covered in this feature directory
+- no test yet asserts live artifact test-run reconciliation after a child run

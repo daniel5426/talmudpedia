@@ -145,6 +145,55 @@ def test_artifact_publish_serialization_includes_tenant_slug() -> None:
     assert call["headers"]["X-Idempotency-Key"] == "idem-promote"
 
 
+def test_artifact_create_serialization_uses_canonical_endpoint() -> None:
+    session = _RecordingSession(_FakeResponse(payload={"id": "artifact-1"}))
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+
+    client.artifacts.create(
+        {
+            "slug": "artifact-1",
+            "display_name": "Artifact 1",
+            "kind": "tool_impl",
+            "runtime": {
+                "source_files": [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return inputs"}],
+                "entry_module_path": "main.py",
+            },
+            "tool_contract": {"input_schema": {}, "output_schema": {}},
+        },
+        tenant_slug="tenant-a",
+        options={"idempotency_key": "idem-artifact-create"},
+    )
+
+    call = session.calls[0]
+    assert call["method"] == "POST"
+    assert call["url"].endswith("/admin/artifacts")
+    assert call["params"]["tenant_slug"] == "tenant-a"
+    assert call["json"]["slug"] == "artifact-1"
+    assert call["headers"]["X-Idempotency-Key"] == "idem-artifact-create"
+
+
+def test_artifact_convert_kind_serialization_uses_convert_endpoint() -> None:
+    session = _RecordingSession(_FakeResponse(payload={"id": "artifact-1", "kind": "agent_node"}))
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+
+    client.artifacts.convert_kind(
+        "artifact-1",
+        {
+            "kind": "agent_node",
+            "agent_contract": {"input_schema": {}, "output_schema": {}},
+        },
+        tenant_slug="tenant-a",
+        options={"idempotency_key": "idem-convert"},
+    )
+
+    call = session.calls[0]
+    assert call["method"] == "POST"
+    assert call["url"].endswith("/admin/artifacts/artifact-1/convert-kind")
+    assert call["params"]["tenant_slug"] == "tenant-a"
+    assert call["json"]["kind"] == "agent_node"
+    assert call["headers"]["X-Idempotency-Key"] == "idem-convert"
+
+
 def test_tenant_resolver_sets_header_per_request() -> None:
     session = _RecordingSession(_FakeResponse(payload={"id": "agent-1"}))
     resolver_values = iter(["tenant-a", "tenant-b"])

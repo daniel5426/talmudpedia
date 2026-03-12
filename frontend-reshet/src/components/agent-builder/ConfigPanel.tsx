@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
     X,
     FolderInput,
@@ -247,11 +247,103 @@ function SmartInput({
     availableVariables?: any[]
     mode?: "template" | "expression" | "variable"
 }) {
+    const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
     const [showSuggestions, setShowSuggestions] = useState(false)
     const [cursorPosition, setCursorPosition] = useState(0)
     const [searchTerm, setSearchTerm] = useState("")
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [suggestionType, setSuggestionType] = useState<"variables" | "operators">("variables")
+    const [suggestionPosition, setSuggestionPosition] = useState<{ top: number; left: number; width: number }>({
+        top: 0,
+        left: 0,
+        width: 280,
+    })
+    const normalizedSearchTerm = searchTerm.trim().toLowerCase()
+
+    const updateSuggestionPosition = useCallback(() => {
+        if (!inputRef.current || !showSuggestions) {
+            return
+        }
+
+        const element = inputRef.current
+        const rect = element.getBoundingClientRect()
+        const styles = window.getComputedStyle(element)
+        const font = [
+            styles.fontStyle,
+            styles.fontVariant,
+            styles.fontWeight,
+            styles.fontStretch,
+            styles.fontSize,
+            styles.fontFamily,
+        ].join(" ")
+        const lineHeight =
+            Number.parseFloat(styles.lineHeight) ||
+            Math.ceil(Number.parseFloat(styles.fontSize || "16") * 1.4)
+        const borderTop = Number.parseFloat(styles.borderTopWidth || "0")
+        const paddingTop = Number.parseFloat(styles.paddingTop || "0")
+
+        const measure = document.createElement("div")
+        measure.style.position = "fixed"
+        measure.style.visibility = "hidden"
+        measure.style.pointerEvents = "none"
+        measure.style.whiteSpace = multiline ? "pre-wrap" : "pre"
+        measure.style.wordWrap = "break-word"
+        measure.style.overflowWrap = "break-word"
+        measure.style.font = font
+        measure.style.letterSpacing = styles.letterSpacing
+        measure.style.textTransform = styles.textTransform
+        measure.style.textIndent = styles.textIndent
+        measure.style.tabSize = styles.tabSize
+        measure.style.boxSizing = styles.boxSizing
+        measure.style.padding = styles.padding
+        measure.style.border = styles.border
+        measure.style.width = `${rect.width}px`
+        measure.style.maxWidth = `${rect.width}px`
+
+        const textBeforeCursor = value.slice(0, cursorPosition).replace(/\n$/, "\n ")
+        measure.textContent = textBeforeCursor
+
+        const caret = document.createElement("span")
+        caret.textContent = value.slice(cursorPosition, cursorPosition + 1) || " "
+        measure.appendChild(caret)
+        document.body.appendChild(measure)
+
+        const caretTop = rect.top + borderTop + paddingTop + caret.offsetTop - element.scrollTop
+        document.body.removeChild(measure)
+
+        const menuWidth = Math.min(320, Math.max(220, rect.width * 0.9))
+        const suggestionCount = suggestionType === "variables"
+            ? (
+                availableVariables?.filter((variable) =>
+                    normalizedSearchTerm.length === 0 ||
+                    variable.name.toLowerCase().includes(normalizedSearchTerm)
+                ).length || 0
+            )
+            : EXPRESSION_OPERATORS.filter((operator) =>
+                normalizedSearchTerm.length === 0 ||
+                operator.toLowerCase().includes(normalizedSearchTerm)
+            ).length
+        const menuHeight = Math.min(200, Math.max(48, suggestionCount * 32 + 8))
+        const horizontalGap = 12
+        const verticalGap = 4
+        const preferredLeft = rect.left - menuWidth - horizontalGap
+        const fallbackLeft = rect.right + horizontalGap
+        const maxLeft = window.innerWidth - menuWidth - 8
+        const left = preferredLeft >= 8
+            ? preferredLeft
+            : Math.min(Math.max(8, fallbackLeft), maxLeft)
+        const relativeCursorY = caretTop - rect.top
+        const alignToBottom = relativeCursorY > rect.height / 2
+        const desiredTop = alignToBottom
+            ? caretTop + lineHeight - menuHeight - verticalGap
+            : caretTop - verticalGap
+        const top = Math.min(
+            Math.max(8, desiredTop),
+            Math.max(8, window.innerHeight - menuHeight - 8)
+        )
+
+        setSuggestionPosition({ top, left, width: menuWidth })
+    }, [availableVariables, cursorPosition, multiline, normalizedSearchTerm, showSuggestions, suggestionType, value])
 
     const detectExpressionContext = (textBeforeCursor: string) => {
         const hasTrailingSpace = /\s$/.test(textBeforeCursor)
@@ -313,11 +405,13 @@ function SmartInput({
         setShowSuggestions(true)
     }
 
-    const filteredVariables = availableVariables?.filter(v =>
-        v.name.toLowerCase().includes(searchTerm.toLowerCase())
+    const filteredVariables = availableVariables?.filter((variable) =>
+        normalizedSearchTerm.length === 0 ||
+        variable.name.toLowerCase().includes(normalizedSearchTerm)
     ) || []
-    const filteredOperators = EXPRESSION_OPERATORS.filter(op =>
-        op.toLowerCase().includes(searchTerm.toLowerCase())
+    const filteredOperators = EXPRESSION_OPERATORS.filter((operator) =>
+        normalizedSearchTerm.length === 0 ||
+        operator.toLowerCase().includes(normalizedSearchTerm)
     )
 
     const insertVariable = (varName: string) => {
@@ -405,22 +499,60 @@ function SmartInput({
 
     const hasSuggestions = showSuggestions && suggestionList.length > 0
 
+    useEffect(() => {
+        if (!hasSuggestions) {
+            return
+        }
+
+        updateSuggestionPosition()
+
+        const handleViewportChange = () => updateSuggestionPosition()
+        window.addEventListener("resize", handleViewportChange)
+        window.addEventListener("scroll", handleViewportChange, true)
+
+        return () => {
+            window.removeEventListener("resize", handleViewportChange)
+            window.removeEventListener("scroll", handleViewportChange, true)
+        }
+    }, [hasSuggestions, updateSuggestionPosition])
+
     return (
         <div className="relative">
             <Component
+                ref={inputRef}
                 value={value}
                 onChange={handleChange}
                 onKeyDown={(e) => {
                     e.stopPropagation()
                     handleKeyDown(e)
                 }}
+                onClick={() => {
+                    const nextPosition = inputRef.current?.selectionStart || 0
+                    setCursorPosition(nextPosition)
+                }}
+                onKeyUp={() => {
+                    const nextPosition = inputRef.current?.selectionStart || 0
+                    setCursorPosition(nextPosition)
+                }}
+                onSelect={() => {
+                    const nextPosition = inputRef.current?.selectionStart || 0
+                    setCursorPosition(nextPosition)
+                }}
+                onScroll={() => updateSuggestionPosition()}
                 placeholder={placeholder}
                 className={className}
                 onBlur={() => setShowSuggestions(false)}
                 rows={multiline ? 4 : 1}
             />
             {hasSuggestions && (
-                <div className="absolute z-50 w-full mt-1 bg-popover text-popover-foreground shadow-md rounded-md border border-border p-1 max-h-[200px] overflow-auto">
+                <div
+                    className="fixed z-[120] bg-popover text-popover-foreground shadow-md rounded-md border border-border p-1 max-h-[200px] overflow-auto"
+                    style={{
+                        top: suggestionPosition.top,
+                        left: suggestionPosition.left,
+                        width: suggestionPosition.width,
+                    }}
+                >
                     {suggestionList.map((item, idx) => (
                         <div
                             key={item.key}

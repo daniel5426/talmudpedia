@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-12
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -29,6 +29,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Current auth, authorization, and workload-security overview.
 - `docs/design-docs/artifact_execution_current.md`
   - Current artifact execution architecture.
+- `docs/design-docs/platform_architect_artifact_delegation_current.md`
+  - Current platform-architect artifact lifecycle and artifact-coding delegation model.
 
 ## Current Canonical Product Specs
 

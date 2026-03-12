@@ -29,7 +29,7 @@ Fallback bundle envs:
 
 - no production-grade fairness scheduler yet beyond queue classes plus tenant concurrency caps
 - tenant artifacts must fit the Cloudflare Workers Python/runtime constraints
-- builtin repo artifacts still remain on their separate backend-local execution path
+- builtin/system artifacts now converge on the same canonical revision/runtime substrate; do not treat repo-local execution as the control-plane source of truth
 
 ## Target Direction
 
