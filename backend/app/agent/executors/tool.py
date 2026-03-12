@@ -36,6 +36,41 @@ from app.services.web_search import create_web_search_provider
 logger = logging.getLogger(__name__)
 
 
+def _trace_safe_value(value: Any, *, max_string: int = 800, max_items: int = 12) -> Any:
+    if callable(value):
+        name = getattr(value, "__name__", value.__class__.__name__)
+        return f"<callable:{name}>"
+    if isinstance(value, str):
+        if len(value) <= max_string:
+            return value
+        return value[:max_string] + "...[truncated]"
+    if isinstance(value, dict):
+        items = list(value.items())[:max_items]
+        rendered = {str(key): _trace_safe_value(val, max_string=max_string, max_items=max_items) for key, val in items}
+        if len(value) > max_items:
+            rendered["__truncated_keys__"] = len(value) - max_items
+        return rendered
+    if isinstance(value, list):
+        rendered = [_trace_safe_value(item, max_string=max_string, max_items=max_items) for item in value[:max_items]]
+        if len(value) > max_items:
+            rendered.append({"__truncated_items__": len(value) - max_items})
+        return rendered
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return value
+
+
+def _tool_input_shape(input_data: Any) -> dict[str, Any]:
+    if not isinstance(input_data, dict):
+        return {"input_type": type(input_data).__name__}
+    return {
+        "top_level_keys": sorted(str(key) for key in input_data.keys()),
+        "has_action": bool(isinstance(input_data.get("action"), str) and input_data.get("action", "").strip()),
+        "wrapped_input_keys": [key for key in ("query", "text", "value") if key in input_data],
+        "has_payload_dict": isinstance(input_data.get("payload"), dict),
+    }
+
+
 class ToolNodeExecutor(BaseNodeExecutor):
     @staticmethod
     def _coerce_scalar_text(value: Any) -> str | None:
@@ -1164,6 +1199,19 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if hasattr(impl_type, "value"):
             impl_type = impl_type.value
         impl_type = str(impl_type).lower()
+        if emitter:
+            emitter.emit_internal_event(
+                "tool.execution_prepared",
+                {
+                    "tool_id": str(tool_id),
+                    "tool_slug": getattr(tool, "slug", None),
+                    "implementation_type": impl_type,
+                    "input_shape": _tool_input_shape(input_data),
+                    "input_preview": _trace_safe_value(input_data),
+                },
+                node_id=node_id,
+                category="tool_execution",
+            )
 
         try:
             from app.services.platform_architect_guardrails import enforce_platform_architect_guardrails
@@ -1246,6 +1294,16 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 emitter=emitter,
             )
             if emitter:
+                emitter.emit_internal_event(
+                    "tool.execution_completed",
+                    {
+                        "tool_slug": getattr(tool, "slug", None),
+                        "implementation_type": impl_type,
+                        "output_preview": _trace_safe_value(output_data),
+                    },
+                    node_id=node_id,
+                    category="tool_execution",
+                )
                 emitter.emit_tool_end(tool.name, output_data, node_id, tool_event_metadata)
 
             return {

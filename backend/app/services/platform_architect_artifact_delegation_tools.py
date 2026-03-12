@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
+import re
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.execution.service import AgentExecutorService
+from app.agent.execution.types import ExecutionMode
 from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactRun
@@ -38,6 +42,64 @@ def _tool_schema(
     }
 
 
+_UUID_FIELD_RE_TEMPLATE = r'"{field}"\s*:\s*"([^"]+)"'
+
+
+def _parse_json_object_loose(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    candidates = [text]
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 3:
+            candidates.append(parts[1].replace("json", "", 1).strip())
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _extract_uuid_field_from_wrapped_text(raw: Any, field: str) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    match = re.search(_UUID_FIELD_RE_TEMPLATE.format(field=re.escape(field)), raw)
+    if not match:
+        return None
+    value = str(match.group(1) or "").strip()
+    return value or None
+
+
+def _normalize_artifact_coding_call_payload(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    normalized = dict(tool_payload)
+
+    nested_context = dict(normalized.get("context")) if isinstance(normalized.get("context"), dict) else {}
+    for wrapper_key in ("value", "query", "text"):
+        parsed = _parse_json_object_loose(normalized.get(wrapper_key))
+        if isinstance(parsed, dict):
+            for key, value in parsed.items():
+                if key == "context" and isinstance(value, dict):
+                    nested_context = {**value, **nested_context}
+                    continue
+                if key not in normalized:
+                    normalized[key] = value
+        elif "chat_session_id" not in normalized and "chat_session_id" not in nested_context:
+            extracted_session_id = _extract_uuid_field_from_wrapped_text(normalized.get(wrapper_key), "chat_session_id")
+            if extracted_session_id:
+                normalized["chat_session_id"] = extracted_session_id
+
+    if nested_context:
+        normalized["context"] = nested_context
+    return normalized
+
+
 def _context_uuid(payload: dict[str, Any], field: str, *, required: bool) -> UUID | None:
     context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
     raw = payload.get(field) or context.get(field)
@@ -56,6 +118,30 @@ def _context_text(payload: dict[str, Any], field: str) -> str | None:
     raw = payload.get(field) or context.get(field)
     text = str(raw or "").strip()
     return text or None
+
+
+async def _resolve_latest_session_id_for_user(
+    *,
+    db: AsyncSession,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> UUID | None:
+    from app.db.postgres.models.agent_threads import AgentThread
+    from app.db.postgres.models.artifact_runtime import ArtifactCodingSession
+
+    result = await db.execute(
+        select(ArtifactCodingSession.id)
+        .join(AgentThread, ArtifactCodingSession.agent_thread_id == AgentThread.id)
+        .where(
+            and_(
+                ArtifactCodingSession.tenant_id == tenant_id,
+                AgentThread.user_id == user_id,
+            )
+        )
+        .order_by(ArtifactCodingSession.last_message_at.desc(), ArtifactCodingSession.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 def _serialize_prepare_result(
@@ -77,6 +163,34 @@ def _serialize_prepare_result(
             }
         ),
     }
+
+
+def _compose_architect_artifact_coding_prompt(payload: dict[str, Any]) -> str:
+    raw_input = payload.get("input")
+    if isinstance(raw_input, str) and raw_input.strip():
+        return raw_input.strip()
+
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        parts: list[str] = []
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "system":
+                parts.append(f"System instructions:\n{content}")
+            elif role == "user":
+                parts.append(f"User request:\n{content}")
+            else:
+                parts.append(content)
+        prompt = "\n\n".join(part for part in parts if part.strip())
+        if prompt:
+            return prompt
+
+    raise ValueError("artifact coding prompt input is required")
 
 
 @register_tool_function("artifact_coding_session_prepare")
@@ -159,6 +273,66 @@ async def artifact_coding_session_get_state(payload: Any) -> dict[str, Any]:
         )
 
 
+@register_tool_function("artifact_coding_agent_call")
+async def artifact_coding_agent_call(payload: Any) -> dict[str, Any]:
+    tool_payload = _normalize_artifact_coding_call_payload(payload)
+    tenant_id = _context_uuid(tool_payload, "tenant_id", required=True)
+    user_id = _context_uuid(tool_payload, "user_id", required=True)
+    requested_session_id = _context_uuid(tool_payload, "chat_session_id", required=False)
+    artifact_id = _context_uuid(tool_payload, "artifact_id", required=False)
+    draft_key = _context_text(tool_payload, "draft_key")
+    requested_model_id = _context_text(tool_payload, "model_id")
+    user_prompt = _compose_architect_artifact_coding_prompt(tool_payload)
+
+    async with get_session() as db:
+        chat_session_id = requested_session_id or await _resolve_latest_session_id_for_user(
+            db=db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        if chat_session_id is None:
+            raise ValueError("chat_session_id is required")
+        runtime = ArtifactCodingRuntimeService(db)
+        session, _shared_draft, run = await runtime.start_prompt_run(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            user_prompt=user_prompt,
+            artifact_id=artifact_id,
+            draft_key=draft_key,
+            chat_session_id=chat_session_id,
+            draft_snapshot=None,
+            model_id=requested_model_id,
+        )
+        executor = AgentExecutorService(db=db)
+        async for _ in executor.run_and_stream(run.id, db, None, mode=ExecutionMode.DEBUG):
+            pass
+
+        refreshed_run = await db.get(AgentRun, run.id)
+        if refreshed_run is None:
+            raise RuntimeError("Artifact coding run was not created")
+
+        await runtime.reconcile_session_run(session=session, run=refreshed_run)
+        await db.refresh(session)
+        await db.refresh(refreshed_run)
+
+        output_result = refreshed_run.output_result if isinstance(refreshed_run.output_result, dict) else {}
+        state = output_result.get("state") if isinstance(output_result.get("state"), dict) else {}
+        result: dict[str, Any] = {
+            "mode": "sync",
+            "run_id": str(refreshed_run.id),
+            "status": str(getattr(refreshed_run.status, "value", refreshed_run.status)),
+            "chat_session_id": str(session.id),
+            "surface": str(refreshed_run.surface or ""),
+        }
+        if state.get("last_agent_output") is not None:
+            result["output"] = state.get("last_agent_output")
+        if isinstance(output_result.get("context"), dict):
+            result["context"] = output_result.get("context")
+        if refreshed_run.error_message:
+            result["error"] = refreshed_run.error_message
+        return result
+
+
 ARCHITECT_ARTIFACT_DELEGATION_TOOL_SPECS: list[dict[str, Any]] = [
     {
         "slug": "artifact-coding-session-prepare",
@@ -211,7 +385,7 @@ ARCHITECT_ARTIFACT_DELEGATION_TOOL_SPECS: list[dict[str, Any]] = [
         "slug": "artifact-coding-agent-call",
         "name": "Artifact Coding Agent Call",
         "description": "Call the tenant-scoped Artifact Coding Agent as a child run using the prepared artifact-coding session context.",
-        "implementation_type": ToolImplementationType.AGENT_CALL,
+        "implementation_type": ToolImplementationType.FUNCTION,
         "schema": _tool_schema(
             properties={
                 "input": {},
@@ -221,8 +395,8 @@ ARCHITECT_ARTIFACT_DELEGATION_TOOL_SPECS: list[dict[str, Any]] = [
         ),
         "config_schema": {
             "implementation": {
-                "type": "agent_call",
-                "target_agent_slug": ARTIFACT_CODING_AGENT_PROFILE_SLUG,
+                "type": "function",
+                "function_name": "artifact_coding_agent_call",
             },
             "execution": {
                 "timeout_s": 180,

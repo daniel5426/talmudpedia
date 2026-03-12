@@ -330,7 +330,7 @@ def test_platform_architect_guardrails_block_repeated_identical_mutation_failure
     assert any(name == "architect.repair_blocked" for name, _data in emitted)
 
 
-def test_platform_architect_guardrails_block_contract_failures_immediately():
+def test_platform_architect_guardrails_allow_three_retries_for_noncanonical_contract_failures():
     node_context = {
         "run_id": "run-contract",
         "node_id": "tool-node",
@@ -338,20 +338,36 @@ def test_platform_architect_guardrails_block_contract_failures_immediately():
     }
     tool_result = {
         "context": {
-            "action": "agents.graph.apply_patch",
-            "errors": [{"code": "NON_CANONICAL_PLATFORM_SDK_INPUT", "message": "bad wrapper"}],
+            "action": "noop",
+            "errors": [
+                {
+                    "code": "NON_CANONICAL_PLATFORM_SDK_INPUT",
+                    "message": "bad wrapper",
+                    "attempted_action": "agents.create",
+                }
+            ],
         }
     }
+
+    for _ in range(3):
+        enforce_platform_architect_guardrails(
+            tool_slug="platform-agents",
+            tool_result=tool_result,
+            input_data={"query": '{"action":"agents.create","payload":{"name":"demo"}}'},
+            node_context=node_context,
+            emitter=None,
+        )
 
     with pytest.raises(PlatformArchitectBlockedError) as exc_info:
         enforce_platform_architect_guardrails(
             tool_slug="platform-agents",
             tool_result=tool_result,
-            input_data={"agent_id": "agent-1"},
+            input_data={"query": '{"action":"agents.create","payload":{"name":"demo"}}'},
             node_context=node_context,
             emitter=None,
         )
 
+    assert exc_info.value.blocker["attempted_action"] == "agents.create"
     assert exc_info.value.blocker["normalized_failure_code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
 
 

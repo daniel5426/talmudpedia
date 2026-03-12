@@ -13,6 +13,7 @@ import { filterAppsBuilderFiles } from "@/services/apps-builder-file-filter";
 import {
   isCodingAgentRunActiveError,
   isDraftDevTransientBootstrapError,
+  isDraftDevWarmupError,
   isDraftSandboxNotRunningError,
 } from "@/features/apps-builder/workspace/draftDevErrors";
 
@@ -20,6 +21,7 @@ const DRAFT_DEV_SYNC_DEBOUNCE_MS = 800;
 const DRAFT_DEV_HEARTBEAT_MS = 45_000;
 const DRAFT_DEV_RECOVERY_ATTEMPTS = 3;
 const DRAFT_DEV_RECOVERY_BACKOFF_MS = 700;
+const DRAFT_DEV_WARMUP_POLL_MS = 2_000;
 
 type EnsureReason = "startup" | "manual" | "recovering";
 
@@ -112,6 +114,11 @@ function withPreviewBuildReloadKey(
   }
 }
 
+function isWarmupRecoverySession(session: DraftDevSessionResponse | null | undefined): boolean {
+  if (!session) return false;
+  return isDraftDevWarmupError(session.last_error || null) && !isDraftDevServingStatus(session.status);
+}
+
 export function useAppsBuilderSandboxLifecycle({
   appId,
   currentRevisionId,
@@ -136,6 +143,7 @@ export function useAppsBuilderSandboxLifecycle({
   const currentSyncFingerprintRef = useRef<string>("");
   const revisionFingerprintSeedRef = useRef<string | null>(null);
   const latestSessionPayloadRef = useRef<DraftDevSessionResponse | null>(null);
+  const draftDevErrorRef = useRef<string | null>(null);
   const sessionSnapshotRef = useRef<{
     sessionId: string | null;
     status: DraftDevSessionStatus | null;
@@ -152,11 +160,16 @@ export function useAppsBuilderSandboxLifecycle({
     [entryFile, filteredFiles],
   );
 
+  useEffect(() => {
+    draftDevErrorRef.current = draftDevError;
+  }, [draftDevError]);
+
   const applySession = useCallback((session: DraftDevSessionResponse, options?: { markSynced?: boolean }) => {
+    const warmupRecovery = isWarmupRecoverySession(session);
     latestSessionPayloadRef.current = session;
     setDraftDevSessionId(session.session_id || null);
     setDraftDevStatus((session.status as DraftDevSessionStatus | undefined) || null);
-    setDraftDevError(session.last_error || null);
+    setDraftDevError(warmupRecovery ? null : session.last_error || null);
     setPreviewAuthToken(session.preview_auth_token || null);
     setRecoveryExhausted(false);
 
@@ -180,6 +193,8 @@ export function useAppsBuilderSandboxLifecycle({
 
     if (isDraftDevServingStatus(session.status as DraftDevSessionStatus | undefined)) {
       setPhase("running");
+    } else if (warmupRecovery) {
+      setPhase("recovering");
     } else if (isDraftDevPendingStatus(session.status as DraftDevSessionStatus | undefined)) {
       setPhase((prev) => (prev === "recovering" ? "recovering" : "ensuring"));
     } else if (isDraftDevFailureStatus(session.status as DraftDevSessionStatus | undefined)) {
@@ -224,7 +239,7 @@ export function useAppsBuilderSandboxLifecycle({
       && isDraftDevServingStatus(reusableSession?.status)
       && Boolean(reusableSession?.session_id)
       && Boolean(reusableSession?.preview_url)
-      && !draftDevError;
+      && !draftDevErrorRef.current;
     if (hasReusableRunningSession) {
       return reusableSession || null;
     }
@@ -274,7 +289,7 @@ export function useAppsBuilderSandboxLifecycle({
 
     ensureInFlightRef.current = ensurePromise;
     return ensurePromise;
-  }, [appId, applySession, draftDevError]);
+  }, [appId, applySession]);
 
   const syncDraftDevSession = useCallback(async (fingerprint: string) => {
     if (!currentRevisionId || !draftDevSessionId || !isDraftDevServingStatus(draftDevStatus)) {
@@ -373,6 +388,8 @@ export function useAppsBuilderSandboxLifecycle({
     syncFingerprintRef.current = currentSyncFingerprint;
   }, [currentRevisionId, currentSyncFingerprint]);
 
+  // Reset local lifecycle state when the workspace scope changes.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setPhase("idle");
     setDraftDevSessionId(null);
@@ -388,6 +405,7 @@ export function useAppsBuilderSandboxLifecycle({
     ensureInFlightRef.current = null;
     syncInFlightRef.current = null;
   }, [appId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!currentRevisionId) {
@@ -476,6 +494,33 @@ export function useAppsBuilderSandboxLifecycle({
       window.clearInterval(interval);
     };
   }, [appId, applySession, draftDevSessionId]);
+
+  useEffect(() => {
+    if (!draftDevSessionId) {
+      return;
+    }
+    const latestSession = latestSessionPayloadRef.current;
+    if (!isWarmupRecoverySession(latestSession)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      publishedAppsService
+        .heartbeatDraftDevSessionQuiet(appId)
+        .then((result) => {
+          if (result.session) {
+            applySession(result.session);
+          }
+        })
+        .catch(() => {
+          // Keep polling while the sandbox is still warming up.
+        });
+    }, DRAFT_DEV_WARMUP_POLL_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [appId, applySession, draftDevSessionId, draftDevStatus, phase]);
 
   const isReady =
     isDraftDevServingStatus(draftDevStatus)

@@ -118,7 +118,7 @@ export function AssistantResponseTimeline({
   isLoading = false,
 }: AssistantResponseTimelineProps) {
   const renderedBlocks = useMemo(() => {
-    const items: JSX.Element[] = [];
+    const items: React.ReactNode[] = [];
     let index = 0;
     const lastToolCallId = [...blocks]
       .reverse()

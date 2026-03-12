@@ -3,6 +3,12 @@
 const DRAFT_SANDBOX_NOT_RUNNING_MARKER = "draft dev sandbox is not running";
 const DRAFT_CONTROLLER_TIMEOUT_MARKERS = ["readtimeout", "timed out", "timeout"];
 const CODING_AGENT_RUN_ACTIVE_MARKER = "coding_agent_run_active";
+const DRAFT_WARMUP_ERROR_MARKERS = [
+  "preview service did not become ready",
+  "preview state not ready",
+  "preview root not ready",
+  "preview build pending",
+];
 
 function parseErrorDetailPayload(error: unknown): unknown {
   if (!error) return null;
@@ -49,4 +55,10 @@ export function isDraftDevTransientBootstrapError(error: unknown): boolean {
   const message =
     typeof error === "string" ? error.toLowerCase() : error instanceof Error ? error.message.toLowerCase() : "";
   return DRAFT_CONTROLLER_TIMEOUT_MARKERS.some((marker) => message.includes(marker));
+}
+
+export function isDraftDevWarmupError(error: unknown): boolean {
+  const message =
+    typeof error === "string" ? error.toLowerCase() : error instanceof Error ? error.message.toLowerCase() : "";
+  return DRAFT_WARMUP_ERROR_MARKERS.some((marker) => message.includes(marker));
 }

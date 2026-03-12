@@ -788,6 +788,8 @@ class AgentExecutorService:
             return {k: self._serialize_state(v) for k, v in state.items()}
         if isinstance(state, list):
             return [self._serialize_state(v) for v in state]
+        if isinstance(state, tuple):
+            return [self._serialize_state(v) for v in state]
         
         # Handle LangChain messages
         if hasattr(state, "type") and hasattr(state, "content") and not isinstance(state, dict):
@@ -804,5 +806,15 @@ class AgentExecutorService:
             return str(state)
         if isinstance(state, datetime):
             return state.isoformat()
+        if callable(state):
+            name = getattr(state, "__name__", state.__class__.__name__)
+            return f"<callable:{name}>"
+        if isinstance(state, (str, int, float, bool)) or state is None:
+            return state
+        if hasattr(state, "isoformat"):
+            try:
+                return state.isoformat()
+            except Exception:
+                pass
             
-        return state
+        return str(state)

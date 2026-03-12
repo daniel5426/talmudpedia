@@ -6,7 +6,9 @@ Executes platform control-plane actions via SDK method wrappers.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -99,6 +101,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     tenant_mismatch_error = _validate_tenant_override(inputs, payload, state, context)
 
     if noncanonical_input_error is not None:
+        attempted_action = str(noncanonical_input_error.get("attempted_action") or "noop")
         output = {
             "result": {
                 "status": "validation_error",
@@ -106,7 +109,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
                 "message": noncanonical_input_error["message"],
             },
             "errors": [noncanonical_input_error],
-            "action": "noop",
+            "action": attempted_action,
             "dry_run": dry_run,
         }
         return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
@@ -462,6 +465,7 @@ def _extract_noncanonical_input_error(inputs: Dict[str, Any]) -> Optional[Dict[s
         text = candidate.strip()
         if not text:
             continue
+        wrapped_details = _inspect_wrapped_platform_sdk_input(text)
         if text.startswith("```"):
             return {
                 "error": "non_canonical_wrapped_input",
@@ -474,6 +478,7 @@ def _extract_noncanonical_input_error(inputs: Dict[str, Any]) -> Optional[Dict[s
                 "retryable": False,
                 "source_field": candidate_key,
                 "migration_hint": 'Send {"action":"...","payload":{...}} as the tool input object.',
+                **wrapped_details,
             }
         if text.startswith("{") or text.startswith("["):
             return {
@@ -487,9 +492,55 @@ def _extract_noncanonical_input_error(inputs: Dict[str, Any]) -> Optional[Dict[s
                 "retryable": False,
                 "source_field": candidate_key,
                 "migration_hint": 'Send {"action":"...","payload":{...}} as the tool input object.',
+                **wrapped_details,
             }
 
     return None
+
+
+_ACTION_RE = re.compile(r'"action"\s*:\s*"([^"]+)"')
+
+
+def _inspect_wrapped_platform_sdk_input(text: str) -> Dict[str, Any]:
+    details: Dict[str, Any] = {
+        "embedded_json_parseable": False,
+        "attempted_action": None,
+        "embedded_top_level_keys": [],
+        "embedded_payload_keys": [],
+    }
+    stripped = str(text or "").strip()
+    if not stripped:
+        return details
+
+    candidates = [stripped]
+    if stripped.startswith("```"):
+        parts = stripped.split("```")
+        if len(parts) >= 3:
+            candidates.append(parts[1].replace("json", "", 1).strip())
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            parsed = None
+        if not isinstance(parsed, dict):
+            continue
+        details["embedded_json_parseable"] = True
+        details["embedded_top_level_keys"] = sorted(str(key) for key in parsed.keys())
+        payload = parsed.get("payload")
+        if isinstance(payload, dict):
+            details["embedded_payload_keys"] = sorted(str(key) for key in payload.keys())
+        action = parsed.get("action")
+        if isinstance(action, str) and action.strip():
+            details["attempted_action"] = action.strip()
+        return details
+
+    match = _ACTION_RE.search(stripped)
+    if match:
+        details["attempted_action"] = match.group(1).strip()
+    return details
 
 
 def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Optional[str]) -> Dict[str, Any]:

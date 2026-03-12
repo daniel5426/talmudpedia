@@ -38,6 +38,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Function-tool execution now flattens wrapper payloads (`args`, `input`, `parameters`, `payload`, `data`, `arguments`, `value`) before validation and dispatch.
 - Function-tool execution now propagates delegation/runtime context fields (`tenant_id`, `grant_id`, `requested_scopes`, agent metadata) into the nested function payload context.
 - Reasoning tool-call normalization now preserves direct argument fields when no `input/args/parameters` wrapper is present.
+- Reasoning executor now emits internal trace events when it infers a tool call from assistant JSON fallback instead of a native provider tool call.
 - `agent_call` success returns compact sync payload with child output/context
 - `agent_call` rejects draft/unpublished targets
 - `agent_call` enforces cross-tenant target isolation
@@ -93,6 +94,12 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime backend/tests/tool_execution/test_function_tool_execution.py::test_function_tool_execution backend/tests/tool_execution/test_function_tool_execution.py::test_function_tool_propagates_delegation_context`
 - Date/Time: 2026-03-12 02:04 EET
 - Result: PASS (`20 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_actions.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py backend/tests/platform_architect_runtime/test_local_platform_sdk_tools.py backend/tests/tool_execution/test_reasoning_tool_call_chunk_buffering.py`
+- Date/Time: 2026-03-12 03:07 EET
+- Result: PASS (`28 passed, 1 warning`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_local_platform_sdk_tools.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py backend/tests/platform_sdk_tool/test_platform_sdk_actions.py backend/tests/tool_execution/test_reasoning_tool_call_chunk_buffering.py`
+- Date/Time: 2026-03-12 03:39 EET
+- Result: PASS (`28 passed, 1 warning`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

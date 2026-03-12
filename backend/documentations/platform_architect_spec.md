@@ -62,8 +62,9 @@ The architect runtime follows this direct loop:
 3. Execute one domain tool call at a time.
 4. Prefer semantic graph helpers for graph edits, then schema-aware patch actions when needed.
 5. Validate after each mutation.
-6. Stop on repeated identical mutation failures with a blocker report instead of looping indefinitely.
-7. Return a normal text response.
+6. Allow a limited repair budget for malformed but potentially self-correctable platform-tool calls.
+7. Stop on repeated identical mutation failures with a blocker report instead of looping indefinitely.
+8. Return a normal text response.
 
 ### Node intelligence and validation
 The architect can discover and validate agent graph structure through `platform-agents`:
@@ -144,11 +145,17 @@ Current architect-facing policy:
 Platform SDK handler behavior now supports:
 - canonical top-level `action` / `payload` dispatch only
 - explicit contract failures when callers send wrapped tool input in `value` / `query` / `text`
+- wrapped-input failures now preserve `attempted_action`, wrapper source field, and whether the embedded payload was parseable JSON
 - structured mutation errors that preserve backend validation details
 
 ### Important practical constraint
 There is no wrapped-input recovery path anymore.
 Platform SDK callers must send a structured top-level tool input object directly.
+
+### Repair budget behavior
+- `NON_CANONICAL_PLATFORM_SDK_INPUT` is treated as repairable, not terminal on first sight
+- current retry budget is three repair attempts, then block on the fourth matching failure
+- blocker attribution now prefers the embedded attempted action over `noop` when wrapped input is rejected
 
 ### Structured error expectations
 Important architect-visible error categories:
@@ -211,8 +218,39 @@ Feature directory:
 
 Relevant coverage includes:
 - strict rejection of wrapped `value` / `query` / `text` tool input
+- preservation of wrapped attempted action and parseability metadata on non-canonical failures
 - canonical action dispatch and alias normalization
 - parity coverage for `agents.graph.*` and `rag.graph.*` actions
+
+## Execution Tracing
+
+Runtime execution events are persisted through the shared execution trace recorder at `backend/app/agent/execution/trace_recorder.py`.
+
+For architect diagnosis, the most relevant events are now:
+- `reasoning.tool_call_inferred`
+  - emitted when the reasoning node infers a tool call from assistant JSON fallback instead of a native provider tool call
+  - includes the raw inferred payload, normalized tool call, wrapped input keys, and whether a top-level action was present
+- `tool.execution_prepared`
+  - emitted immediately before tool execution
+  - includes tool slug, implementation type, input shape, and sanitized input preview
+- `platform_sdk_local.dispatch_prepared`
+  - emitted by the local architect platform-tool dispatcher
+  - includes the sanitized payload preview and runtime context preview sent to the Platform SDK handler
+  - non-serializable runtime objects such as callables are stringified before persistence (for example `<callable:mint_token>`)
+- `platform_sdk_local.dispatch_completed`
+  - emitted after the Platform SDK handler returns
+  - includes a sanitized result preview
+- `tool.execution_completed`
+  - emitted after tool execution and guardrail processing
+  - includes tool slug, implementation type, and sanitized output preview
+- `architect.repair_attempted`
+  - emitted when a repeated architect mutation failure is recorded
+  - includes normalized failure code, attempt count, fingerprint, and target resource
+- `architect.repair_blocked`
+  - emitted when retry budget is exhausted and the architect is blocked
+
+### Investigated live failure mode
+The investigated live architect failure on 2026-03-12 was not caused by the local `platform_sdk` dispatcher. Persisted run traces showed that the malformed payload already existed at `on_tool_start`: the architect emitted top-level `query` and `value` fields containing a malformed stringified `{"action":"agents.create","payload":...}` blob. The strict Platform SDK handler correctly rejected that as `NON_CANONICAL_PLATFORM_SDK_INPUT`. The new trace events above are intended to make that exact distinction immediately visible in future runs.
 
 ### Live E2E harness
 Harness directory:

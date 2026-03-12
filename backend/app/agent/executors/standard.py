@@ -402,6 +402,57 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
 
         return None
 
+    def _trace_safe_value(self, value: Any, *, max_string: int = 1200, max_items: int = 12) -> Any:
+        if callable(value):
+            name = getattr(value, "__name__", value.__class__.__name__)
+            return f"<callable:{name}>"
+        if isinstance(value, str):
+            if len(value) <= max_string:
+                return value
+            return value[:max_string] + "...[truncated]"
+        if isinstance(value, dict):
+            items = list(value.items())[:max_items]
+            rendered = {str(key): self._trace_safe_value(val, max_string=max_string, max_items=max_items) for key, val in items}
+            if len(value) > max_items:
+                rendered["__truncated_keys__"] = len(value) - max_items
+            return rendered
+        if isinstance(value, list):
+            rendered = [self._trace_safe_value(item, max_string=max_string, max_items=max_items) for item in value[:max_items]]
+            if len(value) > max_items:
+                rendered.append({"__truncated_items__": len(value) - max_items})
+            return rendered
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return value
+
+    def _emit_inferred_tool_call_event(
+        self,
+        *,
+        emitter: Any,
+        node_id: str,
+        source: str,
+        raw_payload: Any,
+        tool_call: Dict[str, Any],
+    ) -> None:
+        if not emitter:
+            return
+        wrapped_keys: list[str] = []
+        input_payload = tool_call.get("input")
+        if isinstance(input_payload, dict):
+            wrapped_keys = [key for key in ("query", "text", "value") if key in input_payload]
+        emitter.emit_internal_event(
+            "reasoning.tool_call_inferred",
+            {
+                "source": source,
+                "raw_payload": self._trace_safe_value(raw_payload),
+                "normalized_tool_call": self._trace_safe_value(tool_call),
+                "wrapped_input_keys": wrapped_keys,
+                "has_top_level_action": bool(isinstance(input_payload, dict) and input_payload.get("action")),
+            },
+            node_id=node_id,
+            category="tool_reasoning",
+        )
+
     def _normalize_tool_call(self, payload: Any) -> Optional[Dict[str, Any]]:
         if payload is None:
             return None
@@ -1311,9 +1362,18 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 if not tool_calls:
                     tool_payload = self._extract_json_payload(full_content)
                     tool_call = self._normalize_tool_call(tool_payload)
+                    tool_call_source = "assistant_content_json"
                     if not tool_call and isinstance(result_content, dict):
                         tool_call = self._normalize_tool_call(result_content)
+                        tool_call_source = "assistant_result_json"
                     if tool_call:
+                        self._emit_inferred_tool_call_event(
+                            emitter=emitter,
+                            node_id=node_id,
+                            source=tool_call_source,
+                            raw_payload=tool_payload if tool_call_source == "assistant_content_json" else result_content,
+                            tool_call=tool_call,
+                        )
                         tool_calls = [{
                             "id": tool_call.get("tool_id") or tool_call.get("tool_name"),
                             "tool_id": tool_call.get("tool_id"),

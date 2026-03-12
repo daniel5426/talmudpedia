@@ -72,10 +72,12 @@ def test_execute_rejects_wrapped_json_action_from_value_wrapper():
     )
 
     err = out["context"]["errors"][0]
-    assert out["context"]["action"] == "noop"
+    assert out["context"]["action"] == "rag.create_visual_pipeline"
     assert out["context"]["result"]["reason"] == "non_canonical_input"
     assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
     assert err["source_field"] == "value"
+    assert err["attempted_action"] == "rag.create_visual_pipeline"
+    assert err["embedded_json_parseable"] is True
     assert "top-level action and payload" in err["message"]
 
 
@@ -92,9 +94,11 @@ def test_execute_rejects_noncanonical_wrapped_text_input():
     )
 
     err = out["context"]["errors"][0]
+    assert out["context"]["action"] == "agents.get"
     assert out["context"]["result"]["reason"] == "non_canonical_input"
     assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
     assert err["source_field"] == "text"
+    assert err["attempted_action"] == "agents.get"
 
 
 def test_execute_reports_noncanonical_wrapped_json_as_contract_error():
@@ -116,9 +120,12 @@ def test_execute_reports_noncanonical_wrapped_json_as_contract_error():
     )
 
     err = out["context"]["errors"][0]
+    assert out["context"]["action"] == "rag.create_visual_pipeline"
     assert out["context"]["result"]["reason"] == "non_canonical_input"
     assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
     assert err["source_field"] == "value"
+    assert err["attempted_action"] == "rag.create_visual_pipeline"
+    assert err["embedded_json_parseable"] is False
     assert "top-level action and payload" in err["message"]
 
 

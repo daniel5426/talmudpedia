@@ -10,11 +10,13 @@ _LOCK = Lock()
 _RUN_FAILURE_STATE: dict[str, dict[str, Any]] = {}
 _BLOCK_IMMEDIATELY_CODES = {
     "MISSING_REQUIRED_FIELD",
-    "NON_CANONICAL_PLATFORM_SDK_INPUT",
     "INVALID_JSON",
 }
 _REPLAN_ONCE_ERROR_NAMES = {"unknown_action"}
 _MAX_REPEATED_FAILURE_ATTEMPTS = 5
+_ERROR_MAX_ATTEMPTS = {
+    "NON_CANONICAL_PLATFORM_SDK_INPUT": 4,
+}
 _MUTATION_ACTION_PREFIXES = (
     "agents.graph.",
     "rag.graph.",
@@ -59,6 +61,8 @@ def enforce_platform_architect_guardrails(
         return
 
     action = str(envelope.get("action") or "").strip()
+    if not action or action == "noop":
+        action = _infer_attempted_action(envelope, input_data or {})
     if not action:
         return
 
@@ -108,10 +112,8 @@ def enforce_platform_architect_guardrails(
             category="architect",
         )
 
-    if (
-        normalized_code in _BLOCK_IMMEDIATELY_CODES
-        or blocker["attempt_count"] >= _MAX_REPEATED_FAILURE_ATTEMPTS
-    ):
+    max_attempts = int(_ERROR_MAX_ATTEMPTS.get(normalized_code, _MAX_REPEATED_FAILURE_ATTEMPTS))
+    if normalized_code in _BLOCK_IMMEDIATELY_CODES or blocker["attempt_count"] >= max_attempts:
         blocker["message"] = (
             "Platform architect stopped after repeated mutation failure. "
             f"action={action} code={normalized_code} target={blocker['target_resource']}"
@@ -196,6 +198,16 @@ def _normalized_error_name(errors: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _infer_attempted_action(envelope: dict[str, Any], input_data: dict[str, Any]) -> str:
+    for error in list(envelope.get("errors") or []):
+        if not isinstance(error, dict):
+            continue
+        candidate = error.get("attempted_action")
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return _extract_action_from_input_data(input_data) or "noop"
+
+
 def _validation_details(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     details: list[dict[str, Any]] = []
     for error in errors:
@@ -243,6 +255,59 @@ def _target_resource(input_data: dict[str, Any]) -> str:
             if value:
                 return f"{key}:{value}"
     return "unknown"
+
+
+def _extract_action_from_input_data(input_data: dict[str, Any]) -> str | None:
+    if not isinstance(input_data, dict):
+        return None
+    raw_action = input_data.get("action")
+    if isinstance(raw_action, str) and raw_action.strip():
+        return raw_action.strip()
+    for key in ("payload", "input", "args", "parameters", "data"):
+        nested = input_data.get(key)
+        if isinstance(nested, dict):
+            candidate = _extract_action_from_input_data(nested)
+            if candidate:
+                return candidate
+    for key in ("value", "query", "text"):
+        candidate = input_data.get(key)
+        parsed = _extract_action_from_wrapped_text(candidate)
+        if parsed:
+            return parsed
+    return None
+
+
+def _extract_action_from_wrapped_text(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict):
+        action = parsed.get("action")
+        if isinstance(action, str) and action.strip():
+            return action.strip()
+    marker = '"action"'
+    idx = text.find(marker)
+    if idx == -1:
+        return None
+    remainder = text[idx + len(marker):]
+    colon = remainder.find(":")
+    if colon == -1:
+        return None
+    remainder = remainder[colon + 1:].lstrip()
+    if not remainder.startswith('"'):
+        return None
+    remainder = remainder[1:]
+    end = remainder.find('"')
+    if end == -1:
+        return None
+    candidate = remainder[:end].strip()
+    return candidate or None
 
 
 def _recommended_next_repair_action(action: str) -> str:
