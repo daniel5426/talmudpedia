@@ -1,6 +1,6 @@
 # Documentation System
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-12
 
 This directory is the repo-level documentation hub for Talmudpedia.
 
@@ -26,10 +26,12 @@ This directory is the repo-level documentation hub for Talmudpedia.
 ## Canonical Top-Level Docs
 - Root `AGENTS.md`
   - Operating instructions for agents working in this repository.
+- Root `ARCHITECTURE.md`
+  - Repo-level architecture entry point.
 - `code_architect/architecture_tree.md`
   - Curated backend architecture map used for fast architectural orientation.
 - `backend/ARCHITECTURE.md`
-  - Legacy backend overview. This should be refreshed or replaced because it appears older than the current backend shape.
+  - Legacy pointer only. Do not use it as the primary architecture reference.
 
 ## Documentation Rules
 - Every edited Markdown file must include a `Last Updated` date.
@@ -47,7 +49,9 @@ Most existing long-form documentation still lives in `backend/documentations/`. 
 - `docs/design-docs/platform_current_state.md`
 - `docs/design-docs/platform_architecture_layers.md`
 - `docs/design-docs/auth_current.md`
+- `docs/design-docs/apps_builder_current.md`
 - `docs/design-docs/artifact_execution_current.md`
+- `docs/design-docs/coding_agent_runtime_current.md`
 - `docs/design-docs/voice_runtime_current.md`
 - `docs/product-specs/published_apps_spec.md`
 - `docs/product-specs/settings_hub_spec.md`
@@ -57,3 +61,12 @@ Most existing long-form documentation still lives in `backend/documentations/`. 
 - `docs/product-specs/tools_domain_spec.md`
 - `docs/product-specs/admin_stats_spec.md`
 - `docs/references/canonical_docs_guide.md`
+- `docs/references/legacy_docs_coverage_map.md`
+
+## Legacy Detail Policy
+Some focused current-state details still live under `backend/documentations/` when they have not yet been promoted into `docs/`.
+
+When checking whether an old file is still important:
+- use `docs/references/legacy_docs_coverage_map.md`
+- prefer files marked `canonical_detail`
+- treat `legacy_pointer`, `historical_plan`, and `historical_summary` as non-canonical

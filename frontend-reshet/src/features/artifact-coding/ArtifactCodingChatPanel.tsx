@@ -194,7 +194,7 @@ export function ArtifactCodingChatPanel({
         <div className="flex min-w-0 flex-1 items-center gap-2 px-1">
           {activeSessionIsRunning ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /> : null}
         </div>
-        <div className="flex mr-1 border rounded-md items-center gap-1">
+        <div className="flex mr-1 mb-2 border rounded-md items-center gap-1">
         <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={onStartNewChat} aria-label="Create new chat">
           <Plus className="h-3.5 w-3.5" />
         </Button>

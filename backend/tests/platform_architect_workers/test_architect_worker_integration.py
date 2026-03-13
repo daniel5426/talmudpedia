@@ -1,0 +1,448 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from uuid import uuid4
+
+import pytest
+from langchain_core.messages import AIMessageChunk
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from app.agent.execution.service import AgentExecutorService
+from app.agent.execution.types import ExecutionMode
+from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
+from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun
+from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
+from app.services import registry_seeding
+from app.services.artifact_runtime.revision_service import ArtifactRevisionService
+from app.services.model_resolver import ModelResolver
+from app.services.orchestration_kernel_service import OrchestrationKernelService
+from app.services.platform_architect_worker_runtime_service import PlatformArchitectWorkerRuntimeService
+from app.services.workload_provisioning_service import WorkloadProvisioningService
+
+
+class _ScriptedProvider:
+    def __init__(self, builders):
+        self._builders = builders
+        self._idx = 0
+
+    async def stream(self, _messages, _system_prompt=None, **_kwargs):
+        response = self._builders[self._idx]()
+        self._idx += 1
+        for chunk in response:
+            yield chunk
+
+
+def _tool_call_chunks(tool_name: str, payload: dict):
+    return [
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[{"id": f"call-{tool_name}", "name": tool_name, "args": __import__("json").dumps(payload)}],
+        )
+    ]
+
+
+async def _seed_tenant_user_and_model(db_session):
+    suffix = uuid4().hex[:8]
+    existing_defaults = (
+        await db_session.execute(
+            select(ModelRegistry).where(
+                ModelRegistry.tenant_id.is_(None),
+                ModelRegistry.capability_type == ModelCapabilityType.CHAT,
+                ModelRegistry.is_default.is_(True),
+            )
+        )
+    ).scalars().all()
+    for item in existing_defaults:
+        item.is_default = False
+    tenant = Tenant(name=f"Architect Worker E2E {suffix}", slug=f"architect-worker-e2e-{suffix}")
+    user = User(email=f"architect-worker-e2e-{suffix}@example.com", role="admin")
+    db_session.add_all([tenant, user])
+    await db_session.flush()
+    model = ModelRegistry(
+        tenant_id=None,
+        name="Unit Chat Model",
+        slug=f"unit-chat-{suffix}",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        is_default=True,
+    )
+    db_session.add(model)
+    await db_session.commit()
+    await db_session.refresh(tenant)
+    await db_session.refresh(user)
+    return tenant, user, model
+
+
+@pytest.mark.asyncio
+async def test_seeded_architect_run_spawns_artifact_worker_and_persists_artifact(db_session, monkeypatch):
+    tenant, user, _model = await _seed_tenant_user_and_model(db_session)
+    architect = await registry_seeding.seed_platform_architect_agent(db_session)
+    assert architect is not None
+    tenant_id = architect.tenant_id
+
+    provisioning = WorkloadProvisioningService(db_session)
+    await provisioning.provision_agent_policy(agent=architect, actor_user_id=user.id)
+    await db_session.commit()
+
+    shared: dict[str, object] = {}
+    draft_key = f"architect-worker-{uuid4().hex[:8]}"
+
+    original_prepare_binding = PlatformArchitectWorkerRuntimeService.prepare_binding
+    original_spawn_worker = PlatformArchitectWorkerRuntimeService.spawn_worker
+    original_get_binding_state = PlatformArchitectWorkerRuntimeService.get_binding_state
+    original_spawn_run = OrchestrationKernelService.spawn_run
+
+    async def capture_prepare(self, payload):
+        result = await original_prepare_binding(self, payload)
+        shared["binding_ref"] = result["binding_ref"]
+        return result
+
+    async def capture_spawn(self, payload):
+        result = await original_spawn_worker(self, payload)
+        shared["run_id"] = result["run_id"]
+        return result
+
+    async def capture_get_state(self, payload):
+        result = await original_get_binding_state(self, payload)
+        shared["artifact_create_payload"] = result["binding_state"]["artifact_create_payload"]
+        return result
+
+    async def sync_child_spawn(self, **kwargs):
+        result = await original_spawn_run(self, **{**kwargs, "start_background": False})
+        child_run_id = result["spawned_run_ids"][0]
+        executor = AgentExecutorService(db=self.db)
+        async for _ in executor.run_and_stream(child_run_id, self.db, None, mode=ExecutionMode.DEBUG):
+            pass
+        return result
+
+    monkeypatch.setattr(PlatformArchitectWorkerRuntimeService, "prepare_binding", capture_prepare)
+    monkeypatch.setattr(PlatformArchitectWorkerRuntimeService, "spawn_worker", capture_spawn)
+    monkeypatch.setattr(PlatformArchitectWorkerRuntimeService, "get_binding_state", capture_get_state)
+    monkeypatch.setattr(OrchestrationKernelService, "spawn_run", sync_child_spawn)
+
+    @asynccontextmanager
+    async def shared_session():
+        yield db_session
+
+    async def fake_platform_assets_dispatch(*, tool_slug: str, payload):
+        assert tool_slug == "platform-assets"
+        tool_payload = dict(payload or {})
+        assert tool_payload.get("action") == "artifacts.create"
+        artifact_payload = dict(tool_payload.get("payload") or {})
+        runtime_payload = dict(artifact_payload.get("runtime") or {})
+        artifact = await ArtifactRevisionService(db_session).create_artifact(
+            tenant_id=tenant_id,
+            created_by=user.id,
+            slug=str(artifact_payload["slug"]),
+            display_name=str(artifact_payload["display_name"]),
+            description=artifact_payload.get("description"),
+            kind=str(artifact_payload["kind"]),
+            source_files=list(runtime_payload.get("source_files") or []),
+            entry_module_path=runtime_payload.get("entry_module_path"),
+            python_dependencies=list(runtime_payload.get("python_dependencies") or []),
+            runtime_target=str(runtime_payload.get("runtime_target") or "cloudflare_workers"),
+            capabilities=dict(artifact_payload.get("capabilities") or {}),
+            config_schema=dict(artifact_payload.get("config_schema") or {}),
+            agent_contract=artifact_payload.get("agent_contract"),
+            rag_contract=artifact_payload.get("rag_contract"),
+            tool_contract=artifact_payload.get("tool_contract"),
+        )
+        await db_session.commit()
+        await db_session.refresh(artifact)
+        return {"ok": True, "artifact_id": str(artifact.id), "artifact_slug": artifact.slug}
+
+    monkeypatch.setattr("app.services.platform_architect_worker_tools.get_session", shared_session)
+    monkeypatch.setattr("app.services.artifact_coding_agent_tools.get_session", shared_session)
+    monkeypatch.setattr("app.services.platform_sdk_local_tools._dispatch_platform_sdk_locally", fake_platform_assets_dispatch)
+
+    provider = _ScriptedProvider(
+        [
+            lambda: _tool_call_chunks(
+                "architect-worker-binding-prepare",
+                {
+                    "binding_type": "artifact_shared_draft",
+                    "replace_snapshot": True,
+                    "binding_payload": {
+                        "draft_key": draft_key,
+                        "title_prompt": "Create a greeting tool artifact",
+                        "draft_snapshot": {
+                            "slug": "greeting-tool",
+                            "display_name": "Greeting Tool",
+                            "description": "Draft greeting tool",
+                            "kind": "tool_impl",
+                            "source_files": [],
+                            "entry_module_path": "main.py",
+                            "python_dependencies": "",
+                            "runtime_target": "cloudflare_workers",
+                            "capabilities": {},
+                            "config_schema": {"type": "object", "properties": {}},
+                            "tool_contract": {
+                                "input_schema": {"type": "object", "properties": {}},
+                                "output_schema": {"type": "object", "properties": {}},
+                                "side_effects": [],
+                                "execution_mode": "interactive",
+                                "tool_ui": {},
+                            },
+                        },
+                    },
+                },
+            ),
+            lambda: _tool_call_chunks(
+                "architect-worker-spawn",
+                {
+                    "task": {
+                        "objective": "Update the bound artifact draft into a minimal greeting tool.",
+                        "constraints": ["Use main.py as the entry file."],
+                    },
+                    "binding_ref": shared["binding_ref"],
+                },
+            ),
+            lambda: _tool_call_chunks(
+                "artifact-coding-set-metadata",
+                {
+                    "slug": "greeting-tool",
+                    "display_name": "Greeting Tool",
+                    "description": "A greeting tool generated by architect worker flow",
+                },
+            ),
+            lambda: _tool_call_chunks(
+                "artifact-coding-create-file",
+                {
+                    "path": "main.py",
+                    "content": "def execute(inputs, config, context):\n    return {\"message\": \"shalom\"}\n",
+                },
+            ),
+            lambda: [AIMessageChunk(content="Artifact draft updated.")],
+            lambda: _tool_call_chunks(
+                "architect-worker-get-run",
+                {
+                    "run_id": shared["run_id"],
+                },
+            ),
+            lambda: _tool_call_chunks(
+                "architect-worker-binding-get-state",
+                {
+                    "binding_ref": shared["binding_ref"],
+                },
+            ),
+            lambda: _tool_call_chunks(
+                "platform-assets",
+                {
+                    "action": "artifacts.create",
+                    "payload": shared["artifact_create_payload"],
+                },
+            ),
+            lambda: [AIMessageChunk(content="Successfully created the greeting artifact through the worker flow.")],
+        ]
+    )
+
+    async def fake_resolve(_self, _model_id):
+        return provider
+
+    monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
+
+    executor = AgentExecutorService(db=db_session)
+    run_id = await executor.start_run(
+        agent_id=architect.id,
+        input_params={
+            "messages": [{"role": "user", "content": "Create a greeting tool artifact using the worker flow."}],
+            "context": {},
+        },
+        user_id=user.id,
+        background=False,
+        mode=ExecutionMode.DEBUG,
+    )
+    async for _ in executor.run_and_stream(run_id, db_session, mode=ExecutionMode.DEBUG):
+        pass
+
+    run = await db_session.get(AgentRun, run_id)
+    assert run is not None
+    assert run.status == RunStatus.completed
+    output_result = run.output_result if isinstance(run.output_result, dict) else {}
+    final_output = str(
+        output_result.get("final_output")
+        or output_result.get("last_agent_output")
+        or output_result.get("output")
+        or output_result
+    )
+    assert "Successfully created the greeting artifact" in final_output
+
+    child_run = await db_session.get(AgentRun, shared["run_id"])
+    assert child_run is not None
+    assert child_run.parent_run_id == run.id
+    assert child_run.root_run_id == run.id
+    assert child_run.status == RunStatus.completed
+
+    session = (
+        await db_session.execute(
+            select(ArtifactCodingSession).where(ArtifactCodingSession.id == shared["binding_ref"]["binding_id"])
+        )
+    ).scalar_one()
+    shared_draft = (
+        await db_session.execute(
+            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.last_run_id == child_run.id)
+        )
+    ).scalar_one()
+    assert session.last_run_id == child_run.id
+    assert shared_draft.last_run_id == child_run.id
+    assert shared_draft.working_draft_snapshot["source_files"][0]["path"] == "main.py"
+
+    artifact = (
+        await db_session.execute(
+            select(Artifact)
+            .options(selectinload(Artifact.latest_draft_revision))
+            .where(
+                Artifact.tenant_id == tenant_id,
+                Artifact.slug == "greeting-tool",
+            )
+        )
+    ).scalar_one()
+    assert artifact.display_name == "Greeting Tool"
+    assert artifact.latest_draft_revision is not None
+    assert artifact.latest_draft_revision.entry_module_path == "main.py"
+
+    artifact_runs = (
+        await db_session.execute(
+            select(ArtifactRun).where(ArtifactRun.artifact_id == artifact.id)
+        )
+    ).scalars().all()
+    assert artifact_runs == []
+
+
+@pytest.mark.asyncio
+async def test_seeded_architect_run_rejects_second_mutating_spawn_for_active_binding(db_session, monkeypatch):
+    tenant, user, _model = await _seed_tenant_user_and_model(db_session)
+    architect = await registry_seeding.seed_platform_architect_agent(db_session)
+    assert architect is not None
+
+    provisioning = WorkloadProvisioningService(db_session)
+    await provisioning.provision_agent_policy(agent=architect, actor_user_id=user.id)
+    await db_session.commit()
+
+    shared: dict[str, object] = {}
+    draft_key = f"architect-worker-blocked-{uuid4().hex[:8]}"
+    original_prepare_binding = PlatformArchitectWorkerRuntimeService.prepare_binding
+    original_spawn_worker = PlatformArchitectWorkerRuntimeService.spawn_worker
+    original_spawn_run = OrchestrationKernelService.spawn_run
+
+    async def capture_prepare(self, payload):
+        result = await original_prepare_binding(self, payload)
+        shared["binding_ref"] = result["binding_ref"]
+        return result
+
+    async def capture_spawn(self, payload):
+        result = await original_spawn_worker(self, payload)
+        shared["first_run_id"] = result["run_id"]
+        return result
+
+    async def queued_child_spawn(self, **kwargs):
+        return await original_spawn_run(self, **{**kwargs, "start_background": False})
+
+    monkeypatch.setattr(PlatformArchitectWorkerRuntimeService, "prepare_binding", capture_prepare)
+    monkeypatch.setattr(PlatformArchitectWorkerRuntimeService, "spawn_worker", capture_spawn)
+    monkeypatch.setattr(OrchestrationKernelService, "spawn_run", queued_child_spawn)
+
+    @asynccontextmanager
+    async def shared_session():
+        yield db_session
+
+    monkeypatch.setattr("app.services.platform_architect_worker_tools.get_session", shared_session)
+
+    provider = _ScriptedProvider(
+        [
+            lambda: _tool_call_chunks(
+                "architect-worker-binding-prepare",
+                {
+                    "binding_type": "artifact_shared_draft",
+                    "replace_snapshot": True,
+                    "binding_payload": {
+                        "draft_key": draft_key,
+                        "title_prompt": "Prepare a bound artifact draft",
+                        "draft_snapshot": {
+                            "slug": "blocked-tool",
+                            "display_name": "Blocked Tool",
+                            "description": "Draft for binding lock test",
+                            "kind": "tool_impl",
+                            "source_files": [{"path": "main.py", "content": ""}],
+                            "entry_module_path": "main.py",
+                            "python_dependencies": "",
+                            "runtime_target": "cloudflare_workers",
+                            "capabilities": {},
+                            "config_schema": {"type": "object", "properties": {}},
+                            "tool_contract": {
+                                "input_schema": {"type": "object", "properties": {}},
+                                "output_schema": {"type": "object", "properties": {}},
+                                "side_effects": [],
+                                "execution_mode": "interactive",
+                                "tool_ui": {},
+                            },
+                        },
+                    },
+                },
+            ),
+            lambda: _tool_call_chunks(
+                "architect-worker-spawn",
+                {
+                    "task": {"objective": "Start a mutating artifact worker run."},
+                    "binding_ref": shared["binding_ref"],
+                },
+            ),
+            lambda: _tool_call_chunks(
+                "architect-worker-spawn",
+                {
+                    "task": {"objective": "Attempt a second mutating artifact worker run on the same binding."},
+                    "binding_ref": shared["binding_ref"],
+                },
+            ),
+            lambda: [AIMessageChunk(content="The artifact binding is busy with an active worker run, so I did not start a second mutating worker.")],
+        ]
+    )
+
+    async def fake_resolve(_self, _model_id):
+        return provider
+
+    monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
+
+    executor = AgentExecutorService(db=db_session)
+    run_id = await executor.start_run(
+        agent_id=architect.id,
+        input_params={
+            "messages": [{"role": "user", "content": "Start two artifact workers on the same draft."}],
+            "context": {},
+        },
+        user_id=user.id,
+        background=False,
+        mode=ExecutionMode.DEBUG,
+    )
+    async for _ in executor.run_and_stream(run_id, db_session, mode=ExecutionMode.DEBUG):
+        pass
+
+    run = await db_session.get(AgentRun, run_id)
+    assert run is not None
+    assert run.status == RunStatus.completed
+    output_result = run.output_result if isinstance(run.output_result, dict) else {}
+    final_output = str(
+        output_result.get("final_output")
+        or output_result.get("last_agent_output")
+        or output_result.get("output")
+        or output_result
+    )
+    assert "binding is busy with an active worker run" in final_output
+
+    child_runs = (
+        await db_session.execute(
+            select(AgentRun).where(AgentRun.parent_run_id == run.id).order_by(AgentRun.created_at.asc())
+        )
+    ).scalars().all()
+    assert len(child_runs) == 1
+    assert child_runs[0].status == RunStatus.queued
+
+    session = (
+        await db_session.execute(
+            select(ArtifactCodingSession).where(ArtifactCodingSession.id == shared["binding_ref"]["binding_id"])
+        )
+    ).scalar_one()
+    assert session.active_run_id == child_runs[0].id

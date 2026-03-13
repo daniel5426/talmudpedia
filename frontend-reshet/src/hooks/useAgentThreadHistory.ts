@@ -5,11 +5,9 @@ import { adminService, agentService, Thread } from "@/services";
 import type { ChatMessage } from "@/components/layout/useChatController";
 import type { ChatRenderBlock } from "@/services/chat-presentation";
 import {
-  adaptRunStreamEvent,
-  applyRunStreamEventToBlocks,
-  finalizeAssistantRenderBlocks,
   sortChatRenderBlocks,
 } from "@/services/chat-presentation";
+import { buildResponseBlocksFromRunTrace } from "@/services/run-trace-blocks";
 
 export interface AgentChatHistoryItem {
   id: string;
@@ -46,7 +44,7 @@ const parseTimestamp = (value?: string, fallback: number = Date.now()): number =
 
 const buildResponseBlocksFromTurn = async (
   turn: ThreadTurn,
-  assistantText: string
+  assistantText: string,
 ): Promise<ChatRenderBlock[] | undefined> => {
   const metadata = turn.metadata && typeof turn.metadata === "object"
     ? (turn.metadata as Record<string, unknown>)
@@ -62,21 +60,7 @@ const buildResponseBlocksFromTurn = async (
   if (!runId) return undefined;
 
   try {
-    const response = await agentService.getRunEvents(runId);
-    const rawEvents = Array.isArray(response.events) ? response.events : [];
-    let blocks: ChatRenderBlock[] = [];
-    rawEvents.forEach((event, index) => {
-      blocks = sortChatRenderBlocks(
-        applyRunStreamEventToBlocks(blocks, adaptRunStreamEvent(event, index)),
-      );
-    });
-    const finalized = sortChatRenderBlocks(
-      finalizeAssistantRenderBlocks(blocks, assistantText, {
-        runId,
-        fallbackSeq: rawEvents.length + 1,
-      }),
-    );
-    return finalized.length > 0 ? finalized : undefined;
+    return await buildResponseBlocksFromRunTrace(runId, assistantText, agentService.getRunEvents);
   } catch (error) {
     console.error("Failed to load run events for thread turn", { runId, error });
     return undefined;
@@ -90,12 +74,21 @@ const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]): Promis
   const next: ChatMessage[] = [];
   const priorAssistantParts: string[] = [];
   const responseBlocksByTurnKey = new Map<string, ChatRenderBlock[] | undefined>();
+  let latestAssistantTurnKey: string | undefined;
+  for (let index = sortedTurns.length - 1; index >= 0; index -= 1) {
+    const turn = sortedTurns[index];
+    if (String(turn.assistant_output_text ?? "").trim() && String(turn.run_id ?? "").trim()) {
+      latestAssistantTurnKey = String(turn.id ?? index);
+      break;
+    }
+  }
 
   await Promise.all(
     sortedTurns.map(async (turn, index) => {
       const rawAssistantText = String(turn.assistant_output_text ?? "").trim();
       if (!rawAssistantText) return;
       const turnKey = String(turn.id ?? index);
+      if (turnKey !== latestAssistantTurnKey) return;
       const blocks = await buildResponseBlocksFromTurn(turn, rawAssistantText);
       responseBlocksByTurnKey.set(turnKey, blocks);
     })
@@ -139,6 +132,7 @@ const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]): Promis
         role: "assistant",
         content: assistantText,
         createdAt: new Date(assistantTimestamp),
+        runId: String(turn.run_id || "").trim() || undefined,
         responseBlocks,
       });
       priorAssistantParts.push(assistantText);

@@ -11,9 +11,9 @@ from app.db.postgres.models.identity import Tenant, User
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
-from app.services.platform_architect_artifact_delegation_tools import (
-    artifact_coding_session_get_state,
-    artifact_coding_session_prepare,
+from app.services.platform_architect_worker_tools import (
+    architect_worker_binding_get_state,
+    architect_worker_binding_prepare,
 )
 
 
@@ -167,7 +167,7 @@ async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonic
         return seeded_agent
 
     monkeypatch.setattr(
-        "app.services.platform_architect_artifact_delegation_tools.ensure_artifact_coding_agent_profile",
+        "app.services.platform_architect_worker_bindings.ensure_artifact_coding_agent_profile",
         _return_seeded_agent,
     )
 
@@ -176,33 +176,43 @@ async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonic
         yield db_session
 
     monkeypatch.setattr(
-        "app.services.platform_architect_artifact_delegation_tools.get_session",
+        "app.services.platform_architect_worker_tools.get_session",
         _session_override,
     )
 
-    prepared = await artifact_coding_session_prepare(
+    prepared = await architect_worker_binding_prepare(
         {
-            "tenant_id": str(tenant.id),
-            "user_id": str(user.id),
-            "artifact_id": str(artifact.id),
-            "title_prompt": "Review hydrated artifact",
+            "binding_type": "artifact_shared_draft",
+            "binding_payload": {
+                "artifact_id": str(artifact.id),
+                "title_prompt": "Review hydrated artifact",
+            },
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(uuid4()),
+            },
         }
     )
 
-    assert prepared["artifact_id"] == str(artifact.id)
-    assert prepared["draft_snapshot"]["display_name"] == "hydrated-tool-display"
-    assert prepared["draft_snapshot"]["source_files"][0]["path"] == "main.py"
-    assert prepared["artifact_create_payload"] is None
+    assert prepared["binding_ref"]["binding_type"] == "artifact_shared_draft"
+    assert prepared["binding_state"]["artifact_id"] == str(artifact.id)
+    assert prepared["binding_state"]["draft_snapshot"]["display_name"] == "hydrated-tool-display"
+    assert prepared["binding_state"]["draft_snapshot"]["source_files"][0]["path"] == "main.py"
+    assert prepared["binding_state"]["artifact_create_payload"] is None
 
-    state = await artifact_coding_session_get_state(
+    state = await architect_worker_binding_get_state(
         {
-            "tenant_id": str(tenant.id),
-            "user_id": str(user.id),
-            "chat_session_id": prepared["chat_session_id"],
+            "binding_ref": prepared["binding_ref"],
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(uuid4()),
+            },
         }
     )
 
-    assert state["artifact_id"] == str(artifact.id)
-    assert state["artifact_create_payload"] is None
-    assert state["artifact_update_payload"]["artifact_id"] == str(artifact.id)
-    assert state["artifact_update_payload"]["patch"]["runtime"]["entry_module_path"] == "main.py"
+    assert state["binding_state"]["artifact_id"] == str(artifact.id)
+    assert state["binding_state"]["artifact_create_payload"] is None
+    assert state["binding_state"]["artifact_update_payload"]["artifact_id"] == str(artifact.id)
+    assert state["binding_state"]["artifact_update_payload"]["patch"]["runtime"]["entry_module_path"] == "main.py"

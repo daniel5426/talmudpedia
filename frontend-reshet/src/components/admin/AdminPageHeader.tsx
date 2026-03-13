@@ -123,7 +123,7 @@ export function AdminPageHeader({
       )}
       {...props}
     >
-      <div className={cn("flex h-12 items-center justify-between gap-4 px-4", contentClassName)}>
+      <div className={cn("flex h-12 items-center justify-between gap-4 px-3", contentClassName)}>
         {children}
       </div>
       <div

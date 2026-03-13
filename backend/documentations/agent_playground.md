@@ -1,5 +1,7 @@
 # Agent Playground - Current State
 
+Last Updated: 2026-03-12
+
 ## Overview
 
 The Agent Playground is a testing and debugging interface for agent workflows. It provides a real-time, interactive environment where developers can test agent executions with full visibility into the execution process. The playground combines a modern chat interface (matching the production chat experience) with a detailed execution trace sidebar for technical debugging.

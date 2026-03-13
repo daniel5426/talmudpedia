@@ -14,18 +14,14 @@ import {
   finalizeAssistantRenderBlocks,
   sortChatRenderBlocks,
 } from "@/services/chat-presentation";
+import {
+  buildExecutionStepsFromRunTrace,
+  type ExecutionStep,
+} from "@/services/run-trace-steps";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { AgentChatHistoryItem, useAgentThreadHistory } from "./useAgentThreadHistory";
 
-export interface ExecutionStep {
-  id: string;
-  name: string;
-  type: string;
-  status: "pending" | "running" | "completed" | "error";
-  input?: any;
-  output?: any;
-  timestamp: Date;
-}
+export type { ExecutionStep } from "@/services/run-trace-steps";
 
 const resolveArchitectResponse = (content: string) => {
   return extractStructuredAssistantText(content) || content;
@@ -95,7 +91,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [streamingContent, setStreamingContent] = useState("");
   const [currentReasoning, setCurrentReasoning] = useState<ChatMessage["reasoningSteps"]>([]);
   const [currentResponseBlocks, setCurrentResponseBlocks] = useState<ChatRenderBlock[]>([]);
-  const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([]);
+  const [liveExecutionSteps, setLiveExecutionSteps] = useState<ExecutionStep[]>([]);
+  const [inspectedTraceSteps, setInspectedTraceSteps] = useState<ExecutionStep[] | null>(null);
   const [liked, setLiked] = useState<Record<string, boolean>>({});
   const [disliked, setDisliked] = useState<Record<string, boolean>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -107,6 +104,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [isPaused, setIsPaused] = useState(false);
   const [pendingApproval, setPendingApproval] = useState(false);
   const [executionEvents, setExecutionEvents] = useState<AgentExecutionEvent[]>([]);
+  const [traceLoadingByMessageId, setTraceLoadingByMessageId] = useState<Record<string, boolean>>({});
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -152,7 +150,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setStreamingContent("");
     setCurrentReasoning([]);
     setCurrentResponseBlocks([]);
-    setExecutionSteps([]);
+    setLiveExecutionSteps([]);
+    setInspectedTraceSteps(null);
     setLastThinkingDurationMs(null);
     setActiveStreamingId(null);
     setCurrentRunId(null);
@@ -161,6 +160,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setIsPaused(false);
     setPendingApproval(false);
     setExecutionEvents([]);
+    setTraceLoadingByMessageId({});
     reasoningRef.current = [];
     lastReasoningRef.current = [];
     responseBlocksRef.current = [];
@@ -249,7 +249,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setStreamingContent("");
     setCurrentReasoning([]);
     setCurrentResponseBlocks([]);
-    setExecutionSteps([]);
+    setLiveExecutionSteps([]);
     setExecutionEvents([]);
     setLastThinkingDurationMs(null);
     setActiveStreamingId(null);
@@ -258,6 +258,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setCurrentThreadId(null);
     setIsPaused(false);
     setPendingApproval(false);
+    setInspectedTraceSteps(null);
     reasoningRef.current = [];
     lastReasoningRef.current = [];
     responseBlocksRef.current = [];
@@ -297,6 +298,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
 
     commitStreamingMessage("new");
     handleStop();
+    setInspectedTraceSteps(null);
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
@@ -313,7 +315,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       setStreamingContent("");
       setCurrentReasoning([]);
       setCurrentResponseBlocks([]);
-      setExecutionSteps([]);
+      setLiveExecutionSteps([]);
       setExecutionEvents([]);
       setCurrentRunId(null);
       setCurrentRunStatus(null);
@@ -352,6 +354,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       let fullAiContent = "";
       let terminalError: string | null = null;
       let streamEventIndex = 0;
+      let latestRunId: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -377,6 +380,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
                 ? (rawEvent.payload as Record<string, unknown>)
                 : {};
             if (typeof rawEvent.run_id === "string" && rawEvent.run_id.trim().length > 0) {
+              latestRunId = rawEvent.run_id;
               setCurrentRunId(rawEvent.run_id);
             }
 
@@ -445,7 +449,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               }
             } else if (eventName === "tool.started") {
               const stepId = String(payload.span_id || rawEvent.run_id || nanoid());
-              setExecutionSteps(prev => [...prev, {
+              setLiveExecutionSteps(prev => [...prev, {
                 id: stepId,
                 name: String(payload.display_name || payload.summary || payload.tool || "Tool"),
                 type: "tool",
@@ -455,7 +459,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               }]);
             } else if (eventName === "tool.completed") {
               const stepId = String(payload.span_id || rawEvent.run_id || "");
-              setExecutionSteps(prev => prev.map(s => s.id === stepId ? {
+              setLiveExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
                 status: "completed",
                 output: payload.output,
@@ -463,7 +467,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
             } else if (eventName === "node_start" || eventName === "on_chain_start") {
               const data = normalizedEvent.data || {};
               const stepId = String(normalizedEvent.span_id || normalizedEvent.run_id || nanoid());
-              setExecutionSteps(prev => [...prev, {
+              setLiveExecutionSteps(prev => [...prev, {
                 id: stepId,
                 name: String(normalizedEvent.name || "Node"),
                 type: "node",
@@ -474,7 +478,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
             } else if (eventName === "node_end" || eventName === "on_chain_end") {
               const data = normalizedEvent.data || {};
               const stepId = String(normalizedEvent.span_id || normalizedEvent.run_id || "");
-              setExecutionSteps(prev => prev.map(s => s.id === stepId ? {
+              setLiveExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
                 status: "completed",
                 output: data.output,
@@ -494,7 +498,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       const resolvedContent = resolveArchitectResponse(fullAiContent);
       const finalizedBlocks = sortChatRenderBlocks(
         finalizeAssistantRenderBlocks(responseBlocksRef.current, resolvedContent, {
-          runId: currentRunId || newStreamingId,
+          runId: latestRunId || currentRunId || newStreamingId,
           fallbackSeq: streamEventIndex + 1,
         }),
       );
@@ -509,6 +513,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
           role: "assistant",
           content: resolvedContent,
           createdAt: new Date(),
+          runId: latestRunId || currentRunId || undefined,
           responseBlocks: finalizedBlocks.length > 0 ? finalizedBlocks : undefined,
           reasoningSteps: lastReasoningRef.current && lastReasoningRef.current.length > 0 ? lastReasoningRef.current : undefined,
           thinkingDurationMs: thinkingDurationRef.current || undefined,
@@ -541,6 +546,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
           role: "assistant",
           content: fallbackMessage,
           createdAt: new Date(),
+          runId: latestRunId || currentRunId || undefined,
         };
         setMessages(prev => {
           const next = [...prev, assistantMsg];
@@ -591,12 +597,27 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     }
   };
 
+  const handleLoadTrace = useCallback(async (msg: ChatMessage) => {
+    if (!msg.runId) return;
+    setTraceLoadingByMessageId((prev) => ({ ...prev, [msg.id]: true }));
+    try {
+      const steps = await buildExecutionStepsFromRunTrace(msg.runId);
+      if (!steps || steps.length === 0) return;
+      setInspectedTraceSteps(steps);
+    } catch (error) {
+      console.error("Failed to load run trace", { runId: msg.runId, error });
+    } finally {
+      setTraceLoadingByMessageId((prev) => ({ ...prev, [msg.id]: false }));
+    }
+  }, []);
+
   const handleSourceClick = useCallback((citations: Citation[] | undefined) => {
     console.log("Source click:", citations);
   }, []);
 
   const upsertLiveVoiceMessage = useCallback(() => {}, []);
   const refresh = useCallback(async () => {}, []);
+  const executionSteps = inspectedTraceSteps ?? liveExecutionSteps;
 
   return {
     messages,
@@ -626,7 +647,9 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     handleLike,
     handleDislike,
     handleRetry,
+    handleLoadTrace,
     handleSourceClick,
+    traceLoadingByMessageId,
     upsertLiveVoiceMessage,
     refresh,
     textareaRef,

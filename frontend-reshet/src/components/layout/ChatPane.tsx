@@ -347,8 +347,10 @@ export function ChatWorkspace({
     handleLike,
     handleDislike,
     handleRetry,
+    handleLoadTrace,
     handleSourceClick,
     textareaRef,
+    traceLoadingByMessageId,
   } = controller as any;
 
   const isPaused = (controller as any).isPaused || false;
@@ -888,6 +890,25 @@ export function ChatWorkspace({
                                 )}
                               />
                             </MessageAction>
+                            {msg.runId && (
+                              <MessageAction
+                                label="Trace"
+                                onClick={() => handleLoadTrace(msg)}
+                                tooltip={
+                                  traceLoadingByMessageId?.[msg.id]
+                                    ? "Loading execution trace..."
+                                    : "Load execution trace"
+                                }
+                                disabled={Boolean(traceLoadingByMessageId?.[msg.id])}
+                              >
+                                <SearchIcon
+                                  className={cn(
+                                    "size-4",
+                                    traceLoadingByMessageId?.[msg.id] && "animate-pulse"
+                                  )}
+                                />
+                              </MessageAction>
+                            )}
                           </MessageActions>
                         )}
                       </div>

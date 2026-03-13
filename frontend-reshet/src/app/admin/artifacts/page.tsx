@@ -367,7 +367,7 @@ export default function ArtifactsPage() {
     }, [formData.kind, updateFormData])
 
     const renderHeader = () => (
-        <AdminPageHeader contentClassName="px-4 h-12 items-center">
+        <AdminPageHeader contentClassName="h-12 items-center">
             <div className="flex min-w-0 flex-1 items-center gap-3">
                 <CustomBreadcrumb
                     items={[
@@ -806,6 +806,15 @@ export default function ArtifactsPage() {
                                 agentPanelOpen={artifactCodingChat.isAgentPanelOpen}
                             />
                         </div>
+                        {artifactCodingChat.isAgentPanelOpen && (
+                            <div
+                                className="w-[1.5px] bg-gradient-to-b from-transparent via-primary to-transparent shrink-0"
+                                style={{ 
+                                    opacity: 0.5,
+                                    height: "calc(100% - 140px)"
+                                }}
+                            />
+                        )}
                         <ArtifactCodingChatPanel
                             isOpen={artifactCodingChat.isAgentPanelOpen}
                             isSending={artifactCodingChat.isSending}

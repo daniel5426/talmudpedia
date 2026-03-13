@@ -27,8 +27,9 @@ from app.services.platform_architect_contracts import (
     build_architect_graph_definition,
     build_platform_domain_tool_schema,
 )
-from app.services.platform_architect_artifact_delegation_tools import (
-    ensure_platform_architect_artifact_delegation_tools,
+from app.services.platform_architect_worker_tools import (
+    ensure_platform_architect_worker_orchestration_policy,
+    ensure_platform_architect_worker_tools,
 )
 from app.services.platform_sdk_local_tools import PLATFORM_SDK_LOCAL_FUNCTIONS
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
@@ -139,10 +140,16 @@ async def _normalize_tool_status_values(db):
     labels = await _get_enum_labels(db, "toolstatus")
     for old in ("draft", "published", "deprecated", "disabled"):
         new = _resolve_enum_value(labels, old)
-        await db.execute(
-            text("UPDATE tool_registry SET status=:new WHERE lower(status::text)=:old"),
-            {"new": new, "old": old},
-        )
+        try:
+            await db.execute(
+                text("UPDATE tool_registry SET status=:new WHERE lower(status::text)=:old"),
+                {"new": new, "old": old},
+            )
+        except Exception:
+            await db.execute(
+                text("UPDATE tool_registry SET status=:new WHERE lower(status)=:old"),
+                {"new": new, "old": old},
+            )
     await db.commit()
 
 
@@ -153,10 +160,16 @@ async def _normalize_tool_impl_values(db):
     labels = await _get_enum_labels(db, "toolimplementationtype")
     for old in ("internal", "http", "rag_retrieval", "agent_call", "function", "custom", "artifact", "mcp"):
         new = _resolve_enum_value(labels, old)
-        await db.execute(
-            text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type::text)=:old"),
-            {"new": new, "old": old},
-        )
+        try:
+            await db.execute(
+                text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type::text)=:old"),
+                {"new": new, "old": old},
+            )
+        except Exception:
+            await db.execute(
+                text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type)=:old"),
+                {"new": new, "old": old},
+            )
     await db.commit()
 
 
@@ -548,7 +561,7 @@ async def seed_platform_architect_agent(db):
     if not all(tool_ids.get(slug) for slug in expected_slugs):
         print("Platform architect domain tools missing; skipping Platform Architect agent seed.")
         return None
-    delegation_tool_ids = await ensure_platform_architect_artifact_delegation_tools(
+    worker_tool_ids = await ensure_platform_architect_worker_tools(
         db,
         tenant_id=tenant.id,
     )
@@ -560,7 +573,7 @@ async def seed_platform_architect_agent(db):
 
     architect_tool_ids = [
         *[tool_ids[slug] for slug in expected_slugs],
-        *delegation_tool_ids,
+        *worker_tool_ids,
     ]
     graph_definition = build_architect_graph_definition(
         model_id=model_id,
@@ -640,10 +653,24 @@ async def seed_platform_architect_agent(db):
             agent.is_public = False
 
         await db.commit()
+        await ensure_platform_architect_worker_orchestration_policy(
+            db,
+            tenant_id=tenant.id,
+            orchestrator_agent_id=agent.id,
+        )
+        await db.commit()
         return agent
 
     await db.rollback()
-    return await _seed_platform_architect_agent_legacy(db, tenant.id, graph_definition, architect_tool_ids, agent_columns)
+    agent = await _seed_platform_architect_agent_legacy(db, tenant.id, graph_definition, architect_tool_ids, agent_columns)
+    if agent is not None:
+        await ensure_platform_architect_worker_orchestration_policy(
+            db,
+            tenant_id=tenant.id,
+            orchestrator_agent_id=agent.id,
+        )
+        await db.commit()
+    return agent
 
 
 async def seed_artifact_coding_agent(db):

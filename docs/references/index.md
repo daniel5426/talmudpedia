@@ -25,3 +25,5 @@ This section is for stable supporting documentation used as lookup material by h
   - Current auth documentation entry points and detailed-doc map.
 - `mcp_tools_reference.md`
   - Current MCP tool runtime behavior and open governance gaps.
+- `legacy_docs_coverage_map.md`
+  - Full coverage review of every file still under `backend/documentations/`.

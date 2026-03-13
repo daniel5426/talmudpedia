@@ -1,12 +1,13 @@
 # Agent Operating Instructions (Talmudpedia)
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 ## Documentation Hygiene (Context-dependent)
 - The repo-level documentation hub is `docs/`.
 - Before creating or editing long-lived documentation, check these canonical entry points first:
   - `docs/README.md`
   - `docs/references/canonical_docs_guide.md`
+  - `docs/references/legacy_docs_coverage_map.md`
   - `ARCHITECTURE.md`
   - `code_architect/architecture_tree.md`
 - When asked for a chat summary, unless explicitly requested otherwise, create a markdown file in `backend/documentations/summary/` with a descriptive filename and include a "Last Updated" date.
@@ -18,6 +19,7 @@ Last Updated: 2026-03-11
 - **Do not read every doc**. Open only the files that look relevant based on their names and the task scope.
 - Prefer `docs/` for current canonical documentation.
 - Treat many files in `backend/documentations/` as legacy or historical unless they are explicitly still serving as focused references.
+- If the task is “have we covered or migrated this old doc yet?”, use `docs/references/legacy_docs_coverage_map.md` as the source of truth.
 - If needed, at the **end of the task**, list the documentation files again and update any relevant doc(s):
   - Add or remove details so the docs reflect the work done.
   - Keep edits concise and focused (don't over-edit).

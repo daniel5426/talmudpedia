@@ -20,6 +20,7 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Session preflight validates delegated scope coverage (required action scopes vs architect workload policy and initiator effective scopes) before running matrix scenarios.
 - Architect run start now sends explicit `context.requested_scopes` derived from scenario matrix required scopes to stabilize delegated grant minting.
 - Artifact-create side-effect verification now checks canonical artifact fields (`slug` / `display_name`) for `artifacts.create`.
+- Optional/manual live smoke coverage now exists for the architect artifact-worker flow behind `ARCH_E2E_ARTIFACT_WORKER_SMOKE=1`.
 
 ## Last run command + date/time + result
 - Command: `cd backend && TEST_USE_REAL_DB=1 pytest -q tests/platform_architect_e2e/test_architect_e2e_live.py -m real_db`
@@ -32,3 +33,4 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Some governance outcomes depend on caller role/policy state and are asserted primarily via expected block-code presence.
 - Remaining failing scenarios are concentrated in strict side-effect checks plus schema/action mismatches (especially governance/workload actions) and missing action-specific prerequisites for read/query scenarios.
 - Preflight depends on decoding JWT `sub` for initiator scope intersection details; opaque tokens without JWT claims degrade to policy-only scope diagnostics.
+- The artifact-worker smoke test is opt-in/manual and is not part of the matrix baseline command.

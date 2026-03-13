@@ -570,3 +570,43 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
     )
 
     assert passed, " | ".join(failure_reasons)
+
+
+@pytest.mark.real_db
+def test_platform_architect_artifact_worker_smoke_live(e2e_runtime):
+    if os.getenv("ARCH_E2E_ARTIFACT_WORKER_SMOKE") != "1":
+        pytest.skip("Set ARCH_E2E_ARTIFACT_WORKER_SMOKE=1 to run the manual artifact-worker smoke test.")
+
+    scope_subset = sorted(set(e2e_runtime.get("requested_scopes", [])) | {"agents.execute"})
+    unique_prefix = f"{e2e_runtime['resource_prefix']}-artifact-worker-{uuid.uuid4().hex[:6]}"
+    prompt = (
+        "Create one minimal tool artifact through the architect worker flow. "
+        "Use an architect worker binding, spawn the artifact worker, wait for it, persist the artifact through platform-assets, "
+        "and do not publish it. "
+        f"Use slug {unique_prefix} and display name {unique_prefix}. "
+        "Return one JSON object only with keys: status, artifact_slug, child_agent_slugs, errors."
+    )
+
+    run_id = _start_run(
+        e2e_runtime["base_url"],
+        e2e_runtime["headers"],
+        e2e_runtime["architect_agent_id"],
+        prompt,
+        {"requested_scopes": scope_subset},
+    )
+    run_status = _poll_run(
+        e2e_runtime["base_url"],
+        e2e_runtime["headers"],
+        run_id,
+        int(e2e_runtime["timeout_s"]),
+    )
+    run_tree = _get_run_tree(e2e_runtime["base_url"], e2e_runtime["headers"], run_id)
+    assistant_text = extract_assistant_text(run_status)
+    assistant_json = extract_first_json_object(assistant_text) or {}
+    tree_blob = json.dumps(run_tree)
+
+    assert str(run_status.get("status") or "").lower() == "completed"
+    assert "artifact-coding-agent" in tree_blob
+    assert contains_action_evidence(run_status.get("result"), "artifacts.create") or contains_action_evidence(run_tree, "artifacts.create")
+    assert str(assistant_json.get("status") or "").lower() in {"ok", "completed", "success"}
+    assert str(assistant_json.get("artifact_slug") or "") == unique_prefix

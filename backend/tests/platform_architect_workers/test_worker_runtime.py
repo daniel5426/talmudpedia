@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import select
+
+from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
+from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry
+from app.services.platform_architect_contracts import build_architect_graph_definition
+from app.services.platform_architect_worker_runtime_service import PlatformArchitectWorkerRuntimeService
+from app.services.platform_architect_worker_tools import (
+    architect_worker_binding_prepare,
+    ensure_platform_architect_worker_tools,
+)
+
+
+async def _seed_tenant_and_user(db_session):
+    suffix = uuid4().hex[:8]
+    tenant = Tenant(name=f"Architect Worker Tenant {suffix}", slug=f"architect-worker-tenant-{suffix}")
+    user = User(email=f"architect-worker-{suffix}@example.com", role="admin")
+    db_session.add_all([tenant, user])
+    await db_session.commit()
+    await db_session.refresh(tenant)
+    await db_session.refresh(user)
+    return tenant, user
+
+
+async def _get_tool_by_slug(db_session, slug: str) -> ToolRegistry:
+    result = await db_session.execute(select(ToolRegistry).where(ToolRegistry.slug == slug))
+    return result.scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_architect_worker_tools_seed_expected_slugs(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    tool_ids = await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+
+    tools = (
+        await db_session.execute(select(ToolRegistry).where(ToolRegistry.id.in_(tool_ids)))
+    ).scalars().all()
+    by_slug = {tool.slug: tool for tool in tools}
+
+    assert set(by_slug.keys()) == {
+        "architect-worker-binding-prepare",
+        "architect-worker-binding-get-state",
+        "architect-worker-spawn",
+        "architect-worker-spawn-group",
+        "architect-worker-get-run",
+        "architect-worker-join",
+        "architect-worker-cancel",
+    }
+    assert by_slug["architect-worker-spawn"].implementation_type == ToolImplementationType.FUNCTION
+    assert by_slug["architect-worker-spawn"].config_schema["implementation"]["function_name"] == "architect_worker_spawn"
+
+
+def test_architect_graph_instructions_include_async_worker_flow():
+    graph = build_architect_graph_definition(
+        model_id="model-1",
+        tool_ids=[
+            "platform-rag",
+            "platform-agents",
+            "platform-assets",
+            "platform-governance",
+            "architect-worker-binding-prepare",
+            "architect-worker-binding-get-state",
+            "architect-worker-spawn",
+            "architect-worker-spawn-group",
+            "architect-worker-get-run",
+            "architect-worker-join",
+            "architect-worker-cancel",
+        ],
+    )
+    runtime_node = next(node for node in graph["nodes"] if node["id"] == "architect_runtime")
+    instructions = runtime_node["config"]["instructions"]
+
+    assert "architect-worker-spawn" in instructions
+    assert "architect-worker-binding-prepare" in instructions
+    assert "Do not call raw orchestration.* actions" in instructions
+    assert "must not end the run after spawn/join alone" in instructions
+    assert "Do not treat successful worker completion as task completion by itself" in instructions
+    assert "artifact-coding-agent-call" not in instructions
+    assert "artifact-coding-session-prepare" not in instructions
+
+
+@pytest.mark.asyncio
+async def test_spawn_group_rejects_duplicate_binding_refs_before_kernel(monkeypatch):
+    service = PlatformArchitectWorkerRuntimeService(SimpleNamespace())
+
+    class _FakeAdapter:
+        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref):
+            del tenant_id, user_id, binding_ref
+            return {"worker_agent_slug": "artifact-coding-agent", "context": {}}
+
+    service.bindings = SimpleNamespace(adapter_for_ref=lambda _ref: _FakeAdapter())
+
+    with pytest.raises(RuntimeError, match="BINDING_RUN_ACTIVE"):
+        await service.spawn_group(
+            {
+                "__tool_runtime_context__": {
+                    "tenant_id": str(uuid4()),
+                    "user_id": str(uuid4()),
+                    "run_id": str(uuid4()),
+                },
+                "targets": [
+                    {
+                        "task": {"objective": "first"},
+                        "binding_ref": {"binding_type": "artifact_shared_draft", "binding_id": "11111111-1111-1111-1111-111111111111"},
+                    },
+                    {
+                        "task": {"objective": "second"},
+                        "binding_ref": {"binding_type": "artifact_shared_draft", "binding_id": "11111111-1111-1111-1111-111111111111"},
+                    },
+                ],
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_worker_get_run_returns_binding_ref_from_run_record(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    parent = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": [], "context": {}},
+    )
+    db_session.add(parent)
+    await db_session.flush()
+    parent.root_run_id = parent.id
+    child = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.completed,
+        root_run_id=parent.id,
+        parent_run_id=parent.id,
+        input_params={
+            "context": {
+                "architect_worker_binding_ref": {
+                    "binding_type": "artifact_shared_draft",
+                    "binding_id": str(uuid4()),
+                }
+            }
+        },
+        output_result={"ok": True},
+    )
+    db_session.add(child)
+    await db_session.commit()
+
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    result = await service.get_run(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(parent.id),
+            },
+            "run_id": str(child.id),
+        }
+    )
+
+    assert result["run_id"] == str(child.id)
+    assert result["status"] == RunStatus.completed.value
+    assert result["binding_ref"]["binding_type"] == "artifact_shared_draft"

@@ -39,3 +39,21 @@ def test_normalize_filtered_event_to_v2_preserves_tool_display_metadata():
     assert payload["action"] == "agents.nodes.validate"
     assert payload["display_name"] == "Validate agent graph"
     assert payload["summary"] == "Validate agent graph"
+
+
+def test_normalize_filtered_event_to_v2_keeps_generic_error_non_terminal():
+    event_name, stage, payload, diagnostics = normalize_filtered_event_to_v2(
+        raw_event={
+            "event": "error",
+            "data": {
+                "error": "Action 'agents.tools.list' requires bearer token; missing caller auth context",
+            },
+        }
+    )
+
+    assert event_name == "runtime.error"
+    assert stage == "system"
+    assert payload["error"] == "Action 'agents.tools.list' requires bearer token; missing caller auth context"
+    assert diagnostics == [
+        {"message": "Action 'agents.tools.list' requires bearer token; missing caller auth context"}
+    ]

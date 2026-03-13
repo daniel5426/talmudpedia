@@ -9,6 +9,7 @@ import { SearchIcon, DotIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { chatService } from "@/services";
 import type { ChatRenderBlock } from "@/services/chat-presentation";
+import { buildResponseBlocksFromRunTrace } from "@/services/run-trace-blocks";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
 import { hasPendingChatMessage } from "@/lib/chatPrefill";
 import {
@@ -33,6 +34,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: Date;
+  runId?: string;
   responseBlocks?: ChatRenderBlock[];
   isFinal?: boolean;
   approvalRequest?: boolean;
@@ -127,7 +129,9 @@ export interface ChatController {
   handleLike: (msg: ChatMessage) => Promise<void>;
   handleDislike: (msg: ChatMessage) => Promise<void>;
   handleRetry: (msg: ChatMessage) => Promise<void>;
+  handleLoadTrace: (msg: ChatMessage) => Promise<void>;
   handleSourceClick: (citations: ChatMessage["citations"]) => void;
+  traceLoadingByMessageId: Record<string, boolean>;
   upsertLiveVoiceMessage: (input: {
     role: "user" | "assistant";
     content: string;
@@ -161,6 +165,7 @@ export function useChatController(): ChatController {
   >(null);
   const [activeStreamingId, setActiveStreamingId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [traceLoadingByMessageId, setTraceLoadingByMessageId] = useState<Record<string, boolean>>({});
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const citationsRef = useRef<ChatMessage["citations"]>([]);
@@ -710,6 +715,22 @@ export function useChatController(): ChatController {
     }
   };
 
+  const handleLoadTrace = useCallback(async (msg: ChatMessage) => {
+    if (!msg.runId) return;
+    setTraceLoadingByMessageId((prev) => ({ ...prev, [msg.id]: true }));
+    try {
+      const blocks = await buildResponseBlocksFromRunTrace(msg.runId, msg.content || "");
+      if (!blocks) return;
+      setMessages((prev) =>
+        prev.map((item) => (item.id === msg.id ? { ...item, responseBlocks: blocks } : item))
+      );
+    } catch (error) {
+      console.error("Failed to load run trace", { runId: msg.runId, error });
+    } finally {
+      setTraceLoadingByMessageId((prev) => ({ ...prev, [msg.id]: false }));
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     setRefreshTrigger(prev => prev + 1);
   }, []);
@@ -731,7 +752,9 @@ export function useChatController(): ChatController {
     handleLike,
     handleDislike,
     handleRetry,
+    handleLoadTrace,
     handleSourceClick,
+    traceLoadingByMessageId,
     upsertLiveVoiceMessage,
     refresh,
     textareaRef,

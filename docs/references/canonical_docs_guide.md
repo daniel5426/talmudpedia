@@ -12,6 +12,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Repo-level architecture entry point.
 - `docs/README.md`
   - Repo-level docs hub and section purposes.
+- `docs/references/legacy_docs_coverage_map.md`
+  - Complete coverage map for the legacy `backend/documentations/` tree.
 
 ## Current Canonical Architecture Docs
 
@@ -27,10 +29,18 @@ This guide lists the current canonical documentation entry points after the firs
   - Conceptual architecture layers and boundaries.
 - `docs/design-docs/auth_current.md`
   - Current auth, authorization, and workload-security overview.
+- `docs/design-docs/apps_builder_current.md`
+  - Current Apps Builder architecture, preview runtime, revision flow, and publish model.
 - `docs/design-docs/artifact_execution_current.md`
   - Current artifact execution architecture.
+- `docs/design-docs/coding_agent_runtime_current.md`
+  - Current published-app coding-agent runtime and API model.
+- `docs/design-docs/platform_architect_worker_orchestration_current.md`
+  - Current platform-architect async worker orchestration model and binding-backed artifact flow.
 - `docs/design-docs/platform_architect_artifact_delegation_current.md`
-  - Current platform-architect artifact lifecycle and artifact-coding delegation model.
+  - Current platform-architect artifact delegation model.
+- `docs/design-docs/artifact_coding_agent_direct_use_current.md`
+  - Current direct artifact usage model in coding-agent flows.
 
 ## Current Canonical Product Specs
 
@@ -48,6 +58,29 @@ This guide lists the current canonical documentation entry points after the firs
   - Current tools-domain behavior and guardrails.
 - `docs/product-specs/admin_stats_spec.md`
   - Current admin stats contract.
+
+## Focused Current Detail Docs Still Under `backend/documentations/`
+
+- `backend/documentations/auth/10_auth_current_state_overview.md`
+  - Detailed auth current-state reference.
+- `backend/documentations/auth/20_auth_delegated_workload_tokens.md`
+  - Detailed delegated-workload token contract.
+- `backend/documentations/auth/30_auth_workload_delegation_design.md`
+  - Detailed workload-delegation design note.
+- `backend/documentations/auth/40_auth_published_apps_unified_gate_and_user_scope.md`
+  - Detailed published-app auth behavior reference.
+- `backend/documentations/architecture/001_agent_execution_modes.md`
+  - Focused ADR that still supports the current execution model.
+- `backend/documentations/platform_architect_spec.md`
+  - Focused platform-architect contract/detail doc.
+- `backend/documentations/platform_control_plane_sdk_spec_v1.md`
+  - Focused platform control-plane SDK contract reference.
+- `backend/documentations/sandbox_spec.md`
+  - Focused sandbox/runtime reference.
+- `backend/documentations/summary/chat_thread_token_spec.md`
+  - Focused thread/token/quota behavior reference.
+- `backend/documentations/web_crawler_crawl4ai_dev_setup.md`
+  - Focused operational setup reference.
 
 ## Legacy Files That Now Act As Pointers
 
@@ -74,3 +107,5 @@ This guide lists the current canonical documentation entry points after the firs
 
 - If the question is “how is the system implemented now?”, start with the docs in `docs/design-docs/` plus `code_architect/architecture_tree.md`.
 - If the question is “what did we previously write about this?”, inspect legacy docs in `backend/documentations/`.
+- If the question is “have we covered this old doc yet?”, check `docs/references/legacy_docs_coverage_map.md`.
+- If the question is “which old docs are still intentionally authoritative?”, use the focused-detail section above plus the `canonical_detail` entries in `docs/references/legacy_docs_coverage_map.md`.

@@ -298,6 +298,29 @@ class ArtifactCodingRuntimeService:
         await self.history.reconcile_session_run(session=session, run=run)
         await self.db.commit()
 
+    async def register_spawned_run(
+        self,
+        *,
+        session: ArtifactCodingSession,
+        shared_draft: ArtifactCodingSharedDraft,
+        run: AgentRun,
+        user_prompt: str,
+    ) -> None:
+        await self.history.mark_run_started(session=session, run_id=run.id)
+        await self.shared_drafts.set_last_run(shared_draft=shared_draft, run_id=run.id)
+        await self.shared_drafts.create_run_snapshot(
+            shared_draft=shared_draft,
+            run_id=run.id,
+            session_id=session.id,
+        )
+        await self.history.persist_user_message(
+            session_id=session.id,
+            run_id=run.id,
+            content=user_prompt,
+        )
+        run.surface = ARTIFACT_CODING_AGENT_SURFACE
+        await self.db.commit()
+
     async def get_session_state_for_user(
         self,
         *,

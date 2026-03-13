@@ -11,6 +11,9 @@ interface FloatingPanelProps {
     fullHeight?: boolean
     autoHeight?: boolean
     offset?: number
+    background?: string
+    shadow?: string
+    border?: string
 }
 
 /**
@@ -21,9 +24,12 @@ export function FloatingPanel({
     children,
     position,
     visible,
-    fullHeight = false,
+    background = "bg-background/95",
+    fullHeight = false, 
     autoHeight = false,
     offset = 0,
+    shadow = "shadow-xs",
+    border = "border",
     className
 }: FloatingPanelProps) {
     // Simplified translation logic for inline styles
@@ -56,9 +62,12 @@ export function FloatingPanel({
             style={style}
         >
             <div className={cn(
-                "relative shadow-xs bg-background/95 backdrop-blur-md flex flex-col overflow-hidden h-full",
+                "relative backdrop-blur-md flex flex-col overflow-hidden h-full",
+                shadow,
+                background,
                 !fullHeight ? "rounded-2xl " : "",
-                autoHeight && "h-auto"
+                autoHeight && "h-auto",
+                border
             )}>
                 {children}
             </div>

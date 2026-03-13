@@ -6,6 +6,7 @@ Shared assistant-response normalization and timeline rendering used by the agent
 ## Test Files Present
 - `frontend-reshet/src/__tests__/assistant_response_ui/normalizer.test.ts`
 - `frontend-reshet/src/__tests__/assistant_response_ui/renderer.test.tsx`
+- `frontend-reshet/src/__tests__/assistant_response_ui/trace_loader.test.ts`
 
 ## Key Scenarios Covered
 - Tool lifecycle events stay inline in chronological order with assistant text.
@@ -17,10 +18,17 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - Active tool and thinking labels shimmer while streaming.
 - Historical assistant messages do not inherit active loading shimmer from newer runs.
 - Tool rows can expand to reveal the stored summary text when the summary differs from the short title.
+- Persisted run events can be replayed back into assistant response blocks for lazy trace loading and latest-turn thread hydration.
 
 ## Last Run
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/assistant_response_ui/renderer.test.tsx`
 - Date: 2026-03-10 19:02:00 EET
+- Result: Pass
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/assistant_response_ui/renderer.test.tsx src/__tests__/assistant_response_ui/trace_loader.test.ts`
+- Date: 2026-03-12 05:49 EET
+- Result: Partial fail (`trace_loader.test.ts` passed; existing unrelated renderer shimmer assertions failed`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/assistant_response_ui/trace_loader.test.ts src/__tests__/assistant_response_ui/normalizer.test.ts`
+- Date: 2026-03-12 05:51 EET
 - Result: Pass
 
 ## Known Gaps / Follow-ups

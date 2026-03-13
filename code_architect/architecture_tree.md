@@ -126,7 +126,9 @@ backend/app/services/artifact_coding_agent_tools.py
 backend/app/services/artifact_coding_agent_profile.py
 backend/app/services/artifact_coding_runtime_service.py
 backend/app/services/platform_architect_contracts.py
-backend/app/services/platform_architect_artifact_delegation_tools.py
+backend/app/services/platform_architect_worker_bindings.py
+backend/app/services/platform_architect_worker_runtime_service.py
+backend/app/services/platform_architect_worker_tools.py
 backend/app/services/platform_sdk_local_tools.py
 backend/app/services/platform_architect_guardrails.py
 backend/app/services/graph_mutation_service.py

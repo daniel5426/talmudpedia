@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback, Suspense } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
     Loader2,
@@ -161,6 +161,14 @@ function PlaygroundContent() {
         }
     }, [agentId, controller, router])
 
+    const chatController = useMemo(() => ({
+        ...controller,
+        handleLoadTrace: async (message: AgentChatHistoryItem["messages"][number]) => {
+            setIsExecutionSidebarOpen(true)
+            await controller.handleLoadTrace(message)
+        },
+    }), [controller])
+
     return (
         <div className="flex w-full flex-col h-screen bg-background overflow-hidden [&_button]:shadow-none">
             {/* Header */}
@@ -290,7 +298,7 @@ function PlaygroundContent() {
                             >
                                 <ChatWorkspace
                                     noBackground={true}
-                                    controller={controller}
+                                    controller={chatController}
                                     isVoiceModeActive={false}
                                     handleToggleVoiceMode={() => { }}
                                     conversationScrollClassName="admin-page-scroll"

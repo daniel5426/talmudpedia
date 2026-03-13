@@ -111,8 +111,8 @@ def normalize_filtered_event_to_v2(
             or "Runtime error"
         )
         return (
-            "run.failed",
-            "run",
+            "runtime.error",
+            "system",
             {"error": str(err)},
             [{"message": str(err)}],
         )

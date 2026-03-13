@@ -24,6 +24,8 @@ This section is for architecture and design documents that explain system shape,
 - `backend/documentations/platform_architect_spec.md`
 - `backend/documentations/auth/`
 - `backend/documentations/architecture/`
+- `backend/documentations/Plans/AppsBuilder_Current_Implementation_Overview.md`
+- `backend/documentations/summary/CustomCodingAgent.md`
 
 ## Current Canonical Docs
 - `backend_architecture_current.md`
@@ -36,9 +38,17 @@ This section is for architecture and design documents that explain system shape,
   - Conceptual layered architecture and boundary model.
 - `auth_current.md`
   - Current authentication, authorization, and workload-security overview.
+- `apps_builder_current.md`
+  - Current Apps Builder runtime, preview, revision, and publish model.
 - `artifact_execution_current.md`
   - Current artifact execution architecture and runtime surfaces.
+- `coding_agent_runtime_current.md`
+  - Current published-app coding-agent runtime and OpenCode-backed API surface.
+- `platform_architect_worker_orchestration_current.md`
+  - Current architect async worker orchestration model and binding-backed artifact flow.
 - `platform_architect_artifact_delegation_current.md`
-  - Current architect artifact lifecycle and artifact-coding delegation flow.
+  - Current architect artifact delegation model and responsibilities.
+- `artifact_coding_agent_direct_use_current.md`
+  - Current direct artifact-usage model in coding-agent flows.
 - `voice_runtime_current.md`
   - Current voice websocket/provider runtime shape and security reality.

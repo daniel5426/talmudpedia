@@ -1,6 +1,6 @@
 # Agent Execution Current State
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 This document describes the current agent execution architecture as implemented in the backend.
 
@@ -58,6 +58,11 @@ The system supports divergent observability by execution mode and surface. The e
 - client-safe streamed output
 
 That separation appears in event types, stream contracts, trace recording, and surface-specific routers.
+
+Current stream-contract rule:
+- generic runtime `error` events are non-terminal diagnostics
+- only explicit terminal run events such as `run.completed`, `run.failed`, `run.cancelled`, and `run.paused` should terminate client streaming flows
+- persisted run traces can be replayed by `run_id` through `GET /agents/runs/{run_id}/events`, which is now the canonical path for thread-history trace rehydration
 
 ### Node Execution
 
