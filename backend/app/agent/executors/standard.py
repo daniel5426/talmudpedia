@@ -5,6 +5,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.agent.execution.tool_input_contracts import (
+    get_tool_execution_config,
+    get_tool_input_schema,
+    is_strict_tool_input,
+    parse_schema_dict,
+)
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.registry import AgentOperatorRegistry, AgentOperatorSpec, AgentStateField, AgentExecutorRegistry
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage, ToolMessage
@@ -535,29 +541,17 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         }
 
     def _parse_config_schema(self, config_schema: Any) -> Dict[str, Any]:
-        if isinstance(config_schema, dict):
-            return config_schema
-        if isinstance(config_schema, str):
-            try:
-                parsed = json.loads(config_schema)
-                return parsed if isinstance(parsed, dict) else {}
-            except Exception:
-                return {}
-        return {}
+        return parse_schema_dict(config_schema)
 
     def _parse_tool_input_schema(self, tool: Any) -> Dict[str, Any]:
-        schema = getattr(tool, "schema", {}) or {}
-        if isinstance(schema, str):
-            try:
-                schema = json.loads(schema)
-            except Exception:
-                schema = {}
-        if not isinstance(schema, dict):
-            return {}
-        input_schema = schema.get("input") or {}
-        return input_schema if isinstance(input_schema, dict) else {}
+        return get_tool_input_schema(tool)
 
     def _coerce_tool_input(self, tool_input: Any, tool: Any) -> Dict[str, Any]:
+        if is_strict_tool_input(tool):
+            if isinstance(tool_input, dict):
+                return dict(tool_input)
+            return {"value": tool_input}
+
         def _parse_json_object(raw: Any) -> Optional[Dict[str, Any]]:
             if not isinstance(raw, str):
                 return None
@@ -745,10 +739,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         return tool_input
 
     def _get_tool_execution_policy(self, tool: Any, default_timeout: Optional[int]) -> ToolExecutionPolicy:
-        config_schema = self._parse_config_schema(getattr(tool, "config_schema", {}) or {})
-        execution = config_schema.get("execution") if isinstance(config_schema, dict) else {}
-        if not isinstance(execution, dict):
-            execution = {}
+        execution = get_tool_execution_config(tool)
         is_pure = bool(execution.get("is_pure", False))
         concurrency_group = execution.get("concurrency_group") or "default"
         max_concurrency = execution.get("max_concurrency")
@@ -767,12 +758,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
     def _build_langchain_tool(self, tool: Any) -> BaseTool:
         tool_name = getattr(tool, "slug", None) or getattr(tool, "name", "tool")
         description = getattr(tool, "description", "") or ""
-        schema = getattr(tool, "schema", {}) or {}
-        if isinstance(schema, str):
-            try:
-                schema = json.loads(schema)
-            except Exception:
-                schema = {}
+        schema = parse_schema_dict(getattr(tool, "schema", {}) or {})
         input_schema = schema.get("input", {}) if isinstance(schema, dict) else {}
 
         args_schema: type[BaseModel]

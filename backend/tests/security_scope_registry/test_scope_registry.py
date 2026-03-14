@@ -5,6 +5,7 @@ from app.core.scope_registry import (
     TENANT_DEFAULT_ROLE_SCOPES,
     build_scope_catalog,
 )
+from app.services.platform_architect_contracts import PLATFORM_ARCHITECT_DOMAIN_TOOLS
 
 
 def test_action_scope_registry_is_subset_of_all_scopes():
@@ -38,3 +39,15 @@ def test_scope_catalog_contains_groups_and_defaults():
     assert isinstance(catalog.get("default_roles"), dict)
     assert "agents" in catalog["groups"]
     assert "owner" in catalog["default_roles"]
+
+
+def test_platform_architect_actions_are_registered_in_scope_registry():
+    registered_actions = set(ACTION_REQUIRED_SCOPES)
+    architect_actions = {
+        action
+        for spec in PLATFORM_ARCHITECT_DOMAIN_TOOLS.values()
+        for action in spec.get("actions", {})
+    }
+
+    missing = sorted(action for action in architect_actions if action not in registered_actions)
+    assert missing == [], f"Architect actions missing from scope registry: {missing}"

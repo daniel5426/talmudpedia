@@ -3,7 +3,8 @@
 import { useMemo, useEffect, useState } from "react"
 import {
     Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle,
-    GripVertical, PanelLeftClose, Database, Bot, Sparkles, RefreshCw, ListFilter, GitMerge, Link, Route, Scale, Ban
+    GripVertical, PanelLeftClose, Database, Bot, Sparkles, RefreshCw, ListFilter, GitMerge, Link, Route, Scale, Ban,
+    PanelLeft
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -241,7 +242,7 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
                                 onClick={onClose}
                                 title="Close Catalog"
                             >
-                                <PanelLeftClose className="h-4 w-4" />
+                                <PanelLeft className="h-4 w-4" />
                             </Button>
                         )}
                         <h3 className="text-xs font-bold text-foreground/70 uppercase tracking-tight">

@@ -483,6 +483,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
                 "is_pure": False,
                 "concurrency_group": "platform_sdk_local",
                 "max_concurrency": 4,
+                "strict_input_schema": True,
                 "allowed_actions": list(spec["actions"].keys()),
             },
         }

@@ -1,6 +1,6 @@
 # Platform Architect Workers Tests State
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-14
 
 ## Scope of the feature
 Focused coverage for the architect-specific async worker runtime, binding-backed artifact delegation flow, and seeded architect DB-backed orchestration behavior.
@@ -15,11 +15,13 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Child-run inspection returning binding metadata from run records.
 - DB-backed seeded architect run that prepares an artifact binding, spawns an artifact worker, waits, exports binding state, and persists the canonical artifact successfully.
 - DB-backed seeded architect run that attempts a second mutating spawn on the same binding and reports the active-binding blocker cleanly.
+- Strict architect worker tool schemas reject malformed model payloads before runtime dispatch while still allowing executor-owned runtime metadata to flow separately.
+- Binding-exported artifact payloads stay compatible with strict `platform-assets` schemas by omitting unused kind contracts.
 
 ## Last run command + date/time + result
-- Command: `PYTHONPATH=backend pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py`
-- Date/Time: 2026-03-12 (local run during this change set)
-- Result: pass
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-03-14 20:11 EET
+- Result: PASS (`10 passed`)
 
 ## Known gaps or follow-ups
 - Group fanout is covered at runtime level, but there is not yet a DB-backed seeded architect E2E for parallel multi-binding spawn/join.

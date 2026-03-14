@@ -79,6 +79,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   currentResponseBlocks: ChatRenderBlock[];
   currentRunId: string | null;
   currentRunStatus: AgentRunStatus["status"] | null;
+  currentThreadId: string | null;
   isPaused: boolean;
   pendingApproval: boolean;
   historyLoading: boolean;
@@ -118,6 +119,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const streamingContentRef = useRef<string>("");
   const activeStreamingIdRef = useRef<string | null>(null);
   const currentThreadIdRef = useRef<string | null>(null);
+  const lastAgentIdRef = useRef<string | undefined>(agentId);
   const authUserId = useAuthStore((state) => state.user?.id);
   const {
     history,
@@ -145,6 +147,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
 
   // Reset state when agentId changes
   useEffect(() => {
+    lastAgentIdRef.current = agentId;
     setMessages([]);
     setIsLoading(false);
     setStreamingContent("");
@@ -618,6 +621,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const upsertLiveVoiceMessage = useCallback(() => {}, []);
   const refresh = useCallback(async () => {}, []);
   const executionSteps = inspectedTraceSteps ?? liveExecutionSteps;
+  const effectiveCurrentThreadId =
+    lastAgentIdRef.current === agentId ? currentThreadId : null;
 
   return {
     messages,
@@ -635,6 +640,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     activeStreamingId,
     currentRunId,
     currentRunStatus,
+    currentThreadId: effectiveCurrentThreadId,
     isPaused,
     pendingApproval,
     historyLoading,

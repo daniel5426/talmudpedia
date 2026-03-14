@@ -1,6 +1,6 @@
 # Security Scope Registry Test State
 
-Last Updated: 2026-03-05
+Last Updated: 2026-03-14
 
 ## Scope
 Validate canonical scope registry integrity and default role/profile coverage.
@@ -13,11 +13,12 @@ Validate canonical scope registry integrity and default role/profile coverage.
 - Platform Architect profile includes model/knowledge-store write scopes
 - Default tenant role bundles include expected admin/member boundaries
 - Scope catalog shape includes groups and defaults
+- Every platform action advertised to the seeded architect exists in the central scope registry
 
 ## Last Run
-- Command: `pytest -q backend/tests/security_scope_registry backend/tests/security_rbac_scope_model backend/tests/security_bootstrap_defaults backend/tests/security_workload_provisioning backend/tests/security_route_enforcement backend/tests/security_admin_user_management`
-- Date/Time: 2026-03-05
-- Result: pass
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/security_scope_registry backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-03-14 19:48 EET
+- Result: pass (`9 passed, 1 warning`)
 
 ## Known Gaps
 - Does not validate runtime enforcement against endpoint dependencies.

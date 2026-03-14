@@ -742,6 +742,7 @@ function AgentBuilderInner({
                 <FloatingPanel
                     position="left"
                     visible={true}
+                    border="border-none"
                     autoHeight={true}
                     className="w-[320px] z-60"
                 >

@@ -15,15 +15,16 @@ Execution event emission coverage for core nodes in debug streaming runs.
 - Node executor exceptions are converted into recoverable state updates (no node re-raise)
 - Run setup failures emit stream error events and persist failed thread turns/output text
 - Tool lifecycle stream normalization preserves platform tool action/display metadata for shared chat rendering
+- Failed tool calls now emit terminal `tool.failed` lifecycle events and failed reasoning steps so UI traces do not leave tool calls spinning indefinitely
 - Generic runtime `error` events stay non-terminal in the v2 stream contract; only explicit run terminal events should end a client stream
 
 **Last Run**
 - Command: `pytest -q backend/tests/agent_execution_events/test_runtime_error_recovery.py backend/tests/agent_execution_events/test_tool_event_metadata.py`
 - Date: 2026-03-06
 - Result: Pass (4 passed)
-- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_execution_events/test_tool_event_metadata.py backend/tests/agent_execution_events/test_runtime_error_recovery.py`
-- Date: 2026-03-12 05:34 EET
-- Result: Pass (5 passed, 3 warnings)
+- Command: `PYTHONPATH=backend pytest -q backend/tests/agent_execution_events/test_tool_event_metadata.py backend/tests/agent_execution_events/test_runtime_error_recovery.py`
+- Date: 2026-03-13 (local run during this change set)
+- Result: Pass (`7 passed, 3 warnings`)
 
 **Known Gaps / Follow-ups**
 - Extend event-emission assertions to classify/if_else once handle-driven routing events are normalized

@@ -119,6 +119,34 @@ class EventEmitter:
             visibility=EventVisibility.INTERNAL,
             metadata=self._metadata()
         ))
+
+    def emit_tool_failed(
+        self,
+        tool_name: str,
+        *,
+        error: str,
+        input_data: Any = None,
+        node_id: Optional[str] = None,
+        tool_metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Emit a terminal failed tool event."""
+        data = {"error": error}
+        if input_data is not None:
+            data["input"] = input_data
+        if isinstance(tool_metadata, dict):
+            data.update(tool_metadata)
+        span_id = node_id
+        if isinstance(tool_metadata, dict) and tool_metadata.get("tool_call_id"):
+            span_id = str(tool_metadata["tool_call_id"])
+        self._emit(ExecutionEvent(
+            event="tool.failed",
+            data=data,
+            run_id=self._run_id,
+            span_id=span_id,
+            name=tool_name,
+            visibility=EventVisibility.CLIENT_SAFE,
+            metadata=self._metadata(),
+        ))
     
     def emit_node_end(self, node_id: str, name: str, node_type: str, output_data: Any = None) -> None:
         """Emit a node end event."""

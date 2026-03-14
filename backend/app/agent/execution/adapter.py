@@ -12,7 +12,7 @@ class StreamAdapter:
     """
 
     _PRODUCTION_LEGACY_ALLOW = {"on_chat_model_stream", "run_status"}
-    _TOOL_LIFECYCLE_EVENTS = {"on_tool_start", "on_tool_end"}
+    _TOOL_LIFECYCLE_EVENTS = {"on_tool_start", "on_tool_end", "tool.failed"}
 
     @classmethod
     def _is_client_safe(cls, visibility: Any) -> bool:
@@ -51,6 +51,17 @@ class StreamAdapter:
                     "status": "complete",
                     "message": f"Tool {event_name} completed",
                     "output": payload.get("output"),
+                },
+            }
+        if event_type == "tool.failed":
+            return {
+                "type": "reasoning",
+                "data": {
+                    "step": event_name or "Tool",
+                    "step_id": step_id,
+                    "status": "failed",
+                    "message": payload.get("error") or f"Tool {event_name} failed",
+                    "error": payload.get("error"),
                 },
             }
         return None

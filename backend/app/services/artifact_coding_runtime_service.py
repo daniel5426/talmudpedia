@@ -391,9 +391,6 @@ class ArtifactCodingRuntimeService:
             },
             "capabilities": capabilities,
             "config_schema": config_schema,
-            "agent_contract": None,
-            "rag_contract": None,
-            "tool_contract": None,
         }
         if kind == "agent_node":
             create_payload["agent_contract"] = _parse_json_object(snapshot.get("agent_contract"), field="agent_contract", fallback=DEFAULT_AGENT_CONTRACT)

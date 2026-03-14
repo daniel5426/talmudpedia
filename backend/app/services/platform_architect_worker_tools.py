@@ -26,15 +26,83 @@ def _tool_schema(
     *,
     properties: dict[str, Any],
     required: list[str] | None = None,
+    one_of: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "input": {
             "type": "object",
             "properties": properties,
             "required": list(required or []),
-            "additionalProperties": True,
+            "additionalProperties": False,
+            **({"oneOf": one_of} if one_of else {}),
         },
         "output": {"type": "object", "additionalProperties": True},
+    }
+
+
+def _binding_ref_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "binding_type": {"type": "string", "enum": ["artifact_shared_draft"]},
+            "binding_id": {"type": "string"},
+        },
+        "required": ["binding_type", "binding_id"],
+        "additionalProperties": False,
+    }
+
+
+def _artifact_snapshot_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string"},
+            "slug": {"type": "string"},
+            "display_name": {"type": "string"},
+            "description": {"type": "string"},
+            "source_files": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": False,
+                },
+            },
+            "entry_module_path": {"type": "string"},
+            "python_dependencies": {"type": "string"},
+            "runtime_target": {"type": "string"},
+            "capabilities": {"type": "object"},
+            "config_schema": {"type": "object"},
+            "agent_contract": {"type": "object"},
+            "rag_contract": {"type": "object"},
+            "tool_contract": {"type": "object"},
+        },
+        "required": ["kind", "slug", "display_name", "source_files", "entry_module_path"],
+        "additionalProperties": False,
+    }
+
+
+def _spawn_target_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "worker_agent_slug": {"type": "string"},
+            "binding_ref": _binding_ref_schema(),
+            "objective": {"type": "string"},
+            "context": {"type": "object", "additionalProperties": True},
+            "constraints": {"type": "array", "items": {"type": "string"}},
+            "success_criteria": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["objective"],
+        "additionalProperties": False,
+        "oneOf": [
+            {"required": ["worker_agent_slug", "objective"]},
+            {"required": ["binding_ref", "objective"]},
+        ],
     }
 
 
@@ -96,10 +164,32 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         "schema": _tool_schema(
             properties={
                 "binding_type": {"type": "string", "enum": ["artifact_shared_draft"]},
-                "binding_payload": {"type": "object"},
+                "prepare_mode": {
+                    "type": "string",
+                    "enum": ["reuse_existing", "attach_existing_artifact", "create_new_draft"],
+                },
+                "binding_id": {"type": "string"},
+                "artifact_id": {"type": "string"},
+                "draft_key": {"type": "string"},
+                "title_prompt": {"type": "string"},
+                "draft_snapshot": _artifact_snapshot_schema(),
                 "replace_snapshot": {"type": "boolean"},
             },
-            required=["binding_type", "binding_payload"],
+            required=["binding_type", "prepare_mode"],
+            one_of=[
+                {
+                    "properties": {"prepare_mode": {"const": "reuse_existing"}},
+                    "required": ["binding_type", "prepare_mode", "binding_id"],
+                },
+                {
+                    "properties": {"prepare_mode": {"const": "attach_existing_artifact"}},
+                    "required": ["binding_type", "prepare_mode", "artifact_id"],
+                },
+                {
+                    "properties": {"prepare_mode": {"const": "create_new_draft"}},
+                    "required": ["binding_type", "prepare_mode", "title_prompt", "draft_snapshot"],
+                },
+            ],
         ),
         "config_schema": {
             "implementation": {"type": "function", "function_name": "architect_worker_binding_prepare"},
@@ -108,6 +198,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 "is_pure": False,
                 "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
                 "max_concurrency": 8,
+                "strict_input_schema": True,
             },
         },
     },
@@ -118,7 +209,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         "implementation_type": ToolImplementationType.FUNCTION,
         "schema": _tool_schema(
             properties={
-                "binding_ref": {"type": "object"},
+                "binding_ref": _binding_ref_schema(),
                 "run_id": {"type": "string"},
             },
             required=["binding_ref"],
@@ -130,6 +221,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 "is_pure": True,
                 "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
                 "max_concurrency": 8,
+                "strict_input_schema": True,
             },
         },
     },
@@ -141,14 +233,21 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         "schema": _tool_schema(
             properties={
                 "worker_agent_slug": {"type": "string"},
-                "task": {"type": "object"},
-                "binding_ref": {"type": "object"},
+                "binding_ref": _binding_ref_schema(),
+                "objective": {"type": "string"},
+                "context": {"type": "object", "additionalProperties": True},
+                "constraints": {"type": "array", "items": {"type": "string"}},
+                "success_criteria": {"type": "array", "items": {"type": "string"}},
                 "scope_subset": {"type": "array", "items": {"type": "string"}},
                 "idempotency_key": {"type": "string"},
                 "failure_policy": {"type": "string"},
                 "timeout_s": {"type": "integer"},
             },
-            required=["task"],
+            required=["objective"],
+            one_of=[
+                {"required": ["worker_agent_slug", "objective"]},
+                {"required": ["binding_ref", "objective"]},
+            ],
         ),
         "config_schema": {
             "implementation": {"type": "function", "function_name": "architect_worker_spawn"},
@@ -157,6 +256,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 "is_pure": False,
                 "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
                 "max_concurrency": 8,
+                "strict_input_schema": True,
             },
         },
     },
@@ -167,7 +267,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         "implementation_type": ToolImplementationType.FUNCTION,
         "schema": _tool_schema(
             properties={
-                "targets": {"type": "array", "items": {"type": "object"}},
+                "targets": {"type": "array", "items": _spawn_target_schema()},
                 "scope_subset": {"type": "array", "items": {"type": "string"}},
                 "idempotency_key_prefix": {"type": "string"},
                 "failure_policy": {"type": "string"},
@@ -184,6 +284,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 "is_pure": False,
                 "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
                 "max_concurrency": 8,
+                "strict_input_schema": True,
             },
         },
     },
@@ -200,6 +301,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 "is_pure": True,
                 "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
                 "max_concurrency": 8,
+                "strict_input_schema": True,
             },
         },
     },
@@ -224,6 +326,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 "is_pure": True,
                 "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
                 "max_concurrency": 8,
+                "strict_input_schema": True,
             },
         },
     },
@@ -247,6 +350,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 "is_pure": False,
                 "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
                 "max_concurrency": 8,
+                "strict_input_schema": True,
             },
         },
     },

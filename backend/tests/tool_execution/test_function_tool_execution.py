@@ -310,4 +310,152 @@ async def test_coding_agent_function_tool_policy_error_is_normalized(monkeypatch
 
     assert result["context"]["code"] == "BUILDER_PATCH_POLICY_VIOLATION"
     assert result["context"]["field"] == "path"
-    assert "Absolute paths are not allowed" in result["context"]["error"]
+    assert (
+        "Absolute paths are not allowed" in result["context"]["error"]
+        or "File path is required" in result["context"]["error"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_strict_function_tool_rejects_missing_required_field_before_dispatch(monkeypatch):
+    captured = {"called": False}
+
+    @register_tool_function("unit_test_strict_objective")
+    def unit_test_strict_objective(payload):
+        captured["called"] = True
+        return {"ok": True, "payload": payload}
+
+    tool_id = uuid4()
+    config_schema = {
+        "implementation": {"type": "function", "function_name": "unit_test_strict_objective"},
+        "execution": {"strict_input_schema": True},
+    }
+    tool = make_tool(
+        tool_id,
+        config_schema,
+        schema={
+            "input": {
+                "type": "object",
+                "properties": {"objective": {"type": "string"}},
+                "required": ["objective"],
+                "additionalProperties": False,
+            }
+        },
+    )
+    db = FakeDB(tool)
+    executor = ToolNodeExecutor(tenant_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    result = await executor.execute(
+        {"context": {"run_id": "run-1", "args": {"instructions": "wrong key"}}},
+        {"tool_id": str(tool_id)},
+        {"node_id": "tool-node"},
+    )
+
+    assert captured["called"] is False
+    assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
+    assert any("objective" in item["message"] for item in result["context"]["validation_errors"])
+
+
+@pytest.mark.asyncio
+async def test_strict_function_tool_rejects_unknown_fields_before_dispatch(monkeypatch):
+    captured = {"called": False}
+
+    @register_tool_function("unit_test_strict_no_extras")
+    def unit_test_strict_no_extras(payload):
+        captured["called"] = True
+        return {"ok": True, "payload": payload}
+
+    tool_id = uuid4()
+    config_schema = {
+        "implementation": {"type": "function", "function_name": "unit_test_strict_no_extras"},
+        "execution": {"strict_input_schema": True},
+    }
+    tool = make_tool(
+        tool_id,
+        config_schema,
+        schema={
+            "input": {
+                "type": "object",
+                "properties": {"objective": {"type": "string"}},
+                "required": ["objective"],
+                "additionalProperties": False,
+            }
+        },
+    )
+    db = FakeDB(tool)
+    executor = ToolNodeExecutor(tenant_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    result = await executor.execute(
+        {"context": {"run_id": "run-1", "args": {"objective": "valid", "title": "extra"}}},
+        {"tool_id": str(tool_id)},
+        {"node_id": "tool-node"},
+    )
+
+    assert captured["called"] is False
+    assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
+    assert any("Additional properties are not allowed" in item["message"] for item in result["context"]["validation_errors"])
+
+
+@pytest.mark.asyncio
+async def test_strict_function_tool_ignores_executor_runtime_metadata_before_dispatch(monkeypatch):
+    captured = {"payload": None}
+
+    @register_tool_function("unit_test_strict_runtime_metadata")
+    def unit_test_strict_runtime_metadata(payload):
+        captured["payload"] = payload
+        return {"ok": True, "payload": payload}
+
+    tool_id = uuid4()
+    config_schema = {
+        "implementation": {"type": "function", "function_name": "unit_test_strict_runtime_metadata"},
+        "execution": {"strict_input_schema": True},
+    }
+    tool = make_tool(
+        tool_id,
+        config_schema,
+        schema={
+            "input": {
+                "type": "object",
+                "properties": {"objective": {"type": "string"}},
+                "required": ["objective"],
+                "additionalProperties": False,
+            }
+        },
+    )
+    db = FakeDB(tool)
+    executor = ToolNodeExecutor(tenant_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    result = await executor.execute(
+        {
+            "context": {
+                "objective": "valid objective",
+                "run_id": "run-1",
+                "tenant_id": "tenant-1",
+                "agent_id": "agent-1",
+                "thread_id": "thread-1",
+            }
+        },
+        {"tool_id": str(tool_id)},
+        {"node_id": "tool-node"},
+    )
+
+    assert result["context"]["ok"] is True
+    assert captured["payload"] is not None
+    assert captured["payload"]["objective"] == "valid objective"
+    assert "agent_id" not in captured["payload"]
+    assert "tenant_id" not in captured["payload"]

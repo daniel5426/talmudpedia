@@ -24,6 +24,7 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "Do not call raw orchestration.* actions" in instructions
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
+    assert "Do not invent nested fields like task.instructions" in instructions
     assert "top-level action and payload" in instructions
     assert "Never wrap a tool call inside query, text, value" in instructions
     assert "agents.graph.add_tool_to_agent_node" in instructions

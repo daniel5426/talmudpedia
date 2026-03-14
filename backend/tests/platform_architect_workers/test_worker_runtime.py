@@ -60,6 +60,21 @@ async def test_architect_worker_tools_seed_expected_slugs(db_session):
     }
     assert by_slug["architect-worker-spawn"].implementation_type == ToolImplementationType.FUNCTION
     assert by_slug["architect-worker-spawn"].config_schema["implementation"]["function_name"] == "architect_worker_spawn"
+    assert by_slug["architect-worker-spawn"].config_schema["execution"]["strict_input_schema"] is True
+    assert by_slug["architect-worker-binding-prepare"].config_schema["execution"]["strict_input_schema"] is True
+
+    spawn_schema = by_slug["architect-worker-spawn"].schema["input"]
+    assert "task" not in spawn_schema["properties"]
+    assert "objective" in spawn_schema["properties"]
+    assert spawn_schema["properties"]["binding_ref"]["required"] == ["binding_type", "binding_id"]
+
+    binding_prepare_schema = by_slug["architect-worker-binding-prepare"].schema["input"]
+    assert "binding_payload" not in binding_prepare_schema["properties"]
+    assert binding_prepare_schema["properties"]["prepare_mode"]["enum"] == [
+        "reuse_existing",
+        "attach_existing_artifact",
+        "create_new_draft",
+    ]
 
 
 def test_architect_graph_instructions_include_async_worker_flow():
@@ -87,6 +102,7 @@ def test_architect_graph_instructions_include_async_worker_flow():
     assert "Do not call raw orchestration.* actions" in instructions
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
+    assert "Do not invent nested fields like task.instructions" in instructions
     assert "artifact-coding-agent-call" not in instructions
     assert "artifact-coding-session-prepare" not in instructions
 
@@ -112,11 +128,11 @@ async def test_spawn_group_rejects_duplicate_binding_refs_before_kernel(monkeypa
                 },
                 "targets": [
                     {
-                        "task": {"objective": "first"},
+                        "objective": "first",
                         "binding_ref": {"binding_type": "artifact_shared_draft", "binding_id": "11111111-1111-1111-1111-111111111111"},
                     },
                     {
-                        "task": {"objective": "second"},
+                        "objective": "second",
                         "binding_ref": {"binding_type": "artifact_shared_draft", "binding_id": "11111111-1111-1111-1111-111111111111"},
                     },
                 ],

@@ -6,6 +6,15 @@ import { agentService } from "@/services";
 
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
+const mockSearchState = {
+  agentId: "agent-1",
+  threadId: null as string | null,
+};
+const mockLoadHistoryChat = jest.fn();
+const mockControllerState = {
+  currentThreadId: null as string | null,
+  history: [] as any[],
+};
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -14,10 +23,14 @@ jest.mock("next/navigation", () => ({
   }),
   useSearchParams: () => ({
     get: (key: string) => {
-      if (key === "agentId") return "agent-1";
+      if (key === "agentId") return mockSearchState.agentId;
+      if (key === "threadId") return mockSearchState.threadId;
       return null;
     },
-    toString: () => "agentId=agent-1",
+    toString: () =>
+      mockSearchState.threadId
+        ? `agentId=${mockSearchState.agentId}&threadId=${mockSearchState.threadId}`
+        : `agentId=${mockSearchState.agentId}`,
   }),
 }));
 
@@ -58,10 +71,11 @@ jest.mock("@/hooks/useAgentRunController", () => {
         activeStreamingId: null,
         currentRunId: null,
         currentRunStatus: null,
+        currentThreadId: mockControllerState.currentThreadId,
         isPaused: false,
         pendingApproval: false,
         historyLoading: false,
-        history: [],
+        history: mockControllerState.history,
         traceLoadingByMessageId: {},
         handleSubmit: jest.fn(),
         handleStop: jest.fn(),
@@ -85,7 +99,7 @@ jest.mock("@/hooks/useAgentRunController", () => {
         refresh: jest.fn(),
         textareaRef: { current: null },
         startNewChat: jest.fn(),
-        loadHistoryChat: jest.fn(),
+        loadHistoryChat: mockLoadHistoryChat,
       };
     },
   };
@@ -165,7 +179,12 @@ jest.mock("@/lib/store/useAuthStore", () => ({
 }));
 
 jest.mock("@/components/agent-builder/ExecutionHistoryDropdown", () => ({
-  ExecutionHistoryDropdown: () => null,
+  ExecutionHistoryDropdown: ({ historyItems, onSelectHistory }: { historyItems: any[]; onSelectHistory: (item: any) => void }) =>
+    historyItems.length > 0 ? (
+      <button type="button" onClick={() => onSelectHistory(historyItems[0])}>
+        History
+      </button>
+    ) : null,
 }));
 
 jest.mock("@/components/builder", () => ({
@@ -188,6 +207,12 @@ const mockedAgentService = agentService as jest.Mocked<typeof agentService>;
 describe("playground trace sidebar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSearchState.agentId = "agent-1";
+    mockSearchState.threadId = null;
+    mockControllerState.currentThreadId = null;
+    mockControllerState.history = [];
+    mockLoadHistoryChat.mockReset();
+    mockLoadHistoryChat.mockImplementation(async (item: any) => item);
     mockedAgentService.listAgents.mockResolvedValue({
       agents: [
         {
@@ -229,5 +254,69 @@ describe("playground trace sidebar", () => {
 
     expect(screen.getByText("Search library")).toBeInTheDocument();
     expect(screen.getByText("Saved answer")).toBeInTheDocument();
+  });
+
+  it("syncs the active thread id into the URL for reload persistence", async () => {
+    mockControllerState.currentThreadId = "thread-live-1";
+
+    render(<PlaygroundPage />);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(
+        "/admin/agents/playground?agentId=agent-1&threadId=thread-live-1",
+        { scroll: false },
+      );
+    });
+  });
+
+  it("keeps the same-agent thread id in the URL when history is selected", async () => {
+    mockControllerState.history = [
+      {
+        id: "thread-1",
+        threadId: "thread-1",
+        agentId: "agent-1",
+        title: "Thread 1",
+        timestamp: 1,
+        messages: [],
+      },
+    ];
+    mockLoadHistoryChat.mockResolvedValue(mockControllerState.history[0]);
+
+    render(<PlaygroundPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(
+        "/admin/agents/playground?agentId=agent-1&threadId=thread-1",
+        { scroll: false },
+      );
+    });
+  });
+
+  it("does not strip threadId from the URL after loading a thread from the URL", async () => {
+    mockSearchState.threadId = "thread-1";
+    mockControllerState.history = [
+      {
+        id: "thread-1",
+        threadId: "thread-1",
+        agentId: "agent-1",
+        title: "Thread 1",
+        timestamp: 1,
+        messages: [],
+      },
+    ];
+    mockLoadHistoryChat.mockResolvedValue(mockControllerState.history[0]);
+
+    render(<PlaygroundPage />);
+
+    await waitFor(() => {
+      expect(mockLoadHistoryChat).toHaveBeenCalledWith(mockControllerState.history[0]);
+    });
+
+    expect(mockReplace).not.toHaveBeenCalledWith(
+      "/admin/agents/playground?agentId=agent-1",
+      { scroll: false },
+    );
   });
 });

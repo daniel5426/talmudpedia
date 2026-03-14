@@ -1,6 +1,6 @@
 # Platform Architect Worker Orchestration Current State
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-14
 
 This document is the canonical design reference for the current `platform-architect` worker orchestration model.
 
@@ -79,6 +79,17 @@ Important boundary:
 - they return immediately with run ids and lineage
 - they do not wait for worker completion
 - the architect decides when to inspect, join, or cancel later
+
+## Strict Tool Contracts
+
+Architect worker tools now run with strict pre-dispatch schema enforcement:
+- model-authored payloads must match the registered input schema exactly
+- nested wrapper recovery like `task.instructions`, `binding_payload`, `query`, or `value` is not part of the contract
+- executor-owned runtime metadata is stripped before validation and passed separately through runtime context
+
+Artifact binding exports now emit canonical platform-assets payloads:
+- optional kind-specific contracts are omitted when unused instead of being returned as `null`
+- this keeps `architect-worker-binding-get-state` output directly compatible with strict `platform-assets` mutation schemas
 
 ## Strict Runtime Context
 

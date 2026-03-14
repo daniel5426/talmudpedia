@@ -80,6 +80,23 @@ def normalize_filtered_event_to_v2(
             [],
         )
 
+    if event_name == "tool.failed":
+        return (
+            "tool.failed",
+            "tool",
+            {
+                "tool": raw_event.get("name"),
+                "span_id": raw_event.get("span_id"),
+                "input": data.get("input"),
+                "error": data.get("error"),
+                "tool_slug": data.get("tool_slug"),
+                "action": data.get("action"),
+                "display_name": data.get("display_name"),
+                "summary": data.get("summary"),
+            },
+            [{"message": str(data.get("error") or "Tool failed")}],
+        )
+
     if event_name == "run_status":
         status = str(data.get("status") or "").strip().lower()
         mapped = {

@@ -51,7 +51,7 @@ function PlaygroundContent() {
     const hydratedThreadRef = useRef<string | null>(null)
 
     const controller = useAgentRunController(agentId || undefined)
-    const { executionSteps } = controller
+    const { executionSteps, currentThreadId } = controller
     const { direction } = useDirection()
     const { currentTenant } = useTenant()
     const authUser = useAuthStore((state) => state.user)
@@ -132,11 +132,20 @@ function PlaygroundContent() {
 
     const handleSelectHistory = useCallback(async (item: AgentChatHistoryItem) => {
         const resolved = await controller.loadHistoryChat(item)
-        if (!resolved?.agentId || resolved.agentId === agentId) {
+        if (!resolved?.threadId) {
+            return
+        }
+        const resolvedAgentId = resolved.agentId || agentId
+        if (!resolvedAgentId) {
+            return
+        }
+        if (resolvedAgentId === agentId) {
+            hydratedThreadRef.current = `${resolvedAgentId}:${resolved.threadId}`
+            router.replace(`/admin/agents/playground?agentId=${resolvedAgentId}&threadId=${resolved.threadId}`, { scroll: false })
             return
         }
         hydratedThreadRef.current = null
-        router.push(`/admin/agents/playground?agentId=${resolved.agentId}&threadId=${resolved.threadId}`, { scroll: false })
+        router.push(`/admin/agents/playground?agentId=${resolvedAgentId}&threadId=${resolved.threadId}`, { scroll: false })
     }, [agentId, controller, router])
 
     useEffect(() => {
@@ -149,9 +158,15 @@ function PlaygroundContent() {
         hydratedThreadRef.current = hydrationKey
         void (async () => {
             await controller.loadHistoryChat(target)
-            router.replace(`/admin/agents/playground?agentId=${agentId}`, { scroll: false })
         })()
-    }, [agentId, controller, isListingLoading, isMetadataLoading, router, threadId])
+    }, [agentId, controller, isListingLoading, isMetadataLoading, threadId])
+
+    useEffect(() => {
+        if (!agentId || !currentThreadId) return
+        if (threadId === currentThreadId) return
+        hydratedThreadRef.current = `${agentId}:${currentThreadId}`
+        router.replace(`/admin/agents/playground?agentId=${agentId}&threadId=${currentThreadId}`, { scroll: false })
+    }, [agentId, currentThreadId, router, threadId])
 
     const handleStartNewThread = useCallback(() => {
         hydratedThreadRef.current = null

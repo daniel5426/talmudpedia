@@ -134,7 +134,17 @@ class PlatformArchitectWorkerRuntimeService:
         binding_type = str(payload.get("binding_type") or "").strip()
         if not binding_type:
             raise ValueError("binding_type is required")
-        binding_payload = payload.get("binding_payload") if isinstance(payload.get("binding_payload"), dict) else {}
+        prepare_mode = str(payload.get("prepare_mode") or "").strip()
+        if not prepare_mode:
+            raise ValueError("prepare_mode is required")
+        binding_payload = {
+            "prepare_mode": prepare_mode,
+            "binding_id": payload.get("binding_id"),
+            "artifact_id": payload.get("artifact_id"),
+            "draft_key": payload.get("draft_key"),
+            "title_prompt": payload.get("title_prompt"),
+            "draft_snapshot": payload.get("draft_snapshot"),
+        }
         replace_snapshot = bool(payload.get("replace_snapshot"))
         adapter = self.bindings.adapter_for_type(binding_type)
         return await adapter.prepare(
@@ -159,7 +169,12 @@ class PlatformArchitectWorkerRuntimeService:
 
     async def spawn_worker(self, payload: dict[str, Any]) -> dict[str, Any]:
         runtime_context = self.parse_runtime_context(payload)
-        task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+        task = {
+            "objective": payload.get("objective"),
+            "context": payload.get("context"),
+            "constraints": payload.get("constraints"),
+            "success_criteria": payload.get("success_criteria"),
+        }
         prompt = self._task_prompt(task)
         binding_ref = parse_binding_ref(payload.get("binding_ref")) if payload.get("binding_ref") is not None else None
 
@@ -233,7 +248,12 @@ class PlatformArchitectWorkerRuntimeService:
         for index, raw_target in enumerate(targets_raw):
             if not isinstance(raw_target, dict):
                 raise ValueError(f"targets[{index}] must be an object")
-            task = raw_target.get("task") if isinstance(raw_target.get("task"), dict) else {}
+            task = {
+                "objective": raw_target.get("objective"),
+                "context": raw_target.get("context"),
+                "constraints": raw_target.get("constraints"),
+                "success_criteria": raw_target.get("success_criteria"),
+            }
             prompt = self._task_prompt(task)
             binding_ref = parse_binding_ref(raw_target.get("binding_ref")) if raw_target.get("binding_ref") is not None else None
             worker_agent_slug = str(raw_target.get("worker_agent_slug") or "").strip()

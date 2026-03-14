@@ -16,6 +16,11 @@ import httpx
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import ProgrammingError
 
+from app.agent.execution.tool_input_contracts import (
+    get_tool_input_schema,
+    is_strict_tool_input,
+    validate_tool_input_schema,
+)
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
@@ -34,6 +39,28 @@ from app.services.tool_function_registry import get_tool_function, run_tool_func
 from app.services.web_search import create_web_search_provider
 
 logger = logging.getLogger(__name__)
+
+INTERNAL_TOOL_RUNTIME_INPUT_KEYS = {
+    "run_id",
+    "thread_id",
+    "tenant_id",
+    "user_id",
+    "grant_id",
+    "principal_id",
+    "initiator_user_id",
+    "requested_scopes",
+    "root_run_id",
+    "parent_run_id",
+    "parent_node_id",
+    "depth",
+    "agent_id",
+    "agent_slug",
+    "mode",
+    "surface",
+    "orchestration_surface",
+    "quota_max_output_tokens",
+    "token",
+}
 
 
 def _trace_safe_value(value: Any, *, max_string: int = 800, max_items: int = 12) -> Any:
@@ -443,47 +470,71 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     return parsed
             return None
 
+        strict_input = is_strict_tool_input(_tool)
         payload = dict(input_data or {})
-        merged_payload = dict(payload)
-        for wrapper_key in ("args", "input", "parameters", "payload", "data", "arguments", "value"):
-            wrapper_payload = merged_payload.get(wrapper_key)
-            if isinstance(wrapper_payload, str):
-                parsed_wrapper_payload = _parse_json_object(wrapper_payload)
-                if isinstance(parsed_wrapper_payload, dict):
-                    wrapper_payload = parsed_wrapper_payload
-                    merged_payload[wrapper_key] = parsed_wrapper_payload
-            if isinstance(wrapper_payload, dict):
-                for key, value in wrapper_payload.items():
-                    merged_payload[key] = value
-        payload = merged_payload
-        if isinstance(node_context, dict):
+        if not strict_input:
+            merged_payload = dict(payload)
+            for wrapper_key in ("args", "input", "parameters", "payload", "data", "arguments", "value"):
+                wrapper_payload = merged_payload.get(wrapper_key)
+                if isinstance(wrapper_payload, str):
+                    parsed_wrapper_payload = _parse_json_object(wrapper_payload)
+                    if isinstance(parsed_wrapper_payload, dict):
+                        wrapper_payload = parsed_wrapper_payload
+                        merged_payload[wrapper_key] = parsed_wrapper_payload
+                if isinstance(wrapper_payload, dict):
+                    for key, value in wrapper_payload.items():
+                        merged_payload[key] = value
+            payload = merged_payload
+        else:
+            input_schema = get_tool_input_schema(_tool)
+            declared_keys = set(input_schema.get("properties", {}).keys()) if isinstance(input_schema, dict) else set()
+            payload = {
+                key: value
+                for key, value in payload.items()
+                if key not in INTERNAL_TOOL_RUNTIME_INPUT_KEYS or key in declared_keys
+            }
+
+        if strict_input:
+            validation_errors = validate_tool_input_schema(_tool, payload)
+            if validation_errors:
+                return {
+                    "error": "Tool input validation failed",
+                    "code": "TOOL_INPUT_VALIDATION_FAILED",
+                    "validation_errors": validation_errors,
+                    "received_keys": sorted(str(key) for key in payload.keys()) if isinstance(payload, dict) else [],
+                }
+
+        runtime_context = {
+            key: value
+            for key, value in (node_context or {}).items()
+            if value is not None
+            and key
+            in {
+                "run_id",
+                "thread_id",
+                "tenant_id",
+                "user_id",
+                "grant_id",
+                "principal_id",
+                "initiator_user_id",
+                "requested_scopes",
+                "root_run_id",
+                "parent_run_id",
+                "parent_node_id",
+                "depth",
+                "agent_id",
+                "agent_slug",
+                "mode",
+                "surface",
+            }
+        }
+        if runtime_context:
+            payload["__tool_runtime_context__"] = runtime_context
+        if isinstance(node_context, dict) and not strict_input:
             existing_context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
             payload["context"] = {
                 **dict(existing_context),
-                **{
-                    key: value
-                    for key, value in node_context.items()
-                    if value is not None
-                    and key
-                    in {
-                        "run_id",
-                        "thread_id",
-                        "tenant_id",
-                        "user_id",
-                        "grant_id",
-                        "principal_id",
-                        "initiator_user_id",
-                        "requested_scopes",
-                        "root_run_id",
-                        "parent_run_id",
-                        "parent_node_id",
-                        "depth",
-                        "agent_id",
-                        "agent_slug",
-                        "mode",
-                        "surface",
-                    }
-                },
+                **runtime_context,
             }
         if function_name.startswith("coding_agent_"):
             payload = normalize_coding_agent_tool_payload(function_name, payload)
@@ -1314,5 +1365,24 @@ class ToolNodeExecutor(BaseNodeExecutor):
         except Exception as e:
             logger.error(f"Tool execution failed: {e}")
             if emitter:
+                emitter.emit_internal_event(
+                    "tool.execution_completed",
+                    {
+                        "tool_slug": getattr(tool, "slug", None),
+                        "implementation_type": impl_type,
+                        "status": "failed",
+                        "error": str(e),
+                        "output_preview": {"error": str(e)},
+                    },
+                    node_id=node_id,
+                    category="tool_execution",
+                )
+                emitter.emit_tool_failed(
+                    tool.name,
+                    error=str(e),
+                    input_data=input_data,
+                    node_id=node_id,
+                    tool_metadata=tool_event_metadata,
+                )
                 emitter.emit_error(str(e), node_id)
             raise e

@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-14
 
 ## Purpose
 This file is the focused current-state reference for the seeded `platform-architect` runtime.
@@ -126,6 +126,9 @@ There is no compatibility wrapper for that path in the live architect runtime.
 - Approval-sensitive failures continue to normalize through the existing Platform SDK error contract.
 - Wrapped `value` / `query` / `text` recovery is not part of the platform SDK path; canonical top-level `action` / `payload` is required there.
 - Architect worker tools derive `tenant_id`, user identity, and `run_id` from runtime context, not from model-authored payload.
+- Strict platform tools are validated before function dispatch against their registered JSON-schema input contract.
+- Executor-owned runtime metadata is removed from strict tool payload validation and passed separately in `__tool_runtime_context__`.
+- Canonical artifact create/update payloads exported from worker bindings omit unused optional contracts instead of emitting `null`.
 
 ## Active Test Coverage
 

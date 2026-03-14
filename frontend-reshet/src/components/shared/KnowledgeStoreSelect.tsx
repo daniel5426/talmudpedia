@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Check, Search, X, Database } from "lucide-react"
+import { Check, X, Database } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { knowledgeStoresService, KnowledgeStore } from "@/services"
@@ -12,6 +12,18 @@ interface KnowledgeStoreSelectProps {
     onChange: (value: string) => void
     placeholder?: string
     className?: string
+}
+
+function normalizeText(value: unknown): string {
+    if (typeof value === "string") {
+        return value
+    }
+
+    if (value == null) {
+        return ""
+    }
+
+    return String(value)
 }
 
 export function KnowledgeStoreSelect({
@@ -44,21 +56,24 @@ export function KnowledgeStoreSelect({
         loadStores()
     }, [currentTenant?.slug])
 
+    const normalizedValue = normalizeText(value)
+    const normalizedQuery = normalizeText(query)
+
     // Get the label for the current value
-    const selectedStore = stores.find(s => s.id === value)
+    const selectedStore = stores.find(s => s.id === normalizedValue)
 
     // Sync query when value changes and we are not typing
     useEffect(() => {
         if (!isFocused) {
-            setQuery(selectedStore?.name || value || "")
+            setQuery(selectedStore?.name || normalizedValue)
         }
-    }, [value, selectedStore, isFocused])
+    }, [normalizedValue, selectedStore, isFocused])
 
-    const isValid = !value || !!selectedStore || stores.length === 0 && loading
+    const isValid = !normalizedValue || !!selectedStore || stores.length === 0 && loading
 
     const filteredStores = stores.filter(s =>
-        s.name.toLowerCase().includes(query.toLowerCase()) ||
-        s.id.toLowerCase().includes(query.toLowerCase())
+        s.name.toLowerCase().includes(normalizedQuery.toLowerCase()) ||
+        s.id.toLowerCase().includes(normalizedQuery.toLowerCase())
     )
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -88,19 +103,19 @@ export function KnowledgeStoreSelect({
 
         // Check if what was typed matches a store exactly (by name or ID)
         const exactMatch = stores.find(s =>
-            s.name.toLowerCase() === query.trim().toLowerCase() ||
-            s.id.toLowerCase() === query.trim().toLowerCase()
+            s.name.toLowerCase() === normalizedQuery.trim().toLowerCase() ||
+            s.id.toLowerCase() === normalizedQuery.trim().toLowerCase()
         )
 
         if (exactMatch) {
             onChange(exactMatch.id)
             setQuery(exactMatch.name)
-        } else if (query.trim() === "") {
+        } else if (normalizedQuery.trim() === "") {
             onChange("")
             setQuery("")
         } else {
             // It's invalid, but we set it anyway to show the error
-            onChange(query.trim())
+            onChange(normalizedQuery.trim())
         }
 
         // Close suggestions immediately
@@ -163,7 +178,7 @@ export function KnowledgeStoreSelect({
                         >
                             <div className="flex items-center justify-between">
                                 <span className="font-medium">{store.name}</span>
-                                {store.id === value && <Check className="h-3 w-3 text-primary" />}
+                                {store.id === normalizedValue && <Check className="h-3 w-3 text-primary" />}
                             </div>
                             <div className="flex items-center gap-2 text-[10px] opacity-50 font-mono truncate">
                                 <span>{store.id}</span>

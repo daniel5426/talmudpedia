@@ -1,4 +1,4 @@
-Last Updated: 2026-03-12
+Last Updated: 2026-03-14
 
 ## Scope
 Playground-specific trace inspection behavior for assistant responses, including persisted trace replay into the execution sidebar and reset behavior across playground state changes.
@@ -14,10 +14,13 @@ Playground-specific trace inspection behavior for assistant responses, including
 - The playground controller can load and swap inspected traces by assistant-response `runId`.
 - New thread, thread load, and agent switch clear inspected trace state.
 - Clicking `Trace` on a playground assistant response opens the sidebar without changing message content.
+- The playground syncs the active `threadId` into the URL so reload restores the current chat.
+- Selecting a same-agent history thread writes that thread id into the URL.
+- Loading a thread from a `threadId` URL does not strip the `threadId` back out.
 
 ## Last Run
-- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/agent_playground/trace_steps.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx src/__tests__/agent_playground/playground_page_trace.test.tsx`
-- Date: 2026-03-12 21:16 EET
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/agent_playground/trace_steps.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx src/__tests__/agent_playground/playground_page_trace.test.tsx src/__tests__/assistant_response_ui/trace_loader.test.ts src/__tests__/assistant_response_ui/normalizer.test.ts`
+- Date: 2026-03-14 19:40 EET
 - Result: Pass
 
 ## Known Gaps / Follow-ups

@@ -810,8 +810,8 @@ export default function ArtifactsPage() {
                             <div
                                 className="w-[1.5px] bg-gradient-to-b from-transparent via-primary to-transparent shrink-0"
                                 style={{ 
-                                    opacity: 0.5,
-                                    height: "calc(100% - 140px)"
+                                    opacity: 0.16,
+                                    height: "calc(100% - 50px)"
                                 }}
                             />
                         )}

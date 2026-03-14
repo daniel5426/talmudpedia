@@ -110,7 +110,7 @@ export function ConfigPanel({
   const Icon = CATEGORY_ICONS[data.category] || Hash
 
   return (
-    <div className="h-full flex flex-col ">
+    <div className="flex flex-col ">
       <div className="p-3.5 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
           <div

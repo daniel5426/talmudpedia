@@ -161,15 +161,39 @@ class ArtifactSharedDraftBindingAdapter:
         binding_payload: dict[str, Any],
         replace_snapshot: bool,
     ) -> dict[str, Any]:
-        explicit_binding_id = str(binding_payload.get("binding_id") or "").strip() or None
-        artifact_id_raw = binding_payload.get("artifact_id")
-        draft_key = str(binding_payload.get("draft_key") or "").strip() or None
-        title_prompt = str(
-            binding_payload.get("title_prompt")
-            or "Platform Architect artifact work binding"
-        ).strip()
-        draft_snapshot = binding_payload.get("draft_snapshot") if isinstance(binding_payload.get("draft_snapshot"), dict) else None
-        artifact_id = UUID(str(artifact_id_raw)) if artifact_id_raw else None
+        prepare_mode = str(binding_payload.get("prepare_mode") or "").strip()
+        if not prepare_mode:
+            raise ValueError("prepare_mode is required")
+
+        explicit_binding_id: str | None = None
+        artifact_id: UUID | None = None
+        draft_key: str | None = None
+        title_prompt: str | None = None
+        draft_snapshot: dict[str, Any] | None = None
+
+        if prepare_mode == "reuse_existing":
+            explicit_binding_id = str(binding_payload.get("binding_id") or "").strip() or None
+            if not explicit_binding_id:
+                raise ValueError("binding_id is required")
+        elif prepare_mode == "attach_existing_artifact":
+            artifact_id_raw = binding_payload.get("artifact_id")
+            if artifact_id_raw in (None, ""):
+                raise ValueError("artifact_id is required")
+            artifact_id = UUID(str(artifact_id_raw))
+        elif prepare_mode == "create_new_draft":
+            title_prompt = str(binding_payload.get("title_prompt") or "").strip()
+            if not title_prompt:
+                raise ValueError("title_prompt is required")
+            draft_snapshot = (
+                binding_payload.get("draft_snapshot")
+                if isinstance(binding_payload.get("draft_snapshot"), dict)
+                else None
+            )
+            if not draft_snapshot:
+                raise ValueError("draft_snapshot is required")
+            draft_key = str(binding_payload.get("draft_key") or "").strip() or None
+        else:
+            raise ValueError("Unsupported prepare_mode")
 
         artifact_agent = await ensure_artifact_coding_agent_profile(self.db, tenant_id, actor_user_id=user_id)
 
@@ -194,7 +218,7 @@ class ArtifactSharedDraftBindingAdapter:
             tenant_id=tenant_id,
             user_id=user_id,
             agent_id=artifact_agent.id,
-            title_prompt=title_prompt,
+            title_prompt=title_prompt or "Platform Architect artifact work binding",
             artifact_id=artifact_id,
             draft_key=draft_key,
             chat_session_id=session_id,

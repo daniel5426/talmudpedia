@@ -451,7 +451,7 @@ async def test_production_stream_includes_internal_tool_and_reasoning_events(db_
 
 
 @pytest.mark.asyncio
-async def test_debug_stream_tool_error_has_active_reasoning_step_without_complete(db_session, monkeypatch):
+async def test_debug_stream_tool_error_emits_failed_terminal_tool_event(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     suffix = uuid4().hex[:8]
 
@@ -502,6 +502,9 @@ async def test_debug_stream_tool_error_has_active_reasoning_step_without_complet
 
     assert run.status == RunStatus.completed
     assert not _events_by_name(events, "on_tool_end", tool_name=web_fetch_tool.name)
+    tool_failed_events = _events_by_name(events, "tool.failed", tool_name=web_fetch_tool.name)
+    assert len(tool_failed_events) == 1
+    assert "http/https" in str((tool_failed_events[0].get("data") or {}).get("error"))
 
     error_events = _events_by_name(events, "error")
     assert error_events
@@ -511,7 +514,7 @@ async def test_debug_stream_tool_error_has_active_reasoning_step_without_complet
         e for e in _reasoning_events(events) if (e.get("data") or {}).get("step") == web_fetch_tool.name
     ]
     assert reasoning_for_tool
-    assert [e["data"]["status"] for e in reasoning_for_tool] == ["active"]
+    assert [e["data"]["status"] for e in reasoning_for_tool] == ["active", "failed"]
 
 
 @pytest.mark.asyncio
