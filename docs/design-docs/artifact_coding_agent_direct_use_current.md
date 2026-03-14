@@ -1,6 +1,6 @@
 # Artifact Coding Agent Direct Use Current State
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-14
 
 This document describes the current direct-use artifact coding agent surface on the admin artifact page.
 
@@ -51,7 +51,7 @@ Current tool groups:
 - mutation: file edits, metadata/runtime updates, kind/contract updates
 - validation: run artifact test, fetch last test result
 
-Mutation tools update only the session working snapshot and return:
+Mutation tools update only the shared working-draft snapshot for the current artifact scope and return:
 - a short summary
 - changed field names
 - the normalized next draft snapshot

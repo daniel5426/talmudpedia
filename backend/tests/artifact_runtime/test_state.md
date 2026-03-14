@@ -1,4 +1,4 @@
-Last Updated: 2026-03-12
+Last Updated: 2026-03-14
 
 # Test State
 
@@ -10,12 +10,15 @@ Artifact runtime revision and bundle lifecycle.
 
 - `test_revision_service.py`
 - `test_execution_service.py`
+- `test_artifact_versions_api.py`
 
 ## Key Scenarios Covered
 
 - create tenant artifact draft with source-tree runtime payload
 - update artifact and create a new draft revision
 - publish the latest draft revision
+- list saved artifact revisions through the admin API
+- fetch one historical artifact revision snapshot through the admin API
 - verify bundle builder hash stability
 - verify build-hash stability across source-tree revisions
 - verify Cloudflare package builder emits a runnable `main.py` worker entrypoint
@@ -42,6 +45,9 @@ Artifact runtime revision and bundle lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_runtime/test_free_plan_runtime_worker.py`
 - Date: 2026-03-12 01:58 Asia/Hebron
 - Result: Pass (13 passed)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_artifact_versions_api.py`
+- Date: 2026-03-14 Asia/Hebron
+- Result: Pass (4 passed)
 
 ## Known Gaps
 

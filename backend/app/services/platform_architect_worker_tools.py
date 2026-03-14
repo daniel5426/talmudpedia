@@ -15,6 +15,7 @@ from app.services.artifact_coding_agent_profile import (
     ARTIFACT_CODING_AGENT_PROFILE_SLUG,
     ensure_artifact_coding_agent_profile,
 )
+from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.services.platform_architect_worker_runtime_service import PlatformArchitectWorkerRuntimeService
 from app.services.tool_function_registry import register_tool_function
 
@@ -56,7 +57,7 @@ def _artifact_snapshot_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "kind": {"type": "string"},
+            "kind": {"type": "string", "enum": [item.value for item in ArtifactKind]},
             "slug": {"type": "string"},
             "display_name": {"type": "string"},
             "description": {"type": "string"},
@@ -82,6 +83,22 @@ def _artifact_snapshot_schema() -> dict[str, Any]:
             "tool_contract": {"type": "object"},
         },
         "required": ["kind", "slug", "display_name", "source_files", "entry_module_path"],
+        "additionalProperties": False,
+    }
+
+
+def _artifact_draft_seed_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "enum": [item.value for item in ArtifactKind]},
+            "slug": {"type": "string"},
+            "display_name": {"type": "string"},
+            "description": {"type": "string"},
+            "entry_module_path": {"type": "string"},
+            "runtime_target": {"type": "string"},
+        },
+        "required": ["kind"],
         "additionalProperties": False,
     }
 
@@ -159,19 +176,20 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
     {
         "slug": "architect-worker-binding-prepare",
         "name": "Architect Worker Binding Prepare",
-        "description": "Prepare or reuse a binding-backed worker state for the architect.",
+        "description": "Prepare or reuse a binding-backed worker state for the architect. Normal artifact creation uses prepare_mode=create_new_draft with title_prompt plus draft_seed.kind; full draft_snapshot is reserved for seed_snapshot only.",
         "implementation_type": ToolImplementationType.FUNCTION,
         "schema": _tool_schema(
             properties={
                 "binding_type": {"type": "string", "enum": ["artifact_shared_draft"]},
                 "prepare_mode": {
                     "type": "string",
-                    "enum": ["reuse_existing", "attach_existing_artifact", "create_new_draft"],
+                    "enum": ["reuse_existing", "attach_existing_artifact", "create_new_draft", "seed_snapshot"],
                 },
                 "binding_id": {"type": "string"},
                 "artifact_id": {"type": "string"},
                 "draft_key": {"type": "string"},
                 "title_prompt": {"type": "string"},
+                "draft_seed": _artifact_draft_seed_schema(),
                 "draft_snapshot": _artifact_snapshot_schema(),
                 "replace_snapshot": {"type": "boolean"},
             },
@@ -187,7 +205,13 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 },
                 {
                     "properties": {"prepare_mode": {"const": "create_new_draft"}},
+                    "required": ["binding_type", "prepare_mode", "title_prompt", "draft_seed"],
+                    "not": {"required": ["draft_snapshot"]},
+                },
+                {
+                    "properties": {"prepare_mode": {"const": "seed_snapshot"}},
                     "required": ["binding_type", "prepare_mode", "title_prompt", "draft_snapshot"],
+                    "not": {"required": ["draft_seed"]},
                 },
             ],
         ),

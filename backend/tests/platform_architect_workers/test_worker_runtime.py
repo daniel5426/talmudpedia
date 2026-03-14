@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
+from app.agent.execution.tool_input_contracts import validate_tool_input_schema
 from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry
@@ -74,7 +75,77 @@ async def test_architect_worker_tools_seed_expected_slugs(db_session):
         "reuse_existing",
         "attach_existing_artifact",
         "create_new_draft",
+        "seed_snapshot",
     ]
+    assert binding_prepare_schema["properties"]["draft_seed"]["required"] == ["kind"]
+    create_branch = next(
+        variant
+        for variant in binding_prepare_schema["oneOf"]
+        if variant["properties"]["prepare_mode"]["const"] == "create_new_draft"
+    )
+    assert create_branch["required"] == ["binding_type", "prepare_mode", "title_prompt", "draft_seed"]
+    assert create_branch["not"] == {"required": ["draft_snapshot"]}
+
+
+@pytest.mark.asyncio
+async def test_binding_prepare_schema_accepts_lightweight_seed_and_rejects_old_snapshot_guesses(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+    tool = await _get_tool_by_slug(db_session, "architect-worker-binding-prepare")
+
+    assert validate_tool_input_schema(
+        tool,
+        {
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "create_new_draft",
+            "title_prompt": "Create a tool artifact draft",
+            "draft_seed": {"kind": "tool_impl"},
+        },
+    ) == []
+
+    missing_kind_errors = validate_tool_input_schema(
+        tool,
+        {
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "create_new_draft",
+            "title_prompt": "Create a tool artifact draft",
+            "draft_seed": {},
+        },
+    )
+    assert any("kind" in item["message"] for item in missing_kind_errors)
+
+    files_guess_errors = validate_tool_input_schema(
+        tool,
+        {
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "create_new_draft",
+            "draft_snapshot": {"files": {}},
+        },
+    )
+    assert any("not valid under any of the given schemas" in item["message"] for item in files_guess_errors)
+
+    entrypoint_errors = validate_tool_input_schema(
+        tool,
+        {
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "seed_snapshot",
+            "title_prompt": "Seed a snapshot",
+            "draft_snapshot": {
+                "kind": "tool_impl",
+                "slug": "seeded-tool",
+                "display_name": "Seeded Tool",
+                "entrypoint": "main.py",
+                "source_files": [{"path": "main.py", "text": "print('x')"}],
+            },
+        },
+    )
+    assert any("entry_module_path" in item["message"] for item in entrypoint_errors)
+    assert any("text" in item["message"] for item in entrypoint_errors)
 
 
 def test_architect_graph_instructions_include_async_worker_flow():
@@ -103,6 +174,10 @@ def test_architect_graph_instructions_include_async_worker_flow():
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
     assert "Do not invent nested fields like task.instructions" in instructions
+    assert "agents.create_shell" in instructions
+    assert "rag.create_pipeline_shell" in instructions
+    assert "draft_seed.kind" in instructions
+    assert "Do not invent non-canonical binding fields such as create, files, entrypoint, or text." in instructions
     assert "artifact-coding-agent-call" not in instructions
     assert "artifact-coding-session-prepare" not in instructions
 

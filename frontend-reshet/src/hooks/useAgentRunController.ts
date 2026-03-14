@@ -27,6 +27,11 @@ const resolveArchitectResponse = (content: string) => {
   return extractStructuredAssistantText(content) || content;
 };
 
+const logRunControllerDebug = (event: string, details?: Record<string, unknown>) => {
+  if (process.env.NODE_ENV === "production") return;
+  console.debug("[playground-controller-debug]", event, details || {});
+};
+
 const normalizeExecutionEvent = (rawEvent: Record<string, unknown>): AgentExecutionEvent => {
   const payload =
     rawEvent.payload && typeof rawEvent.payload === "object"
@@ -144,6 +149,13 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   useEffect(() => {
     currentThreadIdRef.current = currentThreadId;
   }, [currentThreadId]);
+
+  useEffect(() => {
+    logRunControllerDebug("thread-id.changed", {
+      agentId,
+      currentThreadId,
+    });
+  }, [agentId, currentThreadId]);
 
   // Reset state when agentId changes
   useEffect(() => {
@@ -270,17 +282,33 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   }, []);
 
   const startNewChat = useCallback(() => {
+    logRunControllerDebug("start-new-chat", {
+      agentId,
+      currentThreadId: currentThreadIdRef.current,
+      messageCount: messagesRef.current.length,
+    });
     resetExecutionState();
     setMessages([]);
   }, [resetExecutionState]);
 
   const loadHistoryChat = useCallback(async (item: AgentChatHistoryItem): Promise<AgentChatHistoryItem | null> => {
     if (!item) return null;
+    logRunControllerDebug("load-history-chat.start", {
+      agentId,
+      requestedThreadId: item.threadId,
+      cachedMessageCount: item.messages.length,
+      currentThreadId: currentThreadIdRef.current,
+    });
     const resolved = await loadThreadMessages(item);
     if (!resolved) return null;
     resetExecutionState();
     setCurrentThreadId(resolved.threadId || item.threadId || null);
     setMessages(resolved.messages || []);
+    logRunControllerDebug("load-history-chat.done", {
+      agentId,
+      resolvedThreadId: resolved.threadId || item.threadId || null,
+      resolvedMessageCount: resolved.messages?.length || 0,
+    });
     return resolved;
   }, [loadThreadMessages, resetExecutionState]);
 

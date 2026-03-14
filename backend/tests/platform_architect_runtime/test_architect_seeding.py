@@ -25,6 +25,10 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
     assert "Do not invent nested fields like task.instructions" in instructions
+    assert "agents.create_shell" in instructions
+    assert "rag.create_pipeline_shell" in instructions
+    assert "draft_seed.kind" in instructions
+    assert "Do not construct a full draft_snapshot for normal artifact creation" in instructions
     assert "top-level action and payload" in instructions
     assert "Never wrap a tool call inside query, text, value" in instructions
     assert "agents.graph.add_tool_to_agent_node" in instructions
@@ -62,12 +66,14 @@ def test_platform_domain_schema_is_action_specific_one_of():
     by_action = {variant["properties"]["action"]["const"]: variant for variant in variants}
 
     assert "agents.create" in by_action
+    assert "agents.create_shell" in by_action
     assert "agents.graph.add_tool_to_agent_node" in by_action
     assert "agents.nodes.catalog" in by_action
     assert "agents.nodes.schema" in by_action
     assert "agents.nodes.validate" in by_action
     assert "rag.operators.catalog" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
     assert "rag.operators.schema" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
+    assert "rag.create_pipeline_shell" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
     assert "agents.publish" in by_action
     assert "rag.graph.apply_patch" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
     assert "architect.run" not in by_action

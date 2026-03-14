@@ -155,6 +155,32 @@ export interface ArtifactRun {
   finished_at?: string;
 }
 
+export interface ArtifactVersionListItem {
+  id: string;
+  artifact_id: string;
+  revision_number: number;
+  version_label: string;
+  is_published: boolean;
+  is_current_draft: boolean;
+  is_current_published: boolean;
+  source_file_count: number;
+  created_at: string;
+  created_by?: string | null;
+}
+
+export interface ArtifactVersion extends ArtifactVersionListItem {
+  slug: string;
+  display_name: string;
+  description?: string | null;
+  kind: ArtifactKind;
+  config_schema: Record<string, unknown>;
+  runtime: ArtifactRuntimeConfig;
+  capabilities: ArtifactCapabilityConfig;
+  agent_contract?: AgentArtifactContract | null;
+  rag_contract?: RAGArtifactContract | null;
+  tool_contract?: ToolArtifactContract | null;
+}
+
 export interface ArtifactRunEvent {
   id: string;
   sequence: number;
@@ -285,6 +311,20 @@ export const artifactsService = {
   get: async (id: string, tenantSlug?: string): Promise<Artifact> => {
     const url = tenantSlug ? `/admin/artifacts/${id}?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}`;
     return httpClient.get<Artifact>(url);
+  },
+
+  listVersions: async (artifactId: string, tenantSlug?: string): Promise<ArtifactVersionListItem[]> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/${artifactId}/versions?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/${artifactId}/versions`;
+    return httpClient.get<ArtifactVersionListItem[]>(url);
+  },
+
+  getVersion: async (artifactId: string, revisionId: string, tenantSlug?: string): Promise<ArtifactVersion> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/${artifactId}/versions/${revisionId}?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/${artifactId}/versions/${revisionId}`;
+    return httpClient.get<ArtifactVersion>(url);
   },
 
   create: async (data: ArtifactCreateRequest, tenantSlug?: string): Promise<Artifact> => {

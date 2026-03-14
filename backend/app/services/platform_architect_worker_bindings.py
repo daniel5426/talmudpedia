@@ -170,6 +170,7 @@ class ArtifactSharedDraftBindingAdapter:
         draft_key: str | None = None
         title_prompt: str | None = None
         draft_snapshot: dict[str, Any] | None = None
+        draft_seed: dict[str, Any] | None = None
 
         if prepare_mode == "reuse_existing":
             explicit_binding_id = str(binding_payload.get("binding_id") or "").strip() or None
@@ -181,6 +182,15 @@ class ArtifactSharedDraftBindingAdapter:
                 raise ValueError("artifact_id is required")
             artifact_id = UUID(str(artifact_id_raw))
         elif prepare_mode == "create_new_draft":
+            title_prompt = str(binding_payload.get("title_prompt") or "").strip()
+            if not title_prompt:
+                raise ValueError("title_prompt is required")
+            draft_seed = binding_payload.get("draft_seed") if isinstance(binding_payload.get("draft_seed"), dict) else None
+            if not draft_seed:
+                raise ValueError("draft_seed is required")
+            draft_snapshot = self.runtime.build_initial_snapshot_from_seed(draft_seed)
+            draft_key = str(binding_payload.get("draft_key") or "").strip() or None
+        elif prepare_mode == "seed_snapshot":
             title_prompt = str(binding_payload.get("title_prompt") or "").strip()
             if not title_prompt:
                 raise ValueError("title_prompt is required")

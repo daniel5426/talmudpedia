@@ -22,6 +22,8 @@ from app.services.artifact_coding_agent_tools import (
     DEFAULT_RAG_CONTRACT,
     DEFAULT_TOOL_CONTRACT,
     _initial_snapshot_for_kind,
+    _normalize_kind,
+    _normalize_path,
     _normalize_file_list,
     _parse_json_object,
     _serialize_form_state,
@@ -50,6 +52,31 @@ class ArtifactCodingRuntimeService:
     def _normalize_draft_key(value: str | None) -> str | None:
         text = str(value or "").strip()
         return text or None
+
+    @staticmethod
+    def build_initial_snapshot_from_seed(draft_seed: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(draft_seed, dict):
+            raise ValueError("draft_seed is required")
+        kind = str(draft_seed.get("kind") or "").strip()
+        if not kind:
+            raise ValueError("draft_seed.kind is required")
+        snapshot = _initial_snapshot_for_kind(_normalize_kind(kind))
+        for field_name in ("slug", "display_name", "description"):
+            value = draft_seed.get(field_name)
+            if isinstance(value, str):
+                snapshot[field_name] = value.strip()
+        entry_module_path = draft_seed.get("entry_module_path")
+        if isinstance(entry_module_path, str) and entry_module_path.strip():
+            normalized_path = _normalize_path(entry_module_path)
+            snapshot["entry_module_path"] = normalized_path
+            files = list(snapshot.get("source_files") or [])
+            if files and isinstance(files[0], dict):
+                files[0] = {"path": normalized_path, "content": str(files[0].get("content") or "")}
+                snapshot["source_files"] = files
+        runtime_target = draft_seed.get("runtime_target")
+        if isinstance(runtime_target, str) and runtime_target.strip():
+            snapshot["runtime_target"] = runtime_target.strip()
+        return _serialize_form_state(snapshot)
 
     async def _get_session_for_user(
         self,

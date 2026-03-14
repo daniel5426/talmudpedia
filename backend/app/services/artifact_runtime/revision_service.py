@@ -118,8 +118,9 @@ class ArtifactRevisionService:
             source_files=source_files,
             entry_module_path=entry_module_path,
         )
+        kind_value = self._normalize_kind(artifact.kind)
         self._validate_contracts(
-            kind=artifact.kind,
+            kind=kind_value,
             agent_contract=agent_contract,
             rag_contract=rag_contract,
             tool_contract=tool_contract,
@@ -135,7 +136,7 @@ class ArtifactRevisionService:
             is_ephemeral=False,
             display_name=display_name,
             description=description,
-            kind=artifact.kind,
+            kind=kind_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
             python_dependencies=python_dependencies,

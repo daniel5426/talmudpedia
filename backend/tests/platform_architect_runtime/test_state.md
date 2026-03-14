@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-14
 
 ## Scope
 - Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
@@ -28,8 +28,10 @@ Last Updated: 2026-03-12
 - `agents.create` propagates structured SDK validation details (including normalized `validation_errors`) for deterministic repair.
 - Platform architect domain schema includes `agents.nodes.catalog/schema/validate` action contracts.
 - Platform architect domain schema now includes `rag.operators.catalog/schema` action contracts for RAG-native discovery.
+- Platform architect domain schema now includes `agents.create_shell` and `rag.create_pipeline_shell` as the preferred lightweight creation actions.
 - Seeded architect runtime no longer forces JSON-only output in prompt or node config.
 - Seeded architect runtime now defaults `temperature` to `1`.
+- Seeded architect prompt now instructs artifact binding creation through `title_prompt + draft_seed.kind` and explicitly forbids low-level guesses like `create`, `files`, `entrypoint`, and `text`.
 - Architect domain tools bind to local `platform_sdk` function dispatch instead of artifact-worker execution.
 - Local `platform_sdk` function dispatch forwards the correct architect domain tool slug.
 - Local `platform_sdk` function dispatch emits internal trace events for the prepared runtime context and the completed SDK result.
@@ -47,6 +49,9 @@ Last Updated: 2026-03-12
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_local_platform_sdk_tools.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py backend/tests/platform_sdk_tool/test_platform_sdk_actions.py backend/tests/tool_execution/test_reasoning_tool_call_chunk_buffering.py`
 - Date/Time: 2026-03-12 03:39 EET
 - Result: passed (`28 passed, 1 warning`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-03-14 20:39 EET
+- Result: passed (`10 passed`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.

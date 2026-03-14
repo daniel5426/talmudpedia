@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import ensure_sensitive_action_approved, get_current_principal, require_scopes
@@ -17,9 +17,11 @@ from app.api.schemas.artifacts import (
     ArtifactTestRequest,
     ArtifactType,
     ArtifactUpdate,
+    ArtifactVersionListItem,
+    ArtifactVersionSchema,
 )
 from app.db.postgres.models.artifact_runtime import Artifact as ArtifactModel
-from app.db.postgres.models.artifact_runtime import ArtifactOwnerType, ArtifactRunStatus, ArtifactStatus
+from app.db.postgres.models.artifact_runtime import ArtifactOwnerType, ArtifactRevision as ArtifactRevisionModel, ArtifactRunStatus, ArtifactStatus
 from app.db.postgres.models.identity import OrgMembership, Tenant
 from app.db.postgres.models.registry import ToolRegistry
 from app.db.postgres.session import get_db
@@ -174,6 +176,42 @@ def _artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = False) 
     )
 
 
+def _artifact_revision_to_version_schema(
+    artifact: ArtifactModel,
+    revision: ArtifactRevisionModel,
+    *,
+    include_code: bool = False,
+) -> ArtifactVersionSchema:
+    runtime = {
+        "source_files": list(revision.source_files or []) if include_code else [],
+        "entry_module_path": revision.entry_module_path,
+        "python_dependencies": list(revision.python_dependencies or []),
+        "runtime_target": str(revision.runtime_target or "cloudflare_workers"),
+    }
+    return ArtifactVersionSchema(
+        id=str(revision.id),
+        artifact_id=str(artifact.id),
+        revision_number=int(revision.revision_number or 0),
+        version_label=str(revision.version_label or f"v{int(revision.revision_number or 0)}"),
+        is_published=bool(revision.is_published),
+        is_current_draft=artifact.latest_draft_revision_id == revision.id,
+        is_current_published=artifact.latest_published_revision_id == revision.id,
+        source_file_count=len(list(revision.source_files or [])),
+        created_at=revision.created_at,
+        created_by=None,
+        slug=artifact.slug,
+        display_name=revision.display_name,
+        description=revision.description,
+        kind=getattr(revision.kind, "value", revision.kind),
+        config_schema=dict(revision.config_schema or {}),
+        runtime=runtime,
+        capabilities=dict(revision.capabilities or {}),
+        agent_contract=dict(revision.agent_contract or {}) if revision.agent_contract is not None else None,
+        rag_contract=dict(revision.rag_contract or {}) if revision.rag_contract is not None else None,
+        tool_contract=dict(revision.tool_contract or {}) if revision.tool_contract is not None else None,
+    )
+
+
 @router.get("", response_model=List[ArtifactSchema])
 async def list_artifacts(
     tenant_slug: Optional[str] = None,
@@ -202,6 +240,60 @@ async def get_artifact(
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     return _artifact_to_schema(artifact, include_code=True)
+
+
+@router.get("/{artifact_id}/versions", response_model=List[ArtifactVersionListItem])
+async def list_artifact_versions(
+    artifact_id: str,
+    tenant_slug: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, _user, db = artifact_ctx
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    artifact = await ArtifactRegistryService(db).get_accessible_artifact(
+        artifact_id=artifact_uuid,
+        tenant_id=tenant.id if tenant is not None else None,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    result = await db.execute(
+        select(ArtifactRevisionModel)
+        .where(ArtifactRevisionModel.artifact_id == artifact.id)
+        .order_by(desc(ArtifactRevisionModel.revision_number), desc(ArtifactRevisionModel.created_at))
+    )
+    versions = []
+    for revision in result.scalars().all():
+        version = _artifact_revision_to_version_schema(artifact, revision, include_code=False)
+        versions.append(ArtifactVersionListItem(**version.model_dump()))
+    return versions
+
+
+@router.get("/{artifact_id}/versions/{revision_id}", response_model=ArtifactVersionSchema)
+async def get_artifact_version(
+    artifact_id: str,
+    revision_id: str,
+    tenant_slug: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, _user, db = artifact_ctx
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    revision_uuid = _parse_artifact_uuid(revision_id)
+    if artifact_uuid is None or revision_uuid is None:
+        raise HTTPException(status_code=404, detail="Artifact version not found")
+    artifact = await ArtifactRegistryService(db).get_accessible_artifact(
+        artifact_id=artifact_uuid,
+        tenant_id=tenant.id if tenant is not None else None,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    revision = await db.get(ArtifactRevisionModel, revision_uuid)
+    if revision is None or revision.artifact_id != artifact.id:
+        raise HTTPException(status_code=404, detail="Artifact version not found")
+    return _artifact_revision_to_version_schema(artifact, revision, include_code=True)
 
 
 @router.post("", response_model=ArtifactSchema)

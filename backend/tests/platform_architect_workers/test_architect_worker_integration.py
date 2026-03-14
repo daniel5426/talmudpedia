@@ -101,24 +101,13 @@ async def test_seeded_architect_run_spawns_artifact_worker_and_persists_artifact
             "replace_snapshot": True,
             "draft_key": draft_key,
             "title_prompt": "Create a greeting tool artifact",
-            "draft_snapshot": {
+            "draft_seed": {
+                "kind": "tool_impl",
                 "slug": "greeting-tool",
                 "display_name": "Greeting Tool",
                 "description": "Draft greeting tool",
-                "kind": "tool_impl",
-                "source_files": [],
                 "entry_module_path": "main.py",
-                "python_dependencies": "",
                 "runtime_target": "cloudflare_workers",
-                "capabilities": {},
-                "config_schema": {"type": "object", "properties": {}},
-                "tool_contract": {
-                    "input_schema": {"type": "object", "properties": {}},
-                    "output_schema": {"type": "object", "properties": {}},
-                    "side_effects": [],
-                    "execution_mode": "interactive",
-                    "tool_ui": {},
-                },
             },
         }
     )
@@ -415,24 +404,13 @@ async def test_seeded_architect_run_rejects_second_mutating_spawn_for_active_bin
             "replace_snapshot": True,
             "draft_key": draft_key,
             "title_prompt": "Prepare a bound artifact draft",
-            "draft_snapshot": {
+            "draft_seed": {
+                "kind": "tool_impl",
                 "slug": "blocked-tool",
                 "display_name": "Blocked Tool",
                 "description": "Draft for binding lock test",
-                "kind": "tool_impl",
-                "source_files": [{"path": "main.py", "content": ""}],
                 "entry_module_path": "main.py",
-                "python_dependencies": "",
                 "runtime_target": "cloudflare_workers",
-                "capabilities": {},
-                "config_schema": {"type": "object", "properties": {}},
-                "tool_contract": {
-                    "input_schema": {"type": "object", "properties": {}},
-                    "output_schema": {"type": "object", "properties": {}},
-                    "side_effects": [],
-                    "execution_mode": "interactive",
-                    "tool_ui": {},
-                },
             },
         }
     )

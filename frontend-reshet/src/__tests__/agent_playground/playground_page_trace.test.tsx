@@ -11,6 +11,7 @@ const mockSearchState = {
   threadId: null as string | null,
 };
 const mockLoadHistoryChat = jest.fn();
+const mockStartNewChat = jest.fn();
 const mockControllerState = {
   currentThreadId: null as string | null,
   history: [] as any[],
@@ -98,7 +99,7 @@ jest.mock("@/hooks/useAgentRunController", () => {
         upsertLiveVoiceMessage: jest.fn(),
         refresh: jest.fn(),
         textareaRef: { current: null },
-        startNewChat: jest.fn(),
+        startNewChat: mockStartNewChat,
         loadHistoryChat: mockLoadHistoryChat,
       };
     },
@@ -179,12 +180,26 @@ jest.mock("@/lib/store/useAuthStore", () => ({
 }));
 
 jest.mock("@/components/agent-builder/ExecutionHistoryDropdown", () => ({
-  ExecutionHistoryDropdown: ({ historyItems, onSelectHistory }: { historyItems: any[]; onSelectHistory: (item: any) => void }) =>
-    historyItems.length > 0 ? (
-      <button type="button" onClick={() => onSelectHistory(historyItems[0])}>
-        History
+  ExecutionHistoryDropdown: ({
+    historyItems,
+    onSelectHistory,
+    onStartNewChat,
+  }: {
+    historyItems: any[];
+    onSelectHistory: (item: any) => void;
+    onStartNewChat: () => void;
+  }) => (
+    <div>
+      {historyItems.length > 0 ? (
+        <button type="button" onClick={() => onSelectHistory(historyItems[0])}>
+          History
+        </button>
+      ) : null}
+      <button type="button" onClick={onStartNewChat}>
+        New Chat
       </button>
-    ) : null,
+    </div>
+  ),
 }));
 
 jest.mock("@/components/builder", () => ({
@@ -212,6 +227,7 @@ describe("playground trace sidebar", () => {
     mockControllerState.currentThreadId = null;
     mockControllerState.history = [];
     mockLoadHistoryChat.mockReset();
+    mockStartNewChat.mockReset();
     mockLoadHistoryChat.mockImplementation(async (item: any) => item);
     mockedAgentService.listAgents.mockResolvedValue({
       agents: [
@@ -318,5 +334,38 @@ describe("playground trace sidebar", () => {
       "/admin/agents/playground?agentId=agent-1",
       { scroll: false },
     );
+  });
+
+  it("clears the thread id from the URL when new chat is started from history controls", async () => {
+    mockSearchState.threadId = "thread-old";
+    mockControllerState.currentThreadId = "thread-old";
+    mockControllerState.history = [
+      {
+        id: "thread-old",
+        threadId: "thread-old",
+        agentId: "agent-1",
+        title: "Thread old",
+        timestamp: 1,
+        messages: [],
+      },
+    ];
+
+    render(<PlaygroundPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "New Chat" }));
+
+    await waitFor(() => {
+      expect(mockStartNewChat).toHaveBeenCalled();
+      expect(mockReplace).toHaveBeenCalledWith(
+        "/admin/agents/playground?agentId=agent-1",
+        { scroll: false },
+      );
+    });
+
+    expect(mockReplace).not.toHaveBeenCalledWith(
+      "/admin/agents/playground?agentId=agent-1&threadId=thread-old",
+      { scroll: false },
+    );
+    expect(mockLoadHistoryChat).not.toHaveBeenCalledWith(mockControllerState.history[0]);
   });
 });

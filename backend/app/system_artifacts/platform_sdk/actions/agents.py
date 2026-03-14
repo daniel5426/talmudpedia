@@ -15,6 +15,19 @@ from .shared import (
 )
 
 
+def _agent_shell_graph_definition() -> Dict[str, Any]:
+    return {
+        "spec_version": "2.0",
+        "nodes": [
+            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+            {"id": "end", "type": "end", "position": {"x": 240, "y": 0}, "config": {}},
+        ],
+        "edges": [
+            {"id": "e_start_end", "source": "start", "target": "end", "type": "control"},
+        ],
+    }
+
+
 def _extract_validation_errors(details: Any) -> List[Dict[str, Any]]:
     if not isinstance(details, dict):
         return []
@@ -151,6 +164,41 @@ def create(
     return create_or_update(
         client,
         payload,
+        dry_run,
+        control_client_factory=control_client_factory,
+        request_options_builder=request_options_builder,
+    )
+
+
+def create_shell(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    name = str(payload.get("name") or "").strip()
+    slug = str(payload.get("slug") or "").strip()
+    if not name or not slug:
+        missing = []
+        if not name:
+            missing.append("name")
+        if not slug:
+            missing.append("slug")
+        return None, [{"error": "missing_fields", "fields": missing}]
+
+    shell_payload: Dict[str, Any] = {
+        "name": name,
+        "slug": slug,
+        "graph_definition": _agent_shell_graph_definition(),
+    }
+    description = payload.get("description")
+    if isinstance(description, str) and description.strip():
+        shell_payload["description"] = description.strip()
+    return create_or_update(
+        client,
+        shell_payload,
         dry_run,
         control_client_factory=control_client_factory,
         request_options_builder=request_options_builder,

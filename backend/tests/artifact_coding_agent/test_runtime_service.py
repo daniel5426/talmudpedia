@@ -153,6 +153,30 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
 
 
 @pytest.mark.asyncio
+async def test_build_initial_snapshot_from_seed_uses_seed_kind_without_agent_node_fallback(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+
+    runtime = ArtifactCodingRuntimeService(db_session)
+    snapshot = runtime.build_initial_snapshot_from_seed(
+        {
+            "kind": "tool_impl",
+            "slug": "seeded-tool",
+            "display_name": "Seeded Tool",
+            "description": "seed-based initialization",
+            "entry_module_path": "src/main.py",
+            "runtime_target": "cloudflare_workers",
+        }
+    )
+
+    assert snapshot["kind"] == "tool_impl"
+    assert snapshot["slug"] == "seeded-tool"
+    assert snapshot["display_name"] == "Seeded Tool"
+    assert snapshot["entry_module_path"] == "src/main.py"
+    assert snapshot["source_files"][0]["path"] == "src/main.py"
+
+
+@pytest.mark.asyncio
 async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonical_export_payloads(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     artifact = await _create_artifact_from_payload(
@@ -183,10 +207,8 @@ async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonic
     prepared = await architect_worker_binding_prepare(
         {
             "binding_type": "artifact_shared_draft",
-            "binding_payload": {
-                "artifact_id": str(artifact.id),
-                "title_prompt": "Review hydrated artifact",
-            },
+            "prepare_mode": "attach_existing_artifact",
+            "artifact_id": str(artifact.id),
             "__tool_runtime_context__": {
                 "tenant_id": str(tenant.id),
                 "user_id": str(user.id),

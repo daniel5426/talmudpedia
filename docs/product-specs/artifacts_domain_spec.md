@@ -1,6 +1,6 @@
 # Artifacts Domain Spec
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-14
 
 This document is the canonical product/specification overview for the artifact domain.
 
@@ -63,6 +63,8 @@ Current admin authoring UI also includes:
 - a source-tree editor with a file explorer/workspace panel
 - an active-file editor surface
 - kind-specific contract editing
+- explicit save-created version history for saved artifacts
+- a version-history drawer that can load any saved version back into the working draft
 - artifact-page test-run execution against unsaved source trees
 - artifact-page coding chat that edits the live draft snapshot, including unsaved form changes
 
@@ -73,9 +75,10 @@ The admin artifact page now has a direct coding-agent surface for artifact autho
 Current behavior:
 - the coding agent is a public seeded tenant agent profile, but the direct UI surface is the artifact page
 - the artifact page sends the full live form draft as prompt context on each submission
-- agent tool mutations update only a persisted session working snapshot, not canonical artifact rows
+- agent tool mutations update only a persisted shared working-draft snapshot for the current artifact scope, not canonical artifact rows
 - tool mutation results are applied back into the artifact page immediately
-- Save and Publish remain explicit page actions; the coding agent does not auto-save or auto-publish
+- Save creates a new immutable artifact revision/version
+- Publish remains explicit and now auto-saves first when the editor has unsaved changes
 - create mode is supported before first artifact save through a temporary `draft_key`
 
 ### Publish
@@ -84,6 +87,11 @@ Published revisions are the immutable execution target for production-like runti
 
 Current rule:
 - production/live execution paths should use published immutable revisions
+
+Current authoring rule:
+- Save creates a reversible version checkpoint
+- loading a historical version into the editor affects only the working draft until the user saves again
+- Publish should publish the latest saved revision, auto-saving the current working draft first when required
 
 Current pinning behavior by surface:
 - agent artifact nodes are pinned to published artifact revisions at agent run compile/start time

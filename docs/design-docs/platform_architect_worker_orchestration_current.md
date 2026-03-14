@@ -46,6 +46,15 @@ Bindings are typed references to durable worker state outside the LLM transcript
 V1 supports exactly one binding type:
 - `artifact_shared_draft`
 
+Normal create flow for this binding is now lightweight:
+- `prepare_mode=create_new_draft`
+- required: `title_prompt`, `draft_seed.kind`
+- optional: `draft_seed.slug`, `draft_seed.display_name`, `draft_seed.description`, `draft_seed.entry_module_path`, `draft_seed.runtime_target`, `draft_key`, `replace_snapshot`
+
+Advanced snapshot seeding still exists but is not the architect’s normal path:
+- `prepare_mode=seed_snapshot`
+- required: `title_prompt`, full canonical `draft_snapshot`
+
 Binding responsibilities:
 - prepare or reuse a shared draft/session
 - attach canonical child-run context before spawn
@@ -72,6 +81,31 @@ Current artifact flow:
 Important boundary:
 - the worker edits only the shared draft
 - canonical artifact persistence still happens through `platform-assets`
+
+The backend now owns initial draft construction for the normal create path:
+- the architect provides only the draft seed
+- the backend generates the canonical initial snapshot from the artifact kind defaults
+- the architect no longer needs to author files, contract blobs, or runtime defaults just to start the worker flow
+
+Current explicit contract rule:
+- normal `create_new_draft` rejects full `draft_snapshot`
+- advanced `seed_snapshot` accepts full canonical snapshots only
+- guessed fields like `create`, `files`, `entrypoint`, and `text` now fail fast under strict validation
+
+## Architect-Facing Shell Actions
+
+The architect also now has lightweight first-create actions on the deterministic domain tools:
+- `platform-agents` -> `agents.create_shell`
+- `platform-rag` -> `rag.create_pipeline_shell`
+
+These are intentionally orchestration-friendly:
+- the architect provides a small intent/metadata payload
+- the backend creates a minimal valid resource skeleton
+- later mutations still use the canonical detailed mutation surfaces
+
+Current limitation:
+- `rag.create_pipeline_shell` currently supports retrieval shells only
+- ingestion shells still require real source/storage/embedding configuration and are not auto-scaffolded in this refactor
 
 ## Async Semantics
 

@@ -55,6 +55,13 @@ Important prompt boundary:
 
 Cross-domain action usage through the wrong domain tool is denied with `SCOPE_DENIED`.
 
+Preferred first-create actions:
+- `platform-agents` -> `agents.create_shell`
+- `platform-rag` -> `rag.create_pipeline_shell`
+
+The architect should prefer these shell actions for first creation instead of constructing full agent graphs or RAG node/edge payloads up front.
+Current limit: `rag.create_pipeline_shell` is retrieval-only in this refactor.
+
 ## Worker Orchestration Model
 
 The architect worker runtime is async and kernel-backed.
@@ -90,6 +97,15 @@ Artifact binding behavior:
 - preserve run-linked snapshots/history on the existing artifact tables
 - later export canonical artifact create/update payloads
 
+Normal artifact binding creation is now lightweight:
+- `prepare_mode=create_new_draft`
+- required: `title_prompt`, `draft_seed.kind`
+- optional seed metadata: `slug`, `display_name`, `description`, `entry_module_path`, `runtime_target`
+
+Advanced full snapshot seeding still exists:
+- `prepare_mode=seed_snapshot`
+- requires `title_prompt` plus a full canonical `draft_snapshot`
+
 Writable bindings are single-writer:
 - one active mutating worker per binding
 - a second mutating spawn on the same binding is rejected with `BINDING_RUN_ACTIVE`
@@ -108,6 +124,9 @@ Current architect artifact flow:
 Important ownership boundary:
 - the child worker edits only the shared draft
 - the architect still performs canonical artifact persistence through `platform-assets`
+
+The architect should not author full `draft_snapshot` payloads for normal artifact creation.
+The backend now creates the canonical initial draft snapshot from the supplied `draft_seed`.
 
 ## Removed Legacy Path
 
@@ -129,6 +148,7 @@ There is no compatibility wrapper for that path in the live architect runtime.
 - Strict platform tools are validated before function dispatch against their registered JSON-schema input contract.
 - Executor-owned runtime metadata is removed from strict tool payload validation and passed separately in `__tool_runtime_context__`.
 - Canonical artifact create/update payloads exported from worker bindings omit unused optional contracts instead of emitting `null`.
+- Architect-facing worker binding creation now explicitly rejects low-level guessed fields like `create`, `files`, `entrypoint`, and `text`.
 
 ## Active Test Coverage
 

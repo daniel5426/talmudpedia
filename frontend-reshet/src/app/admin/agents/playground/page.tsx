@@ -37,6 +37,11 @@ import { FloatingPanel } from "@/components/builder"
 import { cn } from "@/lib/utils"
 import type { AgentChatHistoryItem } from "@/hooks/useAgentThreadHistory"
 
+const logPlaygroundDebug = (event: string, details?: Record<string, unknown>) => {
+    if (process.env.NODE_ENV === "production") return
+    console.debug("[playground-thread-debug]", event, details || {})
+}
+
 function PlaygroundContent() {
     const router = useRouter()
     const searchParams = useSearchParams()
@@ -49,6 +54,9 @@ function PlaygroundContent() {
     const [isListingLoading, setIsListingLoading] = useState(false)
     const [isExecutionSidebarOpen, setIsExecutionSidebarOpen] = useState(false)
     const hydratedThreadRef = useRef<string | null>(null)
+    const suppressedThreadIdRef = useRef<string | null>(null)
+    const pendingUrlThreadIdRef = useRef<string | null>(null)
+    const clearingThreadRef = useRef(false)
 
     const controller = useAgentRunController(agentId || undefined)
     const { executionSteps, currentThreadId } = controller
@@ -130,51 +138,189 @@ function PlaygroundContent() {
         return () => { isMounted = false; };
     }, [agentId, router]);
 
-    const handleSelectHistory = useCallback(async (item: AgentChatHistoryItem) => {
-        const resolved = await controller.loadHistoryChat(item)
-        if (!resolved?.threadId) {
+    const handleSelectHistory = useCallback((item: AgentChatHistoryItem) => {
+        logPlaygroundDebug("history.select.start", {
+            itemThreadId: item.threadId,
+            itemAgentId: item.agentId,
+            currentAgentId: agentId,
+            currentThreadId,
+            urlThreadId: threadId,
+        })
+        if (!item?.threadId) {
             return
         }
-        const resolvedAgentId = resolved.agentId || agentId
+        if (item.threadId === threadId && (item.agentId || agentId) === agentId) {
+            logPlaygroundDebug("history.select.skip.already-active", {
+                itemThreadId: item.threadId,
+                currentAgentId: agentId,
+                urlThreadId: threadId,
+            })
+            return
+        }
+        const resolvedAgentId = item.agentId || agentId
         if (!resolvedAgentId) {
             return
         }
+        pendingUrlThreadIdRef.current = item.threadId
         if (resolvedAgentId === agentId) {
-            hydratedThreadRef.current = `${resolvedAgentId}:${resolved.threadId}`
-            router.replace(`/admin/agents/playground?agentId=${resolvedAgentId}&threadId=${resolved.threadId}`, { scroll: false })
+            hydratedThreadRef.current = null
+            logPlaygroundDebug("history.select.replace.same-agent", {
+                targetThreadId: item.threadId,
+                pendingUrlThreadId: pendingUrlThreadIdRef.current,
+                hydratedThreadKey: hydratedThreadRef.current,
+            })
+            router.replace(`/admin/agents/playground?agentId=${resolvedAgentId}&threadId=${item.threadId}`, { scroll: false })
             return
         }
         hydratedThreadRef.current = null
-        router.push(`/admin/agents/playground?agentId=${resolvedAgentId}&threadId=${resolved.threadId}`, { scroll: false })
-    }, [agentId, controller, router])
+        logPlaygroundDebug("history.select.push.cross-agent", {
+            targetAgentId: resolvedAgentId,
+            targetThreadId: item.threadId,
+        })
+        router.push(`/admin/agents/playground?agentId=${resolvedAgentId}&threadId=${item.threadId}`, { scroll: false })
+    }, [agentId, currentThreadId, router, threadId])
 
     useEffect(() => {
+        if (clearingThreadRef.current) {
+            logPlaygroundDebug("history.hydration.skip.clearing-thread", {
+                agentId,
+                urlThreadId: threadId,
+                currentThreadId,
+                suppressedThreadId: suppressedThreadIdRef.current,
+            })
+            return
+        }
         if (!threadId || !agentId || isMetadataLoading || isListingLoading) return
         const hydrationKey = `${agentId}:${threadId}`
-        if (hydratedThreadRef.current === hydrationKey) return
+        if (hydratedThreadRef.current === hydrationKey) {
+            logPlaygroundDebug("history.hydration.skip.already-hydrated", {
+                hydrationKey,
+                currentHydratedKey: hydratedThreadRef.current,
+            })
+            return
+        }
         const target = controller.history.find((item) => item.threadId === threadId)
-        if (!target) return
+        if (!target) {
+            logPlaygroundDebug("history.hydration.skip.no-target", {
+                hydrationKey,
+                knownThreadIds: controller.history.map((item) => item.threadId),
+            })
+            return
+        }
 
         hydratedThreadRef.current = hydrationKey
+        logPlaygroundDebug("history.hydration.load", {
+            hydrationKey,
+            currentThreadId,
+            urlThreadId: threadId,
+        })
         void (async () => {
             await controller.loadHistoryChat(target)
         })()
-    }, [agentId, controller, isListingLoading, isMetadataLoading, threadId])
+    }, [agentId, controller, currentThreadId, isListingLoading, isMetadataLoading, threadId])
 
     useEffect(() => {
-        if (!agentId || !currentThreadId) return
-        if (threadId === currentThreadId) return
+        if (clearingThreadRef.current) {
+            if (!threadId && !currentThreadId) {
+                logPlaygroundDebug("url-sync.clear.thread-clear-complete", {
+                    agentId,
+                })
+                clearingThreadRef.current = false
+                suppressedThreadIdRef.current = null
+                pendingUrlThreadIdRef.current = null
+                return
+            }
+            logPlaygroundDebug("url-sync.skip.clearing-thread", {
+                agentId,
+                urlThreadId: threadId,
+                currentThreadId,
+                suppressedThreadId: suppressedThreadIdRef.current,
+            })
+            return
+        }
+        if (pendingUrlThreadIdRef.current) {
+            if (currentThreadId !== pendingUrlThreadIdRef.current) {
+                logPlaygroundDebug("url-sync.skip.pending-thread-navigation", {
+                    pendingUrlThreadId: pendingUrlThreadIdRef.current,
+                    currentThreadId,
+                    urlThreadId: threadId,
+                })
+                return
+            }
+            if (threadId === pendingUrlThreadIdRef.current) {
+                logPlaygroundDebug("url-sync.clear.pending-url-thread", {
+                    pendingUrlThreadId: pendingUrlThreadIdRef.current,
+                    urlThreadId: threadId,
+                })
+                pendingUrlThreadIdRef.current = null
+            }
+        }
+        if (suppressedThreadIdRef.current) {
+            if (!currentThreadId) {
+                logPlaygroundDebug("url-sync.clear.suppressed-thread.after-reset", {
+                    suppressedThreadId: suppressedThreadIdRef.current,
+                })
+                suppressedThreadIdRef.current = null
+                return
+            }
+            if (currentThreadId === suppressedThreadIdRef.current) {
+                logPlaygroundDebug("url-sync.skip.suppressed-current-thread", {
+                    suppressedThreadId: suppressedThreadIdRef.current,
+                    currentThreadId,
+                    urlThreadId: threadId,
+                })
+                return
+            }
+            logPlaygroundDebug("url-sync.clear.suppressed-thread.changed", {
+                suppressedThreadId: suppressedThreadIdRef.current,
+                currentThreadId,
+            })
+            suppressedThreadIdRef.current = null
+        }
+        if (!agentId || !currentThreadId) {
+            logPlaygroundDebug("url-sync.skip.missing-agent-or-thread", {
+                agentId,
+                currentThreadId,
+                urlThreadId: threadId,
+            })
+            return
+        }
+        if (threadId === currentThreadId) {
+            logPlaygroundDebug("url-sync.skip.already-synced", {
+                agentId,
+                currentThreadId,
+            })
+            return
+        }
         hydratedThreadRef.current = `${agentId}:${currentThreadId}`
+        logPlaygroundDebug("url-sync.replace.thread", {
+            agentId,
+            currentThreadId,
+            urlThreadId: threadId,
+            hydratedThreadKey: hydratedThreadRef.current,
+        })
         router.replace(`/admin/agents/playground?agentId=${agentId}&threadId=${currentThreadId}`, { scroll: false })
     }, [agentId, currentThreadId, router, threadId])
 
     const handleStartNewThread = useCallback(() => {
+        clearingThreadRef.current = true
+        suppressedThreadIdRef.current = currentThreadId
+        pendingUrlThreadIdRef.current = null
         hydratedThreadRef.current = null
+        logPlaygroundDebug("new-thread.start", {
+            agentId,
+            currentThreadId,
+            urlThreadId: threadId,
+            suppressedThreadId: suppressedThreadIdRef.current,
+        })
         controller.startNewChat()
         if (agentId) {
+            logPlaygroundDebug("new-thread.replace.base-url", {
+                agentId,
+            })
             router.replace(`/admin/agents/playground?agentId=${agentId}`, { scroll: false })
         }
-    }, [agentId, controller, router])
+    }, [agentId, controller, currentThreadId, router, threadId])
 
     const chatController = useMemo(() => ({
         ...controller,
@@ -216,7 +362,7 @@ function PlaygroundContent() {
                         align="end"
                         showChevron={false}
                         onSelectHistory={handleSelectHistory}
-                        onStartNewChat={controller.startNewChat}
+                        onStartNewChat={handleStartNewThread}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         contentClassName="w-[320px] max-w-[min(90vw,320px)] max-h-[360px] overflow-y-auto"
                     />

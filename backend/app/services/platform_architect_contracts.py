@@ -63,6 +63,34 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "failure_codes": ["UNAUTHORIZED", "TENANT_MISMATCH", "VALIDATION_ERROR"],
                 },
             },
+            "rag.create_pipeline_shell": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "tenant_slug": {"type": "string"},
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "pipeline_type": {"type": "string", "enum": ["retrieval"]},
+                    },
+                    required=["name"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Create a draft retrieval pipeline shell with a minimal valid graph skeleton.",
+                    "required_fields": ["name"],
+                    "example_payload": {
+                        "tenant_slug": "acme",
+                        "name": "FAQ Pipeline",
+                        "description": "Initial retrieval shell for FAQ search",
+                        "pipeline_type": "retrieval",
+                    },
+                    "failure_codes": ["VALIDATION_ERROR", "SENSITIVE_ACTION_APPROVAL_REQUIRED"],
+                    "notes": [
+                        "Prefer this for first-time pipeline creation instead of authoring full nodes/edges.",
+                        "Use rag.graph.* helpers or rag.update_visual_pipeline to enrich the shell after creation.",
+                    ],
+                },
+            },
             "rag.create_visual_pipeline": {
                 "mutation": True,
                 "payload_schema": _payload_schema(
@@ -350,6 +378,28 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "required_fields": ["agent_id|id"],
                     "example_payload": {"agent_id": "agent-123"},
                     "failure_codes": ["NOT_FOUND"],
+                },
+            },
+            "agents.create_shell": {
+                "mutation": True,
+                "payload_schema": _payload_schema(
+                    properties={
+                        "name": {"type": "string"},
+                        "slug": {"type": "string"},
+                        "description": {"type": "string"},
+                    },
+                    required=["name", "slug"],
+                    additional_properties=False,
+                ),
+                "contract": {
+                    "summary": "Create a draft agent shell with the minimal valid graph skeleton.",
+                    "required_fields": ["name", "slug"],
+                    "example_payload": {
+                        "name": "FAQ Agent",
+                        "slug": "faq-agent",
+                        "description": "Initial draft shell for FAQ routing",
+                    },
+                    "failure_codes": ["VALIDATION_ERROR", "SENSITIVE_ACTION_APPROVAL_REQUIRED"],
                 },
             },
             "agents.create": {
@@ -985,7 +1035,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "architect-worker-spawn, architect-worker-spawn-group, architect-worker-get-run, architect-worker-join, "
         "architect-worker-cancel. "
         "Never call architect.run or any meta action. "
-        "Use only exact canonical action IDs from tool schemas (for example: agents.create, rag.create_visual_pipeline, "
+        "Use only exact canonical action IDs from tool schemas (for example: agents.create_shell, rag.create_pipeline_shell, "
         "artifacts.create, artifacts.update, artifacts.create_test_run). Never invent aliases like create_agent/register_asset. "
         "Every Platform SDK call must use canonical top-level action and payload fields. "
         "Never wrap a tool call inside query, text, value, or markdown. "
@@ -996,6 +1046,8 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "agents.graph.set_agent_instructions, rag.graph.attach_knowledge_store_to_node, "
         "rag.graph.set_pipeline_node_config). Use agents.graph.apply_patch or rag.graph.apply_patch only when a helper "
         "does not cover the requested mutation. "
+        "For first-time agent creation, prefer agents.create_shell over agents.create unless you intentionally need to supply a full graph_definition. "
+        "For first-time RAG pipeline creation, prefer rag.create_pipeline_shell over rag.create_visual_pipeline unless you intentionally need to supply a full nodes/edges graph. "
         "For rag.create_visual_pipeline, pass nodes/edges at payload top-level (graph_definition is backward-compatible only). "
         "For agent graph discovery use agents.nodes.catalog and agents.nodes.schema only. "
         "For RAG pipeline operator discovery use rag.operators.catalog and rag.operators.schema only. "
@@ -1009,12 +1061,14 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "returned structured errors/warnings. "
         "Do not call raw orchestration.* actions through platform-governance for worker delegation; use the dedicated architect-worker tools instead. "
         "For artifact metadata/runtime/contract lifecycle work, use platform-assets canonical artifact actions directly. "
-        "For code-heavy or multi-file artifact authoring, prepare an artifact_shared_draft binding with architect-worker-binding-prepare using canonical top-level fields "
-        "(prepare_mode plus the exact required fields for that mode), "
+        "For code-heavy or multi-file artifact authoring, prepare an artifact_shared_draft binding with architect-worker-binding-prepare using only canonical top-level fields for the selected mode. "
+        "The normal new-binding flow is prepare_mode=create_new_draft with title_prompt plus draft_seed.kind. "
+        "Do not construct a full draft_snapshot for normal artifact creation; full draft_snapshot is reserved for the advanced seed_snapshot mode only. "
         "spawn the artifact worker asynchronously with architect-worker-spawn or architect-worker-spawn-group using objective as a top-level field, inspect child progress with "
         "architect-worker-get-run or architect-worker-join, then fetch the latest canonical export payload through architect-worker-binding-get-state "
         "and persist it through platform-assets. "
         "Do not invent nested fields like task.instructions, task.title, task.worker_agent, or generic binding_payload wrappers. "
+        "Do not invent non-canonical binding fields such as create, files, entrypoint, or text. "
         "Worker runs may mutate only their binding-backed working state; they never save or publish canonical artifacts by themselves. "
         "If you used an artifact worker binding for a create/update task, you must not end the run after spawn/join alone: before final completion "
         "you must either persist the canonical artifact through artifacts.create or artifacts.update, or return an explicit blocker explaining why "
@@ -1024,7 +1078,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "If the worker finished and no blocker exists, the next required step is architect-worker-binding-get-state followed by canonical persistence. "
         "After delegated artifact changes, persist with artifacts.create or artifacts.update, optionally run artifacts.create_test_run, "
         "and only then publish if explicit publish intent is present. "
-        "For RAG pipeline creation, first discover supported operators, then build one canonical rag.create_visual_pipeline payload from advertised operator contracts, inspect the response, and stop immediately on repeated contract-shape failures. "
+        "For RAG shell creation, use rag.create_pipeline_shell first, then refine the pipeline through graph helpers or canonical update actions. "
         "If the same mutation action fails twice with the same normalized error, stop mutating, summarize the blocker, "
         "and report the target resource, attempted action, normalized failure code, last validation details, whether any "
         "mutation succeeded, and the recommended next repair action. "

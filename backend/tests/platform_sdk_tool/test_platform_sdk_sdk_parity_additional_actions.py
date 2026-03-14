@@ -13,6 +13,7 @@ _ADDITIONAL_DISPATCH_COVERAGE = [
     "rag.operators.catalog",
     "rag.operators.schema",
     "rag.list_visual_pipelines",
+    "rag.create_pipeline_shell",
     "rag.create_visual_pipeline",
     "rag.update_visual_pipeline",
     "rag.graph.get",
@@ -23,6 +24,7 @@ _ADDITIONAL_DISPATCH_COVERAGE = [
     "rag.compile_visual_pipeline",
     "rag.get_executable_pipeline",
     "rag.get_executable_input_schema",
+    "agents.create_shell",
     "agents.create",
     "agents.update",
     "agents.graph.get",
@@ -100,6 +102,14 @@ def _patch_auth(monkeypatch):
             None,
         ),
         ("rag.list_pipelines", {}, "rag", "list_visual_pipelines", None, None),
+        (
+            "rag.create_pipeline_shell",
+            {"name": "FAQ Pipeline"},
+            "rag",
+            "create_visual_pipeline",
+            None,
+            "options",
+        ),
         (
             "rag.create_or_update_pipeline",
             {"pipeline_id": "pipe-1", "patch": {"name": "updated"}},
@@ -312,6 +322,14 @@ def _patch_auth(monkeypatch):
         ("tools.delete", {"tool_id": "t1"}, "tools", "delete", "t1", "options"),
         ("agents.list", {}, "agents", "list", None, None),
         ("agents.get", {"agent_id": "ag1"}, "agents", "get", "ag1", None),
+        (
+            "agents.create_shell",
+            {"name": "FAQ Agent", "slug": "faq-agent"},
+            "agents",
+            "create",
+            None,
+            "options",
+        ),
         (
             "agents.create_or_update",
             {"name": "ag", "slug": "ag"},
@@ -530,6 +548,70 @@ def test_rag_create_visual_pipeline_translates_graph_definition_payload(monkeypa
     assert request_payload["nodes"] == [{"id": "n1", "category": "input", "operator": "query_input", "position": {"x": 0, "y": 0}, "config": {}}]
     assert request_payload["edges"] == []
     assert "tenant_id" not in request_payload
+
+
+def test_rag_create_pipeline_shell_builds_minimal_retrieval_graph(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _build_fake_control_client()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    out = handler.execute(
+        state={},
+        config={},
+        context={
+            "inputs": {
+                "action": "rag.create_pipeline_shell",
+                "tenant_id": "tenant-1",
+                "token": "token",
+                "payload": {
+                    "tenant_id": "tenant-1",
+                    "tenant_slug": "tenant-a",
+                    "name": "FAQ Pipeline",
+                },
+            }
+        },
+    )
+
+    assert out["context"]["errors"] == []
+    call = fake.rag.calls[0]
+    assert call["method"] == "create_visual_pipeline"
+    request_payload = call["args"][0]
+    assert request_payload["pipeline_type"] == "retrieval"
+    assert request_payload["nodes"][0]["operator"] == "query_input"
+    assert request_payload["nodes"][1]["operator"] == "retrieval_result"
+    assert request_payload["edges"][0]["source"] == "query_input_1"
+
+
+def test_agents_create_shell_builds_minimal_graph(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _build_fake_control_client()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    out = handler.execute(
+        state={},
+        config={},
+        context={
+            "inputs": {
+                "action": "agents.create_shell",
+                "tenant_id": "tenant-1",
+                "token": "token",
+                "payload": {
+                    "tenant_id": "tenant-1",
+                    "name": "FAQ Agent",
+                    "slug": "faq-agent",
+                },
+            }
+        },
+    )
+
+    assert out["context"]["errors"] == []
+    call = fake.agents.calls[0]
+    assert call["method"] == "create"
+    request_payload = call["args"][0]
+    assert request_payload["name"] == "FAQ Agent"
+    assert request_payload["slug"] == "faq-agent"
+    assert request_payload["graph_definition"]["nodes"][0]["type"] == "start"
+    assert request_payload["graph_definition"]["nodes"][1]["type"] == "end"
 
 
 def test_rag_update_visual_pipeline_translates_graph_definition_patch(monkeypatch):

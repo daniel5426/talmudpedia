@@ -143,6 +143,7 @@ class PlatformArchitectWorkerRuntimeService:
             "artifact_id": payload.get("artifact_id"),
             "draft_key": payload.get("draft_key"),
             "title_prompt": payload.get("title_prompt"),
+            "draft_seed": payload.get("draft_seed"),
             "draft_snapshot": payload.get("draft_snapshot"),
         }
         replace_snapshot = bool(payload.get("replace_snapshot"))

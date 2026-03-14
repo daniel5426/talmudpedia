@@ -8,18 +8,15 @@ import {
     Artifact,
     ArtifactCapabilityConfig,
     ArtifactKind,
+    ArtifactVersionListItem,
     RAGArtifactContract,
     ToolArtifactContract,
     artifactsService,
 } from "@/services/artifacts"
-import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
-import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
-import { KesherLogo } from "@/components/kesher-logo"
 import {
     Select,
     SelectContent,
@@ -27,31 +24,17 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/components/ui/table"
 import { JsonEditor } from "@/components/ui/json-editor"
 import { Textarea } from "@/components/ui/textarea"
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
+import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
+import { ArtifactListView } from "@/components/admin/artifacts/ArtifactListView"
 import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
+import { ArtifactVersionsDrawer } from "@/components/admin/artifacts/ArtifactVersionsDrawer"
 import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWorkspaceEditor"
 import { ArtifactCodingChatPanel } from "@/features/artifact-coding/ArtifactCodingChatPanel"
 import { useArtifactCodingChat } from "@/features/artifact-coding/useArtifactCodingChat"
 import {
-    ARTIFACT_KIND_OPTIONS,
     ArtifactFormData,
     createFormDataForKind,
     initialFormData,
@@ -63,25 +46,14 @@ import {
     buildConvertPayload,
     contractEditorTitle,
     formDataFromArtifact,
+    formDataFromArtifactVersion,
     kindLabel,
+    serializeArtifactFormData,
     slugify,
     tryParseObject,
 } from "@/components/admin/artifacts/artifactPageUtils"
 import {
-    Bot,
-    Database,
-    ChevronDown,
-    Edit,
     Loader2,
-    Package,
-    PanelLeft,
-    Play,
-    Plus,
-    RefreshCw,
-    Save,
-    Trash2,
-    Upload,
-    Wrench,
 } from "lucide-react"
 
 type ViewMode = "list" | "create" | "edit"
@@ -89,12 +61,6 @@ const ARTIFACT_CODING_DRAFT_KEY_STORAGE_KEY = "artifact-coding-agent:create-draf
 
 function getDefaultActiveFilePath(formData: ArtifactFormData): string {
     return formData.entry_module_path || formData.source_files[0]?.path || "__CONFIG__"
-}
-
-function kindIcon(kind: ArtifactKind) {
-    if (kind === "agent_node") return Bot
-    if (kind === "rag_operator") return Database
-    return Wrench
 }
 
 export default function ArtifactsPage() {
@@ -119,6 +85,10 @@ export default function ArtifactsPage() {
     const [sidebarOpen, setSidebarOpen] = useState(true)
     const [artifactChatDraftKey, setArtifactChatDraftKey] = useState("")
     const [chatError, setChatError] = useState<string | null>(null)
+    const [versionsOpen, setVersionsOpen] = useState(false)
+    const [artifactVersions, setArtifactVersions] = useState<ArtifactVersionListItem[]>([])
+    const [loadingVersions, setLoadingVersions] = useState(false)
+    const [applyingRevisionId, setApplyingRevisionId] = useState<string | null>(null)
 
     useEffect(() => {
         if (typeof window === "undefined") return
@@ -167,6 +137,14 @@ export default function ArtifactsPage() {
         return artifacts.some((artifact) => artifact.slug === slug && artifact.id !== selectedArtifact?.id)
     }, [artifacts, selectedArtifact?.id])
 
+    const savedFormSignature = useMemo(() => {
+        if (!selectedArtifact) return null
+        return serializeArtifactFormData(formDataFromArtifact(selectedArtifact))
+    }, [selectedArtifact])
+
+    const currentFormSignature = useMemo(() => serializeArtifactFormData(formData), [formData])
+    const hasUnsavedChanges = savedFormSignature !== null && currentFormSignature !== savedFormSignature
+
     const setViewModeWithUrl = useCallback((mode: ViewMode, id?: string) => {
         const params = new URLSearchParams()
         if (mode !== "list") params.set("mode", mode)
@@ -214,6 +192,51 @@ export default function ArtifactsPage() {
         setViewMode("list")
     }, [artifacts, handleEdit, idParam, loading, modeParam, setViewModeWithUrl])
 
+    const loadArtifactVersions = useCallback(async () => {
+        if (!selectedArtifact?.id) return
+        setLoadingVersions(true)
+        try {
+            const versions = await artifactsService.listVersions(selectedArtifact.id, currentTenant?.slug)
+            setArtifactVersions(versions)
+        } catch (error) {
+            console.error("Failed to load artifact versions", error)
+            alert(error instanceof Error ? error.message : "Failed to load artifact versions")
+        } finally {
+            setLoadingVersions(false)
+        }
+    }, [currentTenant?.slug, selectedArtifact?.id])
+
+    const applyArtifactVersion = useCallback(async (revisionId: string) => {
+        if (!selectedArtifact?.id) return
+        setApplyingRevisionId(revisionId)
+        try {
+            const version = await artifactsService.getVersion(selectedArtifact.id, revisionId, currentTenant?.slug)
+            const nextFormData = formDataFromArtifactVersion(version)
+            setFormData(nextFormData)
+            setActiveFilePath(getDefaultActiveFilePath(nextFormData))
+            setIsSlugManuallyEdited(true)
+            setSlugError(null)
+            setVersionsOpen(false)
+        } catch (error) {
+            console.error("Failed to load artifact version", error)
+            alert(error instanceof Error ? error.message : "Failed to load artifact version")
+        } finally {
+            setApplyingRevisionId(null)
+        }
+    }, [currentTenant?.slug, selectedArtifact?.id])
+
+    useEffect(() => {
+        if (!versionsOpen || !selectedArtifact?.id) return
+        void loadArtifactVersions()
+    }, [loadArtifactVersions, selectedArtifact?.id, versionsOpen])
+
+    useEffect(() => {
+        if (viewMode !== "edit") {
+            setVersionsOpen(false)
+            setArtifactVersions([])
+        }
+    }, [viewMode])
+
     const updateFormData = useCallback((field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactFormData["source_files"]) => {
         setFormData((prev) => {
             const updated = { ...prev, [field]: value }
@@ -257,18 +280,18 @@ export default function ArtifactsPage() {
         setActiveFilePath(formData.entry_module_path || formData.source_files[0]?.path || "__CONFIG__")
     }, [activeFilePath, formData.entry_module_path, formData.source_files])
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<Artifact | null> => {
         if (!formData.display_name.trim()) {
             alert("Please enter a display name")
-            return
+            return null
         }
         if (!formData.slug.trim()) {
             alert("Please enter a slug")
-            return
+            return null
         }
         if (slugError) {
             alert(slugError)
-            return
+            return null
         }
 
         setSaving(true)
@@ -277,17 +300,24 @@ export default function ArtifactsPage() {
                 const created = await artifactsService.create(buildArtifactPayload(formData), currentTenant?.slug)
                 await fetchArtifacts()
                 setViewModeWithUrl("edit", created.id)
+                return created
             } else if (selectedArtifact) {
                 await artifactsService.update(selectedArtifact.id, buildArtifactUpdatePayload(formData), currentTenant?.slug)
-                await reloadArtifact(selectedArtifact.id)
+                const refreshed = await reloadArtifact(selectedArtifact.id)
                 await fetchArtifacts()
+                if (versionsOpen) {
+                    await loadArtifactVersions()
+                }
+                return refreshed
             }
         } catch (error) {
             console.error("Failed to save artifact", error)
             alert(error instanceof Error ? error.message : "Failed to save artifact")
+            return null
         } finally {
             setSaving(false)
         }
+        return null
     }
 
     const handleDelete = async (artifact: Artifact) => {
@@ -313,6 +343,9 @@ export default function ArtifactsPage() {
             await fetchArtifacts()
             if (selectedArtifact?.id === artifact.id) {
                 await reloadArtifact(artifact.id)
+                if (versionsOpen) {
+                    await loadArtifactVersions()
+                }
             }
         } catch (error) {
             console.error("Failed to publish artifact", error)
@@ -320,6 +353,17 @@ export default function ArtifactsPage() {
         } finally {
             setPublishingId(null)
         }
+    }
+
+    const handlePublishFromEditor = async () => {
+        if (!selectedArtifact) return
+        if (hasUnsavedChanges) {
+            const savedArtifact = await handleSave()
+            if (!savedArtifact) return
+            await handlePublish(savedArtifact)
+            return
+        }
+        await handlePublish(selectedArtifact)
     }
 
     const handleConvertKind = async () => {
@@ -365,196 +409,6 @@ export default function ArtifactsPage() {
         }
         updateFormData("tool_contract", value)
     }, [formData.kind, updateFormData])
-
-    const renderHeader = () => (
-        <AdminPageHeader contentClassName="h-12 items-center">
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-                <CustomBreadcrumb
-                    items={[
-                        { label: "Artifacts", href: "/admin/artifacts", active: viewMode === "list" },
-                        ...(viewMode === "create" ? [{ label: "New Artifact", active: true }] : []),
-                        ...(viewMode === "edit" ? [{ label: formData.display_name || "Edit Artifact", active: true }] : []),
-                    ]}
-                />
-            </div>
-            {viewMode === "list" ? (
-                <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={fetchArtifacts}>
-                        <RefreshCw className="mr-2 h-4 w-4" />
-                        Refresh
-                    </Button>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button size="sm">
-                                <Plus className="mr-2 h-4 w-4" />
-                                New Artifact
-                                <ChevronDown className="ml-1 h-4 w-4 opacity-50" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-64">
-                            <DropdownMenuLabel>Select Artifact Type</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            {ARTIFACT_KIND_OPTIONS.map((option) => {
-                                const Icon = kindIcon(option.value)
-                                return (
-                                    <DropdownMenuItem
-                                        key={option.value}
-                                        className="flex cursor-pointer flex-col items-start gap-1 py-3"
-                                        onClick={() => handleCreate(option.value)}
-                                    >
-                                        <div className="flex items-center gap-2 font-medium text-foreground">
-                                            <Icon className="h-4 w-4 text-muted-foreground" />
-                                            <span>{option.label}</span>
-                                        </div>
-                                        <span className="text-[11px] leading-tight text-muted-foreground">
-                                            {option.description}
-                                        </span>
-                                    </DropdownMenuItem>
-                                )
-                            })}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                </div>
-            ) : (
-                <div className="flex items-center gap-2">
-                    <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setSidebarOpen((prev) => !prev)}
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                        title={sidebarOpen ? "Hide file explorer" : "Show file explorer"}
-                    >
-                        <PanelLeft className="!size-[17px]" />
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => artifactCodingChat.setIsAgentPanelOpen(!artifactCodingChat.isAgentPanelOpen)}
-                        className="h-8 w-8 mr-1 text-muted-foreground hover:text-foreground"
-                        title={artifactCodingChat.isAgentPanelOpen ? "Close coding agent panel" : "Open coding agent panel"}
-                    >
-                        <KesherLogo
-                            size={23}
-                            className={cn(
-                                "h-4 w-4 transition-transform duration-200",
-                                artifactCodingChat.isAgentPanelOpen
-                                    ? "rotate-90 text-foreground"
-                                    : "text-sky-600"
-                            )}
-                        />
-                    </Button>
-                    {viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant" && (
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handlePublish(selectedArtifact)}
-                            disabled={publishingId === selectedArtifact.id}
-                        >
-                            {publishingId === selectedArtifact.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                            Publish
-                        </Button>
-                    )}
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => document.getElementById("artifact-test-panel-execute")?.click()}
-                    >
-                        <Play className="mr-2 h-4 w-4 fill-current" />
-                        Test
-                    </Button>
-                    <Button size="sm" onClick={handleSave} disabled={saving || !!slugError}>
-                        {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                        Save
-                    </Button>
-                </div>
-            )}
-        </AdminPageHeader>
-    )
-
-    const renderList = () => (
-        <div className="m-4 space-y-3">
-            <div>
-                <h2 className="text-lg font-semibold">Unified artifact runtime</h2>
-                <p className="text-sm text-muted-foreground">One execution substrate with explicit domain kinds.</p>
-            </div>
-            <div className="rounded-xl border">
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>Artifact</TableHead>
-                            <TableHead>Kind</TableHead>
-                            <TableHead>Owner</TableHead>
-                            <TableHead>Version</TableHead>
-                            <TableHead className="text-right">Actions</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {artifacts.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
-                                    <div className="flex flex-col items-center gap-2">
-                                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                                            <Package className="h-6 w-6" />
-                                        </div>
-                                        <span>No artifacts found.</span>
-                                    </div>
-                                </TableCell>
-                            </TableRow>
-                        ) : (
-                            artifacts.map((artifact) => {
-                                const Icon = kindIcon(artifact.kind)
-                                return (
-                                    <TableRow key={artifact.id}>
-                                        <TableCell className="font-medium">
-                                            <div className="flex items-center gap-3">
-                                                <div className="rounded-lg bg-muted p-2">
-                                                    <Icon className="h-4 w-4" />
-                                                </div>
-                                                <div className="flex flex-col">
-                                                    <span>{artifact.display_name}</span>
-                                                    <span className="font-mono text-xs text-muted-foreground">{artifact.slug}</span>
-                                                </div>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell>
-                                            <Badge variant="outline">{kindLabel(artifact.kind)}</Badge>
-                                        </TableCell>
-                                        <TableCell>
-                                            <Badge variant={artifact.owner_type === "system" ? "secondary" : "outline"}>{artifact.owner_type}</Badge>
-                                        </TableCell>
-                                        <TableCell className="text-sm text-muted-foreground">{artifact.version}</TableCell>
-                                        <TableCell className="text-right">
-                                            <div className="flex justify-end gap-1">
-                                                {artifact.type === "draft" && artifact.owner_type === "tenant" && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        title="Publish"
-                                                        onClick={() => handlePublish(artifact)}
-                                                        disabled={publishingId === artifact.id}
-                                                    >
-                                                        {publishingId === artifact.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                                                    </Button>
-                                                )}
-                                                <Button variant="ghost" size="icon" onClick={() => setViewModeWithUrl("edit", artifact.id)}>
-                                                    <Edit className="h-4 w-4" />
-                                                </Button>
-                                                {artifact.owner_type === "tenant" && (
-                                                    <Button variant="ghost" size="icon" onClick={() => handleDelete(artifact)}>
-                                                        <Trash2 className="h-4 w-4 text-destructive" />
-                                                    </Button>
-                                                )}
-                                            </div>
-                                        </TableCell>
-                                    </TableRow>
-                                )
-                            })
-                        )}
-                    </TableBody>
-                </Table>
-            </div>
-        </div>
-    )
 
     const renderConfigContent = () => (
         <div className="flex h-full w-full flex-col overflow-y-auto bg-background [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-border">
@@ -781,10 +635,43 @@ export default function ArtifactsPage() {
 
     return (
         <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
-            {renderHeader()}
+            <ArtifactEditorHeader
+                viewMode={viewMode}
+                displayName={formData.display_name}
+                sidebarOpen={sidebarOpen}
+                isAgentPanelOpen={artifactCodingChat.isAgentPanelOpen}
+                isPublishing={publishingId === selectedArtifact?.id}
+                isSaving={saving}
+                disableSave={Boolean(slugError)}
+                showPublish={Boolean(viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant")}
+                showVersions={Boolean(viewMode === "edit" && selectedArtifact?.id)}
+                hasUnsavedChanges={hasUnsavedChanges}
+                onRefreshArtifacts={fetchArtifacts}
+                onCreateArtifact={handleCreate}
+                onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+                onToggleAgentPanel={() => artifactCodingChat.setIsAgentPanelOpen(!artifactCodingChat.isAgentPanelOpen)}
+                onOpenVersions={() => setVersionsOpen(true)}
+                onPublish={handlePublishFromEditor}
+                onRunTest={() => document.getElementById("artifact-test-panel-execute")?.click()}
+                onSave={() => {
+                    void handleSave()
+                }}
+            />
             <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
                 {viewMode === "list" ? (
-                    <div className="h-full overflow-auto" data-admin-page-scroll>{renderList()}</div>
+                    <div className="h-full overflow-auto" data-admin-page-scroll>
+                        <ArtifactListView
+                            artifacts={artifacts}
+                            publishingId={publishingId}
+                            onEditArtifact={(artifact) => setViewModeWithUrl("edit", artifact.id)}
+                            onDeleteArtifact={(artifact) => {
+                                void handleDelete(artifact)
+                            }}
+                            onPublishArtifact={(artifact) => {
+                                void handlePublish(artifact)
+                            }}
+                        />
+                    </div>
                 ) : (
                     <div className="relative flex min-h-0 w-full flex-1 overflow-hidden">
                         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -848,6 +735,20 @@ export default function ArtifactsPage() {
                     </div>
                 )}
             </div>
+            <ArtifactVersionsDrawer
+                open={versionsOpen}
+                onOpenChange={setVersionsOpen}
+                versions={artifactVersions}
+                isLoading={loadingVersions}
+                applyingRevisionId={applyingRevisionId}
+                hasUnsavedChanges={hasUnsavedChanges}
+                onRefresh={() => {
+                    void loadArtifactVersions()
+                }}
+                onSelectVersion={(revisionId) => {
+                    void applyArtifactVersion(revisionId)
+                }}
+            />
             {chatError ? (
                 <div className="pointer-events-none fixed bottom-4 right-4 z-50 w-full max-w-md px-4 sm:px-0">
                     <Card className="pointer-events-auto border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-lg">

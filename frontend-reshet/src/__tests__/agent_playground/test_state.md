@@ -17,10 +17,11 @@ Playground-specific trace inspection behavior for assistant responses, including
 - The playground syncs the active `threadId` into the URL so reload restores the current chat.
 - Selecting a same-agent history thread writes that thread id into the URL.
 - Loading a thread from a `threadId` URL does not strip the `threadId` back out.
+- Starting a new chat from the history controls clears the stale `threadId` from the URL.
 
 ## Last Run
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/agent_playground/trace_steps.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx src/__tests__/agent_playground/playground_page_trace.test.tsx src/__tests__/assistant_response_ui/trace_loader.test.ts src/__tests__/assistant_response_ui/normalizer.test.ts`
-- Date: 2026-03-14 19:40 EET
+- Date: 2026-03-14 21:19 EET
 - Result: Pass
 
 ## Known Gaps / Follow-ups

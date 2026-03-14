@@ -24,7 +24,9 @@ _MUTATION_ACTION_PREFIXES = (
 _MUTATION_ACTION_NAMES = {
     "agents.update",
     "rag.update_visual_pipeline",
+    "agents.create_shell",
     "agents.create",
+    "rag.create_pipeline_shell",
     "rag.create_visual_pipeline",
 }
 _VALIDATION_ACTIONS = {
@@ -317,6 +319,10 @@ def _recommended_next_repair_action(action: str) -> str:
         return "Read the current agent graph, validate one corrected mutation, and stop if the same error repeats."
     if action.startswith("rag.graph.") or action == "rag.update_visual_pipeline":
         return "Read the current pipeline graph, validate one corrected mutation, and stop if the same error repeats."
+    if action == "agents.create_shell":
+        return "Use the minimal shell payload only, inspect the created graph, then refine through graph helpers."
+    if action == "rag.create_pipeline_shell":
+        return "Use the retrieval shell payload only, inspect the created graph, then refine through rag.graph helpers."
     if action == "rag.create_visual_pipeline":
         return "Discover valid RAG operators first, build one canonical create payload, and stop if the same error repeats."
     return "Inspect persisted state, apply one corrected mutation, then validate."

@@ -5,6 +5,7 @@ import {
   ArtifactCreateRequest,
   ArtifactKind,
   ArtifactUpdateRequest,
+  ArtifactVersion,
   RAGArtifactContract,
   ToolArtifactContract,
 } from "@/services/artifacts";
@@ -80,6 +81,31 @@ export function formDataFromArtifact(artifact: Artifact): ArtifactFormData {
     agent_contract: JSON.stringify(artifact.agent_contract || defaultAgentContract, null, 2),
     rag_contract: JSON.stringify(artifact.rag_contract || defaultRagContract, null, 2),
     tool_contract: JSON.stringify(artifact.tool_contract || defaultToolContract, null, 2),
+  };
+}
+
+export function formDataFromArtifactVersion(version: ArtifactVersion): ArtifactFormData {
+  const defaultAgentContract = JSON.parse(createFormDataForKind("agent_node").agent_contract) as Record<string, unknown>;
+  const defaultRagContract = JSON.parse(createFormDataForKind("rag_operator").rag_contract) as Record<string, unknown>;
+  const defaultToolContract = JSON.parse(createFormDataForKind("tool_impl").tool_contract) as Record<string, unknown>;
+  const sourceFiles = version.runtime.source_files?.length
+    ? version.runtime.source_files
+    : createFormDataForKind(version.kind).source_files;
+
+  return {
+    slug: version.slug,
+    display_name: version.display_name,
+    description: version.description || "",
+    kind: version.kind,
+    source_files: sourceFiles,
+    entry_module_path: version.runtime.entry_module_path || sourceFiles[0]?.path || "main.py",
+    python_dependencies: (version.runtime.python_dependencies || []).join(", "),
+    runtime_target: version.runtime.runtime_target || "cloudflare_workers",
+    capabilities: JSON.stringify(version.capabilities || {}, null, 2),
+    config_schema: JSON.stringify(version.config_schema || {}, null, 2),
+    agent_contract: JSON.stringify(version.agent_contract || defaultAgentContract, null, 2),
+    rag_contract: JSON.stringify(version.rag_contract || defaultRagContract, null, 2),
+    tool_contract: JSON.stringify(version.tool_contract || defaultToolContract, null, 2),
   };
 }
 
@@ -160,4 +186,11 @@ export function contractEditorDescription(kind: ArtifactKind): string {
   if (kind === "agent_node") return "State reads/writes, node UI, and typed graph IO.";
   if (kind === "rag_operator") return "Pipeline role, operator category, and typed pipeline IO.";
   return "Invocation schemas, side effects, and tool presentation metadata.";
+}
+
+export function serializeArtifactFormData(formData: ArtifactFormData): string {
+  return JSON.stringify({
+    ...formData,
+    source_files: formData.source_files.map((file) => ({ path: file.path, content: file.content })),
+  });
 }

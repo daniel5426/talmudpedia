@@ -109,6 +109,32 @@ class ArtifactSchema(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class ArtifactVersionListItem(BaseModel):
+    id: str
+    artifact_id: str
+    revision_number: int
+    version_label: str
+    is_published: bool = False
+    is_current_draft: bool = False
+    is_current_published: bool = False
+    source_file_count: int = 0
+    created_at: datetime
+    created_by: Optional[str] = None
+
+
+class ArtifactVersionSchema(ArtifactVersionListItem):
+    slug: str
+    display_name: str
+    description: Optional[str] = None
+    kind: ArtifactKind
+    config_schema: Dict[str, Any] = Field(default_factory=dict)
+    runtime: ArtifactRuntimeConfig
+    capabilities: ArtifactCapabilityConfig = Field(default_factory=ArtifactCapabilityConfig)
+    agent_contract: Optional[AgentArtifactContract] = None
+    rag_contract: Optional[RAGArtifactContract] = None
+    tool_contract: Optional[ToolArtifactContract] = None
+
+
 class ArtifactCreate(BaseModel):
     slug: str
     display_name: str

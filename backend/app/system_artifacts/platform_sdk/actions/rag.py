@@ -70,6 +70,30 @@ def _sdk_error_payload(error_name: str, exc: ControlPlaneSDKError, **extra: Any)
     return payload
 
 
+def _retrieval_pipeline_shell_graph() -> Dict[str, Any]:
+    return {
+        "nodes": [
+            {
+                "id": "query_input_1",
+                "category": "input",
+                "operator": "query_input",
+                "position": {"x": 0, "y": 0},
+                "config": {},
+            },
+            {
+                "id": "retrieval_result_1",
+                "category": "output",
+                "operator": "retrieval_result",
+                "position": {"x": 280, "y": 0},
+                "config": {},
+            },
+        ],
+        "edges": [
+            {"id": "edge_query_to_result", "source": "query_input_1", "target": "retrieval_result_1"},
+        ],
+    }
+
+
 def operators_catalog(
     client: Client,
     payload: Dict[str, Any],
@@ -212,6 +236,53 @@ def create_visual_pipeline(
         return None, [_sdk_error_payload("create_visual_pipeline_failed", exc)]
     except Exception as exc:
         return None, [{"error": "create_visual_pipeline_failed", "detail": str(exc)}]
+
+
+def create_pipeline_shell(
+    client: Client,
+    payload: Dict[str, Any],
+    dry_run: bool,
+    *,
+    control_client_factory=control_client,
+    request_options_builder=request_options,
+) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return None, [{"error": "missing_fields", "fields": ["name"]}]
+
+    pipeline_type = str(payload.get("pipeline_type") or "retrieval").strip().lower()
+    if pipeline_type != "retrieval":
+        return None, [{
+            "error": "unsupported_pipeline_type",
+            "fields": ["pipeline_type"],
+            "message": "rag.create_pipeline_shell currently supports retrieval pipelines only.",
+        }]
+
+    request_payload: Dict[str, Any] = {
+        "name": name,
+        "pipeline_type": pipeline_type,
+        **_retrieval_pipeline_shell_graph(),
+    }
+    description = payload.get("description")
+    if isinstance(description, str) and description.strip():
+        request_payload["description"] = description.strip()
+    tenant_slug = payload.get("tenant_slug")
+
+    if dry_run:
+        return {"status": "skipped", "dry_run": True, "name": name, "pipeline_type": pipeline_type}, []
+
+    try:
+        sdk_client = control_client_factory(client)
+        response = sdk_client.rag.create_visual_pipeline(
+            request_payload,
+            tenant_slug=tenant_slug,
+            options=request_options_builder(payload=payload, dry_run=False),
+        )
+        return response.get("data"), []
+    except ControlPlaneSDKError as exc:
+        return None, [_sdk_error_payload("create_pipeline_shell_failed", exc)]
+    except Exception as exc:
+        return None, [{"error": "create_pipeline_shell_failed", "detail": str(exc)}]
 
 
 def update_visual_pipeline(

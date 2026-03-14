@@ -1,6 +1,6 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-14
 
 Scope:
 - Platform SDK tool action dispatch, explicit-action behavior, and strict canonical input enforcement.
@@ -41,6 +41,7 @@ Key scenarios covered:
   - `rag.operators.catalog`
   - `rag.operators.schema`
   - `rag.list_visual_pipelines`
+  - `rag.create_pipeline_shell`
   - `rag.create_visual_pipeline`
   - `rag.update_visual_pipeline`
   - `rag.graph.get`
@@ -51,6 +52,7 @@ Key scenarios covered:
   - `rag.compile_visual_pipeline`
   - `rag.get_executable_pipeline`
   - `rag.get_executable_input_schema`
+  - `agents.create_shell`
   - `agents.create`
   - `agents.update`
   - `agents.graph.get`
@@ -77,9 +79,9 @@ Key scenarios covered:
   - `agents.resume_run` (error-path parity on nonexistent run)
   These validate persisted-state equivalence across UI HTTP path, SDK path, and tool-action path.
 
-Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_sdk_tool`
-Last run date/time: 2026-03-12 00:57 EET
-Last run result: passed (`103 passed, 11 skipped`)
+Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
+Last run date/time: 2026-03-14 20:39 EET
+Last run result: passed (`61 passed`)
 
 Known gaps / follow-ups:
 - Publish env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.
