@@ -64,7 +64,7 @@ Current admin authoring UI also includes:
 - an active-file editor surface
 - kind-specific contract editing
 - explicit save-created version history for saved artifacts
-- a version-history drawer that can load any saved version back into the working draft
+- a minimalist version-history dropdown that can load any saved version back into the working draft
 - artifact-page test-run execution against unsaved source trees
 - artifact-page coding chat that edits the live draft snapshot, including unsaved form changes
 
@@ -77,6 +77,7 @@ Current behavior:
 - the artifact page sends the full live form draft as prompt context on each submission
 - agent tool mutations update only a persisted shared working-draft snapshot for the current artifact scope, not canonical artifact rows
 - tool mutation results are applied back into the artifact page immediately
+- reopening an existing artifact page should hydrate from the current persisted working draft before falling back to the latest saved revision
 - Save creates a new immutable artifact revision/version
 - Publish remains explicit and now auto-saves first when the editor has unsaved changes
 - create mode is supported before first artifact save through a temporary `draft_key`
@@ -90,6 +91,7 @@ Current rule:
 
 Current authoring rule:
 - Save creates a reversible version checkpoint
+- no-op saves do not create a new version when the working draft matches the latest saved revision exactly
 - loading a historical version into the editor affects only the working draft until the user saves again
 - Publish should publish the latest saved revision, auto-saving the current working draft first when required
 

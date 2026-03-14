@@ -19,7 +19,11 @@ from app.api.schemas.artifacts import (
     ArtifactUpdate,
     ArtifactVersionListItem,
     ArtifactVersionSchema,
+    ArtifactWorkingDraftResponse,
+    ArtifactWorkingDraftUpdateRequest,
 )
+from app.services.artifact_coding_agent_tools import _initial_snapshot_for_kind, _serialize_form_state
+from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.artifact_runtime import Artifact as ArtifactModel
 from app.db.postgres.models.artifact_runtime import ArtifactOwnerType, ArtifactRevision as ArtifactRevisionModel, ArtifactRunStatus, ArtifactStatus
 from app.db.postgres.models.identity import OrgMembership, Tenant
@@ -242,6 +246,29 @@ async def get_artifact(
     return _artifact_to_schema(artifact, include_code=True)
 
 
+def _artifact_form_snapshot(artifact: ArtifactModel) -> dict[str, Any]:
+    active_revision = artifact.latest_draft_revision or artifact.latest_published_revision
+    if active_revision is None:
+        return _initial_snapshot_for_kind(getattr(artifact.kind, "value", artifact.kind))
+    return _serialize_form_state(
+        {
+            "slug": artifact.slug,
+            "display_name": artifact.display_name,
+            "description": artifact.description or "",
+            "kind": getattr(artifact.kind, "value", artifact.kind),
+            "source_files": list(active_revision.source_files or []),
+            "entry_module_path": active_revision.entry_module_path,
+            "python_dependencies": ", ".join(list(active_revision.python_dependencies or [])),
+            "runtime_target": active_revision.runtime_target,
+            "capabilities": dict(active_revision.capabilities or {}),
+            "config_schema": dict(active_revision.config_schema or {}),
+            "agent_contract": dict(active_revision.agent_contract or {}) if active_revision.agent_contract is not None else None,
+            "rag_contract": dict(active_revision.rag_contract or {}) if active_revision.rag_contract is not None else None,
+            "tool_contract": dict(active_revision.tool_contract or {}) if active_revision.tool_contract is not None else None,
+        }
+    )
+
+
 @router.get("/{artifact_id}/versions", response_model=List[ArtifactVersionListItem])
 async def list_artifact_versions(
     artifact_id: str,
@@ -294,6 +321,75 @@ async def get_artifact_version(
     if revision is None or revision.artifact_id != artifact.id:
         raise HTTPException(status_code=404, detail="Artifact version not found")
     return _artifact_revision_to_version_schema(artifact, revision, include_code=True)
+
+
+@router.get("/{artifact_id}/working-draft", response_model=ArtifactWorkingDraftResponse)
+async def get_artifact_working_draft(
+    artifact_id: str,
+    tenant_slug: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, _user, db = artifact_ctx
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    artifact = await ArtifactRegistryService(db).get_accessible_artifact(
+        artifact_id=artifact_uuid,
+        tenant_id=tenant.id if tenant is not None else None,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    initial_snapshot = _artifact_form_snapshot(artifact)
+    shared = await ArtifactCodingSharedDraftService(db).get_or_create_for_scope(
+        tenant_id=tenant.id if tenant is not None else artifact.tenant_id,
+        artifact_id=artifact.id,
+        draft_key=None,
+        initial_snapshot=initial_snapshot,
+    )
+    return ArtifactWorkingDraftResponse(
+        artifact_id=str(artifact.id),
+        draft_snapshot=dict(shared.working_draft_snapshot or initial_snapshot),
+        updated_at=shared.updated_at,
+    )
+
+
+@router.put("/{artifact_id}/working-draft", response_model=ArtifactWorkingDraftResponse)
+async def update_artifact_working_draft(
+    artifact_id: str,
+    request: ArtifactWorkingDraftUpdateRequest,
+    tenant_slug: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, _user, db = artifact_ctx
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    shared_service = ArtifactCodingSharedDraftService(db)
+    shared = await shared_service.get_or_create_for_scope(
+        tenant_id=tenant.id,
+        artifact_id=artifact.id,
+        draft_key=str(request.draft_key or "").strip() or None,
+        initial_snapshot=_artifact_form_snapshot(artifact),
+    )
+    normalized_snapshot = _serialize_form_state(dict(request.draft_snapshot or {}))
+    await shared_service.update_snapshot(
+        shared_draft=shared,
+        draft_snapshot=normalized_snapshot,
+        artifact_id=artifact.id,
+        draft_key=str(request.draft_key or "").strip() or None,
+    )
+    await db.commit()
+    return ArtifactWorkingDraftResponse(
+        artifact_id=str(artifact.id),
+        draft_key=str(request.draft_key or "").strip() or None,
+        draft_snapshot=dict(shared.working_draft_snapshot or normalized_snapshot),
+        updated_at=shared.updated_at,
+    )
 
 
 @router.post("", response_model=ArtifactSchema)

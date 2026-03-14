@@ -17,6 +17,7 @@ export interface BreadcrumbItemProps {
   label: string
   href?: string
   active?: boolean
+  statusDot?: "primary"
 }
 
 interface CustomBreadcrumbProps {
@@ -31,10 +32,16 @@ export function CustomBreadcrumb({ items }: CustomBreadcrumbProps) {
           <React.Fragment key={index}>
             <BreadcrumbItem>
               {item.active ? (
-                <BreadcrumbPage>{item.label}</BreadcrumbPage>
+                <BreadcrumbPage className="inline-flex items-center gap-2">
+                  <span>{item.label}</span>
+                  {item.statusDot === "primary" ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
+                </BreadcrumbPage>
               ) : (
                 <BreadcrumbLink asChild>
-                  <Link href={item.href || "#"}>{item.label}</Link>
+                  <Link href={item.href || "#"} className="inline-flex items-center gap-2">
+                    <span>{item.label}</span>
+                    {item.statusDot === "primary" ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
+                  </Link>
                 </BreadcrumbLink>
               )}
             </BreadcrumbItem>

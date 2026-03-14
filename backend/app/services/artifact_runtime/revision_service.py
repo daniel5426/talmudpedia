@@ -119,12 +119,31 @@ class ArtifactRevisionService:
             entry_module_path=entry_module_path,
         )
         kind_value = self._normalize_kind(artifact.kind)
+        current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
+        if current_revision is None:
+            raise ValueError("Artifact is missing a current revision")
         self._validate_contracts(
             kind=kind_value,
             agent_contract=agent_contract,
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
+        if self._revision_matches_payload(
+            revision=current_revision,
+            display_name=display_name,
+            description=description,
+            kind=kind_value,
+            source_files=source.source_files,
+            entry_module_path=source.entry_module_path,
+            python_dependencies=python_dependencies,
+            runtime_target=runtime_target,
+            capabilities=capabilities,
+            config_schema=config_schema,
+            agent_contract=agent_contract,
+            rag_contract=rag_contract,
+            tool_contract=tool_contract,
+        ):
+            return current_revision
         artifact.display_name = display_name
         artifact.description = description
         revision = self._build_revision(
@@ -344,6 +363,38 @@ class ArtifactRevisionService:
             dependency_hash=build_hash,
             bundle_storage_key=None,
             bundle_inline_bytes=None,
+        )
+
+    @staticmethod
+    def _revision_matches_payload(
+        *,
+        revision: ArtifactRevision,
+        display_name: str,
+        description: str | None,
+        kind: ArtifactKind,
+        source_files: list[dict[str, str]],
+        entry_module_path: str,
+        python_dependencies: list[str],
+        runtime_target: str,
+        capabilities: dict[str, Any],
+        config_schema: dict[str, Any],
+        agent_contract: dict[str, Any] | None,
+        rag_contract: dict[str, Any] | None,
+        tool_contract: dict[str, Any] | None,
+    ) -> bool:
+        return (
+            revision.display_name == display_name
+            and revision.description == description
+            and revision.kind == kind
+            and list(revision.source_files or []) == list(source_files or [])
+            and str(revision.entry_module_path or "") == str(entry_module_path or "")
+            and list(revision.python_dependencies or []) == list(python_dependencies or [])
+            and str(revision.runtime_target or "cloudflare_workers") == str(runtime_target or "cloudflare_workers")
+            and dict(revision.capabilities or {}) == dict(capabilities or {})
+            and dict(revision.config_schema or {}) == dict(config_schema or {})
+            and ((dict(revision.agent_contract or {}) if revision.agent_contract is not None else None) == (dict(agent_contract or {}) if agent_contract is not None else None))
+            and ((dict(revision.rag_contract or {}) if revision.rag_contract is not None else None) == (dict(rag_contract or {}) if rag_contract is not None else None))
+            and ((dict(revision.tool_contract or {}) if revision.tool_contract is not None else None) == (dict(tool_contract or {}) if tool_contract is not None else None))
         )
 
     @staticmethod

@@ -135,6 +135,19 @@ class ArtifactVersionSchema(ArtifactVersionListItem):
     tool_contract: Optional[ToolArtifactContract] = None
 
 
+class ArtifactWorkingDraftResponse(BaseModel):
+    artifact_id: Optional[str] = None
+    draft_key: Optional[str] = None
+    draft_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    updated_at: Optional[datetime] = None
+
+
+class ArtifactWorkingDraftUpdateRequest(BaseModel):
+    artifact_id: Optional[str] = None
+    draft_key: Optional[str] = None
+    draft_snapshot: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ArtifactCreate(BaseModel):
     slug: str
     display_name: str

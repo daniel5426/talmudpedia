@@ -6,12 +6,14 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent.execution.tool_input_contracts import validate_tool_input_schema
 from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry
 from app.services.platform_architect_contracts import build_architect_graph_definition
+from app.services.platform_architect_worker_tools import architect_worker_spawn
 from app.services.platform_architect_worker_runtime_service import PlatformArchitectWorkerRuntimeService
 from app.services.platform_architect_worker_tools import (
     architect_worker_binding_prepare,
@@ -68,6 +70,11 @@ async def test_architect_worker_tools_seed_expected_slugs(db_session):
     assert "task" not in spawn_schema["properties"]
     assert "objective" in spawn_schema["properties"]
     assert spawn_schema["properties"]["binding_ref"]["required"] == ["binding_type", "binding_id"]
+    assert "oneOf" not in spawn_schema
+    assert spawn_schema["anyOf"] == [
+        {"required": ["worker_agent_slug", "objective"]},
+        {"required": ["binding_ref", "objective"]},
+    ]
 
     binding_prepare_schema = by_slug["architect-worker-binding-prepare"].schema["input"]
     assert "binding_payload" not in binding_prepare_schema["properties"]
@@ -146,6 +153,152 @@ async def test_binding_prepare_schema_accepts_lightweight_seed_and_rejects_old_s
     )
     assert any("entry_module_path" in item["message"] for item in entrypoint_errors)
     assert any("text" in item["message"] for item in entrypoint_errors)
+
+
+@pytest.mark.asyncio
+async def test_spawn_schema_allows_bound_worker_payload_with_explicit_worker_slug(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+    tool = await _get_tool_by_slug(db_session, "architect-worker-spawn")
+
+    errors = validate_tool_input_schema(
+        tool,
+        {
+            "binding_ref": {
+                "binding_type": "artifact_shared_draft",
+                "binding_id": "11111111-1111-1111-1111-111111111111",
+            },
+            "worker_agent_slug": "artifact-coding-agent",
+            "objective": "Implement the bound artifact draft.",
+            "timeout_s": 600,
+        },
+    )
+
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_spawn_group_target_schema_allows_bound_worker_payload_with_explicit_worker_slug(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+    tool = await _get_tool_by_slug(db_session, "architect-worker-spawn-group")
+
+    errors = validate_tool_input_schema(
+        tool,
+        {
+            "targets": [
+                {
+                    "binding_ref": {
+                        "binding_type": "artifact_shared_draft",
+                        "binding_id": "11111111-1111-1111-1111-111111111111",
+                    },
+                    "worker_agent_slug": "artifact-coding-agent",
+                    "objective": "Implement the bound artifact draft.",
+                }
+            ],
+            "timeout_s": 600,
+        },
+    )
+
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+
+    session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr("app.services.platform_architect_worker_tools.get_session", session_factory)
+
+    spawned_run_id = uuid4()
+
+    async def fake_spawn_run(
+        self,
+        *,
+        caller_run_id,
+        parent_node_id,
+        target_agent_id,
+        target_agent_slug,
+        mapped_input_payload,
+        failure_policy,
+        timeout_s,
+        scope_subset,
+        idempotency_key,
+        start_background,
+    ):
+        del caller_run_id, parent_node_id, target_agent_id, failure_policy, timeout_s, scope_subset, idempotency_key, start_background
+        run = AgentRun(
+            id=spawned_run_id,
+            tenant_id=tenant.id,
+            agent_id=uuid4(),
+            user_id=user.id,
+            initiator_user_id=user.id,
+            status=RunStatus.queued,
+            root_run_id=spawned_run_id,
+            parent_run_id=None,
+            input_params=mapped_input_payload,
+            output_result={"worker_agent_slug": target_agent_slug},
+        )
+        self.db.add(run)
+        await self.db.flush()
+        return {
+            "spawned_run_ids": [str(spawned_run_id)],
+            "lineage": {"parent_run_id": str(uuid4())},
+            "effective_scope_subset": ["agents.execute"],
+        }
+
+    monkeypatch.setattr(
+        "app.services.orchestration_kernel_service.OrchestrationKernelService.spawn_run",
+        fake_spawn_run,
+    )
+
+    prepare_result = await architect_worker_binding_prepare(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(uuid4()),
+            },
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "create_new_draft",
+            "title_prompt": "Create a random number tool",
+            "draft_seed": {"kind": "tool_impl"},
+        }
+    )
+
+    spawn_result = await architect_worker_spawn(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(uuid4()),
+            },
+            "objective": "Implement the bound tool draft.",
+            "binding_ref": prepare_result["binding_ref"],
+            "worker_agent_slug": "artifact-coding-agent",
+            "timeout_s": 120,
+        }
+    )
+
+    assert spawn_result["mode"] == "async"
+    assert spawn_result["run_id"] == str(spawned_run_id)
+    assert spawn_result["binding_ref"] == prepare_result["binding_ref"]
 
 
 def test_architect_graph_instructions_include_async_worker_flow():

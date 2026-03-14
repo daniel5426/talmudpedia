@@ -3,8 +3,9 @@ import json
 import uuid
 
 import pytest
+from sqlalchemy import func, select
 
-from app.db.postgres.models.artifact_runtime import ArtifactStatus
+from app.db.postgres.models.artifact_runtime import ArtifactRevision, ArtifactStatus
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
 from app.services.artifact_runtime.bundle_builder import ArtifactBundleBuilder
 from app.services.artifact_runtime.cloudflare_package_builder import CloudflareArtifactPackageBuilder
@@ -113,6 +114,71 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
     assert published_revision.version_label == "v2"
     assert artifact.latest_published_revision_id == published_revision.id
     assert artifact.status == ArtifactStatus.PUBLISHED
+
+
+@pytest.mark.asyncio
+async def test_revision_service_does_not_create_new_revision_for_noop_update(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+
+    service = ArtifactRevisionService(db_session)
+    artifact = await service.create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        slug="noop_revision",
+        display_name="Noop Revision",
+        description="unchanged",
+        kind="agent_node",
+        source_files=[
+            {"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"},
+        ],
+        entry_module_path="main.py",
+        python_dependencies=["requests>=2.0"],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={"type": "object"},
+        agent_contract={
+            "state_reads": [],
+            "state_writes": [],
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "node_ui": {},
+        },
+    )
+    await db_session.commit()
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    assert artifact.latest_draft_revision is not None
+    original_revision_id = artifact.latest_draft_revision.id
+    original_revision_number = artifact.latest_draft_revision.revision_number
+
+    returned_revision = await service.update_artifact(
+        artifact,
+        updated_by=user.id,
+        display_name="Noop Revision",
+        description="unchanged",
+        source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
+        entry_module_path="main.py",
+        python_dependencies=["requests>=2.0"],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={"type": "object"},
+        agent_contract={
+            "state_reads": [],
+            "state_writes": [],
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "node_ui": {},
+        },
+    )
+    await db_session.commit()
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    revision_count = await db_session.scalar(
+        select(func.count()).select_from(ArtifactRevision).where(ArtifactRevision.artifact_id == artifact.id)
+    )
+
+    assert returned_revision.id == original_revision_id
+    assert artifact.latest_draft_revision_id == original_revision_id
+    assert artifact.latest_draft_revision.revision_number == original_revision_number
+    assert int(revision_count or 0) == 1
 
 
 def test_bundle_builder_hash_is_stable_for_same_revision_payload():

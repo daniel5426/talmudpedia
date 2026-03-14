@@ -84,6 +84,14 @@ The orchestration kernel remains the execution backbone for:
 
 The architect does not author raw kernel payloads directly.
 
+Mutating architect worker tools now commit before returning:
+- `architect-worker-binding-prepare`
+- `architect-worker-spawn`
+- `architect-worker-spawn-group`
+- `architect-worker-cancel`
+
+This is required because each tool function runs in its own DB session and later tool calls must be able to re-read the durable state created by earlier ones.
+
 ## Binding Model
 
 Bindings are typed references to durable worker state outside the transcript.
@@ -167,3 +175,27 @@ Live E2E coverage remains in:
 - `backend/tests/platform_architect_e2e/`
 
 An optional/manual live smoke path now exists for architect artifact-worker flow.
+
+## Current Live-Run Gaps
+
+Recent live runs isolated the next unresolved problems:
+
+- The old `prepare -> spawn` binding-not-found failure is fixed.
+  - Root cause was missing commits between separate mutating architect worker tool calls.
+
+- The artifact worker still acts like an interactive editor in architect-spawned runs.
+  - Root cause: artifact worker prompt/runtime does not yet define a delegated-worker mode even though `architect_worker_task` is present in context.
+
+- Session-to-shared-draft resolution for fresh architect-created bindings is structurally weak.
+  - Root cause: `ArtifactCodingSession` does not directly reference its `ArtifactCodingSharedDraft`.
+  - Current resolution by nullable scope (`artifact_id`, `draft_key`) can create or resolve the wrong draft when both are unset.
+
+- That shared-draft resolution bug explains two observed symptoms:
+  - `artifact-coding-list-files` can report `main.py` while `artifact-coding-read-file` on `main.py` fails
+  - a prepared `tool_impl` binding can surface inside worker tools as default `agent_node` form state
+
+- Architect polling/backoff is still poor.
+  - Parent runs can spend all tool iterations repeatedly calling `architect-worker-get-run` before reaching terminal child state and canonical persistence.
+
+- Artifact draft seed ergonomics are still rough for the architect.
+  - The architect continues to guess non-canonical values like `python` or `script` instead of artifact-domain kinds like `tool_impl`.

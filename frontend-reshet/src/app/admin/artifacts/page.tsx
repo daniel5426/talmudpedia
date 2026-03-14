@@ -1,63 +1,34 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
-import {
-    AgentArtifactContract,
-    Artifact,
-    ArtifactCapabilityConfig,
-    ArtifactKind,
-    ArtifactVersionListItem,
-    RAGArtifactContract,
-    ToolArtifactContract,
-    artifactsService,
-} from "@/services/artifacts"
+import { AgentArtifactContract, Artifact, ArtifactCapabilityConfig, ArtifactKind, ArtifactVersionListItem, RAGArtifactContract, ToolArtifactContract, artifactsService } from "@/services/artifacts"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { JsonEditor } from "@/components/ui/json-editor"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
 import { ArtifactListView } from "@/components/admin/artifacts/ArtifactListView"
 import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
-import { ArtifactVersionsDrawer } from "@/components/admin/artifacts/ArtifactVersionsDrawer"
 import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWorkspaceEditor"
 import { ArtifactCodingChatPanel } from "@/features/artifact-coding/ArtifactCodingChatPanel"
 import { useArtifactCodingChat } from "@/features/artifact-coding/useArtifactCodingChat"
-import {
-    ArtifactFormData,
-    createFormDataForKind,
-    initialFormData,
-    RUNTIME_TARGET_OPTIONS,
-} from "@/components/admin/artifacts/artifactEditorState"
-import {
-    buildArtifactPayload,
-    buildArtifactUpdatePayload,
-    buildConvertPayload,
-    contractEditorTitle,
-    formDataFromArtifact,
-    formDataFromArtifactVersion,
-    kindLabel,
-    serializeArtifactFormData,
-    slugify,
-    tryParseObject,
-} from "@/components/admin/artifacts/artifactPageUtils"
-import {
-    Loader2,
-} from "lucide-react"
+import { ArtifactFormData, createFormDataForKind, initialFormData, RUNTIME_TARGET_OPTIONS } from "@/components/admin/artifacts/artifactEditorState"
+import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, contractEditorTitle, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, kindLabel, serializeArtifactFormData, slugify, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
+import { Loader2 } from "lucide-react"
 
 type ViewMode = "list" | "create" | "edit"
 const ARTIFACT_CODING_DRAFT_KEY_STORAGE_KEY = "artifact-coding-agent:create-draft-key"
+const PAGE_ARTIFACT_KIND_OPTIONS: Array<{ value: ArtifactKind; label: string }> = [
+    { value: "agent_node", label: "Agent Node" },
+    { value: "rag_operator", label: "RAG Operator" },
+    { value: "tool_impl", label: "Tool Implementation" },
+]
 
 function getDefaultActiveFilePath(formData: ArtifactFormData): string {
     return formData.entry_module_path || formData.source_files[0]?.path || "__CONFIG__"
@@ -89,6 +60,8 @@ export default function ArtifactsPage() {
     const [artifactVersions, setArtifactVersions] = useState<ArtifactVersionListItem[]>([])
     const [loadingVersions, setLoadingVersions] = useState(false)
     const [applyingRevisionId, setApplyingRevisionId] = useState<string | null>(null)
+    const lastWorkingDraftSignatureRef = useRef<string | null>(null)
+    const workingDraftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     useEffect(() => {
         if (typeof window === "undefined") return
@@ -109,28 +82,49 @@ export default function ArtifactsPage() {
         setArtifactChatDraftKey(nextKey)
     }, [])
 
-    const fetchArtifacts = useCallback(async () => {
-        setLoading(true)
+    const fetchArtifacts = useCallback(async (options?: { showLoading?: boolean }) => {
+        if (options?.showLoading) {
+            setLoading(true)
+        }
         try {
             const data = await artifactsService.list(currentTenant?.slug)
             setArtifacts(data)
         } catch (error) {
             console.error("Failed to fetch artifacts", error)
         } finally {
-            setLoading(false)
+            if (options?.showLoading) {
+                setLoading(false)
+            }
         }
     }, [currentTenant?.slug])
 
-    const reloadArtifact = useCallback(async (artifactId: string) => {
+    const syncSelectedArtifact = useCallback((artifact: Artifact) => {
+        setSelectedArtifact(artifact)
+        setConvertTargetKind(artifact.kind === "agent_node" ? "rag_operator" : "agent_node")
+    }, [])
+
+    const loadArtifactEditorState = useCallback(async (artifactId: string) => {
         const fullArtifact = await artifactsService.get(artifactId, currentTenant?.slug)
-        setSelectedArtifact(fullArtifact)
-        setFormData(formDataFromArtifact(fullArtifact))
-        setConvertTargetKind(fullArtifact.kind === "agent_node" ? "rag_operator" : "agent_node")
+        let nextFormData = formDataFromArtifact(fullArtifact)
+        try {
+            const workingDraft = await artifactsService.getWorkingDraft(artifactId, currentTenant?.slug)
+            if (workingDraft?.draft_snapshot && Object.keys(workingDraft.draft_snapshot).length > 0) {
+                nextFormData = formDataFromDraftSnapshot(fullArtifact, workingDraft.draft_snapshot)
+            }
+        } catch (error) {
+            console.error("Failed to load artifact working draft", error)
+        }
+        syncSelectedArtifact(fullArtifact)
+        setFormData(nextFormData)
+        setActiveFilePath(getDefaultActiveFilePath(nextFormData))
+        setIsSlugManuallyEdited(true)
+        setSlugError(null)
+        lastWorkingDraftSignatureRef.current = serializeArtifactFormData(nextFormData)
         return fullArtifact
-    }, [currentTenant?.slug])
+    }, [currentTenant?.slug, syncSelectedArtifact])
 
     useEffect(() => {
-        fetchArtifacts()
+        void fetchArtifacts({ showLoading: true })
     }, [fetchArtifacts])
 
     const checkSlugCollision = useCallback((slug: string) => {
@@ -144,6 +138,10 @@ export default function ArtifactsPage() {
 
     const currentFormSignature = useMemo(() => serializeArtifactFormData(formData), [formData])
     const hasUnsavedChanges = savedFormSignature !== null && currentFormSignature !== savedFormSignature
+    const workingDraftSnapshot = useMemo(() => ({
+        ...formData,
+        source_files: formData.source_files.map((file) => ({ ...file })),
+    }), [formData])
 
     const setViewModeWithUrl = useCallback((mode: ViewMode, id?: string) => {
         const params = new URLSearchParams()
@@ -167,16 +165,9 @@ export default function ArtifactsPage() {
     }, [persistNewDraftKey, setViewModeWithUrl])
 
     const handleEdit = useCallback(async (artifact: Artifact) => {
-        const fullArtifact = await artifactsService.get(artifact.id, currentTenant?.slug)
-        const nextFormData = formDataFromArtifact(fullArtifact)
-        setSelectedArtifact(fullArtifact)
-        setFormData(nextFormData)
-        setActiveFilePath(getDefaultActiveFilePath(nextFormData))
-        setIsSlugManuallyEdited(true)
-        setSlugError(null)
-        setConvertTargetKind(fullArtifact.kind === "agent_node" ? "rag_operator" : "agent_node")
+        await loadArtifactEditorState(artifact.id)
         setViewMode("edit")
-    }, [currentTenant?.slug])
+    }, [loadArtifactEditorState])
 
     useEffect(() => {
         if (loading) return
@@ -237,6 +228,47 @@ export default function ArtifactsPage() {
         }
     }, [viewMode])
 
+    const persistWorkingDraft = useCallback(async (artifactId: string, snapshot = workingDraftSnapshot, signature = currentFormSignature) => {
+        if (workingDraftSaveTimeoutRef.current) {
+            clearTimeout(workingDraftSaveTimeoutRef.current)
+            workingDraftSaveTimeoutRef.current = null
+        }
+        await artifactsService.updateWorkingDraft(
+            artifactId,
+            {
+                artifact_id: artifactId,
+                draft_key: artifactChatDraftKey || undefined,
+                draft_snapshot: snapshot,
+            },
+            currentTenant?.slug,
+        )
+        lastWorkingDraftSignatureRef.current = signature
+    }, [artifactChatDraftKey, currentFormSignature, currentTenant?.slug, workingDraftSnapshot])
+
+    useEffect(() => {
+        if (workingDraftSaveTimeoutRef.current) {
+            clearTimeout(workingDraftSaveTimeoutRef.current)
+            workingDraftSaveTimeoutRef.current = null
+        }
+        if (viewMode !== "edit" || !selectedArtifact?.id) {
+            return
+        }
+        if (currentFormSignature === lastWorkingDraftSignatureRef.current) {
+            return
+        }
+        workingDraftSaveTimeoutRef.current = setTimeout(() => {
+            void persistWorkingDraft(selectedArtifact.id).catch((error) => {
+                console.error("Failed to persist artifact working draft", error)
+            })
+        }, 500)
+        return () => {
+            if (workingDraftSaveTimeoutRef.current) {
+                clearTimeout(workingDraftSaveTimeoutRef.current)
+                workingDraftSaveTimeoutRef.current = null
+            }
+        }
+    }, [currentFormSignature, persistWorkingDraft, selectedArtifact?.id, viewMode])
+
     const updateFormData = useCallback((field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactFormData["source_files"]) => {
         setFormData((prev) => {
             const updated = { ...prev, [field]: value }
@@ -293,6 +325,9 @@ export default function ArtifactsPage() {
             alert(slugError)
             return null
         }
+        if (selectedArtifact && !hasUnsavedChanges) {
+            return selectedArtifact
+        }
 
         setSaving(true)
         try {
@@ -302,13 +337,14 @@ export default function ArtifactsPage() {
                 setViewModeWithUrl("edit", created.id)
                 return created
             } else if (selectedArtifact) {
-                await artifactsService.update(selectedArtifact.id, buildArtifactUpdatePayload(formData), currentTenant?.slug)
-                const refreshed = await reloadArtifact(selectedArtifact.id)
+                const updatedArtifact = await artifactsService.update(selectedArtifact.id, buildArtifactUpdatePayload(formData), currentTenant?.slug)
+                syncSelectedArtifact(updatedArtifact)
+                await persistWorkingDraft(updatedArtifact.id)
                 await fetchArtifacts()
                 if (versionsOpen) {
                     await loadArtifactVersions()
                 }
-                return refreshed
+                return updatedArtifact
             }
         } catch (error) {
             console.error("Failed to save artifact", error)
@@ -342,7 +378,9 @@ export default function ArtifactsPage() {
             await artifactsService.publish(artifact.id, currentTenant?.slug)
             await fetchArtifacts()
             if (selectedArtifact?.id === artifact.id) {
-                await reloadArtifact(artifact.id)
+                const refreshed = await artifactsService.get(artifact.id, currentTenant?.slug)
+                syncSelectedArtifact(refreshed)
+                await persistWorkingDraft(refreshed.id)
                 if (versionsOpen) {
                     await loadArtifactVersions()
                 }
@@ -380,7 +418,7 @@ export default function ArtifactsPage() {
                 buildConvertPayload(convertTargetKind, formData),
                 currentTenant?.slug
             )
-            setSelectedArtifact(converted)
+            syncSelectedArtifact(converted)
             setFormData(formDataFromArtifact(converted))
             setConvertTargetKind(converted.kind === "agent_node" ? "rag_operator" : "agent_node")
             await fetchArtifacts()
@@ -517,7 +555,7 @@ export default function ArtifactsPage() {
                                             <SelectValue placeholder="Convert kind to..." />
                                         </SelectTrigger>
                                         <SelectContent className="rounded-md border-border">
-                                            {ARTIFACT_KIND_OPTIONS.filter((option) => option.value !== formData.kind).map((option) => (
+                                            {PAGE_ARTIFACT_KIND_OPTIONS.filter((option) => option.value !== formData.kind).map((option) => (
                                                 <SelectItem key={option.value} value={option.value} className="text-sm">{option.label}</SelectItem>
                                             ))}
                                         </SelectContent>
@@ -608,10 +646,7 @@ export default function ArtifactsPage() {
         artifactId: selectedArtifact?.id || null,
         draftKey: artifactChatDraftKey,
         isCreateMode: viewMode === "create" || !selectedArtifact?.id,
-        getDraftSnapshot: () => ({
-            ...formData,
-            source_files: formData.source_files.map((file) => ({ ...file })),
-        }),
+        getDraftSnapshot: () => workingDraftSnapshot,
         onApplyDraftSnapshot: applyDraftSnapshot,
         onError: setChatError,
     })
@@ -645,12 +680,19 @@ export default function ArtifactsPage() {
                 disableSave={Boolean(slugError)}
                 showPublish={Boolean(viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant")}
                 showVersions={Boolean(viewMode === "edit" && selectedArtifact?.id)}
+                versionsOpen={versionsOpen}
+                artifactVersions={artifactVersions}
+                versionsLoading={loadingVersions}
+                applyingRevisionId={applyingRevisionId}
                 hasUnsavedChanges={hasUnsavedChanges}
                 onRefreshArtifacts={fetchArtifacts}
                 onCreateArtifact={handleCreate}
                 onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
                 onToggleAgentPanel={() => artifactCodingChat.setIsAgentPanelOpen(!artifactCodingChat.isAgentPanelOpen)}
-                onOpenVersions={() => setVersionsOpen(true)}
+                onVersionsOpenChange={setVersionsOpen}
+                onSelectVersion={(revisionId) => {
+                    void applyArtifactVersion(revisionId)
+                }}
                 onPublish={handlePublishFromEditor}
                 onRunTest={() => document.getElementById("artifact-test-panel-execute")?.click()}
                 onSave={() => {
@@ -735,20 +777,6 @@ export default function ArtifactsPage() {
                     </div>
                 )}
             </div>
-            <ArtifactVersionsDrawer
-                open={versionsOpen}
-                onOpenChange={setVersionsOpen}
-                versions={artifactVersions}
-                isLoading={loadingVersions}
-                applyingRevisionId={applyingRevisionId}
-                hasUnsavedChanges={hasUnsavedChanges}
-                onRefresh={() => {
-                    void loadArtifactVersions()
-                }}
-                onSelectVersion={(revisionId) => {
-                    void applyArtifactVersion(revisionId)
-                }}
-            />
             {chatError ? (
                 <div className="pointer-events-none fixed bottom-4 right-4 z-50 w-full max-w-md px-4 sm:px-0">
                     <Card className="pointer-events-auto border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-lg">

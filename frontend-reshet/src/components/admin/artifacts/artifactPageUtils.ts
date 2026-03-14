@@ -109,6 +109,35 @@ export function formDataFromArtifactVersion(version: ArtifactVersion): ArtifactF
   };
 }
 
+export function formDataFromDraftSnapshot(
+  artifact: Pick<Artifact, "slug" | "display_name" | "description" | "kind">,
+  snapshot: Record<string, unknown>,
+): ArtifactFormData {
+  const defaultAgentContract = JSON.parse(createFormDataForKind("agent_node").agent_contract) as Record<string, unknown>;
+  const defaultRagContract = JSON.parse(createFormDataForKind("rag_operator").rag_contract) as Record<string, unknown>;
+  const defaultToolContract = JSON.parse(createFormDataForKind("tool_impl").tool_contract) as Record<string, unknown>;
+  const kind = (typeof snapshot.kind === "string" ? snapshot.kind : artifact.kind) as ArtifactKind;
+  const sourceFiles = Array.isArray(snapshot.source_files)
+    ? snapshot.source_files as ArtifactFormData["source_files"]
+    : createFormDataForKind(kind).source_files;
+
+  return {
+    slug: typeof snapshot.slug === "string" ? snapshot.slug : artifact.slug,
+    display_name: typeof snapshot.display_name === "string" ? snapshot.display_name : artifact.display_name,
+    description: typeof snapshot.description === "string" ? snapshot.description : (artifact.description || ""),
+    kind,
+    source_files: sourceFiles,
+    entry_module_path: typeof snapshot.entry_module_path === "string" ? snapshot.entry_module_path : sourceFiles[0]?.path || "main.py",
+    python_dependencies: typeof snapshot.python_dependencies === "string" ? snapshot.python_dependencies : "",
+    runtime_target: typeof snapshot.runtime_target === "string" ? snapshot.runtime_target : "cloudflare_workers",
+    capabilities: typeof snapshot.capabilities === "string" ? snapshot.capabilities : JSON.stringify({}, null, 2),
+    config_schema: typeof snapshot.config_schema === "string" ? snapshot.config_schema : JSON.stringify({}, null, 2),
+    agent_contract: typeof snapshot.agent_contract === "string" ? snapshot.agent_contract : JSON.stringify(defaultAgentContract, null, 2),
+    rag_contract: typeof snapshot.rag_contract === "string" ? snapshot.rag_contract : JSON.stringify(defaultRagContract, null, 2),
+    tool_contract: typeof snapshot.tool_contract === "string" ? snapshot.tool_contract : JSON.stringify(defaultToolContract, null, 2),
+  };
+}
+
 export function buildArtifactPayload(formData: ArtifactFormData): ArtifactCreateRequest {
   const payload: ArtifactCreateRequest = {
     slug: formData.slug,

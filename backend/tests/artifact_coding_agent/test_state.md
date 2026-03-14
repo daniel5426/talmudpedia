@@ -23,6 +23,9 @@ Track backend coverage for the direct-use artifact coding agent wrapper, session
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-14 20:39 EET
 - Result: passed (`3 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-14 Asia/Hebron
+- Result: Pass (5 passed)
 
 ## Known Gaps
 

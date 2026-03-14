@@ -181,6 +181,19 @@ export interface ArtifactVersion extends ArtifactVersionListItem {
   tool_contract?: ToolArtifactContract | null;
 }
 
+export interface ArtifactWorkingDraft {
+  artifact_id?: string | null;
+  draft_key?: string | null;
+  draft_snapshot: Record<string, unknown>;
+  updated_at?: string | null;
+}
+
+export interface ArtifactWorkingDraftUpdateRequest {
+  artifact_id?: string;
+  draft_key?: string;
+  draft_snapshot: Record<string, unknown>;
+}
+
 export interface ArtifactRunEvent {
   id: string;
   sequence: number;
@@ -325,6 +338,24 @@ export const artifactsService = {
       ? `/admin/artifacts/${artifactId}/versions/${revisionId}?tenant_slug=${tenantSlug}`
       : `/admin/artifacts/${artifactId}/versions/${revisionId}`;
     return httpClient.get<ArtifactVersion>(url);
+  },
+
+  getWorkingDraft: async (artifactId: string, tenantSlug?: string): Promise<ArtifactWorkingDraft> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/${artifactId}/working-draft?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/${artifactId}/working-draft`;
+    return httpClient.get<ArtifactWorkingDraft>(url);
+  },
+
+  updateWorkingDraft: async (
+    artifactId: string,
+    payload: ArtifactWorkingDraftUpdateRequest,
+    tenantSlug?: string,
+  ): Promise<ArtifactWorkingDraft> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/${artifactId}/working-draft?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/${artifactId}/working-draft`;
+    return httpClient.put<ArtifactWorkingDraft>(url, payload);
   },
 
   create: async (data: ArtifactCreateRequest, tenantSlug?: string): Promise<Artifact> => {

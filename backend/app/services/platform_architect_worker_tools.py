@@ -28,6 +28,7 @@ def _tool_schema(
     properties: dict[str, Any],
     required: list[str] | None = None,
     one_of: list[dict[str, Any]] | None = None,
+    any_of: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "input": {
@@ -36,6 +37,7 @@ def _tool_schema(
             "required": list(required or []),
             "additionalProperties": False,
             **({"oneOf": one_of} if one_of else {}),
+            **({"anyOf": any_of} if any_of else {}),
         },
         "output": {"type": "object", "additionalProperties": True},
     }
@@ -116,7 +118,7 @@ def _spawn_target_schema() -> dict[str, Any]:
         },
         "required": ["objective"],
         "additionalProperties": False,
-        "oneOf": [
+        "anyOf": [
             {"required": ["worker_agent_slug", "objective"]},
             {"required": ["binding_ref", "objective"]},
         ],
@@ -127,7 +129,9 @@ def _spawn_target_schema() -> dict[str, Any]:
 async def architect_worker_binding_prepare(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
     async with get_session() as db:
-        return await PlatformArchitectWorkerRuntimeService(db).prepare_binding(tool_payload)
+        result = await PlatformArchitectWorkerRuntimeService(db).prepare_binding(tool_payload)
+        await db.commit()
+        return result
 
 
 @register_tool_function("architect_worker_binding_get_state")
@@ -141,14 +145,18 @@ async def architect_worker_binding_get_state(payload: Any) -> dict[str, Any]:
 async def architect_worker_spawn(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
     async with get_session() as db:
-        return await PlatformArchitectWorkerRuntimeService(db).spawn_worker(tool_payload)
+        result = await PlatformArchitectWorkerRuntimeService(db).spawn_worker(tool_payload)
+        await db.commit()
+        return result
 
 
 @register_tool_function("architect_worker_spawn_group")
 async def architect_worker_spawn_group(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
     async with get_session() as db:
-        return await PlatformArchitectWorkerRuntimeService(db).spawn_group(tool_payload)
+        result = await PlatformArchitectWorkerRuntimeService(db).spawn_group(tool_payload)
+        await db.commit()
+        return result
 
 
 @register_tool_function("architect_worker_get_run")
@@ -169,7 +177,9 @@ async def architect_worker_join(payload: Any) -> dict[str, Any]:
 async def architect_worker_cancel(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
     async with get_session() as db:
-        return await PlatformArchitectWorkerRuntimeService(db).cancel(tool_payload)
+        result = await PlatformArchitectWorkerRuntimeService(db).cancel(tool_payload)
+        await db.commit()
+        return result
 
 
 ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
@@ -268,7 +278,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
                 "timeout_s": {"type": "integer"},
             },
             required=["objective"],
-            one_of=[
+            any_of=[
                 {"required": ["worker_agent_slug", "objective"]},
                 {"required": ["binding_ref", "objective"]},
             ],

@@ -1,8 +1,9 @@
 "use client"
 
-import { Bot, ChevronDown, Database, History, Loader2, PanelLeft, Play, Plus, RefreshCw, Save, Upload, Wrench } from "lucide-react"
+import { Bot, ChevronDown, Database, Loader2, PanelLeft, Play, Plus, RefreshCw, Save, Upload, Wrench } from "lucide-react"
 
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
+import { ArtifactVersionsDropdown } from "@/components/admin/artifacts/ArtifactVersionsDropdown"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { KesherLogo } from "@/components/kesher-logo"
 import { cn } from "@/lib/utils"
-import type { ArtifactKind } from "@/services/artifacts"
+import type { ArtifactKind, ArtifactVersionListItem } from "@/services/artifacts"
 import { ARTIFACT_KIND_OPTIONS } from "@/components/admin/artifacts/artifactEditorState"
 
 type ViewMode = "list" | "create" | "edit"
@@ -30,12 +31,17 @@ type ArtifactEditorHeaderProps = {
   disableSave: boolean
   showPublish: boolean
   showVersions: boolean
+  versionsOpen: boolean
+  artifactVersions: ArtifactVersionListItem[]
+  versionsLoading: boolean
+  applyingRevisionId: string | null
   hasUnsavedChanges: boolean
   onRefreshArtifacts: () => void
   onCreateArtifact: (kind: ArtifactKind) => void
   onToggleSidebar: () => void
   onToggleAgentPanel: () => void
-  onOpenVersions: () => void
+  onVersionsOpenChange: (open: boolean) => void
+  onSelectVersion: (revisionId: string) => void
   onPublish: () => void
   onRunTest: () => void
   onSave: () => void
@@ -57,12 +63,17 @@ export function ArtifactEditorHeader({
   disableSave,
   showPublish,
   showVersions,
+  versionsOpen,
+  artifactVersions,
+  versionsLoading,
+  applyingRevisionId,
   hasUnsavedChanges,
   onRefreshArtifacts,
   onCreateArtifact,
   onToggleSidebar,
   onToggleAgentPanel,
-  onOpenVersions,
+  onVersionsOpenChange,
+  onSelectVersion,
   onPublish,
   onRunTest,
   onSave,
@@ -74,7 +85,7 @@ export function ArtifactEditorHeader({
           items={[
             { label: "Artifacts", href: "/admin/artifacts", active: viewMode === "list" },
             ...(viewMode === "create" ? [{ label: "New Artifact", active: true }] : []),
-            ...(viewMode === "edit" ? [{ label: displayName || "Edit Artifact", active: true }] : []),
+            ...(viewMode === "edit" ? [{ label: displayName || "Edit Artifact", active: true, statusDot: hasUnsavedChanges ? "primary" : undefined }] : []),
           ]}
         />
       </div>
@@ -139,18 +150,15 @@ export function ArtifactEditorHeader({
             </Button>
           ) : null}
           {showVersions ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onOpenVersions}
-              className={cn(
-                "h-8 w-8 p-0 text-muted-foreground hover:text-foreground",
-                hasUnsavedChanges && "text-primary",
-              )}
-              title="Open version history"
-            >
-              <History className="h-4 w-4" />
-            </Button>
+            <ArtifactVersionsDropdown
+              open={versionsOpen}
+              onOpenChange={onVersionsOpenChange}
+              versions={artifactVersions}
+              isLoading={versionsLoading}
+              applyingRevisionId={applyingRevisionId}
+              hasUnsavedChanges={hasUnsavedChanges}
+              onSelectVersion={onSelectVersion}
+            />
           ) : null}
           <Button
             size="sm"

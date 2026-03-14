@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import desc, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.artifact_runtime import (
@@ -19,6 +19,85 @@ class ArtifactCodingSharedDraftService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def _get_for_artifact(
+        self,
+        *,
+        tenant_id: UUID,
+        artifact_id: UUID,
+    ) -> ArtifactCodingSharedDraft | None:
+        stmt = select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant_id)
+        stmt = stmt.where(
+            or_(
+                ArtifactCodingSharedDraft.artifact_id == artifact_id,
+                ArtifactCodingSharedDraft.linked_artifact_id == artifact_id,
+            )
+        )
+        result = await self.db.execute(stmt.order_by(desc(ArtifactCodingSharedDraft.updated_at)).limit(1))
+        return result.scalar_one_or_none()
+
+    async def _get_for_draft_key(
+        self,
+        *,
+        tenant_id: UUID,
+        draft_key: str,
+    ) -> ArtifactCodingSharedDraft | None:
+        result = await self.db.execute(
+            select(ArtifactCodingSharedDraft)
+            .where(
+                ArtifactCodingSharedDraft.tenant_id == tenant_id,
+                ArtifactCodingSharedDraft.draft_key == draft_key,
+            )
+            .order_by(desc(ArtifactCodingSharedDraft.updated_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def _merge_shared_drafts(
+        self,
+        *,
+        primary: ArtifactCodingSharedDraft,
+        secondary: ArtifactCodingSharedDraft,
+        artifact_id: UUID | None,
+        draft_key: str | None,
+    ) -> ArtifactCodingSharedDraft:
+        if primary.id == secondary.id:
+            return primary
+        primary_snapshot = dict(primary.working_draft_snapshot or {})
+        secondary_snapshot = dict(secondary.working_draft_snapshot or {})
+        primary_updated_at = primary.updated_at
+        secondary_updated_at = secondary.updated_at
+        target_artifact_id = artifact_id or primary.artifact_id or secondary.artifact_id
+        target_linked_artifact_id = artifact_id or primary.linked_artifact_id or secondary.linked_artifact_id
+        target_draft_key = draft_key or primary.draft_key or secondary.draft_key
+        target_linked_at = primary.linked_at or secondary.linked_at or (datetime.now(timezone.utc) if artifact_id is not None else None)
+        target_last_run_id = primary.last_run_id or secondary.last_run_id
+        target_last_test_run_id = primary.last_test_run_id or secondary.last_test_run_id
+
+        await self.db.execute(
+            update(ArtifactCodingRunSnapshot)
+            .where(ArtifactCodingRunSnapshot.shared_draft_id == secondary.id)
+            .values(shared_draft_id=primary.id)
+        )
+        secondary.artifact_id = None
+        secondary.linked_artifact_id = None
+        secondary.draft_key = None
+        await self.db.flush()
+
+        if not primary_snapshot and secondary_snapshot:
+            primary.working_draft_snapshot = secondary_snapshot
+        elif secondary_updated_at and (primary_updated_at is None or secondary_updated_at > primary_updated_at):
+            primary.working_draft_snapshot = secondary_snapshot or primary_snapshot
+        primary.artifact_id = target_artifact_id
+        primary.linked_artifact_id = target_linked_artifact_id
+        primary.linked_at = target_linked_at
+        primary.draft_key = target_draft_key
+        primary.last_run_id = target_last_run_id
+        primary.last_test_run_id = target_last_test_run_id
+        primary.updated_at = datetime.now(timezone.utc)
+        await self.db.delete(secondary)
+        await self.db.flush()
+        return primary
+
     async def get_for_scope(
         self,
         *,
@@ -26,20 +105,22 @@ class ArtifactCodingSharedDraftService:
         artifact_id: UUID | None,
         draft_key: str | None,
     ) -> ArtifactCodingSharedDraft | None:
-        stmt = select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant_id)
-        if artifact_id is not None:
-            stmt = stmt.where(
-                or_(
-                    ArtifactCodingSharedDraft.artifact_id == artifact_id,
-                    ArtifactCodingSharedDraft.linked_artifact_id == artifact_id,
+        if artifact_id is not None and draft_key:
+            artifact_shared = await self._get_for_artifact(tenant_id=tenant_id, artifact_id=artifact_id)
+            draft_shared = await self._get_for_draft_key(tenant_id=tenant_id, draft_key=draft_key)
+            if artifact_shared is not None and draft_shared is not None and artifact_shared.id != draft_shared.id:
+                return await self._merge_shared_drafts(
+                    primary=draft_shared,
+                    secondary=artifact_shared,
+                    artifact_id=artifact_id,
+                    draft_key=draft_key,
                 )
-            )
-        elif draft_key:
-            stmt = stmt.where(ArtifactCodingSharedDraft.draft_key == draft_key)
-        else:
-            return None
-        result = await self.db.execute(stmt.order_by(desc(ArtifactCodingSharedDraft.updated_at)).limit(1))
-        return result.scalar_one_or_none()
+            return draft_shared or artifact_shared
+        if artifact_id is not None:
+            return await self._get_for_artifact(tenant_id=tenant_id, artifact_id=artifact_id)
+        if draft_key:
+            return await self._get_for_draft_key(tenant_id=tenant_id, draft_key=draft_key)
+        return None
 
     async def get_or_create_for_scope(
         self,
@@ -109,7 +190,7 @@ class ArtifactCodingSharedDraftService:
     ) -> None:
         if not draft_key:
             return
-        shared = await self.get_for_scope(tenant_id=tenant_id, artifact_id=None, draft_key=draft_key)
+        shared = await self.get_for_scope(tenant_id=tenant_id, artifact_id=artifact_id, draft_key=draft_key)
         if shared is None:
             return
         shared.artifact_id = artifact_id

@@ -114,6 +114,14 @@ Current limitation:
 - they do not wait for worker completion
 - the architect decides when to inspect, join, or cancel later
 
+Mutating architect worker tools now commit before returning durable identifiers or run metadata:
+- `architect-worker-binding-prepare`
+- `architect-worker-spawn`
+- `architect-worker-spawn-group`
+- `architect-worker-cancel`
+
+This clean-cut commit rule exists because these tools run in separate DB sessions. A later tool call must be able to resolve the durable state created by an earlier one.
+
 ## Strict Tool Contracts
 
 Architect worker tools now run with strict pre-dispatch schema enforcement:
@@ -151,3 +159,30 @@ The current backend coverage for this model includes:
 - DB-backed seeded architect E2E for successful artifact worker flow
 - DB-backed seeded architect E2E for active-binding rejection on a second mutating spawn
 - optional/manual live architect smoke coverage for artifact-worker flow
+
+## Current Known Gaps From Live Runs
+
+The latest live runs exposed several root-cause gaps that are not yet resolved:
+
+- The binding visibility bug between `prepare` and immediate `spawn` is fixed.
+  - Root cause was transaction visibility across separate tool-call DB sessions.
+  - The fix was to commit successful mutating architect worker tools before returning.
+
+- The artifact worker still behaves like an interactive draft editor instead of an autonomous delegated worker.
+  - Root cause: the artifact worker prompt is still generic and interactive.
+  - The worker receives `architect_worker_task`, but its prompt does not tell it to complete delegated objectives without asking the end user follow-up questions.
+
+- Fresh architect-created artifact bindings can resolve to the wrong shared draft during worker tool use.
+  - Root cause: `ArtifactCodingSession` does not hold a direct reference to its `ArtifactCodingSharedDraft`.
+  - Session-to-draft resolution currently falls back to nullable scope (`artifact_id`, `draft_key`), which is insufficient for fresh architect-created bindings where both are `null`.
+  - This can create a second empty shared draft and detach the worker from the prepared one.
+
+- The above session/shared-draft issue causes two visible failures:
+  - `artifact-coding-list-files` can show a default `main.py` while `artifact-coding-read-file` fails with `File not found`
+  - a prepared `tool_impl` draft can drift back to default `agent_node` form state inside worker tools
+
+- Architect polling behavior is still weak.
+  - The parent architect currently polls `architect-worker-get-run` too aggressively and can hit max tool iterations before reaching `binding-get-state` and canonical persistence.
+
+- Artifact seed vocabulary is still not natural enough for the architect.
+  - The architect still guesses values like `python` or `script` instead of the canonical artifact kinds (`tool_impl`, `agent_node`, `rag_operator`).
