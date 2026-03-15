@@ -250,8 +250,9 @@ async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_sess
         scope_subset,
         idempotency_key,
         start_background,
+        thread_id,
     ):
-        del caller_run_id, parent_node_id, target_agent_id, failure_policy, timeout_s, scope_subset, idempotency_key, start_background
+        del caller_run_id, parent_node_id, target_agent_id, failure_policy, timeout_s, scope_subset, idempotency_key, start_background, thread_id
         captured_input["mapped_input_payload"] = mapped_input_payload
         run = AgentRun(
             id=spawned_run_id,
@@ -458,13 +459,60 @@ async def test_binding_persist_artifact_rejects_forced_update_without_linked_art
 
 
 @pytest.mark.asyncio
+async def test_binding_persist_artifact_rejects_create_without_required_metadata(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+
+    async def _fake_profile(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(id=uuid4())
+
+    monkeypatch.setattr(
+        "app.services.platform_architect_worker_bindings.ensure_artifact_coding_agent_profile",
+        _fake_profile,
+    )
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    prepare_result = await service.prepare_binding(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(uuid4()),
+            },
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "create_new_draft",
+            "title_prompt": "Create a tool with missing metadata",
+            "draft_seed": {"kind": "tool_impl"},
+        }
+    )
+
+    with pytest.raises(ValueError, match="ARTIFACT_PERSISTENCE_NOT_READY"):
+        await service.persist_binding_artifact(
+            {
+                "__tool_runtime_context__": {
+                    "tenant_id": str(tenant.id),
+                    "user_id": str(user.id),
+                    "run_id": str(uuid4()),
+                },
+                "binding_ref": prepare_result["binding_ref"],
+            }
+        )
+
+
+@pytest.mark.asyncio
 async def test_spawn_group_rejects_duplicate_binding_refs_before_kernel(monkeypatch):
     service = PlatformArchitectWorkerRuntimeService(SimpleNamespace())
 
     class _FakeAdapter:
-        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref):
-            del tenant_id, user_id, binding_ref
-            return {"worker_agent_slug": "artifact-coding-agent", "context": {}}
+        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref, prompt, prompt_role, task=None):
+            del tenant_id, user_id, binding_ref, prompt, prompt_role, task
+            return {"worker_agent_slug": "artifact-coding-agent", "mapped_input_payload": {}, "thread_id": None}
 
     service.bindings = SimpleNamespace(adapter_for_ref=lambda _ref: _FakeAdapter())
 
@@ -488,6 +536,61 @@ async def test_spawn_group_rejects_duplicate_binding_refs_before_kernel(monkeypa
                 ],
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_spawn_worker_uses_binding_thread_id_for_kernel_child(monkeypatch):
+    service = PlatformArchitectWorkerRuntimeService(SimpleNamespace())
+    worker_thread_id = uuid4()
+    captured: dict[str, object] = {}
+
+    class _FakeAdapter:
+        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref, prompt, prompt_role, task=None):
+            del tenant_id, user_id, binding_ref, task
+            captured["prompt"] = prompt
+            captured["prompt_role"] = prompt_role
+            return {
+                "worker_agent_slug": "artifact-coding-agent",
+                "thread_id": str(worker_thread_id),
+                "mapped_input_payload": {
+                    "input": prompt,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "thread_id": str(worker_thread_id),
+                    "context": {"thread_id": str(worker_thread_id)},
+                },
+            }
+
+        async def register_spawned_run(self, *, tenant_id, user_id, binding_ref, run_id, prompt, prompt_role):
+            del tenant_id, user_id, binding_ref, run_id, prompt, prompt_role
+            return {}
+
+    async def _spawn_run(**kwargs):
+        captured["spawn_kwargs"] = kwargs
+        return {
+            "spawned_run_ids": [str(uuid4())],
+            "lineage": {"parent_node_id": "architect_worker_spawn"},
+            "effective_scope_subset": ["agents.execute"],
+        }
+
+    service.bindings = SimpleNamespace(adapter_for_ref=lambda _ref: _FakeAdapter())
+    service.kernel = SimpleNamespace(spawn_run=_spawn_run)
+
+    result = await service.spawn_worker(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(uuid4()),
+                "user_id": str(uuid4()),
+                "run_id": str(uuid4()),
+            },
+            "binding_ref": {"binding_type": "artifact_shared_draft", "binding_id": str(uuid4())},
+            "objective": "Update the artifact draft.",
+        }
+    )
+
+    assert result["status"] == "queued"
+    assert captured["prompt_role"] == "user"
+    assert captured["spawn_kwargs"]["thread_id"] == worker_thread_id
+    assert captured["spawn_kwargs"]["mapped_input_payload"]["thread_id"] == str(worker_thread_id)
 
 
 @pytest.mark.asyncio
@@ -687,39 +790,57 @@ async def test_worker_respond_continues_completed_blocking_child_natively(db_ses
     captured: dict[str, object] = {}
 
     class _FakeAdapter:
-        async def continue_conversation(self, *, tenant_id, user_id, binding_ref, prior_run_id, message, source=None):
-            del tenant_id, user_id, source
-            captured["prior_run_id"] = str(prior_run_id)
-            captured["message"] = message
-            followup = AgentRun(
-                id=new_run_id,
-                tenant_id=tenant.id,
-                agent_id=uuid4(),
-                user_id=user.id,
-                initiator_user_id=user.id,
-                status=RunStatus.queued,
-                thread_id=worker_thread_id,
-                root_run_id=parent.id,
-                parent_run_id=parent.id,
-                input_params={
+        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref, prompt, prompt_role, task=None):
+            del tenant_id, user_id, task
+            captured["binding_ref"] = binding_ref.as_dict()
+            captured["message"] = prompt
+            captured["prompt_role"] = prompt_role
+            return {
+                "worker_agent_slug": "artifact-coding-agent",
+                "thread_id": str(worker_thread_id),
+                "mapped_input_payload": {
+                    "input": prompt,
+                    "messages": [{"role": "system", "content": prompt}],
                     "thread_id": str(worker_thread_id),
                     "context": {
                         "thread_id": str(worker_thread_id),
                         "architect_worker_binding_ref": binding_ref.as_dict(),
                     },
                 },
-                output_result=None,
-            )
-            db_session.add(followup)
-            await db_session.commit()
-            return followup
+            }
+
+        async def register_spawned_run(self, *, tenant_id, user_id, binding_ref, run_id, prompt, prompt_role):
+            del tenant_id, user_id, binding_ref, run_id, prompt, prompt_role
+            return {}
 
     service = PlatformArchitectWorkerRuntimeService(db_session)
     service.bindings = SimpleNamespace(adapter_for_ref=lambda _binding_ref: _FakeAdapter())
+    async def _spawn_run(**kwargs):
+        captured["spawn_kwargs"] = kwargs
+        followup = AgentRun(
+            id=new_run_id,
+            tenant_id=tenant.id,
+            agent_id=uuid4(),
+            user_id=user.id,
+            initiator_user_id=user.id,
+            status=RunStatus.queued,
+            thread_id=worker_thread_id,
+            root_run_id=parent.id,
+            parent_run_id=parent.id,
+            parent_node_id="architect_worker_respond",
+            input_params=kwargs["mapped_input_payload"],
+            output_result=None,
+        )
+        db_session.add(followup)
+        await db_session.commit()
+        return {"spawned_run_ids": [str(new_run_id)]}
+
     service.kernel = SimpleNamespace(
+        spawn_run=_spawn_run,
         _serialize_lineage=lambda run: {
             "root_run_id": str(run.root_run_id) if run.root_run_id else None,
             "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+            "parent_node_id": run.parent_node_id,
         },
     )
     service.trace_recorder = SimpleNamespace(schedule_persist=lambda *args, **kwargs: None)
@@ -739,8 +860,12 @@ async def test_worker_respond_continues_completed_blocking_child_natively(db_ses
     assert result["run_id"] == str(new_run_id)
     assert result["status"] == RunStatus.queued.value
     assert result["lifecycle_state"] == "running"
-    assert captured["prior_run_id"] == str(child.id)
     assert captured["message"] == "Use slug random-number-tool."
+    assert captured["prompt_role"] == "orchestrator"
+    assert result["continuation_of_run_id"] == str(child.id)
+    assert result["next_action_hint"] == "await_latest_child_then_persist"
+    assert captured["spawn_kwargs"]["thread_id"] == worker_thread_id
+    assert captured["spawn_kwargs"]["parent_node_id"] == "architect_worker_respond"
 
 
 @pytest.mark.asyncio
@@ -790,39 +915,57 @@ async def test_worker_respond_continues_completed_non_waiting_child_natively(db_
     captured: dict[str, object] = {}
 
     class _FakeAdapter:
-        async def continue_conversation(self, *, tenant_id, user_id, binding_ref, prior_run_id, message, source=None):
-            del tenant_id, user_id, source
-            captured["prior_run_id"] = str(prior_run_id)
-            captured["message"] = message
-            followup = AgentRun(
-                id=new_run_id,
-                tenant_id=tenant.id,
-                agent_id=uuid4(),
-                user_id=user.id,
-                initiator_user_id=user.id,
-                status=RunStatus.queued,
-                thread_id=worker_thread_id,
-                root_run_id=parent.id,
-                parent_run_id=parent.id,
-                input_params={
+        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref, prompt, prompt_role, task=None):
+            del tenant_id, user_id, task
+            captured["binding_ref"] = binding_ref.as_dict()
+            captured["message"] = prompt
+            captured["prompt_role"] = prompt_role
+            return {
+                "worker_agent_slug": "artifact-coding-agent",
+                "thread_id": str(worker_thread_id),
+                "mapped_input_payload": {
+                    "input": prompt,
+                    "messages": [{"role": "system", "content": prompt}],
                     "thread_id": str(worker_thread_id),
                     "context": {
                         "thread_id": str(worker_thread_id),
                         "architect_worker_binding_ref": binding_ref.as_dict(),
                     },
                 },
-                output_result=None,
-            )
-            db_session.add(followup)
-            await db_session.commit()
-            return followup
+            }
+
+        async def register_spawned_run(self, *, tenant_id, user_id, binding_ref, run_id, prompt, prompt_role):
+            del tenant_id, user_id, binding_ref, run_id, prompt, prompt_role
+            return {}
 
     service = PlatformArchitectWorkerRuntimeService(db_session)
     service.bindings = SimpleNamespace(adapter_for_ref=lambda _binding_ref: _FakeAdapter())
+    async def _spawn_run(**kwargs):
+        captured["spawn_kwargs"] = kwargs
+        followup = AgentRun(
+            id=new_run_id,
+            tenant_id=tenant.id,
+            agent_id=uuid4(),
+            user_id=user.id,
+            initiator_user_id=user.id,
+            status=RunStatus.queued,
+            thread_id=worker_thread_id,
+            root_run_id=parent.id,
+            parent_run_id=parent.id,
+            parent_node_id="architect_worker_respond",
+            input_params=kwargs["mapped_input_payload"],
+            output_result=None,
+        )
+        db_session.add(followup)
+        await db_session.commit()
+        return {"spawned_run_ids": [str(new_run_id)]}
+
     service.kernel = SimpleNamespace(
+        spawn_run=_spawn_run,
         _serialize_lineage=lambda run: {
             "root_run_id": str(run.root_run_id) if run.root_run_id else None,
             "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+            "parent_node_id": run.parent_node_id,
         },
     )
     service.trace_recorder = SimpleNamespace(schedule_persist=lambda *args, **kwargs: None)
@@ -842,5 +985,7 @@ async def test_worker_respond_continues_completed_non_waiting_child_natively(db_
     assert result["run_id"] == str(new_run_id)
     assert result["status"] == RunStatus.queued.value
     assert result["lifecycle_state"] == "running"
-    assert captured["prior_run_id"] == str(child.id)
     assert captured["message"] == "Add tests, README, and set slug to fibpkg."
+    assert captured["prompt_role"] == "orchestrator"
+    assert result["continuation_of_run_id"] == str(child.id)
+    assert captured["spawn_kwargs"]["thread_id"] == worker_thread_id

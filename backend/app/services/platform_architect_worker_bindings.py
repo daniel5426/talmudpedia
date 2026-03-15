@@ -14,7 +14,6 @@ from app.services.artifact_coding_agent_profile import (
     ARTIFACT_CODING_AGENT_PROFILE_SLUG,
     ensure_artifact_coding_agent_profile,
 )
-from app.services.artifact_coding_agent_tools import ARTIFACT_CODING_AGENT_SURFACE
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 
@@ -69,6 +68,9 @@ class WorkerBindingAdapter(Protocol):
         tenant_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
+        prompt: str,
+        prompt_role: str,
+        task: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -79,7 +81,8 @@ class WorkerBindingAdapter(Protocol):
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         run_id: UUID,
-        user_prompt: str,
+        prompt: str,
+        prompt_role: str,
     ) -> dict[str, Any]:
         ...
 
@@ -92,19 +95,6 @@ class WorkerBindingAdapter(Protocol):
         mode: str,
     ) -> dict[str, Any]:
         ...
-
-    async def continue_conversation(
-        self,
-        *,
-        tenant_id: UUID,
-        user_id: UUID,
-        binding_ref: WorkerBindingRef,
-        prior_run_id: UUID,
-        message: str,
-        source: str | None = None,
-    ) -> AgentRun:
-        ...
-
 
 def parse_binding_ref(raw: Any) -> WorkerBindingRef:
     if not isinstance(raw, dict):
@@ -339,6 +329,9 @@ class ArtifactSharedDraftBindingAdapter:
         tenant_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
+        prompt: str,
+        prompt_role: str,
+        task: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         session = await self._resolve_binding_session(
             tenant_id=tenant_id,
@@ -351,26 +344,23 @@ class ArtifactSharedDraftBindingAdapter:
             last_status = str(getattr(last_run.status, "value", last_run.status))
             if last_status not in TERMINAL_RUN_STATUSES:
                 raise RuntimeError("BINDING_RUN_ACTIVE")
+        prepared = await self.runtime.prepare_session_run_input(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session=session,
+            shared_draft=shared_draft,
+            prompt=prompt,
+            prompt_role=prompt_role,
+            model_id=None,
+            extra_context={
+                "architect_worker_binding_ref": binding_ref.as_dict(),
+                "architect_worker_task": task or None,
+            },
+        )
         return {
             "worker_agent_slug": ARTIFACT_CODING_AGENT_PROFILE_SLUG,
-            "context": {
-                "surface": ARTIFACT_CODING_AGENT_SURFACE,
-                "artifact_coding_session_id": str(session.id),
-                "artifact_coding_shared_draft_id": str(shared_draft.id),
-                "artifact_id": str(
-                    shared_draft.artifact_id
-                    or shared_draft.linked_artifact_id
-                    or session.artifact_id
-                    or session.linked_artifact_id
-                ) if (
-                    shared_draft.artifact_id
-                    or shared_draft.linked_artifact_id
-                    or session.artifact_id
-                    or session.linked_artifact_id
-                ) else None,
-                "draft_key": session.draft_key,
-                "architect_worker_binding_ref": binding_ref.as_dict(),
-            },
+            "thread_id": prepared["thread_id"],
+            "mapped_input_payload": prepared["input_params"],
         }
 
     async def register_spawned_run(
@@ -380,7 +370,8 @@ class ArtifactSharedDraftBindingAdapter:
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         run_id: UUID,
-        user_prompt: str,
+        prompt: str,
+        prompt_role: str,
     ) -> dict[str, Any]:
         session = await self._resolve_binding_session(
             tenant_id=tenant_id,
@@ -395,7 +386,8 @@ class ArtifactSharedDraftBindingAdapter:
             session=session,
             shared_draft=shared_draft,
             run=run,
-            user_prompt=user_prompt,
+            prompt=prompt,
+            prompt_role=prompt_role,
         )
         return {
             "binding_ref": binding_ref.as_dict(),
@@ -447,6 +439,23 @@ class ArtifactSharedDraftBindingAdapter:
             raise ValueError("Binding is not linked to an artifact; update is not allowed")
         if normalized_mode in {"create", "update"}:
             persistence_mode = normalized_mode
+        active_run = await self.db.get(AgentRun, session.active_run_id) if session.active_run_id else None
+        if active_run is not None:
+            active_status = str(getattr(active_run.status, "value", active_run.status))
+            if active_status not in TERMINAL_RUN_STATUSES:
+                raise RuntimeError("BINDING_RUN_ACTIVE")
+        readiness = runtime_state.get("persistence_readiness") if isinstance(runtime_state, dict) else None
+        if persistence_mode == "create" and isinstance(readiness, dict) and not bool(readiness.get("ready", False)):
+            missing_fields = [
+                str(item).strip()
+                for item in (readiness.get("missing_fields") or [])
+                if str(item).strip()
+            ]
+            if missing_fields:
+                raise ValueError(
+                    "ARTIFACT_PERSISTENCE_NOT_READY: missing required create fields: "
+                    + ", ".join(missing_fields)
+                )
 
         revision_service = ArtifactRevisionService(self.db)
         if persistence_mode == "create":
@@ -560,48 +569,6 @@ class ArtifactSharedDraftBindingAdapter:
             "binding_ref": binding_ref.as_dict(),
             "binding_state": refreshed_state,
         }
-
-    async def continue_conversation(
-        self,
-        *,
-        tenant_id: UUID,
-        user_id: UUID,
-        binding_ref: WorkerBindingRef,
-        prior_run_id: UUID,
-        message: str,
-        source: str | None = None,
-    ) -> AgentRun:
-        del source
-        session = await self._resolve_binding_session(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            binding_id=binding_ref.binding_id,
-        )
-        prior_run = await self.db.get(AgentRun, prior_run_id)
-        if prior_run is None or prior_run.tenant_id != tenant_id:
-            raise ValueError("Prior worker run not found")
-        if str(prior_run.parent_run_id or "") != str(prior_run.root_run_id or prior_run.id) and session.last_run_id != prior_run.id:
-            await self.runtime.get_session_state_for_user(
-                tenant_id=tenant_id,
-                user_id=user_id,
-                session_id=session.id,
-                reconcile_run_id=prior_run_id,
-            )
-            await self.db.refresh(session)
-        if session.last_run_id != prior_run.id:
-            raise ValueError("Prior worker run does not match the binding session")
-
-        _session, _shared_draft, run = await self.runtime.continue_prompt_run(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            chat_session_id=session.id,
-            orchestrator_prompt=message,
-            model_id=None,
-        )
-        if run.tenant_id != tenant_id:
-            raise ValueError("Continued worker run tenant mismatch")
-        return run
-
 
 class PlatformArchitectWorkerBindingService:
     def __init__(self, db: AsyncSession):

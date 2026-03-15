@@ -310,13 +310,45 @@ class PlatformArchitectWorkerRuntimeService:
             },
         )
 
-        continued_run = await adapter.continue_conversation(
+        task = input_context.get("architect_worker_task") if isinstance(input_context.get("architect_worker_task"), dict) else None
+        prepared = await adapter.build_spawn_payload(
             tenant_id=runtime_context["tenant_id"],
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
-            prior_run_id=prior_run.id,
-            message=response.strip(),
-            source="orchestrator",
+            prompt=response.strip(),
+            prompt_role="orchestrator",
+            task=task,
+        )
+        continued_result = await self.kernel.spawn_run(
+            caller_run_id=runtime_context["caller_run_id"],
+            parent_node_id="architect_worker_respond",
+            target_agent_id=None,
+            target_agent_slug=str(prepared.get("worker_agent_slug") or "").strip() or None,
+            mapped_input_payload=prepared.get("mapped_input_payload") if isinstance(prepared.get("mapped_input_payload"), dict) else {},
+            failure_policy=None,
+            timeout_s=None,
+            scope_subset=self._default_scope_subset(runtime_context, None),
+            idempotency_key=self._stable_idempotency_key(
+                caller_run_id=runtime_context["caller_run_id"],
+                worker_agent_slug=str(prepared.get("worker_agent_slug") or "").strip() or "artifact-coding-agent",
+                task={"objective": response.strip()},
+                binding_ref=binding_ref,
+                explicit_key=None,
+                suffix=f"respond:{prior_run.id}",
+            ),
+            start_background=True,
+            thread_id=UUID(str(prepared["thread_id"])) if prepared.get("thread_id") else None,
+        )
+        continued_run = await self.db.get(AgentRun, UUID(str(continued_result["spawned_run_ids"][0])))
+        if continued_run is None:
+            raise RuntimeError("Continued worker run was not created")
+        await adapter.register_spawned_run(
+            tenant_id=runtime_context["tenant_id"],
+            user_id=runtime_context["user_id"],
+            binding_ref=binding_ref,
+            run_id=continued_run.id,
+            prompt=response.strip(),
+            prompt_role="orchestrator",
         )
         self._record_trace_event(
             runtime_context["caller_run_id"],
@@ -338,7 +370,10 @@ class PlatformArchitectWorkerRuntimeService:
                 "new_thread_id": str(continued_run.thread_id) if continued_run.thread_id else None,
             },
         )
-        return await self._serialize_run_view(continued_run)
+        view = await self._serialize_run_view(continued_run)
+        view["next_action_hint"] = "await_latest_child_then_persist"
+        view["continuation_of_run_id"] = str(prior_run.id)
+        return view
 
     async def prepare_binding(self, payload: dict[str, Any]) -> dict[str, Any]:
         runtime_context = self.parse_runtime_context(payload)
@@ -410,25 +445,27 @@ class PlatformArchitectWorkerRuntimeService:
                 tenant_id=runtime_context["tenant_id"],
                 user_id=runtime_context["user_id"],
                 binding_ref=binding_ref,
+                prompt=prompt,
+                prompt_role="user",
+                task=task,
             )
             worker_agent_slug = worker_agent_slug or str(binding_context.get("worker_agent_slug") or "").strip()
         if not worker_agent_slug:
             raise ValueError("worker_agent_slug is required")
-
-        child_context = {
-            **(binding_context.get("context") if isinstance(binding_context.get("context"), dict) else {}),
-            "architect_worker_task": task,
-        }
         result = await self.kernel.spawn_run(
             caller_run_id=runtime_context["caller_run_id"],
             parent_node_id="architect_worker_spawn",
             target_agent_id=None,
             target_agent_slug=worker_agent_slug,
-            mapped_input_payload={
-                "input": prompt,
-                "messages": [],
-                "context": child_context,
-            },
+            mapped_input_payload=(
+                binding_context.get("mapped_input_payload")
+                if isinstance(binding_context.get("mapped_input_payload"), dict)
+                else {
+                    "input": prompt,
+                    "messages": [],
+                    "context": {"architect_worker_task": task},
+                }
+            ),
             failure_policy=str(payload.get("failure_policy") or "").strip() or None,
             timeout_s=int(payload.get("timeout_s")) if payload.get("timeout_s") is not None else None,
             scope_subset=self._default_scope_subset(runtime_context, payload.get("scope_subset")),
@@ -440,6 +477,7 @@ class PlatformArchitectWorkerRuntimeService:
                 explicit_key=str(payload.get("idempotency_key") or "").strip() or None,
             ),
             start_background=True,
+            thread_id=UUID(str(binding_context["thread_id"])) if binding_context.get("thread_id") else None,
         )
         run_id = UUID(result["spawned_run_ids"][0])
         if binding_ref is not None:
@@ -449,7 +487,8 @@ class PlatformArchitectWorkerRuntimeService:
                 user_id=runtime_context["user_id"],
                 binding_ref=binding_ref,
                 run_id=run_id,
-                user_prompt=prompt,
+                prompt=prompt,
+                prompt_role="user",
             )
         return {
             "mode": "async",
@@ -492,6 +531,9 @@ class PlatformArchitectWorkerRuntimeService:
                     tenant_id=runtime_context["tenant_id"],
                     user_id=runtime_context["user_id"],
                     binding_ref=binding_ref,
+                    prompt=prompt,
+                    prompt_role="user",
+                    task=task,
                 )
                 worker_agent_slug = worker_agent_slug or str(binding_context.get("worker_agent_slug") or "").strip()
             if not worker_agent_slug:
@@ -502,14 +544,16 @@ class PlatformArchitectWorkerRuntimeService:
                     "binding_ref": binding_ref,
                     "prompt": prompt,
                     "task": task,
-                    "mapped_input_payload": {
-                        "input": prompt,
-                        "messages": [],
-                        "context": {
-                            **(binding_context.get("context") if isinstance(binding_context.get("context"), dict) else {}),
-                            "architect_worker_task": task,
-                        },
-                    },
+                    "thread_id": binding_context.get("thread_id"),
+                    "mapped_input_payload": (
+                        binding_context.get("mapped_input_payload")
+                        if isinstance(binding_context.get("mapped_input_payload"), dict)
+                        else {
+                            "input": prompt,
+                            "messages": [],
+                            "context": {"architect_worker_task": task},
+                        }
+                    ),
                 }
             )
 
@@ -520,6 +564,7 @@ class PlatformArchitectWorkerRuntimeService:
                 {
                     "target_agent_slug": target["worker_agent_slug"],
                     "mapped_input_payload": target["mapped_input_payload"],
+                    "thread_id": target.get("thread_id"),
                 }
                 for target in prepared_targets
             ],
@@ -547,7 +592,8 @@ class PlatformArchitectWorkerRuntimeService:
                 user_id=runtime_context["user_id"],
                 binding_ref=target["binding_ref"],
                 run_id=UUID(str(run_id_raw)),
-                user_prompt=target["prompt"],
+                prompt=target["prompt"],
+                prompt_role="user",
             )
         return {
             "mode": "async",

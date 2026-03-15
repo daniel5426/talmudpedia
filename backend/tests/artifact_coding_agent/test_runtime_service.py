@@ -289,6 +289,56 @@ async def test_build_run_messages_maps_orchestrator_role_to_system(db_session):
 
 
 @pytest.mark.asyncio
+async def test_prepare_session_run_input_uses_native_session_thread_and_orchestrator_role(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Prepare native session input",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    run_id = uuid4()
+    await runtime.history.persist_user_message(
+        session_id=prepared.session.id,
+        run_id=run_id,
+        content="Initial human request",
+    )
+    await runtime.history.persist_assistant_message(
+        session_id=prepared.session.id,
+        run_id=run_id,
+        content="Initial assistant reply",
+    )
+    await db_session.commit()
+
+    prepared_input = await runtime.prepare_session_run_input(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+        prompt="Apply the requested changes without re-asking.",
+        prompt_role="orchestrator",
+        model_id=None,
+        extra_context={"architect_worker_binding_ref": {"binding_type": "artifact_shared_draft", "binding_id": str(prepared.session.id)}},
+    )
+
+    assert prepared_input["thread_id"] == str(prepared.session.agent_thread_id)
+    assert prepared_input["input_params"]["thread_id"] == str(prepared.session.agent_thread_id)
+    assert prepared_input["input_params"]["messages"] == [
+        {"role": "user", "content": "Initial human request"},
+        {"role": "assistant", "content": "Initial assistant reply"},
+        {"role": "system", "content": "Apply the requested changes without re-asking."},
+    ]
+    assert prepared_input["input_params"]["context"]["conversation_message_role"] == "orchestrator"
+
+
+@pytest.mark.asyncio
 async def test_continue_prompt_run_uses_session_history_and_persists_orchestrator_turn(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     runtime = ArtifactCodingRuntimeService(db_session)

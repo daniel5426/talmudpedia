@@ -16,14 +16,17 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Child-run inspection returning binding metadata from run records.
 - Child-run waiting-state detection from delegated-worker blocker output and server-side `architect-worker-await` behavior.
 - Architect continuation of a waiting or already-completed child through `architect-worker-respond`, including native continuation of binding-backed artifact workers through the existing worker session/thread history.
+- Kernel-owned continuation of a completed artifact worker through `architect-worker-respond`, including preserved architect lineage, `parent_node_id=architect_worker_respond`, and reuse of the native artifact session thread id from the initial spawn.
 - `architect-worker-respond` now emits execution-trace events that expose whether response handling resumed a paused run or started native conversation continuation and which thread ids were involved.
 - Binding-owned artifact persistence through `architect-worker-binding-persist-artifact`, including auto-create and explicit mode rejection.
+- Binding persistence readiness gating prevents create-mode artifact persistence when required metadata like `slug` or `display_name` is still missing.
 - DB-backed seeded architect run that prepares an artifact binding, spawns an artifact worker, waits, and persists the canonical artifact successfully without a `platform-assets` artifact-create call in the architect path.
 - DB-backed seeded architect run that attempts a second mutating spawn on the same binding and reports the active-binding blocker cleanly.
 - Strict architect worker tool schemas reject malformed model payloads before runtime dispatch, including the observed bad binding-create guesses (`create`, `files`, `entrypoint`, `text`), while still allowing executor-owned runtime metadata to flow separately.
 - Binding-exported artifact payloads remain available for inspection/debugging, but the normal worker-backed persistence path is now runtime-owned instead of model pass-through.
 - Spawned architect worker context now carries the canonical `artifact_coding_shared_draft_id` derived from the prepared binding session.
-- Completed artifact-worker continuation no longer uses synthetic `messages=[]` follow-up spawn payloads; continuation is session-native and persisted with visible `orchestrator` role chat turns.
+- Completed artifact-worker continuation no longer uses synthetic `messages=[]` follow-up spawn payloads; continuation is history-native, kernel-owned, and persisted with visible `orchestrator` role chat turns.
+- Binding-backed spawn now uses the native worker session thread id from the first architect child run, so spawn and continuation share one worker conversation thread.
 
 ## Last run command + date/time + result
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
@@ -50,6 +53,9 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-03-15 19:33 EET
 - Result: PASS (`25 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_workers/test_architect_worker_integration.py`
+- Date/Time: 2026-03-15 20:18 EET
+- Result: PASS (`30 passed`)
 
 ## Known gaps or follow-ups
 - Group fanout is covered at runtime level, but there is not yet a DB-backed seeded architect E2E for parallel multi-binding spawn/join.

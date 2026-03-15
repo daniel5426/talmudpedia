@@ -307,7 +307,52 @@ class ArtifactCodingRuntimeService:
         background: bool,
     ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, AgentRun]:
         agent = await ensure_artifact_coding_agent_profile(self.db, tenant_id, actor_user_id=user_id)
+        prepared = await self.prepare_session_run_input(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session=session,
+            shared_draft=shared_draft,
+            prompt=prompt,
+            prompt_role=prompt_role,
+            model_id=model_id,
+        )
+        executor = AgentExecutorService(db=self.db)
+        run_id = await executor.start_run(
+            agent_id=agent.id,
+            input_params=prepared["input_params"],
+            user_id=user_id,
+            background=background,
+            mode=ExecutionMode.DEBUG,
+            requested_scopes=[],
+            thread_id=session.agent_thread_id,
+        )
+        run = await self.db.get(AgentRun, run_id)
+        if run is None:
+            raise RuntimeError("Artifact coding run was not created")
+        await self.register_session_run(
+            session=session,
+            shared_draft=shared_draft,
+            run=run,
+            prompt=prompt,
+            prompt_role=prompt_role,
+        )
+        await self.db.commit()
+        await self.db.refresh(session)
+        await self.db.refresh(run)
+        return session, shared_draft, run
 
+    async def prepare_session_run_input(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        session: ArtifactCodingSession,
+        shared_draft: ArtifactCodingSharedDraft,
+        prompt: str,
+        prompt_role: str,
+        model_id: str | None,
+        extra_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if session.active_run_id is not None:
             active_run = await self.db.get(AgentRun, session.active_run_id)
             if active_run is not None and str(getattr(active_run.status, "value", active_run.status)) not in {
@@ -341,25 +386,27 @@ class ArtifactCodingRuntimeService:
             "initiator_user_id": str(user_id),
             "conversation_message_role": prompt_role,
         }
-        input_params = {
-            "messages": run_messages,
-            "input": prompt,
+        if isinstance(extra_context, dict):
+            request_context.update(extra_context)
+        return {
             "thread_id": str(session.agent_thread_id),
-            "context": request_context,
+            "input_params": {
+                "messages": run_messages,
+                "input": prompt,
+                "thread_id": str(session.agent_thread_id),
+                "context": request_context,
+            },
         }
-        executor = AgentExecutorService(db=self.db)
-        run_id = await executor.start_run(
-            agent_id=agent.id,
-            input_params=input_params,
-            user_id=user_id,
-            background=background,
-            mode=ExecutionMode.DEBUG,
-            requested_scopes=[],
-            thread_id=session.agent_thread_id,
-        )
-        run = await self.db.get(AgentRun, run_id)
-        if run is None:
-            raise RuntimeError("Artifact coding run was not created")
+
+    async def register_session_run(
+        self,
+        *,
+        session: ArtifactCodingSession,
+        shared_draft: ArtifactCodingSharedDraft,
+        run: AgentRun,
+        prompt: str,
+        prompt_role: str,
+    ) -> None:
         run.surface = ARTIFACT_CODING_AGENT_SURFACE
         await self.history.mark_run_started(session=session, run_id=run.id)
         await self.shared_drafts.set_last_run(shared_draft=shared_draft, run_id=run.id)
@@ -380,10 +427,6 @@ class ArtifactCodingRuntimeService:
                 run_id=run.id,
                 content=prompt,
             )
-        await self.db.commit()
-        await self.db.refresh(session)
-        await self.db.refresh(run)
-        return session, shared_draft, run
 
     async def reconcile_session_run(
         self,
@@ -400,21 +443,16 @@ class ArtifactCodingRuntimeService:
         session: ArtifactCodingSession,
         shared_draft: ArtifactCodingSharedDraft,
         run: AgentRun,
-        user_prompt: str,
+        prompt: str,
+        prompt_role: str = "user",
     ) -> None:
-        await self.history.mark_run_started(session=session, run_id=run.id)
-        await self.shared_drafts.set_last_run(shared_draft=shared_draft, run_id=run.id)
-        await self.shared_drafts.create_run_snapshot(
+        await self.register_session_run(
+            session=session,
             shared_draft=shared_draft,
-            run_id=run.id,
-            session_id=session.id,
+            run=run,
+            prompt=prompt,
+            prompt_role=prompt_role,
         )
-        await self.history.persist_user_message(
-            session_id=session.id,
-            run_id=run.id,
-            content=user_prompt,
-        )
-        run.surface = ARTIFACT_CODING_AGENT_SURFACE
         await self.db.commit()
 
     async def get_session_state_for_user(
@@ -498,6 +536,15 @@ class ArtifactCodingRuntimeService:
         artifact_id = artifact.id if artifact is not None else (
             shared_draft.artifact_id or shared_draft.linked_artifact_id or session.artifact_id or session.linked_artifact_id
         )
+        missing_create_fields = [
+            field_name
+            for field_name, field_value in (
+                ("slug", artifact_payload.get("slug")),
+                ("display_name", artifact_payload.get("display_name")),
+            )
+            if not str(field_value or "").strip()
+        ]
+        persistence_mode = "update" if artifact_id is not None else "create"
         update_payload = {
             "artifact_id": str(artifact_id),
             "patch": {
@@ -529,6 +576,11 @@ class ArtifactCodingRuntimeService:
                 "error_payload": deepcopy(last_test_run.error_payload or {}),
                 "runtime_metadata": deepcopy(last_test_run.runtime_metadata or {}),
             } if last_test_run else None,
+            "persistence_readiness": {
+                "ready": artifact_id is not None or not missing_create_fields,
+                "mode": persistence_mode,
+                "missing_fields": missing_create_fields,
+            },
             "platform_assets_create_input": platform_assets_create_input,
             "platform_assets_update_input": platform_assets_update_input,
         }

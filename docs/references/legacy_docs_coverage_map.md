@@ -1,6 +1,6 @@
 # Legacy Docs Coverage Map
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-15
 
 This document maps every meaningful documentation file under `backend/documentations/` into the new documentation system.
 
@@ -33,8 +33,8 @@ Noise files such as `.DS_Store` are not part of the documentation inventory.
   - `legacy_pointer`
   - Canonical: `docs/product-specs/published_apps_spec.md`
 - `backend/documentations/Templates.md`
-  - `legacy_reference_pending_promotion`
-  - Related current domains: published apps, runtime SDK, builder runtime
+  - `legacy_pointer`
+  - Current state: old template catalog removed; file now documents the reset state and points back to `docs/design-docs/apps_builder_current.md` and `docs/product-specs/published_apps_spec.md`
 - `backend/documentations/agent_domain_architecture(1).md`
   - `legacy_reference_pending_promotion`
   - Related current canonicals: `docs/design-docs/backend_architecture_current.md`, `docs/design-docs/agent_execution_current.md`

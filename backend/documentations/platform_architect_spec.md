@@ -51,7 +51,7 @@ Current observability note:
 
 Current continuation contract:
 - `architect-worker-respond` is no longer limited to waiting children; it may also continue a completed worker conversation on the same binding/session/thread context when the architect wants additional edits from the same worker.
-- For binding-backed conversational workers, that continuation is native session-history continuation, not a synthetic respawn with empty messages.
+- For binding-backed conversational workers, the binding/runtime prepares native session-history input and the orchestration kernel creates the continued child run with normal architect lineage.
 
 Important prompt boundary:
 - do not use raw `platform-governance` `orchestration.*` actions for worker delegation
@@ -119,6 +119,7 @@ Artifact binding behavior:
 - later export canonical artifact create/update payloads for inspection/debugging
 - persist the current draft server-side through `ArtifactRevisionService`
 - artifact-coding sessions now hold a direct non-null `shared_draft_id` so worker tools resolve the prepared draft by identity, not by nullable scope inference
+- binding state now exposes `persistence_readiness` so create-mode drafts with missing required metadata do not attempt canonical persistence blindly
 
 Normal artifact binding creation is now lightweight:
 - `prepare_mode=create_new_draft`
@@ -139,10 +140,12 @@ Current architect artifact flow:
 1. `architect-worker-binding-prepare`
 2. `architect-worker-spawn` or `architect-worker-spawn-group`
 3. `architect-worker-await` for the normal waiting path
-4. `architect-worker-binding-persist-artifact`
-5. optional `architect-worker-binding-get-state` for inspection/debug/export
-6. optional `artifacts.create_test_run`
-7. optional `artifacts.publish` only with explicit publish intent
+4. if more edits are needed from the same worker, `architect-worker-respond`
+5. `architect-worker-await` on the latest continued child
+6. `architect-worker-binding-persist-artifact`
+7. optional `architect-worker-binding-get-state` for inspection/debug/export
+8. optional `artifacts.create_test_run`
+9. optional `artifacts.publish` only with explicit publish intent
 
 Important ownership boundary:
 - the child worker edits only the shared draft
@@ -153,7 +156,8 @@ The backend now creates the canonical initial draft snapshot from the supplied `
 
 Continuation contract for artifact workers:
 - paused child needing input -> native run resume
-- completed child needing more edits -> append an `orchestrator` turn to the existing artifact coding session and start the next run from true stored history
+- completed child needing more edits -> append an `orchestrator` turn to the existing artifact coding session, prepare the next run from true stored history, and let the orchestration kernel create the continued child run inside the architect tree
+- initial architect spawn also uses the artifact session's native `agent_thread_id`, so spawn and continuation share the same worker conversation thread
 - `orchestrator` turns remain visible in chat history and are not treated as user-authored turns
 
 ## Removed Legacy Path
@@ -220,6 +224,15 @@ Recent live runs isolated the next unresolved problems:
   - Root cause was the architect having to restate a large exported `platform_assets_create_input` / `platform_assets_update_input` object into a new strict `platform-assets` call.
   - The clean-cut fix is `architect-worker-binding-persist-artifact`, which reads canonical binding state server-side, chooses create vs update, persists through `ArtifactRevisionService`, and links the binding/session/shared-draft scope to the canonical artifact after create.
   - `architect-worker-binding-get-state` remains available for inspection/debugging, but it is no longer the normal persistence bridge.
+
+- Session-native continuation no longer escapes architect lineage.
+  - Root cause was direct runtime-owned run creation during continuation, which produced real worker history but lost `root_run_id` / `parent_run_id`.
+  - The clean-cut fix keeps native session-history preparation in the binding/runtime layer while routing final child-run creation back through the orchestration kernel.
+  - Continued worker runs are now awaitable, cancellable, and joinable from the same architect run tree.
+
+- Create-mode persistence now rejects obviously unready drafts.
+  - Missing required metadata like empty `slug` / `display_name` is exposed through `persistence_readiness`.
+  - The architect should continue the worker or return a blocker instead of attempting canonical create on an unready draft.
 
 - Artifact draft seed ergonomics are still rough for the architect.
   - The architect continues to guess non-canonical values like `python` or `script` instead of artifact-domain kinds like `tool_impl`.

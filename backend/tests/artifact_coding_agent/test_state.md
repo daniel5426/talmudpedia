@@ -21,6 +21,8 @@ Track backend coverage for the direct-use artifact coding agent wrapper, session
 - saved artifact session hydration rebuilds the working snapshot from the canonical artifact row
 - stored `orchestrator` chat turns are mapped to model-facing `system` messages when rebuilding session history
 - native `continue_prompt_run(...)` persists visible `orchestrator` turns and starts the next run from real stored session history on the same thread
+- `prepare_session_run_input(...)` builds kernel-ready child-run payloads from true stored session history, uses the session's native `agent_thread_id`, and preserves `orchestrator` authority in model-facing messages
+- runtime state serialization now exposes `persistence_readiness` so create-mode drafts report missing required metadata before canonical persist is attempted
 
 ## Last Run
 
@@ -42,6 +44,9 @@ Track backend coverage for the direct-use artifact coding agent wrapper, session
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date: 2026-03-15 19:33 EET
 - Result: PASS (`25 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_workers/test_architect_worker_integration.py`
+- Date: 2026-03-15 20:18 EET
+- Result: PASS (`30 passed`)
 
 ## Known Gaps
 

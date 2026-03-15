@@ -1,49 +1,37 @@
 # Templates
 
-Last Updated: 2026-02-22
+Last Updated: 2026-03-15
 
 ## Current State Summary
-- Template packs root: `backend/app/templates/published_apps/`
-- Active templates: `chat-classic`, `chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`, `fresh-start`
-- Loader behavior: templates are loaded from disk on each call (no in-memory `lru_cache`), so file edits are picked up without restarting just for template file reads.
-- Template bootstrap overlay now injects both a common runtime bootstrap and OpenCode custom tools into every template output:
-  - `src/runtime-sdk.ts` (thin wrapper, imports `@talmudpedia/runtime-sdk`)
-  - `src/runtime-config.json` (app-specific runtime config payload)
-  - `runtime-sdk/*` (local distributable SDK package payload)
-  - `.opencode/package.json`
-  - `.opencode/tools/read_agent_context.ts`
-- OpenCode run startup also self-heals `.opencode/*` bootstrap for legacy drafts before run start (fail-closed if seed fails).
-- Strategy currently implemented: clean implementation only (no legacy fallback paths kept).
-- Template outputs do not persist provider secrets; model/tool/vector credentials resolve at runtime via Integration Credentials (explicit ref -> tenant default -> platform env default).
+- This file is now a reset-state legacy reference for the old published-app template system.
+- Template packs root remains `backend/app/templates/published_apps/`, but that directory is currently empty.
+- The previously documented template catalog (`chat-classic`, `chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`, `fresh-start`) has been removed from the repo.
+- The backend template loader/bootstrap plumbing still exists, but there is no active checked-in app template catalog today.
+- Use `docs/design-docs/apps_builder_current.md` and `docs/product-specs/published_apps_spec.md` for current canonical app-builder and published-app behavior.
 
-## Fast-Create Direction (Current Planning Scope)
-- Active planning scope: `chat-classic` only.
-- Goal: make initial app creation fast by removing worker build from the create path.
-- Planned strategy:
-  - prebuild immutable `chat-classic` `dist/` artifacts in CI, keyed by template hash
-  - create app by storage prefix copy (template artifact -> app revision prefix), then mark revision build as succeeded immediately
-  - move per-app/per-tenant mutable values to runtime config payload (no per-app template rebuild)
-  - keep worker builds for user-edited revisions only
-- Other templates (`chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`) remain on current behavior for now.
+## What Still Exists
 
-## Template Catalog (Manifest State)
+- Loader/service entry point: `backend/app/services/published_app_templates.py`
+- Bootstrap overlay sources:
+  - `backend/app/templates/published_app_bootstrap/common/*`
+  - `backend/app/templates/published_app_bootstrap/opencode/.opencode/*`
+- Runtime SDK package source:
+  - `packages/runtime-sdk/*`
+- Data/API semantics that still reference templates:
+  - `template_key` on app and revision records
+  - admin/template-related routes that still call the template loader
 
-| Key | Name | Description | Tags | Entry |
-|---|---|---|---|---|
-| `chat-classic` | Classic Dialogue | Balanced chat-first layout with subtle panels. | `chat`, `neutral` | `src/main.tsx` |
-| `chat-grid` | Layout Shell Premium | LayoutShell-style workspace with sidebar, resizable source viewer, and mobile overlays. | `chat`, `premium`, `workspace` | `src/main.tsx` |
-| `chat-editorial` | Editorial Stack | High-contrast editorial style for premium assistants. | `chat`, `editorial` | `src/main.tsx` |
-| `chat-neon` | Neon Console | Dark neon style with bold contrast and sharp edges. | `chat`, `dark` | `src/main.tsx` |
-| `chat-soft` | Soft Product | Rounded, calm interface for customer-facing support flows. | `chat`, `friendly` | `src/main.tsx` |
-| `fresh-start` | Fresh Start | Minimal Vite + React baseline with runtime SDK wiring. | `chat`, `minimal`, `blank` | `src/main.tsx` |
+## What Was Removed
 
-## What Is Special Right Now
-- `chat-classic` is the advanced template and currently includes the largest component set, including:
-  - vendored shadcn/radix-style UI layer under `src/components/ui/*`
-  - AI interaction elements under `src/components/ai-elements/*`
-  - app-level composition via `Sidebar`, `BotInputArea`, `Message`, `ChainOfThought`
-  - support utilities/hooks/stubs under `src/lib/*`, `src/hooks/*`, `src/services/*`
-- Other templates (`chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`) remain lighter and mostly depend on base React/Vite stack.
+- All checked-in published-app template packs under `backend/app/templates/published_apps/`
+- The old multi-template catalog and its design-specific guidance
+- Any claim that the old catalog is still the current source of truth
+
+## Next-Template Direction
+
+- The next template should be treated as a fresh clean-cut replacement.
+- Prefer a single high-quality starter over restoring a broad catalog too early.
+- Keep runtime/bootstrap integration shared and minimal so visual/UI direction can evolve without rebuilding platform contracts.
 
 ## Dependency Policy (Builder Validation)
 - Enforced by: `backend/app/services/apps_builder_dependency_policy.py`
@@ -71,55 +59,6 @@ Last Updated: 2026-02-22
 - Preview chat stream calls continue to support preview token bridging.
 
 ## Operational Notes
+
 - For local testing through the builder, backend + worker must be running and using latest code.
-- If you change backend validation/build code and still see old “Unsupported package ...” errors, restart the backend process and Celery worker so active processes load the latest policy code.
-
-## Local Template Debug Loop (No Worker Roundtrip)
-- Run a template directly with Vite + HMR:
-  - `bash backend/scripts/dev-services/template_local_dev.sh chat-classic`
-- Switch templates quickly:
-  - `bash backend/scripts/dev-services/template_local_dev.sh chat-grid --port 4174`
-- Force dependency reinstall when needed:
-  - `bash backend/scripts/dev-services/template_local_dev.sh chat-classic --install`
-- Build-check before pushing template changes:
-  - `bash backend/scripts/dev-services/template_build_all.sh`
-
-## Tailwind Wiring (`chat-classic`)
-- `chat-classic` now has explicit Tailwind wiring:
-  - `tailwind.config.ts`
-  - `postcss.config.cjs`
-  - `@tailwind base/components/utilities` directives in `src/styles.css`
-- `tailwindcss-animate` is included for shadcn-style animation utilities (`animate-in`, `fade-in-*`, `slide-in-*`, `zoom-*`).
-- Class syntax that was Tailwind v4-style (`w-(--var)`, `origin-(--var)`, `max-h-(--var)`) was normalized to Tailwind v3-compatible arbitrary values (`w-[var(--...)]`, `origin-[var(--...)]`, `max-h-[var(--...)]`).
-- Result: Tailwind utility classes used by `chat-classic` UI components are now emitted in local/worker builds instead of being silently skipped.
-
-## LayoutShell Replication Progress (`chat-classic`)
-- `chat-classic/src/App.tsx` now uses a `LayoutShell`-style structure:
-  - `SidebarProvider` + floating/collapsible `Sidebar`
-  - `SidebarInset` chat workspace
-  - source viewer pane removed for this phase
-- Sidebar now mirrors production structure more closely:
-  - brand/header + collapse trigger
-  - `Platform` nav group
-  - `Previous Chats` group with per-item dropdown actions
-  - footer runtime status panel + desktop sidebar rail
-- Chat workspace now follows ChatPane rhythm:
-  - top bar removed (to match ChatPane workspace behavior more closely)
-  - centered message column using AI elements (`Message`, `ChainOfThought`, `BotInputArea`)
-  - inline sources card instead of side source viewer
-  - empty state now uses centered heading + centered input area (instead of a welcome card block)
-- Styling foundation was cleaned up:
-  - `chat-classic/src/styles.css` legacy handcrafted class blocks were replaced with a minimal Tailwind-token base stylesheet
-  - token compatibility vars (`--border`, `--panel`, `--muted`) are retained for inline-style helper components
-  - result: template visuals are now driven by shadcn/Tailwind classes instead of old template CSS overrides
-
-## Source of Truth Files
-- Template loader: `backend/app/services/published_app_templates.py`
-- Dependency policy: `backend/app/services/apps_builder_dependency_policy.py`
-- Template packs: `backend/app/templates/published_apps/*`
-- Common runtime bootstrap source: `backend/app/templates/published_app_bootstrap/common/*`
-- OpenCode bootstrap source: `backend/app/templates/published_app_bootstrap/opencode/.opencode/*`
-- Runtime SDK package source: `packages/runtime-sdk/*`
-- Current implementation overview: `backend/documentations/Plans/AppsBuilder_Current_Implementation_Overview.md`
-- Runtime SDK architecture doc: `backend/documentations/runtime_sdk_v1_host_anywhere.md`
-- Fast-create pilot scope: `chat-classic` only until rollout criteria are met.
+- If a new template pack is introduced, validate it against the shared dependency policy and runtime/bootstrap overlay instead of reviving old template-specific assumptions from this file.

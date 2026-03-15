@@ -82,17 +82,18 @@ Artifact coding is now implemented as one worker type under the generic architec
 
 Current artifact flow:
 1. `architect-worker-binding-prepare` creates or reuses the shared artifact draft session.
-2. `architect-worker-spawn` or `architect-worker-spawn-group` launches async worker runs.
-3. The spawned child run is bound to the artifact session via child context, including the artifact-coding surface marker.
-4. The architect later waits through `architect-worker-await` or inspects through `architect-worker-get-run`.
-5. The architect persists the binding server-side with `architect-worker-binding-persist-artifact`.
-6. The architect may optionally call `architect-worker-binding-get-state` for inspection/debug/export.
-7. The architect may optionally call `artifacts.create_test_run` and `artifacts.publish` subject to existing draft-first/publish-intent rules.
+2. `architect-worker-spawn` or `architect-worker-spawn-group` launches kernel-owned async worker child runs.
+3. The spawned child run uses the artifact session's native `agent_thread_id` from the first spawn and is bound to the artifact session via child context, including the artifact-coding surface marker.
+4. The architect waits through `architect-worker-await` or inspects through `architect-worker-get-run`.
+5. If more edits are needed from the same worker, the architect continues the same worker conversation with `architect-worker-respond`, then waits again on the continued child run.
+6. Only after the latest child run is terminal and accepted does the architect persist the binding server-side with `architect-worker-binding-persist-artifact`.
+7. The architect may optionally call `architect-worker-binding-get-state` for inspection/debug/export.
+8. The architect may optionally call `artifacts.create_test_run` and `artifacts.publish` subject to existing draft-first/publish-intent rules.
 
 Important boundary:
 - the worker edits only the shared draft
 - canonical artifact persistence for worker-backed artifact drafts now happens inside the binding runtime, not through model-authored `platform-assets` passthrough
-- completed worker continuation for binding-backed conversational workers now happens through the worker's native artifact chat session, not by spawning a synthetic child run with `messages=[]`
+- binding-backed conversational worker continuation now uses binding-prepared native session history plus a kernel-owned child run, not a session-owned run or a synthetic child run with `messages=[]`
 
 The backend now owns initial draft construction for the normal create path:
 - the architect provides only the draft seed
@@ -152,16 +153,17 @@ Artifact binding exports still emit canonical platform-assets payloads for inspe
 
 ## Native Conversation Continuation
 
-Binding-backed conversational worker continuation is now a native session-history operation:
+Binding-backed conversational worker continuation is now a native-history, kernel-owned child-run operation:
 - paused workers still use run resume
 - completed artifact workers are continued by appending an `orchestrator` message to the existing artifact coding chat session
-- the next run is started from the stored session history on the same `agent_thread_id`
+- the binding/runtime prepares the next run from stored session history on the same `agent_thread_id`
+- the orchestration kernel creates the continued child run so lineage, await, join, and cancel still work inside the architect tree
 - stored `orchestrator` turns are mapped to model-facing `system` messages, not `user` messages
 
 Hard-cut removal:
 - no synthetic objective replay inside `input`
 - no continuation path that uses `messages=[]` with a fake fresh run
-- no legacy follow-up spawn path for the binding-backed artifact worker
+- no session-owned continuation run path for architect-owned conversational workers
 
 ## Strict Runtime Context
 
@@ -216,6 +218,15 @@ The latest live runs exposed several root-cause gaps that are not yet resolved:
   - That forwarding step degraded into model-authored `value: "<json string>"` wrappers even after executor hardening.
   - The clean-cut fix is `architect-worker-binding-persist-artifact`, which persists the binding-backed draft server-side through `ArtifactRevisionService` and links the session/shared-draft scope to the canonical artifact after create.
   - `architect-worker-binding-get-state` remains available for export/inspection, but it is no longer the normal persistence bridge.
+
+- Kernel-owned native worker continuation is fixed for binding-backed artifact workers.
+  - Root cause was a split-brain continuation path: the worker session owned continuation history, but the continued run itself was started outside the architect orchestration tree.
+  - The clean-cut fix is to let the binding/runtime prepare native session input while the orchestration kernel still creates the continued child run with the architect's lineage and `parent_node_id=architect_worker_respond`.
+  - Initial spawn now also uses the native artifact session thread id, so spawn and continue share one worker conversation thread.
+
+- Blind create persistence with missing required artifact metadata is no longer accepted.
+  - Binding state now exposes `persistence_readiness`, including missing fields for create mode.
+  - `architect-worker-binding-persist-artifact` now fails fast instead of attempting canonical create with empty required fields like `slug` or `display_name`.
 
 - Artifact seed vocabulary is still not natural enough for the architect.
   - The architect still guesses values like `python` or `script` instead of the canonical artifact kinds (`tool_impl`, `agent_node`, `rag_operator`).

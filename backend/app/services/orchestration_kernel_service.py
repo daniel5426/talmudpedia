@@ -48,6 +48,7 @@ class OrchestrationKernelService:
         idempotency_key: str,
         start_background: bool = True,
         orchestration_group_id: UUID | None = None,
+        thread_id: UUID | None = None,
     ) -> dict[str, Any]:
         caller_run = await self._require_run(caller_run_id)
         target = await self._resolve_target(
@@ -129,6 +130,7 @@ class OrchestrationKernelService:
             depth=int(caller_run.depth or 0) + 1,
             spawn_key=normalized_key,
             orchestration_group_id=orchestration_group_id,
+            thread_id=thread_id,
         )
 
         child_grant.run_id = child_run_id
@@ -216,6 +218,7 @@ class OrchestrationKernelService:
                 idempotency_key=key,
                 start_background=start_background,
                 orchestration_group_id=group.id,
+                thread_id=self._as_uuid(target.get("thread_id")),
             )
             run_id = result["spawned_run_ids"][0]
             spawned.append(run_id)

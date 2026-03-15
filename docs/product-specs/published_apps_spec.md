@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-15
 
 This document is the canonical product/specification overview for published apps.
 
@@ -24,6 +24,10 @@ The current product includes:
 - app-scoped auth with selectable auth templates
 - custom domain request tracking
 - persisted authenticated chat behavior for published runtime
+
+Current repo state note:
+- the previous published-app UI template packs were removed from source control
+- template infrastructure and `template_key` fields still exist in the implementation, but there is no active checked-in app template catalog at the moment
 
 The current product does not yet include:
 - billing/subscriptions

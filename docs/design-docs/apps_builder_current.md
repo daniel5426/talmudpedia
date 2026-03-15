@@ -1,6 +1,6 @@
 # Apps Builder Current
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-15
 
 This document is the canonical current-state overview for the Apps Builder system.
 
@@ -15,6 +15,8 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Coding-agent runs execute against the canonical shared workspace watched by the preview runtime.
 - Published runtime remains static artifact delivery.
 - Publish reuses or materializes the currently visible successful preview-build snapshot.
+- The repo is currently between template generations: `backend/app/templates/published_apps/` is intentionally empty after the previous app template packs were removed.
+- Template infrastructure still exists in backend services and app metadata, but there is no active checked-in published-app template catalog right now.
 
 ## Backend Entry Points
 
@@ -36,7 +38,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
   - `backend/app/services/published_app_coding_agent_runtime_sandbox.py`
   - `backend/app/services/published_app_coding_agent_engines/opencode_engine.py`
   - `backend/app/services/opencode_server_client.py`
-- Revision/publish/template services:
+- Revision/publish/template-related services:
   - `backend/app/services/published_app_revision_store.py`
   - `backend/app/services/published_app_bundle_storage.py`
   - `backend/app/services/published_app_templates.py`
@@ -62,6 +64,13 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Coding-agent APIs live under `/admin/apps/{app_id}/coding-agent/v2/*`.
 - Version preview inspection lives at `GET /admin/apps/{app_id}/versions/{version_id}/preview-runtime`.
 - Publish job status lives at `GET /admin/apps/{app_id}/publish/jobs/{job_id}`.
+
+## Template Reset State
+
+- Previous published-app template packs were deleted from `backend/app/templates/published_apps/`.
+- `published_app_templates.py` remains the template loader/bootstrap integration point, but the checked-in catalog has been reset to empty.
+- `template_key` is still part of the current app/revision model and related APIs, so the codebase has not yet completed a full hard cut away from template selection semantics.
+- The next template should be treated as a fresh replacement, not an incremental continuation of the deleted catalog.
 
 ## Canonical Related Docs
 
