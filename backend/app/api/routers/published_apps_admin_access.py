@@ -366,7 +366,7 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
         return draft
 
     files = build_template_files(
-        app.template_key or "chat-classic",
+        app.template_key or "classic-chat",
         runtime_context={
             "app_id": str(app.id),
             "app_slug": app.slug,
@@ -377,8 +377,8 @@ async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, ac
         db,
         app=app,
         kind=PublishedAppRevisionKind.draft,
-        template_key=app.template_key or "chat-classic",
-        entry_file=get_template(app.template_key or "chat-classic").entry_file,
+        template_key=app.template_key or "classic-chat",
+        entry_file=get_template(app.template_key or "classic-chat").entry_file,
         files=files,
         created_by=actor_id,
         source_revision_id=None,

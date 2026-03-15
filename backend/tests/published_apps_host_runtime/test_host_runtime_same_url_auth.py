@@ -306,7 +306,7 @@ async def test_host_assets_serve_dist_asset_with_assets_prefix(client, db_sessio
     revision = PublishedAppRevision(
         published_app_id=app.id,
         kind=PublishedAppRevisionKind.published,
-        template_key="chat-classic",
+        template_key="classic-chat",
         template_runtime="vite_static",
         files={"src/main.tsx": "export default {};"},
         dist_storage_prefix="apps/t/a/revisions/host-assets/dist",

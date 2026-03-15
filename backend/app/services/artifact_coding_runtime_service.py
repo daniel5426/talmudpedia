@@ -31,7 +31,15 @@ from app.services.artifact_coding_agent_tools import (
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
+from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.thread_service import ThreadService
+
+ARTIFACT_CODING_SCOPE_LOCKED = "locked"
+ARTIFACT_CODING_SCOPE_STANDALONE = "standalone"
+ARTIFACT_CODING_SCOPE_MODES = {
+    ARTIFACT_CODING_SCOPE_LOCKED,
+    ARTIFACT_CODING_SCOPE_STANDALONE,
+}
 
 
 @dataclass
@@ -52,6 +60,13 @@ class ArtifactCodingRuntimeService:
     def _normalize_draft_key(value: str | None) -> str | None:
         text = str(value or "").strip()
         return text or None
+
+    @staticmethod
+    def normalize_scope_mode(value: str | None) -> str:
+        normalized = str(value or ARTIFACT_CODING_SCOPE_LOCKED).strip().lower()
+        if normalized not in ARTIFACT_CODING_SCOPE_MODES:
+            raise ValueError("Unsupported artifact coding scope mode")
+        return normalized
 
     @staticmethod
     def build_initial_snapshot_from_seed(draft_seed: dict[str, Any]) -> dict[str, Any]:
@@ -149,7 +164,9 @@ class ArtifactCodingRuntimeService:
         chat_session_id: UUID | None,
         draft_snapshot: dict[str, Any] | None,
         replace_snapshot: bool,
+        scope_mode: str = ARTIFACT_CODING_SCOPE_LOCKED,
     ) -> PreparedArtifactCodingSession:
+        scope_mode = self.normalize_scope_mode(scope_mode)
         draft_key = self._normalize_draft_key(draft_key)
         initial_snapshot = await self._resolve_initial_snapshot(
             tenant_id=tenant_id,
@@ -195,7 +212,9 @@ class ArtifactCodingRuntimeService:
                 draft_key=draft_key,
                 agent_thread_id=thread.id,
                 title_prompt=title_prompt,
+                scope_mode=scope_mode,
             )
+        session.scope_mode = scope_mode
 
         if replace_snapshot:
             await self.shared_drafts.update_snapshot(
@@ -241,6 +260,7 @@ class ArtifactCodingRuntimeService:
         chat_session_id: UUID | None,
         draft_snapshot: dict[str, Any] | None,
         model_id: str | None,
+        scope_mode: str = ARTIFACT_CODING_SCOPE_LOCKED,
     ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, AgentRun]:
         agent = await ensure_artifact_coding_agent_profile(self.db, tenant_id, actor_user_id=user_id)
         prepared = await self.prepare_session(
@@ -253,6 +273,7 @@ class ArtifactCodingRuntimeService:
             chat_session_id=chat_session_id,
             draft_snapshot=draft_snapshot,
             replace_snapshot=True,
+            scope_mode=scope_mode,
         )
         session = prepared.session
         shared_draft = prepared.shared_draft
@@ -377,6 +398,7 @@ class ArtifactCodingRuntimeService:
             "surface": ARTIFACT_CODING_AGENT_SURFACE,
             "artifact_coding_session_id": str(session.id),
             "artifact_coding_shared_draft_id": str(shared_draft.id),
+            "artifact_coding_scope_mode": self.normalize_scope_mode(getattr(session, "scope_mode", None)),
             "artifact_id": str(artifact_id) if artifact_id else None,
             "draft_key": self._normalize_draft_key(session.draft_key),
             "requested_model_id": model_id,
@@ -491,6 +513,307 @@ class ArtifactCodingRuntimeService:
         last_test_run = await self.db.get(ArtifactRun, shared_draft.last_test_run_id) if shared_draft.last_test_run_id else None
         return session, shared_draft, artifact, run, last_test_run
 
+    async def search_accessible_artifacts(
+        self,
+        *,
+        tenant_id: UUID,
+        query: str | None,
+        limit: int = 10,
+    ) -> list[Artifact]:
+        normalized_query = str(query or "").strip().lower()
+        artifacts = await self.registry.list_accessible_artifacts(tenant_id=tenant_id)
+        if not normalized_query:
+            return artifacts[: max(1, limit)]
+
+        def _score(item: Artifact) -> tuple[int, str]:
+            slug = str(item.slug or "").lower()
+            display_name = str(item.display_name or "").lower()
+            if slug == normalized_query or display_name == normalized_query:
+                return (0, slug)
+            if slug.startswith(normalized_query) or display_name.startswith(normalized_query):
+                return (1, slug)
+            if normalized_query in slug or normalized_query in display_name:
+                return (2, slug)
+            return (3, slug)
+
+        filtered = [
+            artifact
+            for artifact in artifacts
+            if normalized_query in str(artifact.slug or "").lower()
+            or normalized_query in str(artifact.display_name or "").lower()
+            or normalized_query in str(artifact.description or "").lower()
+        ]
+        filtered.sort(key=_score)
+        return filtered[: max(1, limit)]
+
+    async def list_recent_accessible_artifacts(
+        self,
+        *,
+        tenant_id: UUID,
+        limit: int = 10,
+    ) -> list[Artifact]:
+        artifacts = await self.registry.list_accessible_artifacts(tenant_id=tenant_id)
+        return artifacts[: max(1, limit)]
+
+    async def open_artifact_for_session(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        session_id: UUID,
+        artifact_id: UUID,
+    ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, Artifact]:
+        session = await self._get_session_for_user(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if self.normalize_scope_mode(getattr(session, "scope_mode", None)) != ARTIFACT_CODING_SCOPE_STANDALONE:
+            raise RuntimeError("ARTIFACT_CODING_SCOPE_LOCKED")
+        artifact = await self.registry.get_accessible_artifact(artifact_id=artifact_id, tenant_id=tenant_id)
+        if artifact is None:
+            raise ValueError("Artifact not found")
+        snapshot = self._snapshot_from_artifact(artifact)
+        shared_draft = await self.shared_drafts.resolve_for_session(session=session)
+        session.artifact_id = artifact.id
+        session.linked_artifact_id = artifact.id
+        session.linked_at = datetime.now(timezone.utc)
+        session.draft_key = None
+        await self.history.update_session_scope(
+            session=session,
+            artifact_id=artifact.id,
+            draft_key=None,
+            shared_draft_id=shared_draft.id,
+        )
+        shared_draft.artifact_id = artifact.id
+        shared_draft.linked_artifact_id = artifact.id
+        shared_draft.linked_at = datetime.now(timezone.utc)
+        shared_draft.draft_key = None
+        await self.shared_drafts.update_snapshot(
+            shared_draft=shared_draft,
+            draft_snapshot=snapshot,
+            artifact_id=artifact.id,
+            draft_key=None,
+        )
+        await self.db.commit()
+        await self.db.refresh(session)
+        await self.db.refresh(shared_draft)
+        return session, shared_draft, artifact
+
+    async def start_new_draft_for_session(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        session_id: UUID,
+        draft_seed: dict[str, Any],
+    ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft]:
+        session = await self._get_session_for_user(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if self.normalize_scope_mode(getattr(session, "scope_mode", None)) != ARTIFACT_CODING_SCOPE_STANDALONE:
+            raise RuntimeError("ARTIFACT_CODING_SCOPE_LOCKED")
+        snapshot = self.build_initial_snapshot_from_seed(draft_seed)
+        shared_draft = await self.shared_drafts.resolve_for_session(session=session)
+        session.artifact_id = None
+        session.linked_artifact_id = None
+        session.linked_at = None
+        session.draft_key = None
+        await self.history.update_session_scope(
+            session=session,
+            artifact_id=None,
+            draft_key=None,
+            shared_draft_id=shared_draft.id,
+        )
+        shared_draft.artifact_id = None
+        shared_draft.linked_artifact_id = None
+        shared_draft.linked_at = None
+        shared_draft.draft_key = None
+        await self.shared_drafts.update_snapshot(
+            shared_draft=shared_draft,
+            draft_snapshot=snapshot,
+            artifact_id=None,
+            draft_key=None,
+        )
+        await self.shared_drafts.set_last_test_run(shared_draft=shared_draft, test_run_id=None)
+        await self.db.commit()
+        await self.db.refresh(session)
+        await self.db.refresh(shared_draft)
+        return session, shared_draft
+
+    async def persist_session_artifact(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        session_id: UUID,
+        mode: str,
+    ) -> dict[str, Any]:
+        normalized_mode = str(mode or "auto").strip().lower() or "auto"
+        if normalized_mode not in {"auto", "create", "update"}:
+            raise ValueError("mode must be one of auto, create, update")
+        session, shared_draft, artifact, run, last_test_run = await self.get_session_state_for_user(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        runtime_state = self.serialize_runtime_state(
+            session=session,
+            shared_draft=shared_draft,
+            artifact=artifact,
+            run=run,
+            last_test_run=last_test_run,
+        )
+        existing_artifact_id = (
+            shared_draft.artifact_id
+            or shared_draft.linked_artifact_id
+            or session.artifact_id
+            or session.linked_artifact_id
+        )
+        persistence_mode = "update" if existing_artifact_id is not None else "create"
+        if normalized_mode == "create" and existing_artifact_id is not None:
+            raise ValueError("Session already links to an artifact; create is not allowed")
+        if normalized_mode == "update" and existing_artifact_id is None:
+            raise ValueError("Session is not linked to an artifact; update is not allowed")
+        if normalized_mode != "auto":
+            persistence_mode = normalized_mode
+        if session.active_run_id is not None:
+            active_run = await self.db.get(AgentRun, session.active_run_id)
+            if active_run is not None and str(getattr(active_run.status, "value", active_run.status)) not in {
+                RunStatus.completed.value,
+                RunStatus.failed.value,
+                RunStatus.cancelled.value,
+            }:
+                raise RuntimeError("CODING_AGENT_RUN_ACTIVE")
+        readiness = runtime_state.get("persistence_readiness") if isinstance(runtime_state, dict) else None
+        if persistence_mode == "create" and isinstance(readiness, dict) and not bool(readiness.get("ready")):
+            missing_fields = [str(item).strip() for item in (readiness.get("missing_fields") or []) if str(item).strip()]
+            raise ValueError(
+                "ARTIFACT_PERSISTENCE_NOT_READY: missing required create fields: "
+                + ", ".join(missing_fields)
+            )
+        revision_service = ArtifactRevisionService(self.db)
+        if persistence_mode == "create":
+            create_input = runtime_state.get("platform_assets_create_input")
+            if not isinstance(create_input, dict):
+                raise ValueError("Session state is missing canonical create input")
+            artifact_payload = create_input.get("payload")
+            if not isinstance(artifact_payload, dict):
+                raise ValueError("Session create payload is invalid")
+            runtime_payload = artifact_payload.get("runtime")
+            if not isinstance(runtime_payload, dict):
+                raise ValueError("Session create runtime payload is invalid")
+            artifact = await revision_service.create_artifact(
+                tenant_id=tenant_id,
+                created_by=user_id,
+                slug=str(artifact_payload.get("slug") or "").strip(),
+                display_name=str(artifact_payload.get("display_name") or "").strip(),
+                description=artifact_payload.get("description"),
+                kind=str(artifact_payload.get("kind") or "").strip(),
+                source_files=list(runtime_payload.get("source_files") or []),
+                entry_module_path=runtime_payload.get("entry_module_path"),
+                python_dependencies=list(runtime_payload.get("python_dependencies") or []),
+                runtime_target=str(runtime_payload.get("runtime_target") or "cloudflare_workers"),
+                capabilities=dict(artifact_payload.get("capabilities") or {}),
+                config_schema=dict(artifact_payload.get("config_schema") or {}),
+                agent_contract=artifact_payload.get("agent_contract"),
+                rag_contract=artifact_payload.get("rag_contract"),
+                tool_contract=artifact_payload.get("tool_contract"),
+            )
+            session.artifact_id = artifact.id
+            session.linked_artifact_id = artifact.id
+            session.linked_at = datetime.now(timezone.utc)
+            shared_draft.artifact_id = artifact.id
+            shared_draft.linked_artifact_id = artifact.id
+            shared_draft.linked_at = datetime.now(timezone.utc)
+        else:
+            update_input = runtime_state.get("platform_assets_update_input")
+            if not isinstance(update_input, dict):
+                raise ValueError("Session state is missing canonical update input")
+            update_payload = update_input.get("payload")
+            if not isinstance(update_payload, dict):
+                raise ValueError("Session update payload is invalid")
+            patch = update_payload.get("patch")
+            if not isinstance(patch, dict):
+                raise ValueError("Session update patch is invalid")
+            target_artifact = artifact
+            if target_artifact is None and existing_artifact_id is not None:
+                target_artifact = await self.registry.get_tenant_artifact(
+                    artifact_id=existing_artifact_id,
+                    tenant_id=tenant_id,
+                )
+            if target_artifact is None:
+                raise ValueError("Linked artifact not found for update")
+            artifact = target_artifact
+            runtime_payload = patch.get("runtime")
+            if not isinstance(runtime_payload, dict):
+                raise ValueError("Session update runtime payload is invalid")
+            await revision_service.update_artifact(
+                artifact,
+                updated_by=user_id,
+                display_name=str(patch.get("display_name") or "").strip(),
+                description=patch.get("description"),
+                source_files=list(runtime_payload.get("source_files") or []),
+                entry_module_path=runtime_payload.get("entry_module_path"),
+                python_dependencies=list(runtime_payload.get("python_dependencies") or []),
+                runtime_target=str(runtime_payload.get("runtime_target") or "cloudflare_workers"),
+                capabilities=dict(patch.get("capabilities") or {}),
+                config_schema=dict(patch.get("config_schema") or {}),
+                agent_contract=patch.get("agent_contract"),
+                rag_contract=patch.get("rag_contract"),
+                tool_contract=patch.get("tool_contract"),
+            )
+        await self.db.commit()
+        await self.db.refresh(session)
+        await self.db.refresh(shared_draft)
+        session, shared_draft, artifact, run, last_test_run = await self.get_session_state_for_user(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session.id,
+        )
+        refreshed_state = self.serialize_runtime_state(
+            session=session,
+            shared_draft=shared_draft,
+            artifact=artifact,
+            run=run,
+            last_test_run=last_test_run,
+        )
+        return {
+            "artifact_id": str(artifact.id) if artifact is not None else None,
+            "artifact_slug": str(getattr(artifact, "slug", "") or "") or None,
+            "artifact_kind": str(getattr(artifact.kind, "value", artifact.kind)) if artifact is not None else None,
+            "persistence_mode": persistence_mode,
+            "session_state": refreshed_state,
+            "verification_state": refreshed_state.get("verification_state"),
+        }
+
+    @staticmethod
+    def _serialize_verification_state(last_test_run: ArtifactRun | None) -> dict[str, Any]:
+        if last_test_run is None:
+            return {
+                "has_test_run": False,
+                "latest_test_run_id": None,
+                "latest_test_status": None,
+                "latest_test_terminal": None,
+                "latest_test_successful": None,
+                "result_payload": None,
+                "error_payload": None,
+                "runtime_metadata": None,
+            }
+        status = str(getattr(last_test_run.status, "value", last_test_run.status))
+        return {
+            "has_test_run": True,
+            "latest_test_run_id": str(last_test_run.id),
+            "latest_test_status": status,
+            "latest_test_terminal": status in {"completed", "failed", "cancelled"},
+            "latest_test_successful": status == "completed",
+            "result_payload": deepcopy(last_test_run.result_payload or {}),
+            "error_payload": deepcopy(last_test_run.error_payload or {}),
+            "runtime_metadata": deepcopy(last_test_run.runtime_metadata or {}),
+        }
+
     @staticmethod
     def serialize_runtime_state(
         *,
@@ -563,6 +886,7 @@ class ArtifactCodingRuntimeService:
         } if update_payload is not None else None
         return {
             "chat_session_id": str(session.id),
+            "scope_mode": ArtifactCodingRuntimeService.normalize_scope_mode(getattr(session, "scope_mode", None)),
             "artifact_id": str(artifact_id) if artifact_id is not None else None,
             "draft_key": session.draft_key,
             "thread_id": str(session.agent_thread_id),
@@ -576,6 +900,7 @@ class ArtifactCodingRuntimeService:
                 "error_payload": deepcopy(last_test_run.error_payload or {}),
                 "runtime_metadata": deepcopy(last_test_run.runtime_metadata or {}),
             } if last_test_run else None,
+            "verification_state": ArtifactCodingRuntimeService._serialize_verification_state(last_test_run),
             "persistence_readiness": {
                 "ready": artifact_id is not None or not missing_create_fields,
                 "mode": persistence_mode,

@@ -1,6 +1,6 @@
 # Coding Agent API Tests
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-15
 
 ## Scope of the feature
 - v2 coding-agent admin API under `/admin/apps/{app_id}/coding-agent/v2/*`.
@@ -28,6 +28,12 @@ Last Updated: 2026-03-01
 - Batch finalizer marks created revisions as `build_status=failed` when build enqueue fails, without breaking run finalization.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -x -q tests/coding_agent_api/test_v2_api.py`
+- Date: 2026-03-15
+- Result: PASS (7 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_batch_finalizer.py tests/app_versions/test_coding_run_versions.py`
+- Date: 2026-03-15
+- Result: FAIL during collection (`ModuleNotFoundError: app.services.published_app_coding_batch_finalizer`)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py`
 - Date: 2026-02-25
 - Result: PASS (7 passed, 6 warnings)

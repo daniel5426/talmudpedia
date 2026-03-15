@@ -1,6 +1,6 @@
 # App Versions Test State
 
-Last Updated: 2026-03-07
+Last Updated: 2026-03-15
 
 ## Scope
 Hard-cut versions-first API behavior for builder versioning, restore, and publish-by-version.
@@ -27,6 +27,12 @@ Hard-cut versions-first API behavior for builder versioning, restore, and publis
 - Coding-run finalizer still enforces diff-only version creation.
 
 ## Last Run
+- Command: `cd backend && PYTHONPATH=. pytest -x -q tests/app_versions/test_versions_endpoints.py`
+- Date: 2026-03-15
+- Result: FAIL (`test_versions_list_get_create_restore_and_cross_app_guard` receives `410` from `/versions/draft` where the test expects `200`)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_batch_finalizer.py tests/app_versions/test_coding_run_versions.py`
+- Date: 2026-03-15
+- Result: FAIL during collection (`ModuleNotFoundError: app.services.published_app_coding_batch_finalizer`)
 - Command: `cd backend && pytest tests/app_versions/test_versions_endpoints.py`
 - Date: 2026-03-07
 - Result: Partial pass (`pytest backend/tests/app_versions/test_versions_endpoints.py -q -k get_active_publish_job_expires_stale_job` -> `1 passed, 9 deselected`)

@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -124,6 +124,7 @@ backend/app/services/registry_seeding.py
 backend/app/services/artifact_coding_chat_history_service.py
 backend/app/services/artifact_coding_shared_draft_service.py
 backend/app/services/artifact_coding_agent_tools.py
+backend/app/services/artifact_coding_agent_test_tools.py
 backend/app/services/artifact_coding_agent_profile.py
 backend/app/services/artifact_coding_runtime_service.py
 backend/app/services/platform_architect_contracts.py
@@ -221,6 +222,9 @@ backend/app/workers/job_manager.py
 backend/app/workers/livekit_worker.py
 
 backend/app/templates/
+backend/app/templates/published_apps/classic-chat/src/runtime-sdk.ts
+backend/app/templates/published_apps/classic-chat/src/runtime-config.json
+backend/app/templates/published_apps/classic-chat/src/features/classic-chat/runtime-context.tsx
 
 backend/alembic/
 backend/artifacts/

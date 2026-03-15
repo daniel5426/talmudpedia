@@ -1,6 +1,6 @@
 # Platform Architect Worker Orchestration Current State
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
 
 This document is the canonical design reference for the current `platform-architect` worker orchestration model.
 
@@ -104,6 +104,7 @@ Artifact session contract:
 - `ArtifactCodingSession` now directly references its canonical shared draft through `shared_draft_id`
 - artifact worker tools resolve draft state through that direct session link, not by re-deriving draft ownership from nullable scope
 - architect child-run context now includes `artifact_coding_shared_draft_id` so worker resolution can fail fast on mismatched draft state
+- artifact worker verification now distinguishes structural create/update readiness from latest test-run state through a separate `verification_state` payload in binding/session state
 
 Current explicit contract rule:
 - normal `create_new_draft` rejects full `draft_snapshot`
@@ -139,6 +140,12 @@ Mutating architect worker tools now commit before returning durable identifiers 
 - `architect-worker-cancel`
 
 This clean-cut commit rule exists because these tools run in separate DB sessions. A later tool call must be able to resolve the durable state created by an earlier one.
+
+Artifact worker validation is also explicitly async:
+- `artifact-coding-run-test` starts one canonical test run
+- `artifact-coding-await-last-test-result` waits server-side for terminal outcome and is the normal path for Cloudflare cold-start / queue delay
+- `artifact-coding-get-last-test-result` is inspection-only and should not be used as a tight polling loop
+- starting a second test while the previous one is still `queued`, `running`, or `cancel_requested` now fails explicitly
 
 ## Strict Tool Contracts
 

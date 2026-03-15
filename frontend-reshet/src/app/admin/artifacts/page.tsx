@@ -640,6 +640,15 @@ export default function ArtifactsPage() {
     const testAgentContract = useMemo(() => tryParseObject(formData.agent_contract, {}) as unknown as AgentArtifactContract, [formData.agent_contract])
     const testRagContract = useMemo(() => tryParseObject(formData.rag_contract, {}) as unknown as RAGArtifactContract, [formData.rag_contract])
     const testToolContract = useMemo(() => tryParseObject(formData.tool_contract, {}) as unknown as ToolArtifactContract, [formData.tool_contract])
+    const handleResolvedArtifactId = useCallback((resolvedArtifactId: string) => {
+        if (!resolvedArtifactId || selectedArtifact?.id === resolvedArtifactId) {
+            return
+        }
+        void (async () => {
+            await loadArtifactEditorState(resolvedArtifactId)
+            setViewModeWithUrl("edit", resolvedArtifactId)
+        })()
+    }, [loadArtifactEditorState, selectedArtifact?.id, setViewModeWithUrl])
     const artifactCodingChat = useArtifactCodingChat({
         tenantSlug: currentTenant?.slug,
         tenantId: currentTenant?.id || null,
@@ -648,6 +657,7 @@ export default function ArtifactsPage() {
         isCreateMode: viewMode === "create" || !selectedArtifact?.id,
         getDraftSnapshot: () => workingDraftSnapshot,
         onApplyDraftSnapshot: applyDraftSnapshot,
+        onResolvedArtifactId: handleResolvedArtifactId,
         onError: setChatError,
     })
 

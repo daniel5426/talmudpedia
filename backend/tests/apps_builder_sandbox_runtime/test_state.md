@@ -1,4 +1,4 @@
-Last Updated: 2026-03-09
+Last Updated: 2026-03-15
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -39,6 +39,9 @@ Last Updated: 2026-03-09
 - The live coding-run e2e covers create -> ensure draft-dev preview -> submit a real coding-agent prompt -> stream the live run -> poll preview/version/run state every second -> send recurring draft-dev heartbeats during long waits -> verify preview source updates without publish -> verify a new draft revision/version is created automatically -> drive the queued revision build in-test when no worker is present -> verify the built preview asset becomes reachable.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -x -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
+- Date: 2026-03-15
+- Result: PASS (6 passed, 6 warnings)
 - Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py tests/coding_agent_api/test_batch_finalizer.py tests/app_versions/test_coding_run_versions.py tests/apps_publish_sandbox/test_local_publish_dependency_reuse.py tests/apps_publish_sandbox/test_publish_runtime_helpers.py tests/sandbox_controller/test_dev_shim.py`
 - Date: 2026-03-09 19:03 EET
 - Result: PASS (29 passed, 6 warnings)

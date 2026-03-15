@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
 
 ## Purpose
 This file is the focused current-state reference for the seeded `platform-architect` runtime.
@@ -120,6 +120,7 @@ Artifact binding behavior:
 - persist the current draft server-side through `ArtifactRevisionService`
 - artifact-coding sessions now hold a direct non-null `shared_draft_id` so worker tools resolve the prepared draft by identity, not by nullable scope inference
 - binding state now exposes `persistence_readiness` so create-mode drafts with missing required metadata do not attempt canonical persistence blindly
+- binding/session state now also exposes `verification_state` so latest artifact test-run outcome is not conflated with structural persistence readiness
 
 Normal artifact binding creation is now lightweight:
 - `prepare_mode=create_new_draft`
@@ -159,6 +160,7 @@ Continuation contract for artifact workers:
 - completed child needing more edits -> append an `orchestrator` turn to the existing artifact coding session, prepare the next run from true stored history, and let the orchestration kernel create the continued child run inside the architect tree
 - initial architect spawn also uses the artifact session's native `agent_thread_id`, so spawn and continuation share the same worker conversation thread
 - `orchestrator` turns remain visible in chat history and are not treated as user-authored turns
+- when the worker validates code through the artifact test runtime, the normal contract is `artifact-coding-run-test` once, then `artifact-coding-await-last-test-result`; repeated restart loops on queued Cloudflare test runs are no longer valid behavior
 
 ## Removed Legacy Path
 

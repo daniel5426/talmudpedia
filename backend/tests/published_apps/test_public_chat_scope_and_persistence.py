@@ -18,7 +18,7 @@ async def test_preview_chat_stream_uses_preview_token_and_persists_thread(client
             "name": "Preview Chat App",
             "slug": "preview-chat-app",
             "agent_id": str(agent.id),
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },
@@ -81,7 +81,7 @@ async def test_preview_chat_stream_requires_preview_token(client, db_session):
             "name": "Preview Chat Auth App",
             "slug": "preview-chat-auth-app",
             "agent_id": str(agent.id),
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": False,
         },
     )

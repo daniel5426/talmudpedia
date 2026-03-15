@@ -18,6 +18,7 @@ const buildsRoot = path.join(internalRoot, "builds");
 const currentStatePath = path.join(buildsRoot, "current.json");
 const latestStatePath = path.join(buildsRoot, "latest-state.json");
 const retentionCount = 6;
+const pollIntervalMs = 250;
 const ignorePrefixes = [
   ".talmudpedia/",
   ".git/",
@@ -121,6 +122,22 @@ function buildSourceBundleHash(root) {{
   return hash.digest("hex");
 }}
 
+function buildWorkspaceFingerprint(root) {{
+  const hash = crypto.createHash("sha256");
+  for (const relPath of listSourceFiles(root)) {{
+    const target = path.join(root, relPath);
+    const stat = fs.statSync(target, {{ bigint: true }});
+    hash.update(relPath);
+    hash.update("\\0");
+    hash.update(String(stat.size));
+    hash.update("\\0");
+    hash.update(String(stat.mtimeNs));
+    hash.update("\\0");
+  }}
+  hash.update(readEntryFile());
+  return hash.digest("hex");
+}}
+
 function buildDistManifest(distRoot) {{
   const assets = [];
   const stack = [distRoot];
@@ -181,7 +198,7 @@ function updateLatestState(patch) {{
   atomicWriteJson(latestStatePath, latestKnownState);
 }}
 
-async function persistSuccessfulBuild() {{
+async function persistSuccessfulBuild(workspaceFingerprint) {{
   buildSeq += 1;
   const buildId = `build-${{String(buildSeq).padStart(8, "0")}}`;
   const buildRoot = path.join(buildsRoot, buildId);
@@ -197,6 +214,7 @@ async function persistSuccessfulBuild() {{
     build_seq: buildSeq,
     status: "succeeded",
     built_at: builtAt,
+    workspace_fingerprint: workspaceFingerprint,
     source_bundle_hash: buildSourceBundleHash(sourceRoot),
     entry_file: readEntryFile(),
     dist_manifest: buildDistManifest(distRoot),
@@ -224,6 +242,7 @@ function recordFailure(error) {{
     build_id: current.build_id || null,
     build_seq: Number(current.build_seq || buildSeq || 0),
     built_at: current.built_at || null,
+    workspace_fingerprint: latestKnownState.workspace_fingerprint || null,
     source_bundle_hash: latestKnownState.source_bundle_hash || null,
     entry_file: latestKnownState.entry_file || "src/main.tsx",
     dist_manifest: latestKnownState.dist_manifest || null,
@@ -235,46 +254,67 @@ function recordFailure(error) {{
   }});
 }}
 
-async function main() {{
-  ensureDir(runtimeRoot);
-  ensureDir(buildsRoot);
+function sleep(ms) {{
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}}
+
+async function runBuildForFingerprint(workspaceFingerprint) {{
   updateLatestState({{
     status: "building",
     last_error: null,
     entry_file: readEntryFile(),
   }});
-
-  const watcher = await build({{
+  await build({{
     root: workspaceRoot,
     logLevel: "info",
     build: {{
       outDir: tempDistRoot,
       emptyOutDir: true,
-      watch: {{}},
     }},
   }});
+  await persistSuccessfulBuild(workspaceFingerprint);
+}}
 
-  watcher.on("event", async (event) => {{
-    if (event.code === "START") {{
-      updateLatestState({{
-        status: "building",
-        last_error: null,
-      }});
-      return;
+async function main() {{
+  ensureDir(runtimeRoot);
+  ensureDir(buildsRoot);
+  const current = safeReadJson(currentStatePath) || {{}};
+  if (current.build_id) {{
+    updateLatestState({{
+      build_id: current.build_id || latestKnownState.build_id || null,
+      build_seq: Number(current.build_seq || latestKnownState.build_seq || 0),
+      built_at: current.built_at || latestKnownState.built_at || null,
+      snapshot_root: current.snapshot_root || latestKnownState.snapshot_root || null,
+      source_root: current.source_root || latestKnownState.source_root || null,
+      dist_root: current.dist_root || latestKnownState.dist_root || null,
+      entry_file: readEntryFile(),
+      status: latestKnownState.last_error ? "failed" : "succeeded",
+      last_error: latestKnownState.last_error || null,
+    }});
+  }} else {{
+    updateLatestState({{
+      status: "building",
+      last_error: null,
+      entry_file: readEntryFile(),
+    }});
+  }}
+
+  let lastHandledFingerprint = String(latestKnownState.workspace_fingerprint || "").trim();
+  while (true) {{
+    const workspaceFingerprint = buildWorkspaceFingerprint(workspaceRoot);
+    if (!workspaceFingerprint || workspaceFingerprint === lastHandledFingerprint) {{
+      await sleep(pollIntervalMs);
+      continue;
     }}
-    if (event.code === "END") {{
-      try {{
-        await persistSuccessfulBuild();
-      }} catch (error) {{
-        recordFailure(error && error.message ? error.message : String(error));
-      }}
-      return;
+    try {{
+      await runBuildForFingerprint(workspaceFingerprint);
+    }} catch (error) {{
+      recordFailure(error && error.message ? error.message : String(error));
+    }} finally {{
+      lastHandledFingerprint = workspaceFingerprint;
     }}
-    if (event.code === "ERROR") {{
-      const message = event.error && event.error.message ? event.error.message : "Preview build failed";
-      recordFailure(message);
-    }}
-  }});
+    await sleep(pollIntervalMs);
+  }}
 }}
 
 main().catch((error) => {{

@@ -74,7 +74,7 @@ async def test_builder_agent_contract_returns_resolved_tools_and_optional_x_ui_h
         json={
             "name": "Contract App",
             "agent_id": str(agent.id),
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 from uuid import UUID
@@ -310,6 +311,22 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             )
             await self.db.commit()
 
+        def schedule_terminal_revision_finalize() -> None:
+            if not bool(getattr(run, "has_workspace_writes", False)):
+                return
+            if getattr(run, "result_revision_id", None) is not None:
+                return
+            if app.id is None or run.id is None:
+                return
+            from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
+
+            asyncio.create_task(
+                PublishedAppCodingRunMonitor._finalize_terminal_scope_detached(
+                    app_id=app.id,
+                    run_id=run.id,
+                )
+            )
+
         async def persist_workspace_write_flag() -> None:
             nonlocal write_flag_persisted, run
             if write_flag_persisted:
@@ -349,6 +366,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     yield emit("assistant.delta", "assistant", {"content": assistant_text})
                     assistant_delta_events += 1
                 await persist_assistant_message_for_terminal(assistant_text)
+                schedule_terminal_revision_finalize()
                 await release_run_lock()
                 trace_stream("runtime_stream.closed", terminal_event="run.completed")
                 yield emit("run.completed", "run", self.serialize_run(run))
@@ -529,6 +547,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                     completed_at=run.completed_at.isoformat() if isinstance(run.completed_at, datetime) else None,
                     note="terminal run event emitted before detached batch finalizer may finish",
                 )
+                schedule_terminal_revision_finalize()
                 await release_run_lock()
                 trace_stream(
                     "runtime_stream.closed",

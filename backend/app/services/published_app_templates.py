@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 TEMPLATE_MANIFEST_NAME = "template.manifest.json"
+DEFAULT_TEMPLATE_KEY = "classic-chat"
 VITE_BASE_PATTERN = re.compile(r"base\s*:\s*['\"]\./['\"]")
 TEMPLATE_PACKS_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_apps"
 OPENCODE_BOOTSTRAP_ROOT = Path(__file__).resolve().parent.parent / "templates" / "published_app_bootstrap" / "opencode"
@@ -282,14 +283,13 @@ def _load_all_packs() -> Tuple[_TemplatePack, ...]:
     for path in sorted(TEMPLATE_PACKS_ROOT.iterdir()):
         if not path.is_dir():
             continue
+        if not (path / TEMPLATE_MANIFEST_NAME).exists():
+            continue
         pack = _load_pack(path)
         if pack.template.key in seen_keys:
             raise ValueError(f"Duplicate template key found: {pack.template.key}")
         seen_keys.add(pack.template.key)
         packs.append(pack)
-
-    if not packs:
-        raise ValueError(f"No template packs found under: {TEMPLATE_PACKS_ROOT}")
     return tuple(packs)
 
 

@@ -43,6 +43,7 @@ import type { ArtifactCodingPendingQuestion } from "./stream-parsers";
 
 type ArtifactCodingChatPanelProps = {
   isOpen: boolean;
+  layoutMode?: "sidebar" | "playground";
   isSending: boolean;
   isStopping: boolean;
   timeline: TimelineItem[];
@@ -72,6 +73,7 @@ type ArtifactCodingChatPanelProps = {
 
 export function ArtifactCodingChatPanel({
   isOpen,
+  layoutMode = "sidebar",
   isSending,
   isStopping,
   timeline,
@@ -137,10 +139,6 @@ export function ArtifactCodingChatPanel({
     [lastToolAfterCurrentUser],
   );
   const runningSessionIdSet = useMemo(() => new Set(runningSessionIds), [runningSessionIds]);
-  const activeSessionTitle = useMemo(() => {
-    if (!activeChatSessionId) return "New Chat";
-    return chatSessions.find((session) => session.id === activeChatSessionId)?.title || "Chat";
-  }, [activeChatSessionId, chatSessions]);
   const activeSessionIsRunning = useMemo(
     () => Boolean(activeChatSessionId && runningSessionIdSet.has(activeChatSessionId)),
     [activeChatSessionId, runningSessionIdSet],
@@ -182,7 +180,12 @@ export function ArtifactCodingChatPanel({
   }
 
   return (
-    <aside className="flex h-full min-h-0 w-[430px] shrink-0 flex-col overflow-hidden  bg-background">
+    <aside
+      className={cn(
+        "flex h-full min-h-0 shrink-0 flex-col overflow-hidden bg-background",
+        layoutMode === "playground" ? "w-full" : "w-[430px]",
+      )}
+    >
       <div className="relative z-10 flex h-7 shrink-0 items-center gap-1 bg-background px-2 pt-2">
         <div
           className={cn(

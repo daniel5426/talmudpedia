@@ -27,7 +27,9 @@ The current product includes:
 
 Current repo state note:
 - the previous published-app UI template packs were removed from source control
-- template infrastructure and `template_key` fields still exist in the implementation, but there is no active checked-in app template catalog at the moment
+- template infrastructure and `template_key` fields still exist in the implementation
+- there is now one active checked-in starter template pack at `backend/app/templates/published_apps/classic-chat/`
+- the canonical template key is `classic-chat`
 
 The current product does not yet include:
 - billing/subscriptions

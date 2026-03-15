@@ -1,6 +1,6 @@
 # Coding Agent Chat History API Tests
 
-Last Updated: 2026-02-25
+Last Updated: 2026-03-15
 
 ## Scope of the feature
 - Admin coding-agent chat history APIs:
@@ -18,6 +18,9 @@ Last Updated: 2026-02-25
 - Session detail blocks cross-user access and returns `404` for foreign sessions.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -x -q tests/coding_agent_chat_history_api/test_chat_history_endpoints.py`
+- Date: 2026-03-15
+- Result: PASS (6 passed, 6 warnings)
 - Command: `python3 -m pytest backend/tests/coding_agent_chat_history_api/test_chat_history_endpoints.py -q`
 - Date: 2026-02-25
 - Result: PASS (3 passed)

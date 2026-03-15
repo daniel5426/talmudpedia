@@ -35,7 +35,8 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "Do not construct a full draft_snapshot for normal artifact creation" in instructions
     assert "top-level action and payload" in instructions
     assert "Never wrap a tool call inside query, text, value" in instructions
-    assert "architect-worker-binding-persist-artifact as the normal persistence step" in instructions
+    assert "worker may persist its own bound artifact draft through artifact-coding-persist-artifact" in instructions
+    assert "Do not ask a worker to mutate runtime-owned fields like persistence_readiness" in instructions
     assert "agents.graph.add_tool_to_agent_node" in instructions
     assert "rag.operators.catalog" in instructions
     assert "rag.operators.schema" in instructions

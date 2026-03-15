@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-15
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -58,6 +58,11 @@ This guide lists the current canonical documentation entry points after the firs
   - Current tools-domain behavior and guardrails.
 - `docs/product-specs/admin_stats_spec.md`
   - Current admin stats contract.
+
+## Current Canonical References
+
+- `docs/references/classic_chat_template_reference.md`
+  - Current dependency and component inventory for the `classic-chat` published-app starter template.
 
 ## Focused Current Detail Docs Still Under `backend/documentations/`
 

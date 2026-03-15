@@ -21,7 +21,7 @@ async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_
         json={
             "name": "Coding Agent Chat History App",
             "agent_id": agent_id,
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },

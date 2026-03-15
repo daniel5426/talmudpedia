@@ -1,6 +1,6 @@
 # References Index
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-15
 
 This section is for stable supporting documentation used as lookup material by humans and agents.
 
@@ -27,3 +27,5 @@ This section is for stable supporting documentation used as lookup material by h
   - Current MCP tool runtime behavior and open governance gaps.
 - `legacy_docs_coverage_map.md`
   - Full coverage review of every file still under `backend/documentations/`.
+- `classic_chat_template_reference.md`
+  - Current dependency and component inventory for the `classic-chat` published-app starter template.

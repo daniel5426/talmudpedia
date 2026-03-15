@@ -1,6 +1,6 @@
 # Coding Agent Sandbox Isolation Tests
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-15
 
 ## Scope of the feature
 - Run-level sandbox isolation guardrails for coding-agent execution paths.
@@ -16,6 +16,9 @@ Last Updated: 2026-03-01
 - Completed runs terminate cleanly without legacy `checkpoint.created` event semantics.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -x -q tests/coding_agent_sandbox_isolation/test_run_sandbox_isolation.py`
+- Date: 2026-03-15
+- Result: FAIL (`test_stream_reuses_existing_preview_sandbox_without_stage_bootstrap` patches missing method `_prepare_run_stage_workspace_context`)
 - Command: `cd backend && PYTHONPATH=. pytest tests/coding_agent_sandbox_isolation/test_run_sandbox_isolation.py -q`
 - Date: 2026-02-19 03:06:08 EET
 - Result: PASS (3 passed)

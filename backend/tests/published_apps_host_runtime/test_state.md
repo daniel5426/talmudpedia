@@ -1,4 +1,4 @@
-Last Updated: 2026-03-09
+Last Updated: 2026-03-15
 
 # Test State: Published Apps Host Runtime (Same-URL Auth Gate)
 
@@ -25,6 +25,9 @@ Backend same-URL published app host runtime flow for `*.apps` domains:
 - Legacy `/public/apps/{slug}` published runtime/auth/chat endpoints return `410`
 
 ## Last Run
+- Command: `cd backend && PYTHONPATH=. pytest -x -q tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-03-15 (local run)
+- Result: PASS (8 passed, 6 warnings)
 - Command: `pytest -q backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py backend/tests/published_apps/test_public_chat_scope_and_persistence.py backend/tests/published_apps/test_admin_apps_crud.py`
 - Date/Time: 2026-03-09 (local run)
 - Result: pass (`14 passed`)

@@ -3,15 +3,18 @@
 Last Updated: 2026-03-15
 
 ## Current State Summary
-- This file is now a reset-state legacy reference for the old published-app template system.
-- Template packs root remains `backend/app/templates/published_apps/`, but that directory is currently empty.
-- The previously documented template catalog (`chat-classic`, `chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`, `fresh-start`) has been removed from the repo.
-- The backend template loader/bootstrap plumbing still exists, but there is no active checked-in app template catalog today.
-- Use `docs/design-docs/apps_builder_current.md` and `docs/product-specs/published_apps_spec.md` for current canonical app-builder and published-app behavior.
+- This file is now a legacy reference for published-app template state.
+- The old template catalog (`chat-classic`, `chat-grid`, `chat-editorial`, `chat-neon`, `chat-soft`, `fresh-start`) was removed from the repo.
+- A new starter project now exists at `backend/app/templates/published_apps/classic-chat/`.
+- The canonical template-pack key for that starter is `classic-chat`.
+- `classic-chat` now includes a modular chat-first base page that mirrors the playground shell and uses AI elements/shadcn primitives as its primary building blocks.
+- The backend template loader/bootstrap plumbing still exists, and the current direction is a single canonical starter rather than a restored broad catalog.
+- Use `docs/design-docs/apps_builder_current.md` and `docs/references/classic_chat_template_reference.md` for current canonical template/app-builder detail.
 
 ## What Still Exists
 
 - Loader/service entry point: `backend/app/services/published_app_templates.py`
+- Current starter project: `backend/app/templates/published_apps/classic-chat/`
 - Bootstrap overlay sources:
   - `backend/app/templates/published_app_bootstrap/common/*`
   - `backend/app/templates/published_app_bootstrap/opencode/.opencode/*`
@@ -23,15 +26,16 @@ Last Updated: 2026-03-15
 
 ## What Was Removed
 
-- All checked-in published-app template packs under `backend/app/templates/published_apps/`
+- The previous checked-in published-app template catalog
 - The old multi-template catalog and its design-specific guidance
 - Any claim that the old catalog is still the current source of truth
 
-## Next-Template Direction
+## Current Starter Direction
 
-- The next template should be treated as a fresh clean-cut replacement.
+- `classic-chat` is the fresh clean-cut replacement starter.
 - Prefer a single high-quality starter over restoring a broad catalog too early.
 - Keep runtime/bootstrap integration shared and minimal so visual/UI direction can evolve without rebuilding platform contracts.
+- Current dependency and component inventory lives in `docs/references/classic_chat_template_reference.md`.
 
 ## Dependency Policy (Builder Validation)
 - Enforced by: `backend/app/services/apps_builder_dependency_policy.py`

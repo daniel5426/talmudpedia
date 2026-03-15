@@ -36,6 +36,7 @@ import { ExecutionHistoryDropdown } from "@/components/agent-builder/ExecutionHi
 import { FloatingPanel } from "@/components/builder"
 import { cn } from "@/lib/utils"
 import type { AgentChatHistoryItem } from "@/hooks/useAgentThreadHistory"
+import { ArtifactCodingPlaygroundSurface } from "@/features/artifact-coding/ArtifactCodingPlaygroundSurface"
 
 const logPlaygroundDebug = (event: string, details?: Record<string, unknown>) => {
     if (process.env.NODE_ENV === "production") return
@@ -47,6 +48,7 @@ function PlaygroundContent() {
     const searchParams = useSearchParams()
     const agentId = searchParams.get("agentId")
     const threadId = searchParams.get("threadId")
+    const chatSessionId = searchParams.get("chatSessionId")
 
     const [agent, setAgent] = useState<Agent | null>(null)
     const [agents, setAgents] = useState<Agent[]>([])
@@ -77,6 +79,15 @@ function PlaygroundContent() {
         chatId: agentId ?? "agent-playground",
     })
     const isArtifactMessage = (content: string) => Boolean(parseReactArtifact(content))
+    const isArtifactCodingAgent = agent?.slug === "artifact-coding-agent"
+
+    useEffect(() => {
+        if (!isArtifactCodingAgent || !agentId || !threadId) return
+        const nextUrl = chatSessionId
+            ? `/admin/agents/playground?agentId=${agentId}&chatSessionId=${chatSessionId}`
+            : `/admin/agents/playground?agentId=${agentId}`
+        router.replace(nextUrl, { scroll: false })
+    }, [agentId, chatSessionId, isArtifactCodingAgent, router, threadId])
 
     useEffect(() => {
         let isMounted = true;
@@ -344,28 +355,32 @@ function PlaygroundContent() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                    <button
-                        type="button"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        onClick={() => setIsExecutionSidebarOpen((prev) => !prev)}
-                        disabled={!agent || isMetadataLoading}
-                        aria-label={isExecutionSidebarOpen ? "Hide execution traces" : "Show execution traces"}
-                    >
-                        <Terminal className="h-3.5 w-3.5" />
-                    </button>
+                    {!isArtifactCodingAgent ? (
+                        <>
+                            <button
+                                type="button"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                onClick={() => setIsExecutionSidebarOpen((prev) => !prev)}
+                                disabled={!agent || isMetadataLoading}
+                                aria-label={isExecutionSidebarOpen ? "Hide execution traces" : "Show execution traces"}
+                            >
+                                <Terminal className="h-3.5 w-3.5" />
+                            </button>
 
-                    <ExecutionHistoryDropdown
-                        historyItems={controller.history}
-                        loading={controller.historyLoading}
-                        label={null}
-                        ariaLabel="Show history"
-                        align="end"
-                        showChevron={false}
-                        onSelectHistory={handleSelectHistory}
-                        onStartNewChat={handleStartNewThread}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        contentClassName="w-[320px] max-w-[min(90vw,320px)] max-h-[360px] overflow-y-auto"
-                    />
+                            <ExecutionHistoryDropdown
+                                historyItems={controller.history}
+                                loading={controller.historyLoading}
+                                label={null}
+                                ariaLabel="Show history"
+                                align="end"
+                                showChevron={false}
+                                onSelectHistory={handleSelectHistory}
+                                onStartNewChat={handleStartNewThread}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                contentClassName="w-[320px] max-w-[min(90vw,320px)] max-h-[360px] overflow-y-auto"
+                            />
+                        </>
+                    ) : null}
 
                     {agent && (
                         <Button
@@ -380,17 +395,19 @@ function PlaygroundContent() {
                         </Button>
                     )}
 
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8 gap-1.5"
-                        onClick={handleStartNewThread}
-                        disabled={!agent || isMetadataLoading}
-                    >
-                        <Plus className="size-3.5" />
-                        <span>New Thread</span>
-                    </Button>
+                    {!isArtifactCodingAgent ? (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1.5"
+                            onClick={handleStartNewThread}
+                            disabled={!agent || isMetadataLoading}
+                        >
+                            <Plus className="size-3.5" />
+                            <span>New Thread</span>
+                        </Button>
+                    ) : null}
 
                     <Select
                         value={agent?.id || ""}
@@ -442,6 +459,20 @@ function PlaygroundContent() {
                             </div>
                         )}
                     </div>
+                ) : isArtifactCodingAgent ? (
+                    <ArtifactCodingPlaygroundSurface
+                        tenantSlug={currentTenant?.slug}
+                        tenantId={currentTenant?.id ?? authUser?.tenant_id ?? null}
+                        initialChatSessionId={chatSessionId}
+                        onChatSessionIdChange={(nextSessionId) => {
+                            if (!agentId) return
+                            if ((chatSessionId || null) === (nextSessionId || null)) return
+                            const nextUrl = nextSessionId
+                                ? `/admin/agents/playground?agentId=${agentId}&chatSessionId=${nextSessionId}`
+                                : `/admin/agents/playground?agentId=${agentId}`
+                            router.replace(nextUrl, { scroll: false })
+                        }}
+                    />
                 ) : (
                     <div
                         className={cn(
@@ -481,17 +512,19 @@ function PlaygroundContent() {
                     </div>
                 )}
 
-                <FloatingPanel
-                    position="right"
-                    visible={Boolean(isExecutionSidebarOpen && agent && !isMetadataLoading)}
-                    className="w-80 z-30 hidden lg:block"
-                    fullHeight={false}
-                >
-                    <ExecutionSidebar
-                        steps={executionSteps}
-                        className="w-full"
-                    />
-                </FloatingPanel>
+                {!isArtifactCodingAgent ? (
+                    <FloatingPanel
+                        position="right"
+                        visible={Boolean(isExecutionSidebarOpen && agent && !isMetadataLoading)}
+                        className="w-80 z-30 hidden lg:block"
+                        fullHeight={false}
+                    >
+                        <ExecutionSidebar
+                            steps={executionSteps}
+                            className="w-full"
+                        />
+                    </FloatingPanel>
+                ) : null}
             </main>
         </div>
     )

@@ -24,7 +24,7 @@ async def test_admin_apps_crud(client, db_session):
             "description": "App description",
             "logo_url": "https://cdn.example.com/logo.png",
             "agent_id": str(agent.id),
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "visibility": "public",
             "auth_enabled": True,
             "auth_providers": ["password"],
@@ -38,7 +38,7 @@ async def test_admin_apps_crud(client, db_session):
     assert created["logo_url"] == "https://cdn.example.com/logo.png"
     assert created["visibility"] == "public"
     assert created["auth_template_key"] == "auth-split"
-    assert created["template_key"] == "chat-classic"
+    assert created["template_key"] == "classic-chat"
     app_id = created["id"]
 
     list_resp = await client.get("/admin/apps", headers=headers)
@@ -102,7 +102,7 @@ async def test_admin_app_create_enqueues_initial_revision_build(client, db_sessi
         json={
             "name": "Init Build App",
             "agent_id": str(agent.id),
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },
@@ -136,7 +136,7 @@ async def test_admin_app_create_marks_initial_revision_build_failed_on_enqueue_e
         json={
             "name": "Init Build Fail App",
             "agent_id": str(agent.id),
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },
@@ -177,7 +177,7 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
             "name": "Users App",
             "slug": "users-app",
             "agent_id": str(agent.id),
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },
@@ -248,7 +248,7 @@ async def test_admin_custom_domains_crud(client, db_session):
             "name": "Domains App",
             "slug": "domains-app",
             "agent_id": str(agent.id),
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },

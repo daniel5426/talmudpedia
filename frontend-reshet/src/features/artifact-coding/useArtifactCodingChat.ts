@@ -5,6 +5,7 @@ import {
   type ArtifactCodingChatSession,
   type ArtifactCodingChatSessionDetail,
   type ArtifactCodingModelOption,
+  type ArtifactCodingScopeMode,
 } from "@/services/artifacts";
 
 import { TimelineItem, timelineId } from "./chat-model";
@@ -22,8 +23,13 @@ type UseArtifactCodingChatOptions = {
   artifactId?: string | null;
   draftKey: string;
   isCreateMode: boolean;
+  scopeMode?: ArtifactCodingScopeMode;
+  initialChatSessionId?: string | null;
   getDraftSnapshot: () => Record<string, unknown>;
   onApplyDraftSnapshot: (snapshot: Record<string, unknown>) => void;
+  onResetDraftSnapshot?: () => void;
+  onActiveChatSessionChange?: (sessionId: string | null) => void;
+  onResolvedArtifactId?: (artifactId: string) => void;
   onError: (message: string | null) => void;
 };
 
@@ -104,8 +110,13 @@ export function useArtifactCodingChat({
   artifactId,
   draftKey,
   isCreateMode,
+  scopeMode = "locked",
+  initialChatSessionId = null,
   getDraftSnapshot,
   onApplyDraftSnapshot,
+  onResetDraftSnapshot,
+  onActiveChatSessionChange,
+  onResolvedArtifactId,
   onError,
 }: UseArtifactCodingChatOptions) {
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
@@ -147,16 +158,24 @@ export function useArtifactCodingChat({
   }, []);
 
   const refreshSessions = useCallback(async () => {
-    if (!artifactId && !draftKey) return;
+    if (scopeMode === "locked" && !artifactId && !draftKey) return;
     const sessions = await artifactsService.listCodingAgentChatSessions(
-      { artifactId: artifactId || undefined, draftKey: draftKey || undefined, limit: 25 },
+      {
+        artifactId: artifactId || undefined,
+        draftKey: scopeMode === "locked" ? draftKey || undefined : undefined,
+        scopeMode: scopeMode === "standalone" ? "standalone" : undefined,
+        limit: 25,
+      },
       tenantSlug,
     );
     setChatSessions(sessions);
-  }, [artifactId, draftKey, tenantSlug]);
+  }, [artifactId, draftKey, scopeMode, tenantSlug]);
 
   const applySessionDetail = useCallback((detail: ArtifactCodingChatSessionDetail, beforeMessageId?: string | null) => {
     onApplyDraftSnapshot(detail.draft_snapshot || {});
+    if (detail.session.artifact_id) {
+      onResolvedArtifactId?.(detail.session.artifact_id);
+    }
     const nextTimeline = buildTimelineFromDetail(detail);
     if (beforeMessageId) {
       updateTimelineForSession(detail.session.id, (current) => [...nextTimeline, ...current]);
@@ -176,7 +195,7 @@ export function useArtifactCodingChat({
       ...current,
       [detail.session.id]: detail.session.active_run_id || current[detail.session.id] || null,
     }));
-  }, [onApplyDraftSnapshot, setTimelineForSession, updateTimelineForSession]);
+  }, [onApplyDraftSnapshot, onResolvedArtifactId, setTimelineForSession, updateTimelineForSession]);
 
   const loadSessionDetail = useCallback(async (sessionId: string, beforeMessageId?: string | null) => {
     const detail = await artifactsService.getCodingAgentChatSession(sessionId, {
@@ -324,7 +343,8 @@ export function useArtifactCodingChat({
         input: prompt,
         chat_session_id: activeChatSessionId || undefined,
         artifact_id: artifactId || undefined,
-        draft_key: isCreateMode || !artifactId ? draftKey : undefined,
+        draft_key: scopeMode === "locked" && (isCreateMode || !artifactId) ? draftKey : undefined,
+        scope_mode: scopeMode,
         model_id: selectedRunModelId,
         client_message_id: clientMessageId,
         draft_snapshot: getDraftSnapshot(),
@@ -346,7 +366,7 @@ export function useArtifactCodingChat({
     });
     await refreshSessions();
     await consumeRunStream(response.run.run_id, response.chat_session_id);
-  }, [activeChatSessionId, artifactId, consumeRunStream, draftKey, getDraftSnapshot, isCreateMode, refreshSessions, selectedRunModelId, tenantSlug, updateTimelineForSession]);
+  }, [activeChatSessionId, artifactId, consumeRunStream, draftKey, getDraftSnapshot, isCreateMode, refreshSessions, scopeMode, selectedRunModelId, tenantSlug, updateTimelineForSession]);
 
   const loadOlderHistory = useCallback(async () => {
     const historyPage = historyPagesBySession[activeSessionKey] || { hasMore: false, nextBeforeMessageId: null };
@@ -397,16 +417,22 @@ export function useArtifactCodingChat({
     void refreshSessions().then(async () => {
       const models = await artifactsService.listCodingAgentModels();
       setChatModels(models);
+      if (initialChatSessionId) {
+        await loadSessionDetail(initialChatSessionId);
+      }
     }).catch((error) => {
       onError(error instanceof Error ? error.message : "Failed to load artifact coding chat");
     });
-  }, [onError, refreshSessions]);
+  }, [initialChatSessionId, loadSessionDetail, onError, refreshSessions]);
 
   useEffect(() => {
     const previous = previousScopeRef.current;
     previousScopeRef.current = { artifactId, draftKey };
     const sameDraftPromotedToSaved = !previous.artifactId && artifactId && previous.draftKey === draftKey;
     if (sameDraftPromotedToSaved) {
+      return;
+    }
+    if (scopeMode === "standalone") {
       return;
     }
     setActiveChatSessionId(null);
@@ -417,7 +443,7 @@ export function useArtifactCodingChat({
     setActiveRunIdsBySession({});
     setActiveThinkingBySession({});
     setHistoryPagesBySession({});
-  }, [artifactId, draftKey]);
+  }, [artifactId, draftKey, scopeMode]);
 
   const activateDraftChat = useCallback(() => {
     setActiveChatSessionId(null);
@@ -427,13 +453,18 @@ export function useArtifactCodingChat({
       ...current,
       [DRAFT_SESSION_KEY]: { hasMore: false, nextBeforeMessageId: null },
     }));
-    onApplyDraftSnapshot(getDraftSnapshot());
-  }, [getDraftSnapshot, onApplyDraftSnapshot, setTimelineForSession]);
+    onResetDraftSnapshot?.();
+    onApplyDraftSnapshot(scopeMode === "standalone" ? {} : getDraftSnapshot());
+  }, [getDraftSnapshot, onApplyDraftSnapshot, onResetDraftSnapshot, scopeMode, setTimelineForSession]);
 
   const startNewChat = useCallback(() => {
     activateDraftChat();
     setIsAgentPanelOpen(true);
   }, [activateDraftChat]);
+
+  useEffect(() => {
+    onActiveChatSessionChange?.(activeChatSessionId);
+  }, [activeChatSessionId, onActiveChatSessionChange]);
 
   const selectedRunModelLabel = useMemo(() => {
     const selected = chatModels.find((model) => model.id === selectedRunModelId);

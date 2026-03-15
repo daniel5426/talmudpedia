@@ -240,15 +240,20 @@ class PublishedAppCodingRunMonitor:
                     await db.commit()
                     return
                 workspace, snapshot = await preview_builds.get_current_build(app_id=app_id)
+                context = preview_builds._run_context(run)
+                try:
+                    baseline_build_seq = max(0, int(context.get("preview_build_baseline_seq") or 0))
+                except Exception:
+                    baseline_build_seq = 0
+                required_build_seq = baseline_build_seq + 1
                 current_build_seq = int(snapshot.build_seq or 0) if snapshot is not None else 0
-                preview_builds.mark_run_waiting_for_next_build(
-                    run=run,
-                    current_build_seq=current_build_seq,
-                )
+                preview_builds.mark_run_waiting_for_build(run=run, min_build_seq=required_build_seq)
                 cls._trace(
                     "monitor.preview_finalize_begin",
                     run_id=str(run_id),
                     app_id=str(app_id),
+                    baseline_build_seq=baseline_build_seq,
+                    required_build_seq=required_build_seq,
                     current_build_seq=current_build_seq,
                 )
                 result = None

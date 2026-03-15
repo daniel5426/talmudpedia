@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-03-05
+Last Updated: 2026-03-15
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -11,6 +11,7 @@ Last Updated: 2026-03-05
 ## Test files present
 - `backend/tests/published_apps/test_admin_apps_crud.py`
 - `backend/tests/published_apps/test_builder_agent_integration_contract.py`
+- `backend/tests/published_apps/test_template_catalog.py`
 - `backend/tests/published_apps/test_public_app_resolve_and_config.py`
 - `backend/tests/published_apps/test_public_chat_scope_and_persistence.py`
 
@@ -18,6 +19,8 @@ Last Updated: 2026-03-05
 - Tenant admin can create/list/update/delete apps.
 - Initial app-create draft revision (`origin_kind=app_init`) auto-enqueues async build; enqueue failure marks revision build failed without blocking app creation.
 - Builder state includes app + template + current draft metadata.
+- Canonical app-create and builder tests use `template_key="classic-chat"`.
+- Template catalog ignores non-pack directories and returns an empty list when no valid manifest-backed packs exist.
 - Public runtime/config endpoints enforce visibility and auth constraints.
 - Path-mode published auth/chat/runtime endpoints are removed (`410`), while admin user-management tests use host-runtime auth (`/_talmudpedia/*`).
 - Public preview stream uses token auth and persists run-native thread records.
@@ -26,9 +29,12 @@ Last Updated: 2026-03-05
 - Legacy publish helper now routes publish through selected version flow.
 
 ## Last run command + date/time + result
-- Command: `pytest -q backend/tests/published_apps`
-- Date: 2026-03-05
-- Result: PASS (17 passed)
+- Command: `cd backend && PYTHONPATH=. pytest -x -q tests/published_apps/test_admin_apps_crud.py`
+- Date: 2026-03-15
+- Result: PASS (6 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -x -q tests/published_apps/test_public_app_resolve_and_config.py tests/published_apps/test_public_chat_scope_and_persistence.py tests/published_apps/test_builder_agent_integration_contract.py tests/published_apps/test_template_catalog.py`
+- Date: 2026-03-15
+- Result: FAIL (`test_preview_asset_proxy_streams_dist_asset` expects `published_app_preview_token`, but runtime now sets `published_app_public_preview_token`)
 
 ## Known gaps or follow-ups
 - Add explicit regression tests for removed `/admin/apps/{app_id}/publish` route in this folder (currently covered under `backend/tests/app_versions/`).

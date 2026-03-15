@@ -287,7 +287,7 @@ async def _create_checkpoint_from_snapshot(*, job_id: UUID, snapshot: _PublishSn
             db,
             app=app,
             kind=PublishedAppRevisionKind.draft,
-            template_key=app.template_key or current_draft.template_key or "chat-classic",
+            template_key=app.template_key or current_draft.template_key or "classic-chat",
             entry_file=entry_file,
             files=dict(snapshot.files),
             created_by=job.requested_by,

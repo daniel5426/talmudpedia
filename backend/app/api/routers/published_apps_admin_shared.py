@@ -274,7 +274,7 @@ class CreatePublishedAppRequest(BaseModel):
     logo_url: Optional[str] = None
     slug: Optional[str] = None
     agent_id: UUID
-    template_key: str = "chat-classic"
+    template_key: str = "classic-chat"
     visibility: str = "public"
     auth_enabled: bool = True
     auth_providers: List[str] = Field(default_factory=lambda: ["password"])
@@ -627,7 +627,7 @@ def _app_to_response(app: PublishedApp) -> PublishedAppResponse:
         auth_template_key=app.auth_template_key or "auth-classic",
         allowed_origins=list(app.allowed_origins or []),
         external_auth_oidc=dict(app.external_auth_oidc or {}) if app.external_auth_oidc else None,
-        template_key=app.template_key or "chat-classic",
+        template_key=app.template_key or "classic-chat",
         current_draft_revision_id=str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
         current_published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
         published_url=_build_published_url(app.slug) if app.status == PublishedAppStatus.published else None,

@@ -322,11 +322,15 @@ class PublishedAppPreviewBuildService:
         return context
 
     @classmethod
-    def mark_run_waiting_for_next_build(cls, *, run: AgentRun, current_build_seq: int) -> None:
+    def mark_run_waiting_for_build(cls, *, run: AgentRun, min_build_seq: int) -> None:
         context = cls._run_context(run)
         context["awaiting_preview_build"] = True
-        context["awaiting_preview_build_min_seq"] = max(0, int(current_build_seq)) + 1
+        context["awaiting_preview_build_min_seq"] = max(0, int(min_build_seq))
         context["awaiting_preview_build_marked_at"] = datetime.now(timezone.utc).isoformat()
+
+    @classmethod
+    def mark_run_waiting_for_next_build(cls, *, run: AgentRun, current_build_seq: int) -> None:
+        cls.mark_run_waiting_for_build(run=run, min_build_seq=max(0, int(current_build_seq)) + 1)
 
     @classmethod
     def _run_waiting_for_build(cls, *, run: AgentRun, build_seq: int) -> bool:

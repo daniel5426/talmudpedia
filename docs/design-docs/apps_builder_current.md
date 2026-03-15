@@ -1,6 +1,6 @@
 # Apps Builder Current
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
 
 This document is the canonical current-state overview for the Apps Builder system.
 
@@ -12,11 +12,13 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 
 - Draft mode uses one shared draft-dev workspace per app with per-user attachment sessions.
 - Preview serves the latest successful preview-build snapshot instead of raw live modules.
+- Sprite preview builds use polling-based watch detection so out-of-process workspace writes from coding-agent and manual edits reliably trigger rebuilds.
 - Coding-agent runs execute against the canonical shared workspace watched by the preview runtime.
+- Manual code edits save through the draft-dev workspace, then materialize a new draft revision from the resulting preview build so the builder lands in the same revisioned state as a completed coding-agent edit.
 - Published runtime remains static artifact delivery.
 - Publish reuses or materializes the currently visible successful preview-build snapshot.
-- The repo is currently between template generations: `backend/app/templates/published_apps/` is intentionally empty after the previous app template packs were removed.
-- Template infrastructure still exists in backend services and app metadata, but there is no active checked-in published-app template catalog right now.
+- The previous template catalog was removed, but the repo now includes a new starter pack at `backend/app/templates/published_apps/classic-chat/`.
+- Template infrastructure remains active in backend services and app metadata, and the system is moving toward a single canonical starter rather than a broad multi-template catalog.
 
 ## Backend Entry Points
 
@@ -68,15 +70,18 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 ## Template Reset State
 
 - Previous published-app template packs were deleted from `backend/app/templates/published_apps/`.
-- `published_app_templates.py` remains the template loader/bootstrap integration point, but the checked-in catalog has been reset to empty.
+- `published_app_templates.py` remains the template loader/bootstrap integration point.
+- A new starter project now exists at `backend/app/templates/published_apps/classic-chat/`, and it now includes a modular chat-first base page aligned to the platform playground interaction model.
+- The starter is now normalized into the backend template-pack contract with canonical key `classic-chat`.
 - `template_key` is still part of the current app/revision model and related APIs, so the codebase has not yet completed a full hard cut away from template selection semantics.
-- The next template should be treated as a fresh replacement, not an incremental continuation of the deleted catalog.
+- `classic-chat` should be treated as the fresh replacement starter, not as a continuation of the deleted catalog.
 
 ## Canonical Related Docs
 
 - `docs/product-specs/published_apps_spec.md`
 - `docs/product-specs/runtime_sdk_host_anywhere_spec.md`
 - `docs/design-docs/coding_agent_runtime_current.md`
+- `docs/references/classic_chat_template_reference.md`
 
 ## Legacy Detail
 

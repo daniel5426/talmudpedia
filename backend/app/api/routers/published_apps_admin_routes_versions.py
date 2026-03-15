@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -76,6 +78,10 @@ class VersionPreviewRuntimeResponse(BaseModel):
     preview_url: str
     runtime_token: str
     expires_at: datetime
+
+
+MANUAL_SAVE_PREVIEW_BUILD_TIMEOUT_SECONDS = 30.0
+MANUAL_SAVE_PREVIEW_BUILD_POLL_SECONDS = 0.5
 
 
 def _revision_has_dist_assets(revision: PublishedAppRevision) -> bool:
@@ -163,14 +169,120 @@ async def create_draft_version(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_id, payload, request, principal, db)
-    raise HTTPException(
-        status_code=410,
-        detail={
-            "code": "MANUAL_DRAFT_VERSION_REMOVED",
-            "message": "Manual draft version creation was removed. Versions are created from preview builds after AI runs and publish.",
-        },
+    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    _assert_can_manage_apps(ctx)
+    actor = ctx.get("user")
+    if actor is None:
+        raise HTTPException(status_code=403, detail="Manual save requires a user principal")
+
+    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    active_count = await _count_active_coding_runs_for_scope(
+        db,
+        app_id=app.id,
+        user_id=actor.id,
     )
+    if active_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CODING_AGENT_RUN_ACTIVE",
+                "message": "Builder edits are locked while a coding-agent run is active for this app.",
+                "active_coding_run_count": active_count,
+            },
+        )
+    current = await _ensure_current_draft_revision(db, app, actor.id)
+
+    files = _coerce_files_payload(payload.files if payload.files is not None else dict(current.files or {}))
+    entry_file = _normalize_builder_path(payload.entry_file or current.entry_file)
+    _assert_builder_path_allowed(entry_file, field="entry_file")
+    _validate_builder_project_or_raise(files, entry_file)
+
+    preview_builds = PublishedAppPreviewBuildService(db)
+    _, previous_snapshot = await preview_builds.get_current_build(app_id=app.id, refresh=False)
+    previous_build_seq = previous_snapshot.build_seq if previous_snapshot is not None else 0
+    previous_build_id = previous_snapshot.build_id if previous_snapshot is not None else None
+    source_changed = files != dict(current.files or {}) or entry_file != current.entry_file
+
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    try:
+        session = await runtime_service.sync_session(
+            app=app,
+            revision=current,
+            user_id=actor.id,
+            files=files,
+            entry_file=entry_file,
+        )
+    except PublishedAppDraftDevRuntimeDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    target_build_seq = max(0, int(session.preview_build_seq or 0))
+    target_build_id = str(session.current_preview_build_id or "").strip() or None
+    if source_changed and target_build_id and target_build_id == previous_build_id:
+        target_build_id = None
+    if source_changed and not target_build_id:
+        target_build_seq = max(target_build_seq, previous_build_seq + 1)
+
+    deadline = time.monotonic() + MANUAL_SAVE_PREVIEW_BUILD_TIMEOUT_SECONDS
+    while True:
+        workspace, snapshot = await preview_builds.get_current_build(app_id=app.id)
+        if workspace is not None and snapshot is not None:
+            build_seq = max(0, int(snapshot.build_seq or 0))
+            build_id = str(snapshot.build_id or "").strip() or None
+            build_ready = snapshot.status == "succeeded"
+            if build_ready and target_build_id:
+                build_ready = build_id == target_build_id
+            elif build_ready and source_changed:
+                build_ready = build_seq >= target_build_seq and (
+                    build_id != previous_build_id or build_seq > previous_build_seq
+                )
+
+            if build_ready:
+                revision = await preview_builds.materialize_revision_from_build(
+                    app=app,
+                    workspace=workspace,
+                    snapshot=snapshot,
+                    created_by=actor.id,
+                    source_revision_id=current.id,
+                    origin_kind="manual_edit",
+                )
+                app.current_draft_revision_id = revision.id
+                await runtime_service.sync_session(
+                    app=app,
+                    revision=revision,
+                    user_id=actor.id,
+                    files=dict(revision.files or {}),
+                    entry_file=revision.entry_file,
+                )
+                await db.commit()
+                await db.refresh(revision)
+                return _revision_to_response(revision)
+
+            if snapshot.status == "failed" and (
+                (target_build_id and build_id == target_build_id)
+                or (not target_build_id and build_seq >= target_build_seq)
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "MANUAL_SAVE_BUILD_FAILED",
+                        "message": "Manual save could not finalize because the preview build failed.",
+                        "preview_build_id": build_id,
+                        "preview_build_seq": build_seq,
+                        "preview_build_error": snapshot.last_error,
+                    },
+                )
+
+        if time.monotonic() >= deadline:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "MANUAL_SAVE_BUILD_TIMEOUT",
+                    "message": "Manual save timed out waiting for the preview build to finish.",
+                    "preview_build_id": target_build_id,
+                    "preview_build_seq": target_build_seq,
+                },
+            )
+        await asyncio.sleep(MANUAL_SAVE_PREVIEW_BUILD_POLL_SECONDS)
 
 
 @router.post("/{app_id}/versions/{version_id}/restore", response_model=PublishedAppRevisionResponse)

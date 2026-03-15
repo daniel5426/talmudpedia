@@ -28,7 +28,7 @@ async def _create_builder_app(client, headers: dict[str, str], agent_id: str, *,
         json={
             "name": name,
             "agent_id": agent_id,
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },

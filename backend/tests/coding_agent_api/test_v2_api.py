@@ -42,7 +42,7 @@ async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_
         json={
             "name": f"Coding Agent V2 App {uuid4().hex[:6]}",
             "agent_id": agent_id,
-            "template_key": "chat-classic",
+            "template_key": "classic-chat",
             "auth_enabled": True,
             "auth_providers": ["password"],
         },

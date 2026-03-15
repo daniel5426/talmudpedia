@@ -7,11 +7,15 @@ import pytest
 from sqlalchemy import select
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.artifact_runtime import ArtifactCodingSharedDraft
+from app.db.postgres.models.artifact_runtime import ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunStatus
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.identity import Tenant, User
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
+from app.services.artifact_coding_agent_test_tools import (
+    artifact_coding_await_last_test_result,
+    artifact_coding_run_test,
+)
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.platform_architect_worker_tools import (
@@ -74,6 +78,37 @@ async def _create_artifact_from_payload(db_session, *, tenant_id, user_id, paylo
     )
     await db_session.commit()
     return artifact
+
+
+async def _create_artifact_coding_worker_run(
+    db_session,
+    *,
+    tenant,
+    user,
+    agent,
+    session,
+    shared_draft,
+):
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=session.agent_thread_id,
+        surface="artifact_coding_agent",
+        status=RunStatus.completed,
+        input_params={
+            "context": {
+                "thread_id": str(session.agent_thread_id),
+                "artifact_coding_session_id": str(session.id),
+                "artifact_coding_shared_draft_id": str(shared_draft.id),
+            }
+        },
+        output_result={"final_output": "worker context"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    return run
 
 
 @pytest.mark.asyncio
@@ -241,6 +276,190 @@ async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_s
 
 
 @pytest.mark.asyncio
+async def test_prepare_session_records_scope_mode_for_standalone_sessions(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Open artifact coding playground",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=None,
+        replace_snapshot=False,
+        scope_mode="standalone",
+    )
+    await db_session.commit()
+
+    assert prepared.session.scope_mode == "standalone"
+    state = runtime.serialize_runtime_state(
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+        artifact=None,
+        run=None,
+        last_test_run=None,
+    )
+    assert state["scope_mode"] == "standalone"
+
+
+@pytest.mark.asyncio
+async def test_open_artifact_for_standalone_session_rebinds_scope_and_snapshot(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    existing = await _create_artifact_from_payload(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        payload=_tool_impl_create_payload("existing-factorial"),
+    )
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Open standalone session",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl", "slug": "scratch-tool"}),
+        replace_snapshot=True,
+        scope_mode="standalone",
+    )
+    await db_session.commit()
+
+    session, shared_draft, artifact = await runtime.open_artifact_for_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        session_id=prepared.session.id,
+        artifact_id=existing.id,
+    )
+
+    assert session.scope_mode == "standalone"
+    assert session.artifact_id == existing.id
+    assert shared_draft.artifact_id == existing.id
+    assert shared_draft.working_draft_snapshot["slug"] == existing.slug
+    assert artifact.id == existing.id
+
+
+@pytest.mark.asyncio
+async def test_start_new_draft_for_standalone_session_clears_existing_artifact_scope(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    existing = await _create_artifact_from_payload(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        payload=_tool_impl_create_payload("existing-tool"),
+    )
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Standalone edit session",
+        artifact_id=existing.id,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=None,
+        replace_snapshot=False,
+        scope_mode="standalone",
+    )
+    await db_session.commit()
+
+    session, shared_draft = await runtime.start_new_draft_for_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        session_id=prepared.session.id,
+        draft_seed={"kind": "tool_impl", "slug": "fresh-tool", "display_name": "Fresh Tool"},
+    )
+
+    assert session.scope_mode == "standalone"
+    assert session.artifact_id is None
+    assert shared_draft.artifact_id is None
+    assert shared_draft.working_draft_snapshot["slug"] == "fresh-tool"
+    assert shared_draft.working_draft_snapshot["display_name"] == "Fresh Tool"
+
+
+@pytest.mark.asyncio
+async def test_persist_session_artifact_auto_create_links_session_scope(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Create a new artifact from chat",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed(
+            {
+                "kind": "tool_impl",
+                "slug": "persisted-from-agent",
+                "display_name": "Persisted From Agent",
+                "description": "Created via artifact coding persist tool",
+            }
+        ),
+        replace_snapshot=True,
+        scope_mode="standalone",
+    )
+    await db_session.commit()
+
+    result = await runtime.persist_session_artifact(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        session_id=prepared.session.id,
+        mode="auto",
+    )
+
+    assert result["persistence_mode"] == "create"
+    assert result["artifact_slug"] == "persisted-from-agent"
+    session = await db_session.get(ArtifactCodingSession, prepared.session.id)
+    shared_draft = await db_session.get(ArtifactCodingSharedDraft, prepared.shared_draft.id)
+    assert session is not None and session.artifact_id is not None
+    assert shared_draft is not None and shared_draft.artifact_id == session.artifact_id
+
+
+@pytest.mark.asyncio
+async def test_open_artifact_rejects_locked_session_scope(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    existing = await _create_artifact_from_payload(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        payload=_tool_impl_create_payload("locked-existing"),
+    )
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Locked artifact page session",
+        artifact_id=existing.id,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=None,
+        replace_snapshot=False,
+        scope_mode="locked",
+    )
+    await db_session.commit()
+
+    with pytest.raises(RuntimeError, match="ARTIFACT_CODING_SCOPE_LOCKED"):
+        await runtime.open_artifact_for_session(
+            tenant_id=tenant.id,
+            user_id=user.id,
+            session_id=prepared.session.id,
+            artifact_id=existing.id,
+        )
+
+
+@pytest.mark.asyncio
 async def test_build_run_messages_maps_orchestrator_role_to_system(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
@@ -336,6 +555,66 @@ async def test_prepare_session_run_input_uses_native_session_thread_and_orchestr
         {"role": "system", "content": "Apply the requested changes without re-asking."},
     ]
     assert prepared_input["input_params"]["context"]["conversation_message_role"] == "orchestrator"
+
+
+@pytest.mark.asyncio
+async def test_serialize_runtime_state_separates_verification_state_from_persistence_readiness(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Prepare verification state split test",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed(
+            {
+                "kind": "tool_impl",
+                "slug": "verify-split",
+                "display_name": "Verify Split",
+            }
+        ),
+        replace_snapshot=True,
+    )
+
+    last_test_run = ArtifactRun(
+        id=uuid4(),
+        revision_id=uuid4(),
+        tenant_id=tenant.id,
+        domain=ArtifactRunDomain.TEST,
+        status=ArtifactRunStatus.COMPLETED,
+        queue_class="artifact_test",
+        sandbox_backend="cloudflare_workers",
+        result_payload={"ok": True},
+        runtime_metadata={"worker_name": "cf-worker"},
+    )
+
+    state = runtime.serialize_runtime_state(
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+        artifact=None,
+        run=None,
+        last_test_run=last_test_run,
+    )
+
+    assert state["persistence_readiness"] == {
+        "ready": True,
+        "mode": "create",
+        "missing_fields": [],
+    }
+    assert state["verification_state"] == {
+        "has_test_run": True,
+        "latest_test_run_id": str(last_test_run.id),
+        "latest_test_status": "completed",
+        "latest_test_terminal": True,
+        "latest_test_successful": True,
+        "result_payload": {"ok": True},
+        "error_payload": {},
+        "runtime_metadata": {"worker_name": "cf-worker"},
+    }
 
 
 @pytest.mark.asyncio
@@ -445,6 +724,139 @@ async def test_artifact_coding_agent_profile_includes_delegated_worker_mode_inst
     assert "delegated worker" in instructions
     assert "complete the requested objective autonomously" in instructions
     assert "BLOCKING QUESTION:" in instructions
+    assert "artifact_coding_await_last_test_result" in instructions
+    assert "queued or running" in instructions
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_run_test_rejects_duplicate_active_test_run(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Duplicate active test run guard",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+    active_test_run = ArtifactRun(
+        tenant_id=tenant.id,
+        revision_id=uuid4(),
+        artifact_id=None,
+        domain=ArtifactRunDomain.TEST,
+        status=ArtifactRunStatus.QUEUED,
+        queue_class="artifact_test",
+        sandbox_backend="cloudflare_workers",
+        input_payload={},
+        config_payload={},
+        context_payload={},
+        runtime_metadata={},
+    )
+    db_session.add(active_test_run)
+    await db_session.flush()
+    prepared.shared_draft.last_test_run_id = active_test_run.id
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    monkeypatch.setattr(
+        "app.services.artifact_coding_agent_test_tools.get_session",
+        _session_override,
+    )
+
+    with pytest.raises(ValueError, match="TEST_RUN_ALREADY_ACTIVE"):
+        await artifact_coding_run_test({"run_id": str(worker_run.id)})
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_await_last_test_result_waits_for_terminal_state(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Await terminal artifact test result",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+    queued_test_run = ArtifactRun(
+        tenant_id=tenant.id,
+        revision_id=uuid4(),
+        artifact_id=None,
+        domain=ArtifactRunDomain.TEST,
+        status=ArtifactRunStatus.QUEUED,
+        queue_class="artifact_test",
+        sandbox_backend="cloudflare_workers",
+        input_payload={},
+        config_payload={},
+        context_payload={},
+        runtime_metadata={},
+    )
+    db_session.add(queued_test_run)
+    await db_session.flush()
+    prepared.shared_draft.last_test_run_id = queued_test_run.id
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    async def _fake_wait_for_terminal_state(self, run_id, *, timeout_seconds=30.0):
+        del self, timeout_seconds
+        run = await db_session.get(ArtifactRun, run_id)
+        run.status = ArtifactRunStatus.COMPLETED
+        run.result_payload = {"passed": True}
+        run.runtime_metadata = {"waited": True}
+        await db_session.flush()
+        return run
+
+    monkeypatch.setattr(
+        "app.services.artifact_coding_agent_test_tools.get_session",
+        _session_override,
+    )
+    monkeypatch.setattr(
+        "app.services.artifact_coding_agent_test_tools.ArtifactExecutionService.wait_for_terminal_state",
+        _fake_wait_for_terminal_state,
+    )
+
+    result = await artifact_coding_await_last_test_result(
+        {"run_id": str(worker_run.id), "timeout_seconds": 120}
+    )
+
+    assert result["has_test_result"] is True
+    assert result["test_run_id"] == str(queued_test_run.id)
+    assert result["status"] == "completed"
+    assert result["is_terminal"] is True
+    assert result["wait_timed_out"] is False
+    assert result["result_payload"] == {"passed": True}
 
 
 @pytest.mark.asyncio

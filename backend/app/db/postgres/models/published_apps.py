@@ -126,7 +126,7 @@ class PublishedApp(Base):
     allowed_origins = Column(JSONB, nullable=False, default=list)
     external_auth_oidc = Column(JSONB, nullable=True)
     published_url = Column(String, nullable=True)
-    template_key = Column(String, nullable=False, default="chat-classic")
+    template_key = Column(String, nullable=False, default="classic-chat")
     current_draft_revision_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     current_published_revision_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
@@ -434,7 +434,7 @@ class PublishedAppRevision(Base):
         nullable=False,
         default=PublishedAppRevisionKind.draft,
     )
-    template_key = Column(String, nullable=False, default="chat-classic")
+    template_key = Column(String, nullable=False, default="classic-chat")
     entry_file = Column(String, nullable=False, default="src/main.tsx")
     files = Column(JSONB, nullable=False, default=dict)
     manifest_json = Column(JSONB, nullable=False, default=dict)

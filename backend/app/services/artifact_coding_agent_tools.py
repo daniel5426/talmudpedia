@@ -12,10 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.agents import AgentRun
-from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactKind, ArtifactRun
+from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactKind
 from app.db.postgres.models.registry import ToolDefinitionScope, ToolImplementationType, ToolRegistry, ToolStatus
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
-from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.tool_function_registry import register_tool_function
 
@@ -199,43 +198,6 @@ def _serialize_form_state(snapshot: dict[str, Any]) -> dict[str, Any]:
             _parse_json_object(normalized.get(field_name), field=field_name, fallback=default_value)
         )
     return normalized
-
-
-def _artifact_test_payload_from_snapshot(
-    snapshot: dict[str, Any],
-    *,
-    artifact_id: UUID | None,
-    input_data: Any,
-    config: dict[str, Any],
-) -> dict[str, Any]:
-    normalized = _serialize_form_state(snapshot)
-    kind = normalized["kind"]
-    payload = {
-        "artifact_id": artifact_id,
-        "source_files": normalized["source_files"],
-        "entry_module_path": normalized["entry_module_path"],
-        "input_data": input_data,
-        "config": dict(config or {}),
-        "dependencies": [
-            item.strip()
-            for item in str(normalized.get("python_dependencies") or "").split(",")
-            if item.strip()
-        ],
-        "kind": kind,
-        "runtime_target": normalized["runtime_target"],
-        "capabilities": _parse_json_object(normalized["capabilities"], field="capabilities", fallback=DEFAULT_CAPABILITIES),
-        "config_schema": _parse_json_object(normalized["config_schema"], field="config_schema", fallback=DEFAULT_CONFIG_SCHEMA),
-        "agent_contract": None,
-        "rag_contract": None,
-        "tool_contract": None,
-    }
-    contract_field = _current_contract_field(kind)
-    payload[contract_field] = _parse_json_object(
-        normalized[contract_field],
-        field=contract_field,
-        fallback=_default_contract_for_kind(kind),
-    )
-    return payload
 
 
 async def _resolve_session_context(
@@ -702,74 +664,6 @@ async def artifact_coding_set_contract_payload(payload: Any) -> dict[str, Any]:
         )
 
 
-@register_tool_function("artifact_coding_run_test")
-async def artifact_coding_run_test(payload: Any) -> dict[str, Any]:
-    tool_payload = payload if isinstance(payload, dict) else {}
-    input_data = tool_payload.get("input_data")
-    if input_data is None:
-        input_data = {}
-    config = tool_payload.get("config") if isinstance(tool_payload.get("config"), dict) else {}
-    async with get_session() as db:
-        session, shared_draft, run, artifact = await _resolve_session_context(db, tool_payload)
-        snapshot = _serialize_form_state(shared_draft.working_draft_snapshot)
-        execution_service = ArtifactExecutionService(db)
-        test_payload = _artifact_test_payload_from_snapshot(
-            snapshot,
-            artifact_id=artifact.id if artifact else None,
-            input_data=input_data,
-            config=config,
-        )
-        test_run = await execution_service.start_test_run(
-            tenant_id=session.tenant_id,
-            created_by=run.initiator_user_id or run.user_id,
-            artifact_id=test_payload["artifact_id"],
-            source_files=test_payload["source_files"],
-            entry_module_path=test_payload["entry_module_path"],
-            input_data=test_payload["input_data"],
-            config=test_payload["config"],
-            dependencies=test_payload["dependencies"],
-            kind=test_payload["kind"],
-            runtime_target=test_payload["runtime_target"],
-            capabilities=test_payload["capabilities"],
-            config_schema=test_payload["config_schema"],
-            agent_contract=test_payload["agent_contract"],
-            rag_contract=test_payload["rag_contract"],
-            tool_contract=test_payload["tool_contract"],
-        )
-        shared_draft.last_test_run_id = test_run.id
-        await db.commit()
-        return {
-            "ok": True,
-            "summary": "Started artifact test run.",
-            "test_run_id": str(test_run.id),
-            "status": getattr(test_run.status, "value", str(test_run.status)),
-        }
-
-
-@register_tool_function("artifact_coding_get_last_test_result")
-async def artifact_coding_get_last_test_result(payload: Any) -> dict[str, Any]:
-    tool_payload = payload if isinstance(payload, dict) else {}
-    async with get_session() as db:
-        session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
-        if shared_draft.last_test_run_id is None:
-            return {"ok": True, "has_test_result": False}
-        test_run = await db.get(ArtifactRun, shared_draft.last_test_run_id)
-        if test_run is None:
-            return {"ok": True, "has_test_result": False}
-        return {
-            "ok": True,
-            "has_test_result": True,
-            "test_run_id": str(test_run.id),
-            "status": getattr(test_run.status, "value", str(test_run.status)),
-            "result_payload": dict(test_run.result_payload or {}) if test_run.result_payload is not None else None,
-            "error_payload": dict(test_run.error_payload or {}) if test_run.error_payload is not None else None,
-            "stdout_excerpt": test_run.stdout_excerpt,
-            "stderr_excerpt": test_run.stderr_excerpt,
-            "duration_ms": test_run.duration_ms,
-            "runtime_metadata": dict(test_run.runtime_metadata or {}),
-        }
-
-
 def _tool_schema(
     *,
     properties: dict[str, Any],
@@ -805,8 +699,16 @@ ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-set-capabilities", "name": "Artifact Coding Set Capabilities", "description": "Update the artifact capabilities JSON.", "function_name": "artifact_coding_set_capabilities", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"capabilities": {"type": "object"}}, required=["capabilities"])},
     {"slug": "artifact-coding-set-contract-payload", "name": "Artifact Coding Set Contract Payload", "description": "Update the active artifact contract JSON.", "function_name": "artifact_coding_set_contract_payload", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"contract_field": {"type": "string", "enum": ["agent_contract", "rag_contract", "tool_contract"]}, "contract_payload": {"type": "object"}}, required=["contract_payload"])},
     {"slug": "artifact-coding-run-test", "name": "Artifact Coding Run Test", "description": "Run the artifact through the canonical artifact test runtime.", "function_name": "artifact_coding_run_test", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"input_data": {}, "config": {"type": "object"}}, required=[])},
+    {"slug": "artifact-coding-await-last-test-result", "name": "Artifact Coding Await Last Test Result", "description": "Wait server-side for the latest artifact test run to reach a terminal state.", "function_name": "artifact_coding_await_last_test_result", "timeout_s": 150, "is_pure": True, "schema": _tool_schema(properties={"timeout_seconds": {"type": "number"}}, required=[])},
     {"slug": "artifact-coding-get-last-test-result", "name": "Artifact Coding Get Last Test Result", "description": "Get the latest artifact test result for this session.", "function_name": "artifact_coding_get_last_test_result", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
 ]
+
+
+import app.services.artifact_coding_agent_test_tools  # noqa: F401,E402
+import app.services.artifact_coding_agent_scope_tools  # noqa: F401,E402
+from app.services.artifact_coding_agent_scope_tools import ARTIFACT_CODING_SCOPE_TOOL_SPECS  # noqa: E402
+
+ARTIFACT_CODING_TOOL_SPECS += ARTIFACT_CODING_SCOPE_TOOL_SPECS
 
 
 async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:

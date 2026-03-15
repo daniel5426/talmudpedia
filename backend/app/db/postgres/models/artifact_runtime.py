@@ -295,6 +295,7 @@ class ArtifactCodingSession(Base):
     agent_thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False, index=True)
 
     draft_key = Column(String(128), nullable=True, index=True)
+    scope_mode = Column(String(32), nullable=False, server_default="locked", default="locked")
     title = Column(String(255), nullable=False, default="New Chat")
     active_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
     last_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
