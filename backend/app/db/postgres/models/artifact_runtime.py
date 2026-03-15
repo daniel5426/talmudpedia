@@ -286,6 +286,12 @@ class ArtifactCodingSession(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    shared_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("artifact_coding_shared_drafts.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     agent_thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False, index=True)
 
     draft_key = Column(String(128), nullable=True, index=True)
@@ -300,6 +306,7 @@ class ArtifactCodingSession(Base):
 
     tenant = relationship("Tenant")
     artifact = relationship("Artifact", foreign_keys=[artifact_id])
+    shared_draft = relationship("ArtifactCodingSharedDraft", foreign_keys=[shared_draft_id])
     linked_artifact = relationship("Artifact", foreign_keys=[linked_artifact_id])
     agent_thread = relationship("AgentThread", foreign_keys=[agent_thread_id])
     active_run = relationship("AgentRun", foreign_keys=[active_run_id])

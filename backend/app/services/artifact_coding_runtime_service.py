@@ -167,6 +167,7 @@ class ArtifactCodingRuntimeService:
                 session=session,
                 artifact_id=artifact_id,
                 draft_key=draft_key,
+                shared_draft_id=shared_draft.id,
             )
         else:
             thread = (
@@ -181,18 +182,19 @@ class ArtifactCodingRuntimeService:
                     input_text=title_prompt,
                 )
             ).thread
-            session = await self.history.create_session(
-                tenant_id=tenant_id,
-                artifact_id=artifact_id,
-                draft_key=draft_key,
-                agent_thread_id=thread.id,
-                title_prompt=title_prompt,
-            )
             shared_draft = await self.shared_drafts.get_or_create_for_scope(
                 tenant_id=tenant_id,
                 artifact_id=artifact_id,
                 draft_key=draft_key,
                 initial_snapshot=initial_snapshot,
+            )
+            session = await self.history.create_session(
+                tenant_id=tenant_id,
+                artifact_id=artifact_id,
+                shared_draft_id=shared_draft.id,
+                draft_key=draft_key,
+                agent_thread_id=thread.id,
+                title_prompt=title_prompt,
             )
 
         if replace_snapshot:
@@ -271,6 +273,7 @@ class ArtifactCodingRuntimeService:
         request_context = {
             "surface": ARTIFACT_CODING_AGENT_SURFACE,
             "artifact_coding_session_id": str(session.id),
+            "artifact_coding_shared_draft_id": str(shared_draft.id),
             "artifact_id": str(artifact_id) if artifact_id else None,
             "draft_key": self._normalize_draft_key(draft_key),
             "requested_model_id": model_id,
@@ -405,7 +408,7 @@ class ArtifactCodingRuntimeService:
         kind = str(snapshot.get("kind") or "agent_node")
         capabilities = _parse_json_object(snapshot.get("capabilities"), field="capabilities", fallback=DEFAULT_CAPABILITIES)
         config_schema = _parse_json_object(snapshot.get("config_schema"), field="config_schema", fallback=DEFAULT_CONFIG_SCHEMA)
-        create_payload: dict[str, Any] = {
+        artifact_payload: dict[str, Any] = {
             "slug": snapshot.get("slug") or "",
             "display_name": snapshot.get("display_name") or "",
             "description": snapshot.get("description") or "",
@@ -420,11 +423,11 @@ class ArtifactCodingRuntimeService:
             "config_schema": config_schema,
         }
         if kind == "agent_node":
-            create_payload["agent_contract"] = _parse_json_object(snapshot.get("agent_contract"), field="agent_contract", fallback=DEFAULT_AGENT_CONTRACT)
+            artifact_payload["agent_contract"] = _parse_json_object(snapshot.get("agent_contract"), field="agent_contract", fallback=DEFAULT_AGENT_CONTRACT)
         elif kind == "rag_operator":
-            create_payload["rag_contract"] = _parse_json_object(snapshot.get("rag_contract"), field="rag_contract", fallback=DEFAULT_RAG_CONTRACT)
+            artifact_payload["rag_contract"] = _parse_json_object(snapshot.get("rag_contract"), field="rag_contract", fallback=DEFAULT_RAG_CONTRACT)
         else:
-            create_payload["tool_contract"] = _parse_json_object(snapshot.get("tool_contract"), field="tool_contract", fallback=DEFAULT_TOOL_CONTRACT)
+            artifact_payload["tool_contract"] = _parse_json_object(snapshot.get("tool_contract"), field="tool_contract", fallback=DEFAULT_TOOL_CONTRACT)
 
         artifact_id = artifact.id if artifact is not None else (
             shared_draft.artifact_id or shared_draft.linked_artifact_id or session.artifact_id or session.linked_artifact_id
@@ -433,10 +436,18 @@ class ArtifactCodingRuntimeService:
             "artifact_id": str(artifact_id),
             "patch": {
                 key: value
-                for key, value in create_payload.items()
+                for key, value in artifact_payload.items()
                 if key not in {"slug", "kind"}
             },
         } if artifact_id is not None else None
+        platform_assets_create_input = {
+            "action": "artifacts.create",
+            "payload": deepcopy(artifact_payload),
+        } if artifact_id is None else None
+        platform_assets_update_input = {
+            "action": "artifacts.update",
+            "payload": deepcopy(update_payload),
+        } if update_payload is not None else None
         return {
             "chat_session_id": str(session.id),
             "artifact_id": str(artifact_id) if artifact_id is not None else None,
@@ -452,6 +463,6 @@ class ArtifactCodingRuntimeService:
                 "error_payload": deepcopy(last_test_run.error_payload or {}),
                 "runtime_metadata": deepcopy(last_test_run.runtime_metadata or {}),
             } if last_test_run else None,
-            "artifact_create_payload": create_payload if artifact_id is None else None,
-            "artifact_update_payload": update_payload,
+            "platform_assets_create_input": platform_assets_create_input,
+            "platform_assets_update_input": platform_assets_update_input,
         }

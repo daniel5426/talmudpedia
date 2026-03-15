@@ -265,6 +265,15 @@ async def _resolve_session_context(
         raise ValueError("Artifact coding session not found")
     if session.tenant_id != run.tenant_id:
         raise PermissionError("Artifact coding session tenant mismatch")
+    shared_draft_id_raw = (
+        payload.get("artifact_coding_shared_draft_id")
+        or context.get("artifact_coding_shared_draft_id")
+        or input_context.get("artifact_coding_shared_draft_id")
+    )
+    if shared_draft_id_raw:
+        shared_draft_id = _parse_uuid(shared_draft_id_raw, "artifact_coding_shared_draft_id")
+        if shared_draft_id != session.shared_draft_id:
+            raise PermissionError("Artifact coding shared draft mismatch")
 
     shared_draft = await ArtifactCodingSharedDraftService(db).resolve_for_session(session=session)
 

@@ -68,6 +68,7 @@ class ArtifactCodingChatHistoryService:
             "id": str(session.id),
             "title": session.title,
             "artifact_id": str(session.artifact_id) if session.artifact_id else None,
+            "shared_draft_id": str(session.shared_draft_id),
             "draft_key": session.draft_key,
             "agent_thread_id": str(session.agent_thread_id),
             "active_run_id": str(session.active_run_id) if session.active_run_id else None,
@@ -114,6 +115,7 @@ class ArtifactCodingChatHistoryService:
         *,
         tenant_id: UUID,
         artifact_id: UUID | None,
+        shared_draft_id: UUID,
         draft_key: str | None,
         agent_thread_id: UUID,
         title_prompt: str,
@@ -121,6 +123,7 @@ class ArtifactCodingChatHistoryService:
         session = ArtifactCodingSession(
             tenant_id=tenant_id,
             artifact_id=artifact_id,
+            shared_draft_id=shared_draft_id,
             draft_key=draft_key,
             agent_thread_id=agent_thread_id,
             title=self._session_title_from_prompt(title_prompt),
@@ -193,7 +196,10 @@ class ArtifactCodingChatHistoryService:
         session: ArtifactCodingSession,
         artifact_id: UUID | None,
         draft_key: str | None,
+        shared_draft_id: UUID | None = None,
     ) -> ArtifactCodingSession:
+        if shared_draft_id is not None:
+            session.shared_draft_id = shared_draft_id
         if artifact_id is not None:
             session.artifact_id = artifact_id
             session.linked_artifact_id = artifact_id

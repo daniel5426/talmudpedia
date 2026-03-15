@@ -1,6 +1,6 @@
 # Tools Domain Spec
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-14
 
 This document is the canonical product/specification overview for the tools domain.
 
@@ -12,6 +12,9 @@ Tools are callable capabilities that agents can execute. The tools domain provid
 - multiple implementation types
 - tenant/global visibility rules
 
+In the current platform, the canonical tool registry is the DB-backed `ToolRegistry` domain exposed at `/tools`.
+The small in-process helper in `backend/app/services/tool_function_registry.py` is only a function-dispatch map for `FUNCTION` tools, not the canonical registry for the tools domain.
+
 ## Current Tool Classes
 
 Current derived tool classes are:
@@ -21,6 +24,22 @@ Current derived tool classes are:
 - `custom`
 
 This classification is derived at the API layer rather than stored directly as a database column.
+
+## Current Canonical Registry Shape
+
+The logical tool record lives in `tool_registry` and currently carries:
+- identity, scope, and visibility
+- input/output schema
+- config/execution metadata
+- implementation type
+- publish/version state
+- optional artifact binding fields
+
+Important current detail:
+- artifact-backed tools are still first-class tool records
+- artifacts do not replace the tool registry row
+- the tool registry row owns tool identity, visibility, publish lifecycle, and agent-facing tool selection
+- the artifact runtime owns executable code packaging and execution for artifact-backed tools
 
 ## Current Implementation Types
 
@@ -75,6 +94,41 @@ Current publish/runtime rules:
 - published production execution uses that pinned `artifact_revision_id`
 - if the backing tenant artifact has no published revision, tool publish should fail
 
+Current contract boundary:
+- the backing artifact must be kind `tool_impl`
+- the artifact owns the executable handler and `tool_contract`
+- the tool registry row still owns the callable tool identity presented to agents
+- runtime execution calls `ArtifactExecutionService.execute_live_run(...)` with `domain=tool`
+
+Current system-tool note:
+- system tools can also be artifact-backed
+- `platform-sdk` is the main current example of a global/system tool implemented by a system-owned artifact revision
+
+## Artifact Connection
+
+The current artifact-to-tool relationship is composition, not inheritance:
+
+1. An artifact is authored as kind `tool_impl`.
+2. A tool record is created in `/tools` with `implementation_type=artifact` and an artifact binding.
+3. Tool publish resolves the backing artifact, requires a published immutable artifact revision, and pins that revision into `artifact_revision_id`.
+4. Production tool execution uses the pinned `artifact_revision_id`, not a floating draft artifact pointer.
+
+This means “artifact needs to be able to be a tool” is already satisfied in the runtime model, but through two linked domain objects:
+- `Artifact`
+- `ToolRegistry`
+
+The current design intentionally keeps both because they own different responsibilities:
+- artifacts own executable source, revisioning, deployment, and runtime execution
+- tools own agent-facing registration, tenant/global visibility, and tool lifecycle/publish policy
+
+## Current Known Modeling Tension
+
+There is still some duplicated schema/config surface between tools and `tool_impl` artifacts:
+- tool rows carry `schema`
+- tool artifacts carry `tool_contract.input_schema` / `tool_contract.output_schema`
+
+The runtime path already works, but the docs should treat this as one connected model with partially duplicated metadata rather than as two unrelated systems.
+
 ### MCP tools
 
 Current MCP tools execute through HTTP JSON-RPC `tools/call`.
@@ -85,3 +139,5 @@ Current MCP tools execute through HTTP JSON-RPC `tools/call`.
 - `backend/app/services/builtin_tools.py`
 - `backend/app/agent/executors/tool.py`
 - `backend/app/db/postgres/models/registry.py`
+- `backend/app/services/artifact_runtime/registry_service.py`
+- `backend/app/services/artifact_runtime/execution_service.py`

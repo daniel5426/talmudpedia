@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from app.agent.executors.standard import ReasoningNodeExecutor
+from app.agent.executors.standard import (
+    STRICT_PLATFORM_RAW_INPUT_KEY,
+    ReasoningNodeExecutor,
+    _normalize_model_tool_args,
+)
 
 
 def _make_executor() -> ReasoningNodeExecutor:
@@ -78,3 +82,25 @@ def test_normalize_tool_call_keeps_direct_input_fields_when_wrappers_absent() ->
     assert normalized["tool_name"] == "write_file"
     assert normalized["input"]["path"] == "src/App.tsx"
     assert normalized["input"]["content"] == "export const App = () => <div/>;"
+
+
+def test_normalize_model_tool_args_preserves_raw_input_for_strict_platform_tools() -> None:
+    tool = SimpleNamespace(
+        slug="platform-assets",
+        config_schema={"execution": {"strict_input_schema": True}},
+    )
+
+    normalized = _normalize_model_tool_args('{"action":"artifacts.create","payload":{}}', tool)
+
+    assert normalized == {STRICT_PLATFORM_RAW_INPUT_KEY: '{"action":"artifacts.create","payload":{}}'}
+
+
+def test_normalize_model_tool_args_keeps_value_wrapper_for_non_strict_tools() -> None:
+    tool = SimpleNamespace(
+        slug="write_file",
+        config_schema={"execution": {"strict_input_schema": False}},
+    )
+
+    normalized = _normalize_model_tool_args("hello", tool)
+
+    assert normalized == {"value": "hello"}

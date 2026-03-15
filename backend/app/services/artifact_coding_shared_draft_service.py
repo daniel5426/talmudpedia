@@ -78,6 +78,11 @@ class ArtifactCodingSharedDraftService:
             .where(ArtifactCodingRunSnapshot.shared_draft_id == secondary.id)
             .values(shared_draft_id=primary.id)
         )
+        await self.db.execute(
+            update(ArtifactCodingSession)
+            .where(ArtifactCodingSession.shared_draft_id == secondary.id)
+            .values(shared_draft_id=primary.id)
+        )
         secondary.artifact_id = None
         secondary.linked_artifact_id = None
         secondary.draft_key = None
@@ -155,6 +160,12 @@ class ArtifactCodingSharedDraftService:
         *,
         session: ArtifactCodingSession,
     ) -> ArtifactCodingSharedDraft:
+        if session.shared_draft_id is not None:
+            shared = await self.db.get(ArtifactCodingSharedDraft, session.shared_draft_id)
+            if shared is None or shared.tenant_id != session.tenant_id:
+                raise ValueError("Artifact coding shared draft not found")
+            return shared
+
         return await self.get_or_create_for_scope(
             tenant_id=session.tenant_id,
             artifact_id=session.artifact_id or session.linked_artifact_id,

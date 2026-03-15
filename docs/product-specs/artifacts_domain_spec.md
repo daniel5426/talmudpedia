@@ -117,6 +117,26 @@ The artifact domain is already used by:
 
 This is important because the artifact runtime is no longer just a future design; it is already integrated into multiple execution paths.
 
+## How Artifacts Become Tools
+
+Artifacts do not become agent-callable tools by themselves.
+The current connection is:
+- author an artifact with `kind=tool_impl`
+- publish the artifact so it has an immutable executable revision
+- create or update a `ToolRegistry` row with `implementation_type=artifact`
+- bind the tool record to the artifact identity during draft editing
+- publish the tool so the tool row pins `artifact_revision_id`
+
+Current responsibility split:
+- the artifact owns source code, revision history, deployment, and execution
+- the tool row owns callable tool identity, tool visibility, and tool publish/version lifecycle
+
+Current production rule:
+- production execution should use the tool's pinned `artifact_revision_id`, not a floating artifact draft pointer
+
+Current implication:
+- “artifact is a tool” in the product sense really means “a tool is backed by a `tool_impl` artifact revision”
+
 ## Current Contract Shape
 
 Shared runtime/base configuration now includes:
@@ -193,3 +213,5 @@ Current transitional reality:
 - `backend/app/db/postgres/models/artifact_runtime.py`
 - `backend/app/services/artifact_runtime/`
 - `backend/app/services/registry_seeding.py`
+- `backend/app/api/routers/tools.py`
+- `backend/app/agent/executors/tool.py`

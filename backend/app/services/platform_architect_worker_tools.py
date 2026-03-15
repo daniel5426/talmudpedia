@@ -141,6 +141,15 @@ async def architect_worker_binding_get_state(payload: Any) -> dict[str, Any]:
         return await PlatformArchitectWorkerRuntimeService(db).get_binding_state(tool_payload)
 
 
+@register_tool_function("architect_worker_binding_persist_artifact")
+async def architect_worker_binding_persist_artifact(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    async with get_session() as db:
+        result = await PlatformArchitectWorkerRuntimeService(db).persist_binding_artifact(tool_payload)
+        await db.commit()
+        return result
+
+
 @register_tool_function("architect_worker_spawn")
 async def architect_worker_spawn(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
@@ -164,6 +173,22 @@ async def architect_worker_get_run(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
     async with get_session() as db:
         return await PlatformArchitectWorkerRuntimeService(db).get_run(tool_payload)
+
+
+@register_tool_function("architect_worker_await")
+async def architect_worker_await(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    async with get_session() as db:
+        return await PlatformArchitectWorkerRuntimeService(db).await_run(tool_payload)
+
+
+@register_tool_function("architect_worker_respond")
+async def architect_worker_respond(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    async with get_session() as db:
+        result = await PlatformArchitectWorkerRuntimeService(db).respond_to_run(tool_payload)
+        await db.commit()
+        return result
 
 
 @register_tool_function("architect_worker_join")
@@ -260,6 +285,29 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
+        "slug": "architect-worker-binding-persist-artifact",
+        "name": "Architect Worker Binding Persist Artifact",
+        "description": "Persist a binding-backed artifact draft server-side without routing persistence payloads through the model layer.",
+        "implementation_type": ToolImplementationType.FUNCTION,
+        "schema": _tool_schema(
+            properties={
+                "binding_ref": _binding_ref_schema(),
+                "mode": {"type": "string", "enum": ["auto", "create", "update"]},
+            },
+            required=["binding_ref"],
+        ),
+        "config_schema": {
+            "implementation": {"type": "function", "function_name": "architect_worker_binding_persist_artifact"},
+            "execution": {
+                "timeout_s": 30,
+                "is_pure": False,
+                "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
+                "max_concurrency": 8,
+                "strict_input_schema": True,
+            },
+        },
+    },
+    {
         "slug": "architect-worker-spawn",
         "name": "Architect Worker Spawn",
         "description": "Spawn one async worker run for the architect.",
@@ -325,7 +373,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
     {
         "slug": "architect-worker-get-run",
         "name": "Architect Worker Get Run",
-        "description": "Inspect one architect worker run.",
+        "description": "Inspect one architect worker run snapshot. Prefer architect-worker-await for normal waiting behavior.",
         "implementation_type": ToolImplementationType.FUNCTION,
         "schema": _tool_schema(properties={"run_id": {"type": "string"}}, required=["run_id"]),
         "config_schema": {
@@ -333,6 +381,53 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
             "execution": {
                 "timeout_s": 30,
                 "is_pure": True,
+                "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
+                "max_concurrency": 8,
+                "strict_input_schema": True,
+            },
+        },
+    },
+    {
+        "slug": "architect-worker-await",
+        "name": "Architect Worker Await",
+        "description": "Wait server-side for a child worker to complete, fail, cancel, or block on input instead of repeatedly polling get-run.",
+        "implementation_type": ToolImplementationType.FUNCTION,
+        "schema": _tool_schema(
+            properties={
+                "run_id": {"type": "string"},
+                "timeout_s": {"type": "number"},
+                "poll_interval_s": {"type": "number"},
+            },
+            required=["run_id"],
+        ),
+        "config_schema": {
+            "implementation": {"type": "function", "function_name": "architect_worker_await"},
+            "execution": {
+                "timeout_s": 90,
+                "is_pure": True,
+                "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
+                "max_concurrency": 8,
+                "strict_input_schema": True,
+            },
+        },
+    },
+    {
+        "slug": "architect-worker-respond",
+        "name": "Architect Worker Respond",
+        "description": "Provide an orchestrator response when a worker is waiting for input, resuming or continuing the delegated run.",
+        "implementation_type": ToolImplementationType.FUNCTION,
+        "schema": _tool_schema(
+            properties={
+                "run_id": {"type": "string"},
+                "response": {"type": "string"},
+            },
+            required=["run_id", "response"],
+        ),
+        "config_schema": {
+            "implementation": {"type": "function", "function_name": "architect_worker_respond"},
+            "execution": {
+                "timeout_s": 30,
+                "is_pure": False,
                 "concurrency_group": ARCHITECT_WORKER_NAMESPACE,
                 "max_concurrency": 8,
                 "strict_input_schema": True,

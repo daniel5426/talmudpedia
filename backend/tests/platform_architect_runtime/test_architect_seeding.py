@@ -21,9 +21,13 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "Never call architect.run" in instructions
     assert "architect-worker-spawn" in instructions
     assert "architect-worker-binding-prepare" in instructions
+    assert "architect-worker-binding-persist-artifact" in instructions
+    assert "architect-worker-await" in instructions
+    assert "architect-worker-respond" in instructions
     assert "Do not call raw orchestration.* actions" in instructions
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
+    assert "Never burn tool iterations on repeated immediate architect-worker-get-run calls" in instructions
     assert "Do not invent nested fields like task.instructions" in instructions
     assert "agents.create_shell" in instructions
     assert "rag.create_pipeline_shell" in instructions
@@ -31,6 +35,7 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "Do not construct a full draft_snapshot for normal artifact creation" in instructions
     assert "top-level action and payload" in instructions
     assert "Never wrap a tool call inside query, text, value" in instructions
+    assert "architect-worker-binding-persist-artifact as the normal persistence step" in instructions
     assert "agents.graph.add_tool_to_agent_node" in instructions
     assert "rag.operators.catalog" in instructions
     assert "rag.operators.schema" in instructions

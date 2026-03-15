@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from hashlib import sha256
 import json
 from typing import Any
@@ -7,7 +8,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres.models.agents import AgentRun, RunStatus
+from app.agent.execution.service import AgentExecutorService
+from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.services.orchestration_kernel_service import OrchestrationKernelService
 from app.services.platform_architect_worker_bindings import (
     PlatformArchitectWorkerBindingService,
@@ -22,6 +24,8 @@ TERMINAL_RUN_STATUSES = {
     RunStatus.cancelled.value,
     RunStatus.paused.value,
 }
+
+BLOCKING_QUESTION_PREFIX = "BLOCKING QUESTION:"
 
 
 class PlatformArchitectWorkerRuntimeService:
@@ -129,6 +133,221 @@ class PlatformArchitectWorkerRuntimeService:
         digest = sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
         return f"architect-worker:{digest[:20]}"
 
+    @staticmethod
+    def _extract_assistant_output_text(output_result: dict[str, Any] | None) -> str | None:
+        if not isinstance(output_result, dict):
+            return None
+        messages = output_result.get("messages")
+        if isinstance(messages, list):
+            last_assistant: str | None = None
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                role = str(msg.get("role") or msg.get("type") or "").strip().lower()
+                content = msg.get("content")
+                if role in {"assistant", "ai"} and isinstance(content, str):
+                    text = content.strip()
+                    if text:
+                        last_assistant = text
+            if last_assistant:
+                return last_assistant
+        final_output = output_result.get("final_output")
+        if isinstance(final_output, str) and final_output.strip():
+            return final_output.strip()
+        state = output_result.get("state")
+        if isinstance(state, dict):
+            last_output = state.get("last_agent_output")
+            if isinstance(last_output, str) and last_output.strip():
+                return last_output.strip()
+        return None
+
+    @staticmethod
+    def _extract_waiting_state(run: AgentRun) -> dict[str, Any] | None:
+        output_result = run.output_result if isinstance(run.output_result, dict) else {}
+
+        explicit_waiting = output_result.get("worker_waiting_state")
+        if isinstance(explicit_waiting, dict):
+            waiting = bool(explicit_waiting.get("waiting_for_input"))
+            if waiting:
+                return {
+                    "waiting_for_input": True,
+                    "waiting_for_input_from": str(explicit_waiting.get("waiting_for_input_from") or "orchestrator"),
+                    "blocking_question": str(explicit_waiting.get("blocking_question") or "").strip() or None,
+                    "blocking_context": explicit_waiting.get("blocking_context")
+                    if isinstance(explicit_waiting.get("blocking_context"), dict)
+                    else None,
+                    "source": "explicit_state",
+                }
+
+        assistant_text = PlatformArchitectWorkerRuntimeService._extract_assistant_output_text(output_result)
+        if assistant_text:
+            stripped = assistant_text.strip()
+            if stripped.upper().startswith(BLOCKING_QUESTION_PREFIX):
+                question = stripped[len(BLOCKING_QUESTION_PREFIX) :].strip()
+                return {
+                    "waiting_for_input": True,
+                    "waiting_for_input_from": "orchestrator",
+                    "blocking_question": question or None,
+                    "blocking_context": None,
+                    "source": "assistant_output_prefix",
+                }
+
+        if str(getattr(run.status, "value", run.status)) == RunStatus.paused.value:
+            checkpoint = run.checkpoint if isinstance(run.checkpoint, dict) else {}
+            next_nodes = checkpoint.get("next")
+            return {
+                "waiting_for_input": True,
+                "waiting_for_input_from": "user",
+                "blocking_question": None,
+                "blocking_context": {
+                    "next": next_nodes,
+                } if next_nodes is not None else None,
+                "source": "paused_checkpoint",
+            }
+
+        return None
+
+    async def _resolve_child_run(
+        self,
+        *,
+        tenant_id: UUID,
+        caller_run_id: UUID,
+        run_id: UUID,
+    ) -> AgentRun:
+        run = await self.db.get(AgentRun, run_id)
+        if run is None or run.tenant_id != tenant_id:
+            raise ValueError("Run not found")
+        if hasattr(self.db, "refresh"):
+            await self.db.refresh(run)
+        caller_run = await self.db.get(AgentRun, caller_run_id)
+        if caller_run is None:
+            raise ValueError("Caller run not found")
+        valid_root = caller_run.root_run_id or caller_run.id
+        if (run.root_run_id or run.id) != valid_root and run.parent_run_id != caller_run.id:
+            raise ValueError("Run is outside caller orchestration tree")
+        return run
+
+    async def _serialize_run_view(self, run: AgentRun) -> dict[str, Any]:
+        input_context = run.input_params.get("context") if isinstance(run.input_params, dict) else {}
+        binding_ref = input_context.get("architect_worker_binding_ref") if isinstance(input_context, dict) else None
+        waiting_state = self._extract_waiting_state(run)
+        status = str(getattr(run.status, "value", run.status))
+        lifecycle_state = "running"
+        next_action_hint = "poll_or_await"
+        if waiting_state is not None:
+            lifecycle_state = "waiting_for_input"
+            next_action_hint = "respond_or_surface_blocker"
+        elif status == RunStatus.completed.value:
+            lifecycle_state = "completed"
+            next_action_hint = "binding_get_state_then_persist"
+        elif status in {RunStatus.failed.value, RunStatus.cancelled.value}:
+            lifecycle_state = "terminal_error"
+            next_action_hint = "handle_failure"
+
+        return {
+            "run_id": str(run.id),
+            "status": status,
+            "lifecycle_state": lifecycle_state,
+            "worker_agent_id": str(run.agent_id),
+            "binding_ref": binding_ref if isinstance(binding_ref, dict) else None,
+            "error": run.error_message,
+            "completed_at": run.completed_at,
+            "created_at": run.created_at,
+            "output": run.output_result if isinstance(run.output_result, dict) else None,
+            "lineage": self.kernel._serialize_lineage(run),
+            "waiting_state": waiting_state,
+            "next_action_hint": next_action_hint,
+        }
+
+    async def _spawn_followup_run_for_response(
+        self,
+        *,
+        runtime_context: dict[str, Any],
+        prior_run: AgentRun,
+        response: str,
+    ) -> dict[str, Any]:
+        input_context = prior_run.input_params.get("context") if isinstance(prior_run.input_params, dict) else {}
+        if not isinstance(input_context, dict):
+            input_context = {}
+        binding_ref_raw = input_context.get("architect_worker_binding_ref")
+        binding_ref = parse_binding_ref(binding_ref_raw) if isinstance(binding_ref_raw, dict) else None
+        if binding_ref is None:
+            raise ValueError("Respond requires a binding-backed worker run")
+
+        original_task = input_context.get("architect_worker_task") if isinstance(input_context.get("architect_worker_task"), dict) else {}
+        if not isinstance(original_task, dict) or not str(original_task.get("objective") or "").strip():
+            raise ValueError("Worker task context is missing from the child run")
+        waiting_state = self._extract_waiting_state(prior_run)
+        blocking_question = waiting_state.get("blocking_question") if isinstance(waiting_state, dict) else None
+
+        adapter = self.bindings.adapter_for_ref(binding_ref)
+        binding_context = await adapter.build_spawn_payload(
+            tenant_id=runtime_context["tenant_id"],
+            user_id=runtime_context["user_id"],
+            binding_ref=binding_ref,
+        )
+        worker_agent_slug = str(binding_context.get("worker_agent_slug") or "").strip()
+        if not worker_agent_slug:
+            agent = await self.db.get(Agent, prior_run.agent_id)
+            worker_agent_slug = str(getattr(agent, "slug", "") or "").strip()
+        if not worker_agent_slug:
+            raise ValueError("Worker agent slug is not available for follow-up spawn")
+
+        prompt = self._task_prompt(original_task)
+        followup_parts = [prompt]
+        if blocking_question:
+            followup_parts.append(f"Previous blocker question:\n{blocking_question}")
+        followup_parts.append(f"Architect answer:\n{response.strip()}")
+        followup_parts.append(
+            "Continue the delegated task from the current shared draft state and complete it without re-asking unless you remain genuinely blocked."
+        )
+
+        child_context = {
+            **(binding_context.get("context") if isinstance(binding_context.get("context"), dict) else {}),
+            "architect_worker_task": original_task,
+            "architect_worker_followup": {
+                "prior_run_id": str(prior_run.id),
+                "blocking_question": blocking_question,
+                "response": response.strip(),
+            },
+        }
+
+        result = await self.kernel.spawn_run(
+            caller_run_id=runtime_context["caller_run_id"],
+            parent_node_id="architect_worker_respond",
+            target_agent_id=None,
+            target_agent_slug=worker_agent_slug,
+            mapped_input_payload={
+                "input": "\n\n".join(followup_parts),
+                "messages": [],
+                "context": child_context,
+            },
+            failure_policy=None,
+            timeout_s=None,
+            scope_subset=self._default_scope_subset(runtime_context, None),
+            idempotency_key=self._stable_idempotency_key(
+                caller_run_id=runtime_context["caller_run_id"],
+                worker_agent_slug=worker_agent_slug,
+                task=original_task,
+                binding_ref=binding_ref,
+                explicit_key=None,
+                suffix=f"respond:{prior_run.id}:{response.strip()}",
+            ),
+            start_background=True,
+        )
+        new_run_id = UUID(str(result["spawned_run_ids"][0]))
+        await adapter.register_spawned_run(
+            tenant_id=runtime_context["tenant_id"],
+            user_id=runtime_context["user_id"],
+            binding_ref=binding_ref,
+            run_id=new_run_id,
+            user_prompt="\n\n".join(followup_parts),
+        )
+        new_run = await self.db.get(AgentRun, new_run_id)
+        if new_run is None:
+            raise RuntimeError("Follow-up worker run was not created")
+        return await self._serialize_run_view(new_run)
+
     async def prepare_binding(self, payload: dict[str, Any]) -> dict[str, Any]:
         runtime_context = self.parse_runtime_context(payload)
         binding_type = str(payload.get("binding_type") or "").strip()
@@ -166,6 +385,18 @@ class PlatformArchitectWorkerRuntimeService:
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             reconcile_run_id=reconcile_run_id,
+        )
+
+    async def persist_binding_artifact(self, payload: dict[str, Any]) -> dict[str, Any]:
+        runtime_context = self.parse_runtime_context(payload)
+        binding_ref = parse_binding_ref(payload.get("binding_ref"))
+        mode = str(payload.get("mode") or "auto").strip() or "auto"
+        adapter = self.bindings.adapter_for_ref(binding_ref)
+        return await adapter.persist_artifact(
+            tenant_id=runtime_context["tenant_id"],
+            user_id=runtime_context["user_id"],
+            binding_ref=binding_ref,
+            mode=mode,
         )
 
     async def spawn_worker(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -340,28 +571,72 @@ class PlatformArchitectWorkerRuntimeService:
         run_id_raw = payload.get("run_id")
         if run_id_raw in (None, ""):
             raise ValueError("run_id is required")
-        run = await self.db.get(AgentRun, UUID(str(run_id_raw)))
-        if run is None or run.tenant_id != runtime_context["tenant_id"]:
-            raise ValueError("Run not found")
-        caller_run = await self.db.get(AgentRun, runtime_context["caller_run_id"])
-        if caller_run is None:
-            raise ValueError("Caller run not found")
-        valid_root = caller_run.root_run_id or caller_run.id
-        if (run.root_run_id or run.id) != valid_root and run.parent_run_id != caller_run.id:
-            raise ValueError("Run is outside caller orchestration tree")
-        input_context = run.input_params.get("context") if isinstance(run.input_params, dict) else {}
-        binding_ref = input_context.get("architect_worker_binding_ref") if isinstance(input_context, dict) else None
-        return {
-            "run_id": str(run.id),
-            "status": str(getattr(run.status, "value", run.status)),
-            "worker_agent_id": str(run.agent_id),
-            "binding_ref": binding_ref if isinstance(binding_ref, dict) else None,
-            "error": run.error_message,
-            "completed_at": run.completed_at,
-            "created_at": run.created_at,
-            "output": run.output_result if isinstance(run.output_result, dict) else None,
-            "lineage": self.kernel._serialize_lineage(run),
-        }
+        run = await self._resolve_child_run(
+            tenant_id=runtime_context["tenant_id"],
+            caller_run_id=runtime_context["caller_run_id"],
+            run_id=UUID(str(run_id_raw)),
+        )
+        return await self._serialize_run_view(run)
+
+    async def await_run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        runtime_context = self.parse_runtime_context(payload)
+        run_id_raw = payload.get("run_id")
+        if run_id_raw in (None, ""):
+            raise ValueError("run_id is required")
+        timeout_s = float(payload.get("timeout_s") or 45)
+        timeout_s = max(1.0, min(timeout_s, 300.0))
+        poll_interval_s = float(payload.get("poll_interval_s") or 1.5)
+        poll_interval_s = max(0.2, min(poll_interval_s, 10.0))
+        deadline = asyncio.get_running_loop().time() + timeout_s
+
+        while True:
+            run = await self._resolve_child_run(
+                tenant_id=runtime_context["tenant_id"],
+                caller_run_id=runtime_context["caller_run_id"],
+                run_id=UUID(str(run_id_raw)),
+            )
+            view = await self._serialize_run_view(run)
+            if view["lifecycle_state"] in {"completed", "terminal_error", "waiting_for_input"}:
+                view["await_timed_out"] = False
+                return view
+            if asyncio.get_running_loop().time() >= deadline:
+                view["await_timed_out"] = True
+                return view
+            await asyncio.sleep(poll_interval_s)
+
+    async def respond_to_run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        runtime_context = self.parse_runtime_context(payload)
+        run_id_raw = payload.get("run_id")
+        if run_id_raw in (None, ""):
+            raise ValueError("run_id is required")
+        response = str(payload.get("response") or "").strip()
+        if not response:
+            raise ValueError("response is required")
+
+        run = await self._resolve_child_run(
+            tenant_id=runtime_context["tenant_id"],
+            caller_run_id=runtime_context["caller_run_id"],
+            run_id=UUID(str(run_id_raw)),
+        )
+        waiting_state = self._extract_waiting_state(run)
+        if waiting_state is None:
+            raise ValueError("Run is not waiting for input")
+
+        status = str(getattr(run.status, "value", run.status))
+        if status == RunStatus.paused.value:
+            await AgentExecutorService(self.db).resume_run(
+                run.id,
+                {"input": response, "message": response},
+                background=True,
+            )
+            refreshed = await self.db.get(AgentRun, run.id)
+            return await self._serialize_run_view(refreshed or run)
+
+        return await self._spawn_followup_run_for_response(
+            runtime_context=runtime_context,
+            prior_run=run,
+            response=response,
+        )
 
     async def join_group(self, payload: dict[str, Any]) -> dict[str, Any]:
         runtime_context = self.parse_runtime_context(payload)

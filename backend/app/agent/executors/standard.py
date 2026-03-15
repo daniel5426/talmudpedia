@@ -22,6 +22,30 @@ from app.agent.cel_engine import evaluate_template
 
 logger = logging.getLogger(__name__)
 
+STRICT_PLATFORM_TOOL_SLUGS = frozenset(
+    {
+        "platform-assets",
+        "platform-agents",
+        "platform-rag",
+        "platform-governance",
+    }
+)
+STRICT_PLATFORM_RAW_INPUT_KEY = "__strict_platform_raw_input__"
+
+
+def _normalize_model_tool_args(call_args: Any, tool_record: Any | None) -> dict[str, Any]:
+    if isinstance(call_args, dict):
+        return call_args
+
+    tool_slug = str(getattr(tool_record, "slug", "") or "").strip()
+    if (
+        tool_record is not None
+        and is_strict_tool_input(tool_record)
+        and tool_slug in STRICT_PLATFORM_TOOL_SLUGS
+    ):
+        return {STRICT_PLATFORM_RAW_INPUT_KEY: call_args}
+    return {"value": call_args}
+
 
 def _resolve_quota_max_output_tokens(state: Dict[str, Any]) -> Optional[int]:
     if not isinstance(state, dict):
@@ -1266,6 +1290,11 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
 
             tool_records = await self._load_tool_records(tools)
             tool_records_by_id = {str(t.id): t for t in tool_records if getattr(t, "id", None)}
+            tool_records_by_slug = {
+                str(getattr(t, "slug", "")).strip(): t
+                for t in tool_records
+                if getattr(t, "slug", None)
+            }
             langchain_tools = [self._build_langchain_tool(t) for t in tool_records] if tools else []
 
             conversation_messages = list(formatted_messages)
@@ -1382,15 +1411,16 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                             call_args = getattr(call, "args", None) or getattr(call, "input", None) or {}
                             call_tool_id = getattr(call, "tool_id", None)
 
-                        if not isinstance(call_args, dict):
-                            call_args = {"value": call_args}
-
+                        tool_record = None
                         if not call_name and call_tool_id:
                             tool_record = tool_records_by_id.get(str(call_tool_id))
                             call_name = getattr(tool_record, "slug", None) or getattr(tool_record, "name", None)
+                        elif call_name:
+                            tool_record = tool_records_by_slug.get(str(call_name).strip())
 
                         if not call_name:
                             continue
+                        call_args = _normalize_model_tool_args(call_args, tool_record)
 
                         formatted_calls.append({
                             "id": str(call_id or f"toolcall_{iteration}_{idx}"),
@@ -1444,10 +1474,10 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         continue
 
                     tool_input = call.get("args") or call.get("input") or {}
-                    if not isinstance(tool_input, dict):
-                        tool_input = {"value": tool_input}
-
                     tool_record = tool_records_by_id.get(resolved_tool_id)
+                    if tool_record is None and tool_name:
+                        tool_record = tool_records_by_slug.get(str(tool_name).strip())
+                    tool_input = _normalize_model_tool_args(tool_input, tool_record)
                     if tool_record is not None:
                         tool_input = self._coerce_tool_input(tool_input, tool_record)
                     policy = self._get_tool_execution_policy(tool_record, tool_timeout_s)

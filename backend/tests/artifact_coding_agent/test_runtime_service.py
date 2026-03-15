@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from app.db.postgres.models.artifact_runtime import ArtifactCodingSharedDraft
+from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.identity import Tenant, User
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
@@ -114,9 +115,15 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
         run=None,
         last_test_run=None,
     )
-    create_payload = initial_state["artifact_create_payload"]
-    assert create_payload is not None
-    artifact = await _create_artifact_from_payload(db_session, tenant_id=tenant.id, user_id=user.id, payload=create_payload)
+    create_input = initial_state["platform_assets_create_input"]
+    assert create_input is not None
+    assert create_input["action"] == "artifacts.create"
+    artifact = await _create_artifact_from_payload(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        payload=create_input["payload"],
+    )
 
     relinked = await runtime.prepare_session(
         tenant_id=tenant.id,
@@ -147,9 +154,10 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
         run=None,
         last_test_run=None,
     )
-    assert updated_state["artifact_create_payload"] is None
-    assert updated_state["artifact_update_payload"]["artifact_id"] == str(artifact.id)
-    assert updated_state["artifact_update_payload"]["patch"]["display_name"] == "Delegated Tool"
+    assert updated_state["platform_assets_create_input"] is None
+    assert updated_state["platform_assets_update_input"]["action"] == "artifacts.update"
+    assert updated_state["platform_assets_update_input"]["payload"]["artifact_id"] == str(artifact.id)
+    assert updated_state["platform_assets_update_input"]["payload"]["patch"]["display_name"] == "Delegated Tool"
 
 
 @pytest.mark.asyncio
@@ -174,6 +182,78 @@ async def test_build_initial_snapshot_from_seed_uses_seed_kind_without_agent_nod
     assert snapshot["display_name"] == "Seeded Tool"
     assert snapshot["entry_module_path"] == "src/main.py"
     assert snapshot["source_files"][0]["path"] == "src/main.py"
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Create a scope-free delegated draft",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed(
+            {
+                "kind": "tool_impl",
+                "display_name": "Scope Free Tool",
+                "entry_module_path": "src/main.py",
+            }
+        ),
+        replace_snapshot=True,
+    )
+    await db_session.commit()
+
+    shared_drafts_before = (
+        await db_session.execute(
+            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant.id)
+        )
+    ).scalars().all()
+
+    assert len(shared_drafts_before) == 1
+    assert prepared.session.shared_draft_id == prepared.shared_draft.id
+
+    resolved = await ArtifactCodingSharedDraftService(db_session).resolve_for_session(session=prepared.session)
+    state_session, state_shared_draft, _artifact, _run, _last_test_run = await runtime.get_session_state_for_user(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        session_id=prepared.session.id,
+    )
+    shared_drafts_after = (
+        await db_session.execute(
+            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant.id)
+        )
+    ).scalars().all()
+
+    assert len(shared_drafts_after) == 1
+    assert resolved.id == prepared.shared_draft.id
+    assert state_session.shared_draft_id == prepared.shared_draft.id
+    assert state_shared_draft.id == prepared.shared_draft.id
+    assert state_shared_draft.working_draft_snapshot["kind"] == "tool_impl"
+    assert state_shared_draft.working_draft_snapshot["entry_module_path"] == "src/main.py"
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_agent_profile_includes_delegated_worker_mode_instructions(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+
+    node = next(
+        item
+        for item in agent.graph_definition["nodes"]
+        if item.get("id") == "artifact_coding_agent"
+    )
+    instructions = node["config"]["instructions"]
+
+    assert "architect_worker_task" in instructions
+    assert "delegated worker" in instructions
+    assert "complete the requested objective autonomously" in instructions
+    assert "BLOCKING QUESTION:" in instructions
 
 
 @pytest.mark.asyncio
@@ -221,7 +301,7 @@ async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonic
     assert prepared["binding_state"]["artifact_id"] == str(artifact.id)
     assert prepared["binding_state"]["draft_snapshot"]["display_name"] == "hydrated-tool-display"
     assert prepared["binding_state"]["draft_snapshot"]["source_files"][0]["path"] == "main.py"
-    assert prepared["binding_state"]["artifact_create_payload"] is None
+    assert prepared["binding_state"]["platform_assets_create_input"] is None
 
     state = await architect_worker_binding_get_state(
         {
@@ -235,6 +315,7 @@ async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonic
     )
 
     assert state["binding_state"]["artifact_id"] == str(artifact.id)
-    assert state["binding_state"]["artifact_create_payload"] is None
-    assert state["binding_state"]["artifact_update_payload"]["artifact_id"] == str(artifact.id)
-    assert state["binding_state"]["artifact_update_payload"]["patch"]["runtime"]["entry_module_path"] == "main.py"
+    assert state["binding_state"]["platform_assets_create_input"] is None
+    assert state["binding_state"]["platform_assets_update_input"]["action"] == "artifacts.update"
+    assert state["binding_state"]["platform_assets_update_input"]["payload"]["artifact_id"] == str(artifact.id)
+    assert state["binding_state"]["platform_assets_update_input"]["payload"]["patch"]["runtime"]["entry_module_path"] == "main.py"

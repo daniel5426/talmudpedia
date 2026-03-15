@@ -54,7 +54,12 @@ def _build_artifact_coding_graph(model_id: str, tool_ids: list[str]) -> dict:
         "Only claim changes are complete if a mutation tool succeeded. "
         "Use artifact_coding_run_test when validation is needed, and rely on returned test results instead of inventing outcomes. "
         "The runtime target is Cloudflare Workers-compatible Python, so do not assume local processes, local filesystem state, or arbitrary sockets. "
-        "Always answer in natural language after tool use."
+        "Always answer in natural language after tool use. "
+        "If context includes architect_worker_task, you are acting as a delegated worker for the platform architect rather than a user-facing chat editor. "
+        "In delegated mode, complete the requested objective autonomously from the current shared draft and do not ask the end user for routine clarifications. "
+        "Use reasonable defaults consistent with the task, mutate the draft directly when the path is clear, and return a concise completion summary for the architect. "
+        "Ask a question only when you are genuinely blocked on missing information that cannot be safely inferred from the task, draft, or tool results. "
+        "When genuinely blocked in delegated mode, your final response must begin with exactly 'BLOCKING QUESTION:' followed by one concise question, then stop."
     )
     return {
         "nodes": [

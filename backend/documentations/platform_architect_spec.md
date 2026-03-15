@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-14
+Last Updated: 2026-03-15
 
 ## Purpose
 This file is the focused current-state reference for the seeded `platform-architect` runtime.
@@ -19,9 +19,12 @@ The architect is seeded with:
 - `platform-governance`
 - `architect-worker-binding-prepare`
 - `architect-worker-binding-get-state`
+- `architect-worker-binding-persist-artifact`
 - `architect-worker-spawn`
 - `architect-worker-spawn-group`
 - `architect-worker-get-run`
+- `architect-worker-await`
+- `architect-worker-respond`
 - `architect-worker-join`
 - `architect-worker-cancel`
 
@@ -39,8 +42,8 @@ The architect runtime should:
 2. Decide whether work is local deterministic platform work or delegated worker work.
 3. Use direct domain tools for canonical platform reads/mutations.
 4. Use architect worker tools for async delegated work, especially longer-running or mutable draft work.
-5. Poll or join child runs later when needed.
-6. Persist canonical results through explicit platform APIs.
+5. Wait for child progress with `architect-worker-await`, use `architect-worker-get-run` only for inspection/debugging, and answer waiting children with `architect-worker-respond` when needed.
+6. Persist worker-backed artifact drafts through the dedicated binding persist tool; use explicit platform APIs for other domain mutations.
 7. Return a normal text response.
 
 Important prompt boundary:
@@ -68,9 +71,12 @@ The architect worker runtime is async and kernel-backed.
 
 Current architect worker capabilities:
 - prepare a binding-backed worker state
+- persist a binding-backed artifact server-side
 - spawn one worker asynchronously
 - spawn a parallel worker group asynchronously
 - inspect a child run later
+- await child completion/blocking server-side
+- respond to a waiting child run
 - join a worker group later
 - cancel a worker subtree
 
@@ -103,7 +109,9 @@ Artifact binding behavior:
 - prepare or reuse an artifact shared draft/session
 - bind child artifact-coding runs to that session
 - preserve run-linked snapshots/history on the existing artifact tables
-- later export canonical artifact create/update payloads
+- later export canonical artifact create/update payloads for inspection/debugging
+- persist the current draft server-side through `ArtifactRevisionService`
+- artifact-coding sessions now hold a direct non-null `shared_draft_id` so worker tools resolve the prepared draft by identity, not by nullable scope inference
 
 Normal artifact binding creation is now lightweight:
 - `prepare_mode=create_new_draft`
@@ -123,15 +131,15 @@ Writable bindings are single-writer:
 Current architect artifact flow:
 1. `architect-worker-binding-prepare`
 2. `architect-worker-spawn` or `architect-worker-spawn-group`
-3. `architect-worker-get-run` or `architect-worker-join`
-4. `architect-worker-binding-get-state`
-5. `platform-assets` `artifacts.create` or `artifacts.update`
+3. `architect-worker-await` for the normal waiting path
+4. `architect-worker-binding-persist-artifact`
+5. optional `architect-worker-binding-get-state` for inspection/debug/export
 6. optional `artifacts.create_test_run`
 7. optional `artifacts.publish` only with explicit publish intent
 
 Important ownership boundary:
 - the child worker edits only the shared draft
-- the architect still performs canonical artifact persistence through `platform-assets`
+- worker-backed canonical artifact persistence now happens inside the architect worker binding runtime, not through model-authored `platform-assets` passthrough
 
 The architect should not author full `draft_snapshot` payloads for normal artifact creation.
 The backend now creates the canonical initial draft snapshot from the supplied `draft_seed`.
@@ -183,19 +191,23 @@ Recent live runs isolated the next unresolved problems:
 - The old `prepare -> spawn` binding-not-found failure is fixed.
   - Root cause was missing commits between separate mutating architect worker tool calls.
 
-- The artifact worker still acts like an interactive editor in architect-spawned runs.
-  - Root cause: artifact worker prompt/runtime does not yet define a delegated-worker mode even though `architect_worker_task` is present in context.
+- The delegated artifact worker mode is now explicit.
+  - The artifact coding agent profile instructs architect-spawned workers to complete `architect_worker_task` autonomously, not behave like a user-facing editor.
+  - When a worker is genuinely blocked, it emits a final response starting with `BLOCKING QUESTION:` so the orchestrator can treat the run as waiting for input.
 
 - Session-to-shared-draft resolution for fresh architect-created bindings is structurally weak.
-  - Root cause: `ArtifactCodingSession` does not directly reference its `ArtifactCodingSharedDraft`.
-  - Current resolution by nullable scope (`artifact_id`, `draft_key`) can create or resolve the wrong draft when both are unset.
+  - Fixed by adding `ArtifactCodingSession.shared_draft_id` and migrating existing sessions onto canonical shared drafts.
+  - Worker resolution is now direct and child-run context includes `artifact_coding_shared_draft_id` for mismatch detection.
+  - Regression coverage now asserts that scope-free architect-created sessions do not create or resolve a second shared draft later.
 
-- That shared-draft resolution bug explains two observed symptoms:
-  - `artifact-coding-list-files` can report `main.py` while `artifact-coding-read-file` on `main.py` fails
-  - a prepared `tool_impl` binding can surface inside worker tools as default `agent_node` form state
+- Architect waiting no longer relies on repeated `architect-worker-get-run` loops.
+  - `architect-worker-await` is now the normal waiting primitive for completion, failure, cancellation, or blocker detection.
+  - `architect-worker-respond` provides the pull-model continuation path for child runs that are waiting for orchestrator input.
 
-- Architect polling/backoff is still poor.
-  - Parent runs can spend all tool iterations repeatedly calling `architect-worker-get-run` before reaching terminal child state and canonical persistence.
+- The worker-backed artifact persistence pass-through failure is fixed.
+  - Root cause was the architect having to restate a large exported `platform_assets_create_input` / `platform_assets_update_input` object into a new strict `platform-assets` call.
+  - The clean-cut fix is `architect-worker-binding-persist-artifact`, which reads canonical binding state server-side, chooses create vs update, persists through `ArtifactRevisionService`, and links the binding/session/shared-draft scope to the canonical artifact after create.
+  - `architect-worker-binding-get-state` remains available for inspection/debugging, but it is no longer the normal persistence bridge.
 
 - Artifact draft seed ergonomics are still rough for the architect.
   - The architect continues to guess non-canonical values like `python` or `script` instead of artifact-domain kinds like `tool_impl`.

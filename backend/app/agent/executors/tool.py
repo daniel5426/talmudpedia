@@ -61,6 +61,15 @@ INTERNAL_TOOL_RUNTIME_INPUT_KEYS = {
     "quota_max_output_tokens",
     "token",
 }
+STRICT_PLATFORM_TOOL_SLUGS = frozenset(
+    {
+        "platform-assets",
+        "platform-agents",
+        "platform-rag",
+        "platform-governance",
+    }
+)
+STRICT_PLATFORM_RAW_INPUT_KEY = "__strict_platform_raw_input__"
 
 
 def _trace_safe_value(value: Any, *, max_string: int = 800, max_items: int = 12) -> Any:
@@ -99,6 +108,94 @@ def _tool_input_shape(input_data: Any) -> dict[str, Any]:
 
 
 class ToolNodeExecutor(BaseNodeExecutor):
+    @staticmethod
+    def _is_strict_platform_tool(tool: Any) -> bool:
+        tool_slug = str(getattr(tool, "slug", "") or "").strip()
+        return is_strict_tool_input(tool) and tool_slug in STRICT_PLATFORM_TOOL_SLUGS
+
+    @staticmethod
+    def _inspect_platform_sdk_embedded_input(raw: Any) -> dict[str, Any]:
+        details: dict[str, Any] = {
+            "embedded_json_parseable": False,
+            "attempted_action": None,
+            "embedded_top_level_keys": [],
+            "embedded_payload_keys": [],
+        }
+        if isinstance(raw, dict):
+            details["embedded_json_parseable"] = True
+            details["embedded_top_level_keys"] = sorted(str(key) for key in raw.keys())
+            action = raw.get("action")
+            if isinstance(action, str) and action.strip():
+                details["attempted_action"] = action.strip()
+            payload = raw.get("payload")
+            if isinstance(payload, dict):
+                details["embedded_payload_keys"] = sorted(str(key) for key in payload.keys())
+            return details
+        if isinstance(raw, str):
+            from app.system_artifacts.platform_sdk.handler import _inspect_wrapped_platform_sdk_input
+
+            return _inspect_wrapped_platform_sdk_input(raw)
+        return details
+
+    def _extract_strict_platform_noncanonical_input_error(
+        self,
+        *,
+        tool: Any,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not self._is_strict_platform_tool(tool):
+            return None
+
+        source_field: str | None = None
+        raw_value: Any = None
+        if STRICT_PLATFORM_RAW_INPUT_KEY in payload:
+            source_field = "raw_input"
+            raw_value = payload.get(STRICT_PLATFORM_RAW_INPUT_KEY)
+        elif not (isinstance(payload.get("action"), str) and payload.get("action", "").strip()):
+            for candidate_key in ("value", "query", "text"):
+                if candidate_key not in payload:
+                    continue
+                candidate_value = payload.get(candidate_key)
+                if candidate_value not in (None, ""):
+                    source_field = candidate_key
+                    raw_value = candidate_value
+                    break
+
+        if source_field is None:
+            return None
+
+        details = self._inspect_platform_sdk_embedded_input(raw_value)
+        attempted_action = details.get("attempted_action")
+        if source_field == "raw_input":
+            message = (
+                "Platform SDK strict tools require a top-level action and payload object. "
+                "Do not pass a raw scalar or string tool argument."
+            )
+        else:
+            message = (
+                f"Platform SDK no longer accepts wrapped tool input in '{source_field}'. "
+                "Send a top-level action and payload object instead."
+            )
+        error = {
+            "error": "non_canonical_wrapped_input",
+            "code": "NON_CANONICAL_PLATFORM_SDK_INPUT",
+            "message": message,
+            "http_status": 422,
+            "retryable": False,
+            "source_field": source_field,
+            "migration_hint": 'Send {"action":"...","payload":{...}} as the tool input object.',
+            **details,
+        }
+        return {
+            "action": str(attempted_action or "noop"),
+            "result": {
+                "status": "validation_error",
+                "reason": "non_canonical_input",
+                "message": message,
+            },
+            "errors": [error],
+        }
+
     @staticmethod
     def _coerce_scalar_text(value: Any) -> str | None:
         if isinstance(value, str):
@@ -495,6 +592,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
             }
 
         if strict_input:
+            noncanonical_error = self._extract_strict_platform_noncanonical_input_error(
+                tool=_tool,
+                payload=payload,
+            )
+            if noncanonical_error is not None:
+                return noncanonical_error
             validation_errors = validate_tool_input_schema(_tool, payload)
             if validation_errors:
                 return {

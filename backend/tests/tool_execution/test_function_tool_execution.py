@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 import app.services.published_app_coding_agent_tools  # noqa: F401
+import app.services.platform_sdk_local_tools  # noqa: F401
 from app.agent.executors.tool import ToolNodeExecutor
 from app.services.tool_function_registry import register_tool_function
 
@@ -37,6 +38,35 @@ def make_tool(tool_id, config_schema, implementation_type="FUNCTION", schema=Non
         artifact_id=None,
         artifact_version=None,
         implementation_type=implementation_type,
+    )
+
+
+def make_platform_tool(tool_id, slug, function_name):
+    return SimpleNamespace(
+        id=tool_id,
+        name=slug,
+        slug=slug,
+        description="",
+        schema={
+            "input": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                    "payload": {"type": "object"},
+                },
+                "required": ["action", "payload"],
+                "additionalProperties": False,
+            }
+        },
+        config_schema={
+            "implementation": {"type": "function", "function_name": function_name},
+            "execution": {"strict_input_schema": True},
+        },
+        is_active=True,
+        is_system=False,
+        artifact_id=None,
+        artifact_version=None,
+        implementation_type="FUNCTION",
     )
 
 
@@ -459,3 +489,70 @@ async def test_strict_function_tool_ignores_executor_runtime_metadata_before_dis
     assert captured["payload"]["objective"] == "valid objective"
     assert "agent_id" not in captured["payload"]
     assert "tenant_id" not in captured["payload"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_slug", "function_name", "wrapper_key", "attempted_action"),
+    [
+        ("platform-assets", "platform_sdk_local_platform_assets", "value", "artifacts.create"),
+        ("platform-agents", "platform_sdk_local_platform_agents", "query", "agents.create"),
+        ("platform-rag", "platform_sdk_local_platform_rag", "text", "rag.create_pipeline_shell"),
+        ("platform-governance", "platform_sdk_local_platform_governance", "value", "auth.get_current_user"),
+    ],
+)
+async def test_strict_platform_tools_reject_wrapped_input_with_noncanonical_error(
+    monkeypatch,
+    tool_slug,
+    function_name,
+    wrapper_key,
+    attempted_action,
+):
+    tool_id = uuid4()
+    tool = make_platform_tool(tool_id, tool_slug, function_name)
+    db = FakeDB(tool)
+    executor = ToolNodeExecutor(tenant_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    result = await executor.execute(
+        {"context": {wrapper_key: f'{{"action":"{attempted_action}","payload":{{}}}}'}},
+        {"tool_id": str(tool_id)},
+        {"node_id": "tool-node"},
+    )
+
+    assert result["context"]["action"] == attempted_action
+    assert result["context"]["result"]["reason"] == "non_canonical_input"
+    err = result["context"]["errors"][0]
+    assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
+    assert err["source_field"] == wrapper_key
+    assert err["attempted_action"] == attempted_action
+
+
+@pytest.mark.asyncio
+async def test_strict_platform_tool_rejects_raw_scalar_args_with_noncanonical_error(monkeypatch):
+    tool_id = uuid4()
+    tool = make_platform_tool(tool_id, "platform-assets", "platform_sdk_local_platform_assets")
+    db = FakeDB(tool)
+    executor = ToolNodeExecutor(tenant_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    result = await executor.execute(
+        {"context": {"__strict_platform_raw_input__": '{"action":"artifacts.create","payload":{"slug":"demo"}}'}},
+        {"tool_id": str(tool_id)},
+        {"node_id": "tool-node"},
+    )
+
+    assert result["context"]["action"] == "artifacts.create"
+    assert result["context"]["result"]["reason"] == "non_canonical_input"
+    err = result["context"]["errors"][0]
+    assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
+    assert err["source_field"] == "raw_input"
+    assert err["attempted_action"] == "artifacts.create"

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent.execution.tool_input_contracts import validate_tool_input_schema
 from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
+from app.db.postgres.models.artifact_runtime import ArtifactCodingSession
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry
 from app.services.platform_architect_contracts import build_architect_graph_definition
@@ -55,9 +56,12 @@ async def test_architect_worker_tools_seed_expected_slugs(db_session):
     assert set(by_slug.keys()) == {
         "architect-worker-binding-prepare",
         "architect-worker-binding-get-state",
+        "architect-worker-binding-persist-artifact",
         "architect-worker-spawn",
         "architect-worker-spawn-group",
         "architect-worker-get-run",
+        "architect-worker-await",
+        "architect-worker-respond",
         "architect-worker-join",
         "architect-worker-cancel",
     }
@@ -92,6 +96,10 @@ async def test_architect_worker_tools_seed_expected_slugs(db_session):
     )
     assert create_branch["required"] == ["binding_type", "prepare_mode", "title_prompt", "draft_seed"]
     assert create_branch["not"] == {"required": ["draft_snapshot"]}
+
+    persist_schema = by_slug["architect-worker-binding-persist-artifact"].schema["input"]
+    assert persist_schema["required"] == ["binding_ref"]
+    assert persist_schema["properties"]["mode"]["enum"] == ["auto", "create", "update"]
 
 
 @pytest.mark.asyncio
@@ -227,6 +235,7 @@ async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_sess
     monkeypatch.setattr("app.services.platform_architect_worker_tools.get_session", session_factory)
 
     spawned_run_id = uuid4()
+    captured_input: dict[str, object] = {}
 
     async def fake_spawn_run(
         self,
@@ -243,6 +252,7 @@ async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_sess
         start_background,
     ):
         del caller_run_id, parent_node_id, target_agent_id, failure_policy, timeout_s, scope_subset, idempotency_key, start_background
+        captured_input["mapped_input_payload"] = mapped_input_payload
         run = AgentRun(
             id=spawned_run_id,
             tenant_id=tenant.id,
@@ -268,7 +278,8 @@ async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_sess
         fake_spawn_run,
     )
 
-    prepare_result = await architect_worker_binding_prepare(
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    prepare_result = await service.prepare_binding(
         {
             "__tool_runtime_context__": {
                 "tenant_id": str(tenant.id),
@@ -299,6 +310,15 @@ async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_sess
     assert spawn_result["mode"] == "async"
     assert spawn_result["run_id"] == str(spawned_run_id)
     assert spawn_result["binding_ref"] == prepare_result["binding_ref"]
+    prepared_session = await db_session.get(
+        ArtifactCodingSession,
+        UUID(prepare_result["binding_ref"]["binding_id"]),
+    )
+    assert prepared_session is not None
+    assert prepared_session.shared_draft_id is not None
+    assert captured_input["mapped_input_payload"]["context"]["artifact_coding_shared_draft_id"] == str(
+        prepared_session.shared_draft_id
+    )
 
 
 def test_architect_graph_instructions_include_async_worker_flow():
@@ -311,9 +331,12 @@ def test_architect_graph_instructions_include_async_worker_flow():
             "platform-governance",
             "architect-worker-binding-prepare",
             "architect-worker-binding-get-state",
+            "architect-worker-binding-persist-artifact",
             "architect-worker-spawn",
             "architect-worker-spawn-group",
             "architect-worker-get-run",
+            "architect-worker-await",
+            "architect-worker-respond",
             "architect-worker-join",
             "architect-worker-cancel",
         ],
@@ -323,9 +346,13 @@ def test_architect_graph_instructions_include_async_worker_flow():
 
     assert "architect-worker-spawn" in instructions
     assert "architect-worker-binding-prepare" in instructions
+    assert "architect-worker-binding-persist-artifact" in instructions
+    assert "architect-worker-await" in instructions
+    assert "architect-worker-respond" in instructions
     assert "Do not call raw orchestration.* actions" in instructions
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
+    assert "Never burn tool iterations on repeated immediate architect-worker-get-run calls" in instructions
     assert "Do not invent nested fields like task.instructions" in instructions
     assert "agents.create_shell" in instructions
     assert "rag.create_pipeline_shell" in instructions
@@ -333,6 +360,101 @@ def test_architect_graph_instructions_include_async_worker_flow():
     assert "Do not invent non-canonical binding fields such as create, files, entrypoint, or text." in instructions
     assert "artifact-coding-agent-call" not in instructions
     assert "artifact-coding-session-prepare" not in instructions
+
+
+@pytest.mark.asyncio
+async def test_binding_persist_artifact_auto_create_links_binding_scope(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    async def _fake_profile(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(id=uuid4())
+    monkeypatch.setattr(
+        "app.services.platform_architect_worker_bindings.ensure_artifact_coding_agent_profile",
+        _fake_profile,
+    )
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    prepare_result = await service.prepare_binding(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(uuid4()),
+            },
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "create_new_draft",
+            "draft_key": f"persist-auto-{uuid4().hex[:8]}",
+            "title_prompt": "Create a random number tool",
+            "draft_seed": {"kind": "tool_impl", "slug": "random-tool", "display_name": "Random Tool"},
+        }
+    )
+
+    persist_result = await service.persist_binding_artifact(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(uuid4()),
+            },
+            "binding_ref": prepare_result["binding_ref"],
+        }
+    )
+
+    assert persist_result["persistence_mode"] == "create"
+    assert persist_result["artifact_slug"] == "random-tool"
+    assert persist_result["binding_state"]["artifact_id"] == persist_result["artifact_id"]
+
+
+@pytest.mark.asyncio
+async def test_binding_persist_artifact_rejects_forced_update_without_linked_artifact(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    async def _fake_profile(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(id=uuid4())
+    monkeypatch.setattr(
+        "app.services.platform_architect_worker_bindings.ensure_artifact_coding_agent_profile",
+        _fake_profile,
+    )
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    prepare_result = await service.prepare_binding(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(uuid4()),
+            },
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "create_new_draft",
+            "title_prompt": "Create a random number tool",
+            "draft_seed": {"kind": "tool_impl"},
+        }
+    )
+
+    with pytest.raises(ValueError, match="update is not allowed"):
+        await service.persist_binding_artifact(
+            {
+                "__tool_runtime_context__": {
+                    "tenant_id": str(tenant.id),
+                    "user_id": str(user.id),
+                    "run_id": str(uuid4()),
+                },
+                "binding_ref": prepare_result["binding_ref"],
+                "mode": "update",
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -418,3 +540,223 @@ async def test_worker_get_run_returns_binding_ref_from_run_record(db_session):
     assert result["run_id"] == str(child.id)
     assert result["status"] == RunStatus.completed.value
     assert result["binding_ref"]["binding_type"] == "artifact_shared_draft"
+
+
+@pytest.mark.asyncio
+async def test_worker_get_run_detects_blocking_question_waiting_state(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    parent = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": [], "context": {}},
+    )
+    db_session.add(parent)
+    await db_session.flush()
+    parent.root_run_id = parent.id
+    child = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.completed,
+        root_run_id=parent.id,
+        parent_run_id=parent.id,
+        input_params={"context": {}},
+        output_result={
+            "state": {
+                "last_agent_output": "BLOCKING QUESTION: Which runtime secret name should the tool use?"
+            }
+        },
+    )
+    db_session.add(child)
+    await db_session.commit()
+
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    result = await service.get_run(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(parent.id),
+            },
+            "run_id": str(child.id),
+        }
+    )
+
+    assert result["lifecycle_state"] == "waiting_for_input"
+    assert result["waiting_state"]["waiting_for_input"] is True
+    assert result["waiting_state"]["waiting_for_input_from"] == "orchestrator"
+    assert result["waiting_state"]["blocking_question"] == "Which runtime secret name should the tool use?"
+    assert result["next_action_hint"] == "respond_or_surface_blocker"
+
+
+@pytest.mark.asyncio
+async def test_worker_await_returns_waiting_state_without_timeout(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    parent = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": [], "context": {}},
+    )
+    db_session.add(parent)
+    await db_session.flush()
+    parent.root_run_id = parent.id
+    child = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.completed,
+        root_run_id=parent.id,
+        parent_run_id=parent.id,
+        input_params={"context": {}},
+        output_result={"final_output": "BLOCKING QUESTION: Which slug should I use for this tool?"},
+    )
+    db_session.add(child)
+    await db_session.commit()
+
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    result = await service.await_run(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(parent.id),
+            },
+            "run_id": str(child.id),
+            "timeout_s": 1,
+            "poll_interval_s": 0.2,
+        }
+    )
+
+    assert result["await_timed_out"] is False
+    assert result["lifecycle_state"] == "waiting_for_input"
+    assert result["waiting_state"]["blocking_question"] == "Which slug should I use for this tool?"
+
+
+@pytest.mark.asyncio
+async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    parent = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": [], "context": {}},
+    )
+    db_session.add(parent)
+    await db_session.flush()
+    parent.root_run_id = parent.id
+
+    binding_ref = {
+        "binding_type": "artifact_shared_draft",
+        "binding_id": str(uuid4()),
+    }
+    child = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.completed,
+        root_run_id=parent.id,
+        parent_run_id=parent.id,
+        input_params={
+            "context": {
+                "architect_worker_binding_ref": binding_ref,
+                "architect_worker_task": {
+                    "objective": "Implement the delegated tool.",
+                    "constraints": ["Return a random float between 0 and 1."],
+                },
+            }
+        },
+        output_result={"final_output": "BLOCKING QUESTION: Which slug should I use for this tool?"},
+    )
+    db_session.add(child)
+    await db_session.commit()
+
+    new_run_id = uuid4()
+    captured: dict[str, object] = {}
+
+    class _FakeAdapter:
+        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref):
+            del tenant_id, user_id, binding_ref
+            return {
+                "worker_agent_slug": "artifact-coding-agent",
+                "context": {"artifact_coding_session_id": "session-123"},
+            }
+
+        async def register_spawned_run(self, *, tenant_id, user_id, binding_ref, run_id, user_prompt):
+            del tenant_id, user_id, binding_ref
+            captured["registered_run_id"] = str(run_id)
+            captured["user_prompt"] = user_prompt
+
+    async def fake_spawn_run(
+        *,
+        caller_run_id,
+        parent_node_id,
+        target_agent_id,
+        target_agent_slug,
+        mapped_input_payload,
+        failure_policy,
+        timeout_s,
+        scope_subset,
+        idempotency_key,
+        start_background,
+    ):
+        del caller_run_id, target_agent_id, failure_policy, timeout_s, scope_subset, idempotency_key, start_background
+        captured["parent_node_id"] = parent_node_id
+        captured["target_agent_slug"] = target_agent_slug
+        captured["mapped_input_payload"] = mapped_input_payload
+        followup = AgentRun(
+            id=new_run_id,
+            tenant_id=tenant.id,
+            agent_id=uuid4(),
+            user_id=user.id,
+            initiator_user_id=user.id,
+            status=RunStatus.queued,
+            root_run_id=parent.id,
+            parent_run_id=parent.id,
+            input_params=mapped_input_payload,
+            output_result=None,
+        )
+        db_session.add(followup)
+        await db_session.flush()
+        return {"spawned_run_ids": [str(new_run_id)]}
+
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    service.bindings = SimpleNamespace(adapter_for_ref=lambda _binding_ref: _FakeAdapter())
+    service.kernel = SimpleNamespace(
+        spawn_run=fake_spawn_run,
+        _serialize_lineage=lambda run: {
+            "root_run_id": str(run.root_run_id) if run.root_run_id else None,
+            "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+        },
+    )
+
+    result = await service.respond_to_run(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(parent.id),
+            },
+            "run_id": str(child.id),
+            "response": "Use slug random-number-tool.",
+        }
+    )
+
+    assert result["run_id"] == str(new_run_id)
+    assert result["status"] == RunStatus.queued.value
+    assert result["lifecycle_state"] == "running"
+    assert captured["parent_node_id"] == "architect_worker_respond"
+    assert captured["target_agent_slug"] == "artifact-coding-agent"
+    assert "Architect answer:\nUse slug random-number-tool." in captured["mapped_input_payload"]["input"]
+    assert captured["mapped_input_payload"]["context"]["architect_worker_followup"]["prior_run_id"] == str(child.id)
+    assert captured["registered_run_id"] == str(new_run_id)
