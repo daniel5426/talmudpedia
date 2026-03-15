@@ -482,7 +482,7 @@ export const artifactsService = {
       ? streamBase
       : /^https?:\/\//i.test(backendBase)
         ? backendBase
-        : "http://127.0.0.1:8000";
+        : "http://127.0.0.1:8026";
     const authState = useAuthStore.getState();
     const token = authState.token;
     const headers: Record<string, string> = {

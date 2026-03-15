@@ -1,28 +1,40 @@
-import { useEffect, useMemo } from "react";
-import { Copy, RotateCcw } from "lucide-react";
+import { Bot, Loader2, Pencil, Plus, Terminal } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
-import { AssistantResponseTimeline } from "@/components/ai-elements/assistant-response-timeline";
-import {
-  Conversation,
-  ConversationContent,
-  ConversationScrollButton,
-} from "@/components/ai-elements/conversation";
-import {
-  Message,
-  MessageAction,
-  MessageActions,
-  MessageContent,
-} from "@/components/ai-elements/message";
-import { BotInputArea } from "@/components/BotInputArea";
+import { FloatingPanel } from "@/components/builder/FloatingPanel";
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { DirectionProvider, useDirection } from "@/components/direction-provider";
+import { MockExecutionSidebar } from "@/components/layout/MockExecutionSidebar";
+import { PlaygroundChatWorkspace } from "@/components/layout/PlaygroundChatWorkspace";
 import { AppSidebar } from "@/components/navigation/AppSidebar";
-import { ChatPaneHeader } from "@/components/navigation/ChatPaneHeader";
 import { ThemeProvider } from "@/components/theme-provider";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Conversation } from "@/components/ai-elements/conversation";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { useTemplateChat } from "@/hooks/use-template-chat";
 import { cn } from "@/lib/utils";
 
-function ChatShell() {
+const MOCK_AGENT_OPTIONS = [
+  { id: "standard-agent", name: "Standard Agent", published: true },
+  { id: "client-exposure", name: "Client Exposure Copilot", published: false },
+];
+
+function PlaygroundTemplatePage() {
   const {
     sessions,
     activeSession,
@@ -40,10 +52,10 @@ function ChatShell() {
     handleSubmit,
     stopStreaming,
   } = useTemplateChat();
+  const [isExecutionSidebarOpen, setIsExecutionSidebarOpen] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState(MOCK_AGENT_OPTIONS[0].id);
   const { direction } = useDirection();
 
-  const hasMessages = Boolean(activeSession?.messages.length);
-  const isEmptyState = !hasMessages && !isStreaming;
   const orderedSessions = useMemo(
     () =>
       [...sessions].sort(
@@ -55,13 +67,13 @@ function ChatShell() {
 
   useEffect(() => {
     document.title = activeSession?.title
-      ? `${activeSession.title} | Agent Template`
-      : "Agent Template";
+      ? `${activeSession.title} | Agent Playground`
+      : "Agent Playground";
   }, [activeSession?.title]);
 
   return (
-    <SidebarProvider defaultOpen className="h-full bg-transparent" dir={direction}>
-      <div className="relative flex h-full w-full overflow-hidden bg-background text-foreground transition-colors duration-500">
+    <SidebarProvider className="h-full bg-transparent" dir={direction}>
+      <div className="relative flex h-full w-full overflow-hidden bg-background transition-colors duration-500">
         <div className="relative z-10">
           <AppSidebar
             sessions={orderedSessions}
@@ -72,126 +84,138 @@ function ChatShell() {
             onShareSession={shareSession}
           />
         </div>
+
         <SidebarInset className="relative z-10 h-full min-w-0 flex-1 bg-transparent">
-          <main className="flex h-full w-full overflow-hidden bg-transparent">
-            <Conversation
-              dir={direction}
-              className="relative flex-1 overflow-hidden border-none"
-              style={{ background: "var(--chat-background)" }}
-            >
-              <ChatPaneHeader
-                isEmptyState={isEmptyState}
-                title={activeSession?.title || "New conversation"}
-                subtitle="Polished base runtime shell for generic agents"
-              />
+          <div className="flex h-full w-full flex-col overflow-hidden bg-background [&_button]:shadow-none">
+            <AdminPageHeader>
+              <div className="flex items-center gap-3">
+                <CustomBreadcrumb
+                  items={[
+                    { label: "Agents Management", href: "#" },
+                    { label: "Playground", active: true },
+                  ]}
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => setIsExecutionSidebarOpen((prev) => !prev)}
+                  aria-label={isExecutionSidebarOpen ? "Hide execution traces" : "Show execution traces"}
+                >
+                  <Terminal className="h-3.5 w-3.5" />
+                </button>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Show history"
+                    >
+                      <Loader2 className={cn("h-3.5 w-3.5", sessions.length ? "hidden" : "block")} />
+                      <span className={cn("text-sm", sessions.length ? "block" : "hidden")}>+</span>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="max-h-[360px] w-[320px] overflow-y-auto">
+                    <DropdownMenuItem onClick={startNewChat}>
+                      <Plus className="mr-2 size-4" />
+                      New Thread
+                    </DropdownMenuItem>
+                    {orderedSessions.map((session) => (
+                      <DropdownMenuItem key={session.id} onClick={() => selectSession(session.id)}>
+                        <div className="flex min-w-0 flex-col">
+                          <span className="truncate font-medium">{session.title}</span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {new Date(session.updatedAt).toLocaleString()}
+                          </span>
+                        </div>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled aria-label="Edit agent" title="Edit agent">
+                  <Pencil className="size-3.5" />
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  onClick={startNewChat}
+                >
+                  <Plus className="size-3.5" />
+                  <span>New Thread</span>
+                </Button>
+
+                <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+                  <SelectTrigger className="h-9 w-[200px] gap-2 border-none bg-muted/50 transition-colors hover:bg-muted">
+                    <Bot className="size-3.5 text-primary" />
+                    <SelectValue placeholder="Select Agent" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[320px] w-[280px]">
+                    {MOCK_AGENT_OPTIONS.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{agent.name}</span>
+                          {agent.published ? (
+                            <Badge variant="secondary" className="h-3 px-1 text-[8px]">
+                              PUB
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </AdminPageHeader>
+
+            <main className="relative flex-1 overflow-hidden">
               <div
                 className={cn(
-                  "relative z-10 mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col",
-                  isEmptyState ? "px-4" : "px-4 pb-4",
+                  "flex h-full overflow-hidden transition-[padding] duration-300",
+                  isExecutionSidebarOpen && "lg:pr-[332px]",
                 )}
-                dir={direction}
               >
-                <ConversationContent
-                  className={cn(
-                    "gap-6 p-0 pt-[3.25rem]",
-                    isEmptyState ? "h-full justify-center pb-20" : "pb-32",
-                  )}
-                >
-                  {isEmptyState ? (
-                    <div className="animate-in fade-in slide-in-from-bottom-4 flex w-full flex-col items-center text-center duration-500">
-                      <div className="glass-panel shadow-soft mb-8 rounded-3xl border border-border/60 px-5 py-2">
-                        <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">
-                          Standard Agent Base
-                        </p>
-                      </div>
-                      <p className="pb-6 text-3xl font-semibold tracking-tight">
-                        Ready when you are.
-                      </p>
-                      <p className="pb-8 text-sm text-muted-foreground">
-                        Ask in plain language. Tool activity, reasoning progress, and streaming
-                        responses land in the same timeline.
-                      </p>
-                      <BotInputArea
-                        textareaRef={textareaRef}
-                        handleSubmit={handleSubmit}
-                        isLoading={isStreaming}
-                        onStop={stopStreaming}
-                        animate={false}
-                      />
-                    </div>
-                  ) : (
-                    <>
-                      {activeSession?.messages.map((message) => {
-                        const isActiveAssistant =
-                          message.role === "assistant" &&
-                          message.id === streamingAssistantId;
-                        return (
-                          <Message
-                            key={message.id}
-                            from={message.role}
-                            className="max-w-full"
-                          >
-                            <MessageContent
-                              className={cn(
-                                message.role === "assistant" &&
-                                  "bg-transparent px-0 py-0",
-                              )}
-                            >
-                              {message.role === "assistant" && message.blocks?.length ? (
-                                <AssistantResponseTimeline
-                                  blocks={message.blocks}
-                                  isLoading={Boolean(isActiveAssistant && isStreaming)}
-                                />
-                              ) : (
-                                <div className="whitespace-pre-wrap text-sm leading-7">
-                                  {message.content}
-                                </div>
-                              )}
-                            </MessageContent>
-                            {message.role === "assistant" ? (
-                              <MessageActions className="mt-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                                <MessageAction
-                                  tooltip="Copy response"
-                                  onClick={() => copyMessage(message.content)}
-                                >
-                                  <Copy className="size-3.5" />
-                                </MessageAction>
-                              </MessageActions>
-                            ) : (
-                              <MessageActions className="ml-auto mt-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/usermsg:opacity-100">
-                                <MessageAction
-                                  tooltip="Send again"
-                                  onClick={() => resendPrompt(message.content)}
-                                >
-                                  <RotateCcw className="size-3.5" />
-                                </MessageAction>
-                              </MessageActions>
-                            )}
-                          </Message>
-                        );
-                      })}
-                      {runtimeError ? (
-                        <div className="rounded-xl border border-destructive/25 bg-destructive/[0.08] px-4 py-3 text-sm text-destructive">
-                          {runtimeError}
-                        </div>
-                      ) : null}
-                    </>
-                  )}
-                </ConversationContent>
-                {!isEmptyState ? (
-                  <div className="relative shrink-0">
-                    <ConversationScrollButton className="bottom-full mb-3" />
-                    <BotInputArea
+                <div className="flex min-w-0 flex-1">
+                  <Conversation
+                    dir={direction}
+                    className="relative flex min-h-full flex-1 flex-col overflow-hidden border-none"
+                    data-admin-page-scroll
+                    style={{ background: "var(--chat-background)" }}
+                  >
+                    <PlaygroundChatWorkspace
+                      activeSession={activeSession}
+                      activeSessionId={activeSessionId}
+                      isStreaming={isStreaming}
+                      streamingAssistantId={streamingAssistantId}
+                      runtimeError={runtimeError}
                       textareaRef={textareaRef}
-                      handleSubmit={handleSubmit}
-                      isLoading={isStreaming}
+                      onSubmit={handleSubmit}
                       onStop={stopStreaming}
+                      onCopy={copyMessage}
+                      onRetry={resendPrompt}
+                      onShareChat={shareSession}
+                      onDeleteChat={removeSession}
                     />
-                  </div>
-                ) : null}
+                  </Conversation>
+                </div>
               </div>
-            </Conversation>
-          </main>
+
+              <FloatingPanel
+                position="right"
+                visible={Boolean(isExecutionSidebarOpen)}
+                className="z-30 hidden w-80 lg:block"
+                fullHeight={false}
+              >
+                <MockExecutionSidebar className="w-full" />
+              </FloatingPanel>
+            </main>
+          </div>
         </SidebarInset>
       </div>
     </SidebarProvider>
@@ -202,7 +226,7 @@ export function App() {
   return (
     <ThemeProvider>
       <DirectionProvider initialDirection="ltr">
-        <ChatShell />
+        <PlaygroundTemplatePage />
       </DirectionProvider>
     </ThemeProvider>
   );

@@ -1,14 +1,25 @@
-import { Search } from "lucide-react";
+import * as React from "react";
+import { MoreHorizontal, Share2, Trash2 } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface ChatPaneHeaderProps {
-  title: string;
-  subtitle?: string;
+  chatId?: string | null;
+  onShareChat?: () => void;
+  onDeleteChat?: () => void;
   isEmptyState: boolean;
 }
 
 export function ChatPaneHeader({
-  title,
-  subtitle,
+  chatId,
+  onShareChat,
+  onDeleteChat,
   isEmptyState,
 }: ChatPaneHeaderProps) {
   const backgroundStyles = isEmptyState
@@ -20,36 +31,41 @@ export function ChatPaneHeader({
 
   return (
     <div
-      className="absolute left-0 right-0 top-0 z-20 w-full px-4 py-2.5 transition-all duration-500 ease-out"
-      style={backgroundStyles}
+      className="absolute top-0 left-0 right-0 z-20 w-full px-4 py-2.5 transition-all duration-500 ease-out-in"
+      style={{ containerType: "inline-size", ...backgroundStyles } as React.CSSProperties}
     >
       <div className="flex items-center gap-2">
-        <div className="flex shadow-md items-center gap-1 rounded-lg bg-background">
-          <button
-            type="button"
-            className="relative flex h-8 items-center gap-2 rounded-[0.5rem] px-3 text-sm font-normal text-muted-foreground"
-          >
-            <Search className="h-4 w-4 shrink-0" />
-            <span className="hidden min-[400px]:inline-flex">
-              Search and actions coming next
-            </span>
-            <span className="inline-flex min-[400px]:hidden">
-              Search
-            </span>
-            <span className="ml-2 hidden h-5 items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium min-[560px]:inline-flex">
-              <span className="text-xs">⌘</span>K
-            </span>
-          </button>
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{title}</div>
-          {subtitle ? (
-            <div className="truncate text-[11px] text-muted-foreground">
-              {subtitle}
-            </div>
+        <div className="flex items-center gap-1 rounded-lg bg-background shadow-md border-none">
+          {chatId ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild className="border-none shadow-none">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex items-center gap-2 text-muted-foreground"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">More options</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-48" side="bottom" align="start">
+                <DropdownMenuItem onClick={onShareChat} className="cursor-pointer focus:bg-sidebar">
+                  <Share2 className="mr-2 h-4 w-4" />
+                  <span>Share</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={onDeleteChat}
+                  className="cursor-pointer text-red-600 focus:bg-sidebar focus:text-red-600"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  <span>Delete</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : null}
+
         </div>
+        <div className="flex-1" />
       </div>
     </div>
   );

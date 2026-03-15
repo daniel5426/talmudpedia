@@ -27,6 +27,7 @@ frontend/node_modules
 
 # production
 */build
+backend/app/templates/published_apps/*/dist/
 
 # misc
 */.DS_Store

@@ -330,7 +330,7 @@ export const agentService = {
     // CRITICAL: Bypass Next.js dev proxy for SSE streaming.
     // The Next.js rewrite proxy buffers responses, causing all tokens to appear at once.
     // We call the backend directly for streaming endpoints only.
-    const directBackendUrl = process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || 'http://127.0.0.1:8000';
+    const directBackendUrl = process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || 'http://127.0.0.1:8026';
     const url = new URL(`${directBackendUrl}/agents/${id}/stream`);
     if (mode) {
         url.searchParams.append("mode", mode);

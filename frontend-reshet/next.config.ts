@@ -1,5 +1,8 @@
 import type { NextConfig } from "next";
 
+const localBackendTarget =
+  process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://127.0.0.1:8026";
+
 const nextConfig: NextConfig = {
   rewrites: async () => {
     return [
@@ -7,7 +10,7 @@ const nextConfig: NextConfig = {
         source: "/api/py/:path*",
         destination:
           process.env.NODE_ENV === "development"
-            ? "http://127.0.0.1:8000/:path*"
+            ? `${localBackendTarget}/:path*`
             : "/api/py/:path*",
       },
     ];

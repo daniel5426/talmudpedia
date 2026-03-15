@@ -86,8 +86,9 @@ export type ConversationContentProps = ComponentProps<"div">;
 export const ConversationContent = ({
   className,
   children,
+  scrollClassName,
   ...props
-}: ConversationContentProps) => {
+}: ConversationContentProps & { scrollClassName?: string }) => {
   const { isAtBottom, scrollRef, scrollToBottom } = useStickToBottomContext();
 
   useEffect(() => {
@@ -97,7 +98,7 @@ export const ConversationContent = ({
   }, [children, isAtBottom]);
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={scrollRef} className={cn("min-h-0 flex-1 overflow-y-auto", scrollClassName)}>
       <div className={cn("flex min-h-full flex-col gap-8 p-4", className)} {...props}>
         {children}
       </div>

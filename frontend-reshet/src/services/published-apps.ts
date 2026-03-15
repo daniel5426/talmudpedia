@@ -587,7 +587,7 @@ export const publishedAppsService = {
       ? streamBase
       : /^https?:\/\//i.test(backendBase)
         ? backendBase
-        : "http://127.0.0.1:8000";
+        : "http://127.0.0.1:8026";
     const { useAuthStore } = await import("@/lib/store/useAuthStore");
     const authState = useAuthStore.getState();
     const token = authState.token;
