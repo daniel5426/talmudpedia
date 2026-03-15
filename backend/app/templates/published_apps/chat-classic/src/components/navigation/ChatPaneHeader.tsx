@@ -1,3 +1,5 @@
+import { Search } from "lucide-react";
+
 interface ChatPaneHeaderProps {
   title: string;
   subtitle?: string;
@@ -22,20 +24,32 @@ export function ChatPaneHeader({
       style={backgroundStyles}
     >
       <div className="flex items-center gap-2">
-        <div className="glass-panel rounded-xl border border-border/70 px-3 py-2 shadow-sm">
-          <div className="flex items-center gap-3">
-            <span className="h-2 w-2 rounded-full bg-primary/70" />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{title}</p>
-              {subtitle ? (
-                <p className="truncate text-[11px] text-muted-foreground">
-                  {subtitle}
-                </p>
-              ) : null}
-            </div>
-          </div>
+        <div className="flex shadow-md items-center gap-1 rounded-lg bg-background">
+          <button
+            type="button"
+            className="relative flex h-8 items-center gap-2 rounded-[0.5rem] px-3 text-sm font-normal text-muted-foreground"
+          >
+            <Search className="h-4 w-4 shrink-0" />
+            <span className="hidden min-[400px]:inline-flex">
+              Search and actions coming next
+            </span>
+            <span className="inline-flex min-[400px]:hidden">
+              Search
+            </span>
+            <span className="ml-2 hidden h-5 items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium min-[560px]:inline-flex">
+              <span className="text-xs">⌘</span>K
+            </span>
+          </button>
         </div>
-        <div className="flex-1" />
+
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{title}</div>
+          {subtitle ? (
+            <div className="truncate text-[11px] text-muted-foreground">
+              {subtitle}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

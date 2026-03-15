@@ -47,6 +47,9 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-03-15 18:32 Asia/Hebron
 - Result: PASS (`18 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-03-15 19:33 EET
+- Result: PASS (`25 passed`)
 
 ## Known gaps or follow-ups
 - Group fanout is covered at runtime level, but there is not yet a DB-backed seeded architect E2E for parallel multi-binding spawn/join.

@@ -72,12 +72,10 @@ export const Conversation = ({
     <ConversationContext.Provider value={value}>
       <div
         role="log"
-        className={cn("relative flex flex-1 overflow-hidden", className)}
+        className={cn("relative flex flex-1 flex-col overflow-hidden", className)}
         {...props}
       >
-        <div ref={scrollRef} className="h-full w-full overflow-y-auto">
-          {children}
-        </div>
+        {children}
       </div>
     </ConversationContext.Provider>
   );
@@ -90,7 +88,7 @@ export const ConversationContent = ({
   children,
   ...props
 }: ConversationContentProps) => {
-  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  const { isAtBottom, scrollRef, scrollToBottom } = useStickToBottomContext();
 
   useEffect(() => {
     if (isAtBottom) {
@@ -99,8 +97,10 @@ export const ConversationContent = ({
   }, [children, isAtBottom]);
 
   return (
-    <div className={cn("flex min-h-full flex-col gap-8 p-4", className)} {...props}>
-      {children}
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div className={cn("flex min-h-full flex-col gap-8 p-4", className)} {...props}>
+        {children}
+      </div>
     </div>
   );
 };

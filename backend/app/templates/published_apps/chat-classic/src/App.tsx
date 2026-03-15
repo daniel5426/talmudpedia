@@ -60,29 +60,25 @@ function ChatShell() {
   }, [activeSession?.title]);
 
   return (
-    <SidebarProvider defaultOpen>
-      <div className="flex h-screen w-full bg-background text-foreground">
-        <AppSidebar
-          sessions={orderedSessions}
-          activeSessionId={activeSessionId}
-          onNewChat={startNewChat}
-          onSelectSession={selectSession}
-          onDeleteSession={removeSession}
-          onShareSession={shareSession}
-        />
-        <SidebarInset className="min-w-0 bg-background">
-          <main className="flex h-screen min-w-0">
+    <SidebarProvider defaultOpen className="h-full bg-transparent" dir={direction}>
+      <div className="relative flex h-full w-full overflow-hidden bg-background text-foreground transition-colors duration-500">
+        <div className="relative z-10">
+          <AppSidebar
+            sessions={orderedSessions}
+            activeSessionId={activeSessionId}
+            onNewChat={startNewChat}
+            onSelectSession={selectSession}
+            onDeleteSession={removeSession}
+            onShareSession={shareSession}
+          />
+        </div>
+        <SidebarInset className="relative z-10 h-full min-w-0 flex-1 bg-transparent">
+          <main className="flex h-full w-full overflow-hidden bg-transparent">
             <Conversation
               dir={direction}
-              className="chat-surface relative flex-1 overflow-hidden border-none"
+              className="relative flex-1 overflow-hidden border-none"
+              style={{ background: "var(--chat-background)" }}
             >
-              <div
-                aria-hidden="true"
-                className={cn(
-                  "chat-empty-gradient pointer-events-none absolute inset-0 transition-opacity duration-700 ease-in-out",
-                  isEmptyState ? "opacity-100" : "opacity-0",
-                )}
-              />
               <ChatPaneHeader
                 isEmptyState={isEmptyState}
                 title={activeSession?.title || "New conversation"}
@@ -90,14 +86,14 @@ function ChatShell() {
               />
               <div
                 className={cn(
-                  "relative z-10 mx-auto flex h-full w-full max-w-3xl flex-col",
+                  "relative z-10 mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col",
                   isEmptyState ? "px-4" : "px-4 pb-4",
                 )}
                 dir={direction}
               >
                 <ConversationContent
                   className={cn(
-                    "flex-1 gap-6 p-0 pt-[3.25rem]",
+                    "gap-6 p-0 pt-[3.25rem]",
                     isEmptyState ? "h-full justify-center pb-20" : "pb-32",
                   )}
                 >
@@ -183,7 +179,7 @@ function ChatShell() {
                   )}
                 </ConversationContent>
                 {!isEmptyState ? (
-                  <div className="relative">
+                  <div className="relative shrink-0">
                     <ConversationScrollButton className="bottom-full mb-3" />
                     <BotInputArea
                       textareaRef={textareaRef}
