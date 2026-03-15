@@ -6,6 +6,7 @@ import json
 from typing import Any
 from uuid import UUID
 
+from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.service import AgentExecutorService
@@ -33,6 +34,20 @@ class PlatformArchitectWorkerRuntimeService:
         self.db = db
         self.kernel = OrchestrationKernelService(db)
         self.bindings = PlatformArchitectWorkerBindingService(db)
+        self.trace_recorder = ExecutionTraceRecorder(serializer=lambda value: value)
+
+    def _record_trace_event(self, run_id: UUID, name: str, data: dict[str, Any]) -> None:
+        self.trace_recorder.schedule_persist(
+            run_id,
+            {
+                "event": name,
+                "name": name,
+                "visibility": "debug",
+                "tags": ["platform_architect", "worker_respond"],
+                "data": data,
+            },
+            sequence=0,
+        )
 
     @staticmethod
     def parse_runtime_context(payload: dict[str, Any]) -> dict[str, Any]:
@@ -293,6 +308,7 @@ class PlatformArchitectWorkerRuntimeService:
         if not worker_agent_slug:
             raise ValueError("Worker agent slug is not available for follow-up spawn")
 
+        prior_thread_id = str(prior_run.thread_id) if prior_run.thread_id else None
         prompt = self._task_prompt(original_task)
         followup_parts = [prompt]
         if blocking_question:
@@ -311,6 +327,28 @@ class PlatformArchitectWorkerRuntimeService:
                 "response": response.strip(),
             },
         }
+        if prior_thread_id:
+            child_context["thread_id"] = prior_thread_id
+
+        self._record_trace_event(
+            runtime_context["caller_run_id"],
+            "architect.worker_respond.followup_spawn_requested",
+            {
+                "prior_run_id": str(prior_run.id),
+                "prior_run_status": str(getattr(prior_run.status, "value", prior_run.status)),
+                "prior_thread_id": prior_thread_id,
+                "worker_agent_slug": worker_agent_slug,
+                "binding_ref": binding_ref.as_dict(),
+            },
+        )
+        self._record_trace_event(
+            prior_run.id,
+            "architect.worker_respond.followup_spawn_requested",
+            {
+                "caller_run_id": str(runtime_context["caller_run_id"]),
+                "prior_thread_id": prior_thread_id,
+            },
+        )
 
         result = await self.kernel.spawn_run(
             caller_run_id=runtime_context["caller_run_id"],
@@ -321,6 +359,7 @@ class PlatformArchitectWorkerRuntimeService:
                 "input": "\n\n".join(followup_parts),
                 "messages": [],
                 "context": child_context,
+                "thread_id": prior_thread_id,
             },
             failure_policy=None,
             timeout_s=None,
@@ -346,6 +385,26 @@ class PlatformArchitectWorkerRuntimeService:
         new_run = await self.db.get(AgentRun, new_run_id)
         if new_run is None:
             raise RuntimeError("Follow-up worker run was not created")
+        self._record_trace_event(
+            runtime_context["caller_run_id"],
+            "architect.worker_respond.followup_spawned",
+            {
+                "prior_run_id": str(prior_run.id),
+                "new_run_id": str(new_run.id),
+                "prior_thread_id": prior_thread_id,
+                "new_thread_id": str(new_run.thread_id) if new_run.thread_id else None,
+            },
+        )
+        self._record_trace_event(
+            new_run.id,
+            "architect.worker_respond.followup_spawned",
+            {
+                "prior_run_id": str(prior_run.id),
+                "caller_run_id": str(runtime_context["caller_run_id"]),
+                "prior_thread_id": prior_thread_id,
+                "new_thread_id": str(new_run.thread_id) if new_run.thread_id else None,
+            },
+        )
         return await self._serialize_run_view(new_run)
 
     async def prepare_binding(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -619,11 +678,45 @@ class PlatformArchitectWorkerRuntimeService:
             run_id=UUID(str(run_id_raw)),
         )
         waiting_state = self._extract_waiting_state(run)
-        if waiting_state is None:
-            raise ValueError("Run is not waiting for input")
-
+        self._record_trace_event(
+            runtime_context["caller_run_id"],
+            "architect.worker_respond.received",
+            {
+                "target_run_id": str(run.id),
+                "target_run_status": str(getattr(run.status, "value", run.status)),
+                "target_thread_id": str(run.thread_id) if run.thread_id else None,
+                "waiting_state": waiting_state,
+            },
+        )
+        self._record_trace_event(
+            run.id,
+            "architect.worker_respond.received",
+            {
+                "caller_run_id": str(runtime_context["caller_run_id"]),
+                "target_run_status": str(getattr(run.status, "value", run.status)),
+                "target_thread_id": str(run.thread_id) if run.thread_id else None,
+            },
+        )
         status = str(getattr(run.status, "value", run.status))
         if status == RunStatus.paused.value:
+            if waiting_state is None:
+                raise ValueError("Paused run is not waiting for input")
+            self._record_trace_event(
+                runtime_context["caller_run_id"],
+                "architect.worker_respond.resume_requested",
+                {
+                    "target_run_id": str(run.id),
+                    "target_thread_id": str(run.thread_id) if run.thread_id else None,
+                },
+            )
+            self._record_trace_event(
+                run.id,
+                "architect.worker_respond.resume_requested",
+                {
+                    "caller_run_id": str(runtime_context["caller_run_id"]),
+                    "target_thread_id": str(run.thread_id) if run.thread_id else None,
+                },
+            )
             await AgentExecutorService(self.db).resume_run(
                 run.id,
                 {"input": response, "message": response},
@@ -631,6 +724,20 @@ class PlatformArchitectWorkerRuntimeService:
             )
             refreshed = await self.db.get(AgentRun, run.id)
             return await self._serialize_run_view(refreshed or run)
+
+        if status in {
+            RunStatus.completed.value,
+            RunStatus.failed.value,
+            RunStatus.cancelled.value,
+        }:
+            return await self._spawn_followup_run_for_response(
+                runtime_context=runtime_context,
+                prior_run=run,
+                response=response,
+            )
+
+        if waiting_state is None:
+            raise ValueError("Run is not waiting for input")
 
         return await self._spawn_followup_run_for_response(
             runtime_context=runtime_context,

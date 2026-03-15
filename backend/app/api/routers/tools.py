@@ -17,7 +17,7 @@ from app.api.dependencies import (
     require_scopes,
 )
 from app.db.postgres.models.identity import Tenant
-from app.db.postgres.models.rag import ExecutablePipeline, PipelineType, VisualPipeline
+from app.db.postgres.models.rag import ExecutablePipeline, VisualPipeline
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
     ToolImplementationType,
@@ -120,6 +120,8 @@ class ToolResponse(BaseModel):
     artifact_id: Optional[str] = None
     artifact_version: Optional[str] = None
     artifact_revision_id: Optional[uuid.UUID] = None
+    visual_pipeline_id: Optional[uuid.UUID] = None
+    executable_pipeline_id: Optional[uuid.UUID] = None
     builtin_key: Optional[str] = None
     builtin_template_id: Optional[uuid.UUID] = None
     is_builtin_template: bool = False
@@ -135,7 +137,7 @@ class ToolListResponse(BaseModel):
     total: int
 
 
-_RETRIEVAL_DEFAULT_INPUT_SCHEMA: dict[str, Any] = {
+_PIPELINE_DEFAULT_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "query": {"type": "string", "description": "Search query text"},
@@ -146,15 +148,8 @@ _RETRIEVAL_DEFAULT_INPUT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-_RETRIEVAL_DEFAULT_OUTPUT_SCHEMA: dict[str, Any] = {
+_PIPELINE_DEFAULT_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {
-        "query": {"type": "string"},
-        "pipeline_id": {"type": "string"},
-        "results": {"type": "array", "items": {"type": "object"}},
-        "count": {"type": "integer"},
-    },
-    "required": ["results"],
     "additionalProperties": True,
 }
 
@@ -201,6 +196,8 @@ def _get_tool_impl_type(tool: ToolRegistry | object) -> ToolImplementationType:
 
     if getattr(tool, "artifact_id", None):
         return ToolImplementationType.ARTIFACT
+    if getattr(tool, "visual_pipeline_id", None) or getattr(tool, "executable_pipeline_id", None):
+        return ToolImplementationType.RAG_PIPELINE
     if getattr(tool, "is_system", False):
         return ToolImplementationType.INTERNAL
     return ToolImplementationType.CUSTOM
@@ -330,6 +327,8 @@ def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
         artifact_id=getattr(tool, "artifact_id", None),
         artifact_version=getattr(tool, "artifact_version", None),
         artifact_revision_id=getattr(tool, "artifact_revision_id", None),
+        visual_pipeline_id=getattr(tool, "visual_pipeline_id", None),
+        executable_pipeline_id=getattr(tool, "executable_pipeline_id", None),
         builtin_key=getattr(tool, "builtin_key", None),
         builtin_template_id=getattr(tool, "builtin_template_id", None),
         is_builtin_template=_is_builtin_template(tool),
@@ -492,25 +491,24 @@ async def _publish_tool(
     return tool
 
 
-async def _validate_retrieval_pipeline_for_tenant(
+async def _validate_pipeline_binding_for_tenant(
     db: AsyncSession,
     *,
     tenant_id: uuid.UUID,
     pipeline_id_raw: Optional[str],
 ) -> None:
     if not pipeline_id_raw:
-        raise HTTPException(status_code=400, detail="rag_retrieval tools require implementation.pipeline_id")
+        raise HTTPException(status_code=400, detail="rag_pipeline tools require a pipeline binding")
 
     try:
         pipeline_uuid = uuid.UUID(str(pipeline_id_raw))
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid retrieval pipeline id")
+        raise HTTPException(status_code=400, detail="Invalid pipeline id")
 
     executable = await db.execute(
         select(ExecutablePipeline.id).where(
             ExecutablePipeline.id == pipeline_uuid,
             ExecutablePipeline.tenant_id == tenant_id,
-            ExecutablePipeline.pipeline_type == PipelineType.RETRIEVAL,
         )
     )
     if executable.scalar_one_or_none() is not None:
@@ -520,13 +518,12 @@ async def _validate_retrieval_pipeline_for_tenant(
         select(VisualPipeline.id).where(
             VisualPipeline.id == pipeline_uuid,
             VisualPipeline.tenant_id == tenant_id,
-            VisualPipeline.pipeline_type == PipelineType.RETRIEVAL,
         )
     )
     if visual.scalar_one_or_none() is not None:
         return
 
-    raise HTTPException(status_code=400, detail="Retrieval pipeline not found in tenant scope")
+    raise HTTPException(status_code=400, detail="Pipeline not found in tenant scope")
 
 
 def _maybe_validate_builtin_registry_status(requested_status: ToolStatus | None) -> None:
@@ -534,18 +531,22 @@ def _maybe_validate_builtin_registry_status(requested_status: ToolStatus | None)
         raise HTTPException(status_code=400, detail="Use publish endpoint to publish this tool")
 
 
-async def _validate_retrieval_pipeline_config_if_needed(
+async def _validate_pipeline_config_if_needed(
     *,
     db: AsyncSession,
     tenant_id: uuid.UUID,
     implementation_type: ToolImplementationType,
     config_schema: dict | None,
+    visual_pipeline_id: uuid.UUID | None = None,
+    executable_pipeline_id: uuid.UUID | None = None,
 ) -> None:
-    if implementation_type != ToolImplementationType.RAG_RETRIEVAL:
+    if implementation_type != ToolImplementationType.RAG_PIPELINE:
         return
-    implementation = (config_schema or {}).get("implementation")
-    pipeline_id = implementation.get("pipeline_id") if isinstance(implementation, dict) else None
-    await _validate_retrieval_pipeline_for_tenant(
+    pipeline_id = str(executable_pipeline_id or visual_pipeline_id) if (executable_pipeline_id or visual_pipeline_id) else None
+    if pipeline_id is None:
+        implementation = (config_schema or {}).get("implementation")
+        pipeline_id = implementation.get("pipeline_id") if isinstance(implementation, dict) else None
+    await _validate_pipeline_binding_for_tenant(
         db,
         tenant_id=tenant_id,
         pipeline_id_raw=pipeline_id,
@@ -684,14 +685,21 @@ async def create_tool(
         )
         impl_type = _get_tool_impl_type(probe)
 
+    if impl_type in {ToolImplementationType.ARTIFACT, ToolImplementationType.RAG_PIPELINE}:
+        raise HTTPException(
+            status_code=400,
+            detail="artifact and rag_pipeline tools are domain-owned. Create them from the artifact or pipeline editor.",
+        )
+
     input_schema = deepcopy(request.input_schema or {})
     output_schema = deepcopy(request.output_schema or {})
-    if impl_type == ToolImplementationType.RAG_RETRIEVAL:
-        input_schema, output_schema = _normalize_retrieval_tool_schemas(input_schema, output_schema)
+    if impl_type == ToolImplementationType.RAG_PIPELINE:
+        input_schema = deepcopy(input_schema or _PIPELINE_DEFAULT_INPUT_SCHEMA)
+        output_schema = deepcopy(output_schema or _PIPELINE_DEFAULT_OUTPUT_SCHEMA)
 
     requested_status = request.status or ToolStatus.DRAFT
     _maybe_validate_builtin_registry_status(requested_status)
-    await _validate_retrieval_pipeline_config_if_needed(
+    await _validate_pipeline_config_if_needed(
         db=db,
         tenant_id=tid,
         implementation_type=impl_type,
@@ -760,6 +768,8 @@ async def update_tool(
     ).scalar_one_or_none()
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
+    if _get_tool_impl_type(tool) in {ToolImplementationType.ARTIFACT, ToolImplementationType.RAG_PIPELINE}:
+        raise HTTPException(status_code=400, detail="This tool is managed by its owning artifact or pipeline")
     if tool.is_system:
         raise HTTPException(status_code=400, detail="Cannot modify system tools")
     if _is_builtin_instance(tool):
@@ -817,18 +827,14 @@ async def update_tool(
         tool.is_active = request.is_active
 
     effective_impl_type = _get_tool_impl_type(tool)
-    if effective_impl_type == ToolImplementationType.RAG_RETRIEVAL:
-        normalized_input, normalized_output = _normalize_retrieval_tool_schemas(
-            (tool.schema or {}).get("input"),
-            (tool.schema or {}).get("output"),
-        )
-        tool.schema = {"input": normalized_input, "output": normalized_output}
 
-    await _validate_retrieval_pipeline_config_if_needed(
+    await _validate_pipeline_config_if_needed(
         db=db,
         tenant_id=tid,
         implementation_type=effective_impl_type,
         config_schema=tool.config_schema,
+        visual_pipeline_id=getattr(tool, "visual_pipeline_id", None),
+        executable_pipeline_id=getattr(tool, "executable_pipeline_id", None),
     )
 
     await db.commit()
@@ -855,12 +861,16 @@ async def publish_tool(
         raise HTTPException(status_code=400, detail="Cannot publish system tools")
     if _is_builtin_instance(tool):
         raise HTTPException(status_code=404, detail="Tool not found")
+    if _get_tool_impl_type(tool) in {ToolImplementationType.ARTIFACT, ToolImplementationType.RAG_PIPELINE}:
+        raise HTTPException(status_code=400, detail="Publish this tool from its owning artifact or pipeline")
 
-    await _validate_retrieval_pipeline_config_if_needed(
+    await _validate_pipeline_config_if_needed(
         db=db,
         tenant_id=tid,
         implementation_type=_get_tool_impl_type(tool),
         config_schema=tool.config_schema,
+        visual_pipeline_id=getattr(tool, "visual_pipeline_id", None),
+        executable_pipeline_id=getattr(tool, "executable_pipeline_id", None),
     )
 
     tool = await _publish_tool(db=db, tool=tool, tenant_ctx=tenant_ctx, principal=principal, tenant_id=tid)

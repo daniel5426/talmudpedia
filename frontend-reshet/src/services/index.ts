@@ -15,6 +15,7 @@ export type {
   ExecutablePipelineVersion,
   CompilationError,
   CompileResult,
+  PipelineToolBinding,
   PipelineJob,
   CustomOperator,
   PipelineStepData,

@@ -15,7 +15,8 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Async worker runtime behavior including duplicate-binding rejection in group spawn.
 - Child-run inspection returning binding metadata from run records.
 - Child-run waiting-state detection from delegated-worker blocker output and server-side `architect-worker-await` behavior.
-- Architect continuation of a waiting child through `architect-worker-respond`, including follow-up child spawn on binding-backed runs.
+- Architect continuation of a waiting or already-completed child through `architect-worker-respond`, including follow-up child spawn on binding-backed runs while preserving the worker thread id.
+- `architect-worker-respond` follow-up spawn now preserves the existing worker thread id in the spawned payload, and the runtime emits execution-trace events that expose whether response handling resumed or spawned and which thread ids were involved.
 - Binding-owned artifact persistence through `architect-worker-binding-persist-artifact`, including auto-create and explicit mode rejection.
 - DB-backed seeded architect run that prepares an artifact binding, spawns an artifact worker, waits, and persists the canonical artifact successfully without a `platform-assets` artifact-create call in the architect path.
 - DB-backed seeded architect run that attempts a second mutating spawn on the same binding and reports the active-binding blocker cleanly.
@@ -39,6 +40,12 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-03-15 01:01 Asia/Hebron
 - Result: PASS (`19 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py`
+- Date/Time: 2026-03-15 01:47 Asia/Hebron
+- Result: PASS (`13 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-03-15 18:32 Asia/Hebron
+- Result: PASS (`18 passed`)
 
 ## Known gaps or follow-ups
 - Group fanout is covered at runtime level, but there is not yet a DB-backed seeded architect E2E for parallel multi-binding spawn/join.

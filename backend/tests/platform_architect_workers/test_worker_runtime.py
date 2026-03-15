@@ -643,6 +643,7 @@ async def test_worker_await_returns_waiting_state_without_timeout(db_session):
 @pytest.mark.asyncio
 async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
+    worker_thread_id = uuid4()
     parent = AgentRun(
         tenant_id=tenant.id,
         agent_id=uuid4(),
@@ -667,6 +668,7 @@ async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(d
         status=RunStatus.completed,
         root_run_id=parent.id,
         parent_run_id=parent.id,
+        thread_id=worker_thread_id,
         input_params={
             "context": {
                 "architect_worker_binding_ref": binding_ref,
@@ -727,7 +729,7 @@ async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(d
             output_result=None,
         )
         db_session.add(followup)
-        await db_session.flush()
+        await db_session.commit()
         return {"spawned_run_ids": [str(new_run_id)]}
 
     service = PlatformArchitectWorkerRuntimeService(db_session)
@@ -739,6 +741,7 @@ async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(d
             "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
         },
     )
+    service.trace_recorder = SimpleNamespace(schedule_persist=lambda *args, **kwargs: None)
 
     result = await service.respond_to_run(
         {
@@ -758,5 +761,134 @@ async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(d
     assert captured["parent_node_id"] == "architect_worker_respond"
     assert captured["target_agent_slug"] == "artifact-coding-agent"
     assert "Architect answer:\nUse slug random-number-tool." in captured["mapped_input_payload"]["input"]
+    assert captured["mapped_input_payload"]["thread_id"] == str(worker_thread_id)
+    assert captured["mapped_input_payload"]["context"]["thread_id"] == str(worker_thread_id)
+    assert captured["mapped_input_payload"]["context"]["architect_worker_followup"]["prior_run_id"] == str(child.id)
+    assert captured["registered_run_id"] == str(new_run_id)
+
+
+@pytest.mark.asyncio
+async def test_worker_respond_spawns_followup_run_for_completed_non_waiting_child(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    worker_thread_id = uuid4()
+    parent = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": [], "context": {}},
+    )
+    db_session.add(parent)
+    await db_session.flush()
+    parent.root_run_id = parent.id
+
+    binding_ref = {
+        "binding_type": "artifact_shared_draft",
+        "binding_id": str(uuid4()),
+    }
+    child = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=uuid4(),
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.completed,
+        root_run_id=parent.id,
+        parent_run_id=parent.id,
+        thread_id=worker_thread_id,
+        input_params={
+            "context": {
+                "architect_worker_binding_ref": binding_ref,
+                "architect_worker_task": {
+                    "objective": "Implement the delegated tool.",
+                    "constraints": ["Return a random float between 0 and 1."],
+                },
+            }
+        },
+        output_result={"final_output": "I inspected the draft. What would you like me to do next?"},
+    )
+    db_session.add(child)
+    await db_session.commit()
+
+    new_run_id = uuid4()
+    captured: dict[str, object] = {}
+
+    class _FakeAdapter:
+        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref):
+            del tenant_id, user_id, binding_ref
+            return {
+                "worker_agent_slug": "artifact-coding-agent",
+                "context": {"artifact_coding_session_id": "session-123"},
+            }
+
+        async def register_spawned_run(self, *, tenant_id, user_id, binding_ref, run_id, user_prompt):
+            del tenant_id, user_id, binding_ref
+            captured["registered_run_id"] = str(run_id)
+            captured["user_prompt"] = user_prompt
+
+    async def fake_spawn_run(
+        *,
+        caller_run_id,
+        parent_node_id,
+        target_agent_id,
+        target_agent_slug,
+        mapped_input_payload,
+        failure_policy,
+        timeout_s,
+        scope_subset,
+        idempotency_key,
+        start_background,
+    ):
+        del caller_run_id, target_agent_id, failure_policy, timeout_s, scope_subset, idempotency_key, start_background
+        captured["parent_node_id"] = parent_node_id
+        captured["target_agent_slug"] = target_agent_slug
+        captured["mapped_input_payload"] = mapped_input_payload
+        followup = AgentRun(
+            id=new_run_id,
+            tenant_id=tenant.id,
+            agent_id=uuid4(),
+            user_id=user.id,
+            initiator_user_id=user.id,
+            status=RunStatus.queued,
+            root_run_id=parent.id,
+            parent_run_id=parent.id,
+            input_params=mapped_input_payload,
+            output_result=None,
+        )
+        db_session.add(followup)
+        await db_session.commit()
+        return {"spawned_run_ids": [str(new_run_id)]}
+
+    service = PlatformArchitectWorkerRuntimeService(db_session)
+    service.bindings = SimpleNamespace(adapter_for_ref=lambda _binding_ref: _FakeAdapter())
+    service.kernel = SimpleNamespace(
+        spawn_run=fake_spawn_run,
+        _serialize_lineage=lambda run: {
+            "root_run_id": str(run.root_run_id) if run.root_run_id else None,
+            "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+        },
+    )
+    service.trace_recorder = SimpleNamespace(schedule_persist=lambda *args, **kwargs: None)
+
+    result = await service.respond_to_run(
+        {
+            "__tool_runtime_context__": {
+                "tenant_id": str(tenant.id),
+                "user_id": str(user.id),
+                "run_id": str(parent.id),
+            },
+            "run_id": str(child.id),
+            "response": "Add tests, README, and set slug to fibpkg.",
+        }
+    )
+
+    assert result["run_id"] == str(new_run_id)
+    assert result["status"] == RunStatus.queued.value
+    assert result["lifecycle_state"] == "running"
+    assert captured["parent_node_id"] == "architect_worker_respond"
+    assert captured["target_agent_slug"] == "artifact-coding-agent"
+    assert "Architect answer:\nAdd tests, README, and set slug to fibpkg." in captured["mapped_input_payload"]["input"]
+    assert captured["mapped_input_payload"]["thread_id"] == str(worker_thread_id)
+    assert captured["mapped_input_payload"]["context"]["thread_id"] == str(worker_thread_id)
     assert captured["mapped_input_payload"]["context"]["architect_worker_followup"]["prior_run_id"] == str(child.id)
     assert captured["registered_run_id"] == str(new_run_id)

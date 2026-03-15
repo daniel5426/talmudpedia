@@ -46,6 +46,12 @@ The architect runtime should:
 6. Persist worker-backed artifact drafts through the dedicated binding persist tool; use explicit platform APIs for other domain mutations.
 7. Return a normal text response.
 
+Current observability note:
+- `architect-worker-respond` emits reusable execution-trace events on the architect run and the relevant worker run, including whether it chose native resume or follow-up spawn and which worker thread ids were involved.
+
+Current continuation contract:
+- `architect-worker-respond` is no longer limited to waiting children; it may also continue a completed worker conversation on the same binding/thread context when the architect wants additional edits from the same worker.
+
 Important prompt boundary:
 - do not use raw `platform-governance` `orchestration.*` actions for worker delegation
 - use the dedicated architect worker tools instead

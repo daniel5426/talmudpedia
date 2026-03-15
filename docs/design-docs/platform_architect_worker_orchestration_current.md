@@ -34,7 +34,9 @@ Current waiting contract:
 - `architect-worker-get-run` is snapshot/debug only
 - normal worker waiting should use `architect-worker-await`
 - when a child blocks on input, the architect continues it with `architect-worker-respond`
+- `architect-worker-respond` may also continue a completed worker conversation on the same binding/thread context when the architect wants the same worker to make further changes after an initial pass
 - after a completed child run with no blocker, the normal persistence step is `architect-worker-binding-persist-artifact`
+- `architect-worker-respond` now emits durable execution-trace events on both the architect run and the worker run so follow-up response routing can be diagnosed from `GET /agents/runs/{run_id}/events`, including the chosen path and worker thread ids
 
 ## Runtime Backbone
 

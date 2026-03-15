@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback } from "react"
 import { useRouter, useParams, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
-import { ragAdminService, VisualPipeline, OperatorCatalog, OperatorSpec, CompileResult, PipelineStepExecution } from "@/services"
+import { ragAdminService, VisualPipeline, OperatorCatalog, OperatorSpec, CompileResult, PipelineStepExecution, PipelineToolBinding } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
 import {
     Dialog,
     DialogContent,
@@ -50,6 +51,7 @@ export default function PipelineEditorPage() {
     const searchParams = useSearchParams()
     const pipelineId = params.id as string
     const jobIdParam = searchParams.get("jobId")
+    const toolSettingsParam = searchParams.get("toolSettings") === "1"
     const isNew = pipelineId === "new"
 
     const [loading, setLoading] = useState(true)
@@ -72,6 +74,11 @@ export default function PipelineEditorPage() {
     const [isRunDialogOpen, setIsRunDialogOpen] = useState(false)
     const [runningJobId, setRunningJobId] = useState<string | null>(jobIdParam)
     const [executionSteps, setExecutionSteps] = useState<Record<string, PipelineStepExecution> | undefined>(undefined)
+    const [toolBinding, setToolBinding] = useState<PipelineToolBinding | null>(null)
+    const [toolBindingLoading, setToolBindingLoading] = useState(false)
+    const [toolBindingSaving, setToolBindingSaving] = useState(false)
+    const [toolDescription, setToolDescription] = useState("")
+    const [toolInputSchemaText, setToolInputSchemaText] = useState('{\n  "type": "object",\n  "properties": {},\n  "additionalProperties": false\n}')
 
     // Sync runningJobId with URL param if it's missing (e.g. after hydration)
     useEffect(() => {
@@ -82,6 +89,21 @@ export default function PipelineEditorPage() {
 
 
     // Fetch all data needed for the editor
+    const loadToolBinding = useCallback(async (targetPipelineId: string) => {
+        setToolBindingLoading(true)
+        try {
+            const binding = await ragAdminService.getPipelineToolBinding(targetPipelineId, currentTenant?.slug)
+            setToolBinding(binding)
+            setToolDescription(binding.description || "")
+            setToolInputSchemaText(JSON.stringify(binding.input_schema || {}, null, 2))
+        } catch (error) {
+            console.error("Failed to fetch pipeline tool binding", error)
+            setToolBinding(null)
+        } finally {
+            setToolBindingLoading(false)
+        }
+    }, [currentTenant?.slug])
+
     useEffect(() => {
         if (!currentTenant) return
 
@@ -149,6 +171,7 @@ export default function PipelineEditorPage() {
 
                         setEditorNodes(nodes)
                         setEditorEdges(edges)
+                        await loadToolBinding(foundPipeline.id)
                     } else {
                         // Pipeline not found, redirect to list
                         router.push("/admin/pipelines")
@@ -163,7 +186,7 @@ export default function PipelineEditorPage() {
         }
 
         fetchData()
-    }, [currentTenant, currentTenant?.slug, pipelineId, isNew, router])
+    }, [currentTenant, currentTenant?.slug, loadToolBinding, pipelineId, isNew, router])
 
     // Polling for execution steps
     useEffect(() => {
@@ -311,6 +334,7 @@ export default function PipelineEditorPage() {
                 const updatedPipeline = pipelinesRes.pipelines.find(p => p.id === pipeline.id)
                 if (updatedPipeline) {
                     setPipeline(updatedPipeline)
+                    await loadToolBinding(updatedPipeline.id)
                 }
             }
         } catch (error) {
@@ -332,6 +356,7 @@ export default function PipelineEditorPage() {
                 currentTenant?.slug
             )
             setCompileResult(result)
+            await loadToolBinding(pipeline.id)
             setShowCompileDialog(true)
         } catch (error) {
             console.error("Failed to compile pipeline", error)
@@ -339,6 +364,42 @@ export default function PipelineEditorPage() {
             setCompiling(false)
         }
     }
+
+    const handleSaveToolBinding = useCallback(async (enabled: boolean) => {
+        if (!pipeline) {
+            alert("Save the pipeline before enabling tool mode.")
+            return
+        }
+
+        let parsedInputSchema: Record<string, unknown> | undefined
+        try {
+            parsedInputSchema = JSON.parse(toolInputSchemaText)
+        } catch {
+            alert("Tool input schema must be valid JSON.")
+            return
+        }
+
+        setToolBindingSaving(true)
+        try {
+            const binding = await ragAdminService.updatePipelineToolBinding(
+                pipeline.id,
+                {
+                    enabled,
+                    description: toolDescription,
+                    input_schema: parsedInputSchema,
+                },
+                currentTenant?.slug
+            )
+            setToolBinding(binding)
+            setToolDescription(binding.description || "")
+            setToolInputSchemaText(JSON.stringify(binding.input_schema || {}, null, 2))
+        } catch (error) {
+            console.error("Failed to update pipeline tool binding", error)
+            alert("Failed to update tool settings")
+        } finally {
+            setToolBindingSaving(false)
+        }
+    }, [currentTenant?.slug, pipeline, toolDescription, toolInputSchemaText])
 
     const ensureExecutableForRun = useCallback(async (): Promise<CompileResult | null> => {
         if (compileResult?.executable_pipeline_id) {
@@ -419,8 +480,70 @@ export default function PipelineEditorPage() {
                             namePlaceholder="Pipeline name"
                             descriptionPlaceholder="What this pipeline ingests or retrieves."
                             triggerLabel="Edit details"
-                            defaultOpen={isNew}
-                        />
+                            defaultOpen={isNew || toolSettingsParam}
+                        >
+                            {!isNew && (
+                                <div className="space-y-3 border-t border-border/50 pt-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="text-xs font-medium text-foreground/80">Use as tool</div>
+                                            <div className="text-[11px] text-muted-foreground/70">
+                                                Create a tool binding owned by this pipeline.
+                                            </div>
+                                        </div>
+                                        <label className="flex items-center gap-2 text-xs text-foreground/80">
+                                            <input
+                                                type="checkbox"
+                                                checked={toolBinding?.enabled || false}
+                                                onChange={(event) => void handleSaveToolBinding(event.target.checked)}
+                                                disabled={toolBindingSaving || toolBindingLoading}
+                                            />
+                                            Enabled
+                                        </label>
+                                    </div>
+
+                                    {(toolBinding?.enabled || toolSettingsParam) && (
+                                        <>
+                                            <div className="space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-xs font-medium text-foreground/80">Tool description</span>
+                                                    <span className="text-[11px] text-muted-foreground/70">
+                                                        Status: {toolBindingLoading ? "loading" : (toolBinding?.status || "draft")}
+                                                    </span>
+                                                </div>
+                                                <Textarea
+                                                    value={toolDescription}
+                                                    onChange={(event) => setToolDescription(event.target.value)}
+                                                    className="min-h-20 border-border/60 bg-muted/20"
+                                                    placeholder="Describe when the agent should call this pipeline tool."
+                                                    disabled={toolBindingLoading}
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <span className="text-xs font-medium text-foreground/80">Tool input schema (JSON)</span>
+                                                <Textarea
+                                                    value={toolInputSchemaText}
+                                                    onChange={(event) => setToolInputSchemaText(event.target.value)}
+                                                    className="min-h-52 font-mono text-xs border-border/60 bg-muted/20"
+                                                    placeholder='{"type":"object","properties":{}}'
+                                                    disabled={toolBindingLoading}
+                                                />
+                                            </div>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="w-full"
+                                                onClick={() => void handleSaveToolBinding(true)}
+                                                disabled={toolBindingSaving || toolBindingLoading}
+                                            >
+                                                {toolBindingSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                                Save Tool Settings
+                                            </Button>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                        </HeaderConfigEditor>
                         {!isNew ? (
                             <Badge variant="outline" className={cn(
                                 "h-8 rounded-md border px-3 text-xs font-medium capitalize shadow-none",

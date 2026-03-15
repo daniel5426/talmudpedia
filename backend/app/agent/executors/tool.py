@@ -23,7 +23,7 @@ from app.agent.execution.tool_input_contracts import (
 )
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
-from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
+from app.agent.executors.retrieval_runtime import PipelineToolRuntime, RetrievalPipelineRuntime
 from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRunDomain
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
@@ -1121,6 +1121,22 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 return str(artifact_ref), implementation.get("artifact_version")
         return None, None
 
+    def _resolve_tool_pipeline_binding(self, tool: Any) -> tuple[UUID | None, UUID | None]:
+        executable_pipeline_id = self._parse_uuid(getattr(tool, "executable_pipeline_id", None))
+        visual_pipeline_id = self._parse_uuid(getattr(tool, "visual_pipeline_id", None))
+        if executable_pipeline_id is not None or visual_pipeline_id is not None:
+            return executable_pipeline_id, visual_pipeline_id
+
+        config_schema = getattr(tool, "config_schema", {}) or {}
+        implementation = config_schema.get("implementation") if isinstance(config_schema, dict) else {}
+        if not isinstance(implementation, dict):
+            return None, None
+
+        pipeline_id = self._parse_uuid(implementation.get("pipeline_id"))
+        if pipeline_id is not None:
+            return None, pipeline_id
+        return None, None
+
     async def _resolve_tenant_artifact_revision_id(
         self,
         *,
@@ -1175,10 +1191,20 @@ class ToolNodeExecutor(BaseNodeExecutor):
             pinned_revision_id=getattr(tool, "artifact_revision_id", None),
             require_published=self._is_production_mode(context),
         )
-        config_schema = getattr(tool, "config_schema", {}) or {}
-        runtime_config = dict(config_schema) if isinstance(config_schema, dict) else {}
-        runtime_config.pop("implementation", None)
-        runtime_config.pop("execution", None)
+        runtime_config: dict[str, Any] = {}
+        if self.db is not None:
+            revision = await ArtifactRegistryService(self.db).get_revision(
+                revision_id=revision_id,
+                tenant_id=self.tenant_id,
+            )
+            if revision is None:
+                raise ValueError("Tool artifact revision not found")
+            runtime_config = dict(revision.config_schema or {})
+        else:
+            config_schema = getattr(tool, "config_schema", {}) or {}
+            runtime_config = dict(config_schema) if isinstance(config_schema, dict) else {}
+            runtime_config.pop("implementation", None)
+            runtime_config.pop("execution", None)
 
         run = await ArtifactExecutionService(self.db).execute_live_run(
             tenant_id=self.tenant_id,
@@ -1213,6 +1239,29 @@ class ToolNodeExecutor(BaseNodeExecutor):
             return {"result": result}
         return result
 
+    async def _execute_pipeline_tool(
+        self,
+        *,
+        tool: Any,
+        input_data: dict[str, Any],
+        implementation_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self.tenant_id:
+            raise PermissionError("Pipeline tools require tenant context")
+
+        executable_pipeline_id, visual_pipeline_id = self._resolve_tool_pipeline_binding(tool)
+        if executable_pipeline_id is None:
+            explicit_pipeline = self._parse_uuid(implementation_config.get("pipeline_id"))
+            if explicit_pipeline is not None:
+                visual_pipeline_id = explicit_pipeline
+        runtime = PipelineToolRuntime(self.db, self.tenant_id)
+        executable = await runtime.resolve_executable_pipeline(
+            executable_pipeline_id=executable_pipeline_id,
+            visual_pipeline_id=visual_pipeline_id,
+        )
+        result, _job = await runtime.execute(executable_pipeline_id=executable.id, input_params=input_data)
+        return result
+
     def _assert_runtime_policy(self, tool: Any, context: dict[str, Any] | None) -> None:
         if not getattr(tool, "is_active", False):
             raise PermissionError(f"Tool {getattr(tool, 'id', '')} is inactive")
@@ -1222,6 +1271,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
             artifact_id, _artifact_version = self._resolve_tool_artifact_binding(tool)
             if self._parse_uuid(artifact_id) is not None and not getattr(tool, "artifact_revision_id", None):
                 raise PermissionError("Published artifact-backed tools must pin artifact_revision_id for production execution")
+            impl_type = getattr(tool, "implementation_type", None)
+            impl_text = str(getattr(impl_type, "value", impl_type or "")).lower()
+            if impl_text == "rag_pipeline" and not getattr(tool, "executable_pipeline_id", None):
+                raise PermissionError("Published rag_pipeline tools must pin executable_pipeline_id for production execution")
 
     async def _has_artifact_columns(self) -> bool:
         try:
@@ -1429,6 +1482,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     output_data = await self._execute_mcp_tool(tool, input_data, implementation_config, timeout_s)
                 elif impl_type == "rag_retrieval":
                     output_data = await self._execute_retrieval_pipeline_tool(tool, input_data, implementation_config)
+                elif impl_type == "rag_pipeline":
+                    output_data = await self._execute_pipeline_tool(
+                        tool=tool,
+                        input_data=input_data,
+                        implementation_config=implementation_config,
+                    )
                 elif impl_type == "agent_call":
                     output_data = await self._execute_agent_call_tool(
                         tool,

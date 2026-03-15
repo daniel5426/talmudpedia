@@ -42,6 +42,7 @@ from app.rag.pipeline import PipelineCompiler, OperatorRegistry
 from app.rag.pipeline.executor import PipelineExecutor
 from app.rag.pipeline.input_storage import PipelineInputStorage
 from fastapi import BackgroundTasks
+from app.services.tool_binding_service import ToolBindingService
 
 router = APIRouter()
 
@@ -266,6 +267,12 @@ class UpdatePipelineRequest(BaseModel):
     edges: Optional[List[PipelineEdgeRequest]] = None
 
 
+class UpdatePipelineToolBindingRequest(BaseModel):
+    enabled: bool
+    description: Optional[str] = None
+    input_schema: Optional[Dict[str, Any]] = None
+
+
 class CreateJobRequest(BaseModel):
     executable_pipeline_id: UUID
     input_params: Dict[str, Any] = {}
@@ -300,6 +307,19 @@ class InputSchemaStep(BaseModel):
 
 class ExecutablePipelineInputSchema(BaseModel):
     steps: List[InputSchemaStep] = []
+
+
+class PipelineToolBindingResponse(BaseModel):
+    enabled: bool = False
+    tool_id: Optional[UUID] = None
+    tool_name: str
+    tool_slug: Optional[str] = None
+    status: Optional[str] = None
+    description: Optional[str] = None
+    input_schema: Dict[str, Any] = {}
+    output_schema: Dict[str, Any] = {}
+    visual_pipeline_id: Optional[UUID] = None
+    executable_pipeline_id: Optional[UUID] = None
 
 
 # =============================================================================
@@ -355,6 +375,25 @@ def job_to_dict(j: PipelineJob) -> Dict[str, Any]:
         "started_at": j.started_at.isoformat() if j.started_at else None,
         "completed_at": j.completed_at.isoformat() if j.completed_at else None,
         "triggered_by": str(j.triggered_by) if j.triggered_by else None,
+    }
+
+
+def pipeline_tool_binding_to_dict(pipeline: VisualPipeline, tool) -> Dict[str, Any]:
+    schema = dict(getattr(tool, "schema", {}) or {}) if tool is not None else {}
+    input_schema = dict(schema.get("input") or {}) if isinstance(schema, dict) else {}
+    output_schema = dict(schema.get("output") or {}) if isinstance(schema, dict) else {}
+    status = getattr(getattr(tool, "status", None), "value", getattr(tool, "status", None))
+    return {
+        "enabled": bool(getattr(tool, "is_active", False)) if tool is not None else False,
+        "tool_id": getattr(tool, "id", None),
+        "tool_name": getattr(tool, "name", None) or pipeline.name,
+        "tool_slug": getattr(tool, "slug", None),
+        "status": str(status).lower() if status else None,
+        "description": getattr(tool, "description", None) if tool is not None else pipeline.description,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "visual_pipeline_id": getattr(tool, "visual_pipeline_id", None) if tool is not None else pipeline.id,
+        "executable_pipeline_id": getattr(tool, "executable_pipeline_id", None) if tool is not None else None,
     }
 
 
@@ -545,6 +584,66 @@ async def get_visual_pipeline(
     return pipeline_to_dict(pipeline)
 
 
+@router.get("/visual-pipelines/{pipeline_id}/tool-binding", response_model=PipelineToolBindingResponse)
+async def get_visual_pipeline_tool_binding(
+    pipeline_id: UUID,
+    tenant_slug: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+
+    if not await require_pipeline_permission(tenant, user, Action.READ, pipeline_id=pipeline_id, db=db):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    query = select(VisualPipeline).where(VisualPipeline.id == pipeline_id)
+    if tenant:
+        query = query.where(VisualPipeline.tenant_id == tenant.id)
+    pipeline = (await db.execute(query)).scalar_one_or_none()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    tool = await ToolBindingService(db).get_pipeline_tool(pipeline.id)
+    return PipelineToolBindingResponse(**pipeline_tool_binding_to_dict(pipeline, tool))
+
+
+@router.put("/visual-pipelines/{pipeline_id}/tool-binding", response_model=PipelineToolBindingResponse)
+async def update_visual_pipeline_tool_binding(
+    pipeline_id: UUID,
+    request: UpdatePipelineToolBindingRequest,
+    tenant_slug: Optional[str] = None,
+    context: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant, user, db = await get_pipeline_context(tenant_slug, current_user=context.get("user"), db=db, context=context)
+
+    if not await require_pipeline_permission(tenant, user, Action.WRITE, pipeline_id=pipeline_id, db=db):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    query = select(VisualPipeline).where(VisualPipeline.id == pipeline_id)
+    if tenant:
+        query = query.where(VisualPipeline.tenant_id == tenant.id)
+    pipeline = (await db.execute(query)).scalar_one_or_none()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    try:
+        tool = await ToolBindingService(db).upsert_pipeline_tool_binding(
+            pipeline=pipeline,
+            enabled=request.enabled,
+            description=request.description,
+            input_schema=request.input_schema,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await db.commit()
+    if tool is not None:
+        await db.refresh(tool)
+    return PipelineToolBindingResponse(**pipeline_tool_binding_to_dict(pipeline, tool))
+
+
 @router.put("/visual-pipelines/{pipeline_id}")
 async def update_visual_pipeline(
     pipeline_id: UUID,
@@ -571,8 +670,12 @@ async def update_visual_pipeline(
     if not pipeline:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
+    previous_name = pipeline.name
+    previous_description = pipeline.description
+    was_published = pipeline.is_published
+
     # If pipeline was published, increment version and unpublish
-    if pipeline.is_published:
+    if was_published:
         pipeline.version = pipeline.version + 1
         pipeline.is_published = False
 
@@ -588,6 +691,17 @@ async def update_visual_pipeline(
         pipeline.pipeline_type = request.pipeline_type
 
     pipeline.updated_at = datetime.utcnow()
+    binding_service = ToolBindingService(db)
+    try:
+        await binding_service.sync_pipeline_tool_metadata(
+            pipeline=pipeline,
+            previous_name=previous_name,
+            previous_description=previous_description,
+        )
+        if was_published:
+            await binding_service.demote_pipeline_tool_binding(pipeline)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     await db.commit()
     await db.refresh(pipeline)
@@ -645,6 +759,7 @@ async def delete_visual_pipeline(
 
     pipeline_name = pipeline.name
 
+    await ToolBindingService(db).delete_pipeline_tool_binding(pipeline.id)
     await db.delete(pipeline)
     await db.commit()
 
@@ -748,6 +863,14 @@ async def compile_pipeline(
     # Mark visual pipeline as published
     pipeline.is_published = True
     pipeline.updated_at = datetime.utcnow()
+    try:
+        await ToolBindingService(db).publish_pipeline_tool_binding(
+            pipeline=pipeline,
+            executable_pipeline=exec_pipeline,
+            created_by=user.id if user else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     await db.commit()
     await db.refresh(exec_pipeline)

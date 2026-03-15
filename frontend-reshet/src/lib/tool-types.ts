@@ -24,7 +24,7 @@ export const TOOL_BUCKETS: ToolBucketMeta[] = [
 export const TOOL_SUBTYPES: ToolSubtypeMeta[] = [
   { id: "internal", label: "Internal", description: "Platform built-in", sort: 1 },
   { id: "http", label: "HTTP", description: "HTTP endpoint", sort: 2 },
-  { id: "rag_retrieval", label: "RAG Retrieval", description: "Retrieval pipeline", sort: 3 },
+  { id: "rag_pipeline", label: "RAG Pipeline", description: "Pipeline-backed tool", sort: 3 },
   { id: "agent_call", label: "Agent Call", description: "Invoke another published agent", sort: 4 },
   { id: "function", label: "Function", description: "Code-backed", sort: 5 },
   { id: "custom", label: "Custom", description: "Custom wrapper", sort: 6 },

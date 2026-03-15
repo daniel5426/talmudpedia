@@ -115,6 +115,19 @@ export interface CompileResult {
   warnings: CompilationError[];
 }
 
+export interface PipelineToolBinding {
+  enabled: boolean;
+  tool_id?: string | null;
+  tool_name: string;
+  tool_slug?: string | null;
+  status?: string | null;
+  description?: string | null;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  visual_pipeline_id?: string | null;
+  executable_pipeline_id?: string | null;
+}
+
 export interface PipelineJob {
   id: string;
   tenant_id: string;
@@ -400,6 +413,31 @@ class RAGAdminService {
       ? `/admin/pipelines/executable-pipelines/${execId}/input-schema?tenant_slug=${tenantSlug}`
       : `/admin/pipelines/executable-pipelines/${execId}/input-schema`;
     return httpClient.get<ExecutablePipelineInputSchema>(url);
+  }
+
+  async getPipelineToolBinding(
+    pipelineId: string,
+    tenantSlug?: string
+  ): Promise<PipelineToolBinding> {
+    const url = tenantSlug
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding?tenant_slug=${tenantSlug}`
+      : `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding`;
+    return httpClient.get<PipelineToolBinding>(url);
+  }
+
+  async updatePipelineToolBinding(
+    pipelineId: string,
+    data: {
+      enabled: boolean;
+      description?: string;
+      input_schema?: Record<string, unknown>;
+    },
+    tenantSlug?: string
+  ): Promise<PipelineToolBinding> {
+    const url = tenantSlug
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding?tenant_slug=${tenantSlug}`
+      : `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding`;
+    return httpClient.put<PipelineToolBinding>(url, data);
   }
 
   async uploadPipelineInput(

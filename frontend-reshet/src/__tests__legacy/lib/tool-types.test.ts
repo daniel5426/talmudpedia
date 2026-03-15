@@ -33,7 +33,7 @@ test("getToolBucket derives bucket from fields", () => {
 })
 
 test("getSubtypeLabel returns readable label", () => {
-  expect(getSubtypeLabel("rag_retrieval")).toBe("RAG Retrieval")
+  expect(getSubtypeLabel("rag_pipeline")).toBe("RAG Pipeline")
 })
 
 test("filterTools supports query and subtype filtering", () => {

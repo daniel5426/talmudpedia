@@ -25,14 +25,14 @@ from app.api.schemas.artifacts import (
 from app.services.artifact_coding_agent_tools import _initial_snapshot_for_kind, _serialize_form_state
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.artifact_runtime import Artifact as ArtifactModel
-from app.db.postgres.models.artifact_runtime import ArtifactOwnerType, ArtifactRevision as ArtifactRevisionModel, ArtifactRunStatus, ArtifactStatus
+from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactOwnerType, ArtifactRevision as ArtifactRevisionModel, ArtifactRunStatus, ArtifactStatus
 from app.db.postgres.models.identity import OrgMembership, Tenant
-from app.db.postgres.models.registry import ToolRegistry
 from app.db.postgres.session import get_db
 from app.services.artifact_runtime.deployment_service import ArtifactDeploymentService
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
+from app.services.tool_binding_service import ToolBindingService
 
 router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
 
@@ -424,6 +424,10 @@ async def create_artifact_draft(
         rag_contract=_model_dump(request.rag_contract) if request.rag_contract is not None else None,
         tool_contract=_model_dump(request.tool_contract) if request.tool_contract is not None else None,
     )
+    try:
+        await ToolBindingService(db).sync_artifact_tool_binding(artifact)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
     return _artifact_to_schema(refreshed, include_code=True)
@@ -466,6 +470,10 @@ async def update_artifact(
         rag_contract=payload.get("rag_contract", dict(current_revision.rag_contract or {}) if current_revision.rag_contract is not None else None),
         tool_contract=payload.get("tool_contract", dict(current_revision.tool_contract or {}) if current_revision.tool_contract is not None else None),
     )
+    try:
+        await ToolBindingService(db).sync_artifact_tool_binding(artifact)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
     return _artifact_to_schema(refreshed, include_code=True)
@@ -502,6 +510,14 @@ async def publish_artifact(
         namespace="production",
         tenant_id=tenant.id,
     )
+    try:
+        await ToolBindingService(db).publish_artifact_tool_binding(
+            artifact=artifact,
+            revision=revision,
+            created_by=getattr(_user, "id", None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     return ArtifactPublishResponse(
         artifact_id=str(artifact.id),
@@ -529,12 +545,9 @@ async def convert_artifact_kind(
         raise HTTPException(status_code=404, detail="Artifact not found")
     if artifact.latest_published_revision_id is not None:
         raise HTTPException(status_code=409, detail="Published artifacts cannot change kind in place")
-    # Draft-only conversion. The repo currently only binds artifacts through tools and legacy RAG operators.
-    tool_binding = await db.execute(
-        select(1).select_from(ToolRegistry).where(ToolRegistry.artifact_id == str(artifact.id))
-    )
-    if tool_binding.first() is not None:
-        raise HTTPException(status_code=409, detail="Artifact kind cannot change while referenced by a tool")
+    binding_service = ToolBindingService(db)
+    if artifact.kind == ArtifactKind.TOOL_IMPL and request.kind.value != ArtifactKind.TOOL_IMPL.value:
+        await binding_service.delete_artifact_tool_binding(artifact.id)
     await ArtifactRevisionService(db).convert_kind(
         artifact,
         updated_by=user.id if user else None,
@@ -543,6 +556,10 @@ async def convert_artifact_kind(
         rag_contract=_model_dump(request.rag_contract) if request.rag_contract is not None else None,
         tool_contract=_model_dump(request.tool_contract) if request.tool_contract is not None else None,
     )
+    try:
+        await binding_service.sync_artifact_tool_binding(artifact)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
     return _artifact_to_schema(refreshed, include_code=True)
@@ -573,6 +590,7 @@ async def delete_artifact(
         action_scope="artifacts.delete",
         db=db,
     )
+    await ToolBindingService(db).delete_artifact_tool_binding(artifact.id)
     await db.delete(artifact)
     await db.commit()
     return {"status": "deleted"}

@@ -24,7 +24,7 @@ class ToolStatus(str, enum.Enum):
 class ToolImplementationType(str, enum.Enum):
     INTERNAL = "INTERNAL"
     HTTP = "HTTP"
-    RAG_RETRIEVAL = "RAG_RETRIEVAL"
+    RAG_PIPELINE = "RAG_PIPELINE"
     AGENT_CALL = "AGENT_CALL"
     FUNCTION = "FUNCTION"
     CUSTOM = "CUSTOM"
@@ -89,6 +89,8 @@ class ToolRegistry(Base):
     artifact_id = Column(String, nullable=True, index=True)
     artifact_version = Column(String, nullable=True)
     artifact_revision_id = Column(UUID(as_uuid=True), ForeignKey("artifact_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
+    visual_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("visual_pipelines.id", ondelete="CASCADE"), nullable=True, index=True)
+    executable_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("executable_pipelines.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Built-in templates/instances metadata
     builtin_key = Column(String, nullable=True, index=True)
@@ -104,6 +106,8 @@ class ToolRegistry(Base):
     # Relationships
     tenant = relationship("Tenant")
     builtin_template = relationship("ToolRegistry", remote_side=[id])
+    visual_pipeline = relationship("VisualPipeline", foreign_keys=[visual_pipeline_id])
+    executable_pipeline = relationship("ExecutablePipeline", foreign_keys=[executable_pipeline_id])
     versions = relationship("ToolVersion", back_populates="tool", cascade="all, delete-orphan")
 
     __table_args__ = (

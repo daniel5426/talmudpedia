@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-14
+Last Updated: 2026-03-15
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -163,6 +163,7 @@ backend/app/services/orchestration_policy_service.py
 backend/app/services/orchestration_lineage_service.py
 backend/app/services/mcp_client.py
 backend/app/services/web_search.py
+backend/app/services/tool_binding_service.py
 backend/app/services/apps_builder_trace.py
 backend/app/services/published_app_builder_snapshot_filter.py
 backend/app/services/published_app_auth_service.py

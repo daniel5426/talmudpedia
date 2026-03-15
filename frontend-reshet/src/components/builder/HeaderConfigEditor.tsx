@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { ReactNode, useEffect, useState } from "react"
 import { FileText, PencilLine, X } from "lucide-react"
 import { motion } from "motion/react"
 
@@ -23,6 +23,7 @@ interface HeaderConfigEditorProps {
   defaultOpen?: boolean
   className?: string
   contentClassName?: string
+  children?: ReactNode
 }
 
 export function HeaderConfigEditor({
@@ -39,11 +40,16 @@ export function HeaderConfigEditor({
   defaultOpen = false,
   className,
   contentClassName,
+  children,
 }: HeaderConfigEditorProps) {
   const [open, setOpen] = useState(defaultOpen)
   const fieldIdBase = triggerLabel.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || "config"
   const collapsedWidth = 122
   const expandedWidth = "min(420px, calc(100vw - 2rem))"
+
+  useEffect(() => {
+    setOpen(defaultOpen)
+  }, [defaultOpen])
 
   return (
     <div className={cn("relative h-8 w-[122px] shrink-0", className)}>
@@ -139,6 +145,7 @@ export function HeaderConfigEditor({
                 disabled={disabled}
               />
             </div>
+            {children}
           </div>
         </motion.div>
       </motion.div>

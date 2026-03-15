@@ -1,11 +1,10 @@
 "use client"
 
 import { useEffect, useState, useCallback, useMemo } from "react"
+import { useRouter } from "next/navigation"
 import { useDirection } from "@/components/direction-provider"
 import {
     toolsService,
-    agentService,
-    AgentOperatorSpec,
     ToolDefinition,
     ToolImplementationType,
     ToolStatus,
@@ -66,20 +65,21 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { JsonViewer } from "@/components/ui/JsonViewer"
 import { cn } from "@/lib/utils"
 import { TOOL_BUCKETS, TOOL_SUBTYPES, filterTools, getToolBucket, getSubtypeLabel } from "@/lib/tool-types"
-import { RetrievalPipelineSelect } from "@/components/shared/RetrievalPipelineSelect"
 
 /* ───────────────────────────── Constants ───────────────────────────── */
 
 const IMPLEMENTATION_ICONS: Record<ToolImplementationType, React.ElementType> = {
     internal: Cog,
     http: Globe,
-    rag_retrieval: Database,
+    rag_pipeline: Database,
     agent_call: Bot,
     function: Code,
     custom: Wrench,
     artifact: Package,
     mcp: Server,
 }
+
+const TOOL_CREATE_SUBTYPES = TOOL_SUBTYPES.filter((subtype) => subtype.id !== "artifact" && subtype.id !== "rag_pipeline")
 
 const STATUS_CONFIG: Record<ToolStatus, { color: string; label: string }> = {
     published: { color: "bg-emerald-500", label: "Published" },
@@ -97,29 +97,6 @@ const NAV_ITEMS: Array<{ key: ToolsSection; label: string; icon: React.ElementTy
     { key: "artifact", label: "Artifact", icon: Package },
     { key: "custom", label: "Custom", icon: Code },
 ]
-
-const DEFAULT_RETRIEVAL_INPUT_SCHEMA: Record<string, unknown> = {
-    type: "object",
-    properties: {
-        query: { type: "string", description: "Search query text" },
-        top_k: { type: "integer", minimum: 1, maximum: 50 },
-        filters: { type: "object" },
-    },
-    required: ["query"],
-    additionalProperties: false,
-}
-
-const DEFAULT_RETRIEVAL_OUTPUT_SCHEMA: Record<string, unknown> = {
-    type: "object",
-    properties: {
-        query: { type: "string" },
-        pipeline_id: { type: "string" },
-        results: { type: "array", items: { type: "object" } },
-        count: { type: "integer" },
-    },
-    required: ["results"],
-    additionalProperties: true,
-}
 
 /* ───────────────────────────── Create Tool Dialog ─────────────────── */
 
@@ -144,14 +121,7 @@ function CreateToolDialog({
         implementation_config: { type: "http", method: "POST", url: "" },
         execution_config: {},
     })
-    const [artifacts, setArtifacts] = useState<AgentOperatorSpec[]>([])
     const [headersText, setHeadersText] = useState("{}")
-
-    useEffect(() => {
-        if (open) {
-            agentService.listOperators().then(setArtifacts).catch(console.error)
-        }
-    }, [open])
 
     useEffect(() => {
         if (open) {
@@ -181,13 +151,7 @@ function CreateToolDialog({
             }
             if (type === "mcp") nextConfig = { type, server_url: "", tool_name: "" }
             if (type === "function") nextConfig = { type, function_name: "" }
-            if (type === "rag_retrieval") {
-                nextConfig = { type, pipeline_id: "" }
-                nextInputSchema = DEFAULT_RETRIEVAL_INPUT_SCHEMA
-                nextOutputSchema = DEFAULT_RETRIEVAL_OUTPUT_SCHEMA
-            }
             if (type === "agent_call") nextConfig = { type, target_agent_slug: "", target_agent_id: "" }
-            if (type === "artifact") nextConfig = { type, artifact_id: "", artifact_version: "1.0.0" }
 
             return {
                 ...prev,
@@ -197,27 +161,6 @@ function CreateToolDialog({
                 output_schema: nextOutputSchema,
             }
         })
-    }
-
-    const handleArtifactChange = (artifactId: string) => {
-        const artifact = artifacts.find(a => a.type === artifactId)
-        if (!artifact) return
-        setForm(prev => ({
-            ...prev,
-            name: prev.name || artifact.display_name,
-            slug: prev.slug || artifact.type.replace("artifact:", ""),
-            description: prev.description || artifact.description,
-            input_schema: artifact.config_schema,
-            output_schema: {},
-            artifact_id: artifact.type,
-            artifact_version: "1.0.0",
-            implementation_type: "artifact",
-            implementation_config: {
-                type: "artifact",
-                artifact_id: artifact.type,
-                artifact_version: "1.0.0",
-            }
-        }))
     }
 
     const handleCreate = async () => {
@@ -290,30 +233,12 @@ function CreateToolDialog({
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {TOOL_SUBTYPES.map((subtype) => (
+                                        {TOOL_CREATE_SUBTYPES.map((subtype) => (
                                             <SelectItem key={subtype.id} value={subtype.id}>{subtype.label}</SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
                             </div>
-
-                            {form.implementation_type === "artifact" && (
-                                <div className="space-y-2">
-                                    <Label className="text-xs font-medium text-muted-foreground">Select Artifact</Label>
-                                    <Select onValueChange={handleArtifactChange}>
-                                        <SelectTrigger className="h-9">
-                                            <SelectValue placeholder="Select an artifact..." />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {artifacts.filter(a => a.type.startsWith("artifact:")).map(a => (
-                                                <SelectItem key={a.type} value={a.type}>
-                                                    {a.display_name}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            )}
 
                             {form.implementation_type === "http" && (
                                 <div className="space-y-3">
@@ -415,19 +340,6 @@ function CreateToolDialog({
                                 </div>
                             )}
 
-                            {form.implementation_type === "rag_retrieval" && (
-                                <div className="space-y-2">
-                                    <Label className="text-xs font-medium text-muted-foreground">Retrieval Pipeline</Label>
-                                    <RetrievalPipelineSelect
-                                        value={String(implementationConfig.pipeline_id || "")}
-                                        onChange={(value) => setForm({
-                                            ...form,
-                                            implementation_config: { ...implementationConfig, pipeline_id: value }
-                                        })}
-                                    />
-                                </div>
-                            )}
-
                             {form.implementation_type === "agent_call" && (
                                 <div className="space-y-3">
                                     <div className="space-y-2">
@@ -509,7 +421,6 @@ function CreateToolDialog({
                             || !form.slug
                             || !form.description
                             || loading
-                            || (form.implementation_type === "rag_retrieval" && !String((implementationConfig.pipeline_id as string) || "").trim())
                             || (form.implementation_type === "agent_call" && !String((implementationConfig.target_agent_slug as string) || "").trim() && !String((implementationConfig.target_agent_id as string) || "").trim())
                         }
                     >
@@ -530,12 +441,14 @@ function ToolDetailSheet({
     onOpenChange,
     onPublish,
     onDelete,
+    onOpenEditor,
 }: {
     tool: ToolDefinition | null
     open: boolean
     onOpenChange: (open: boolean) => void
     onPublish: (id: string) => void
     onDelete: (id: string) => void
+    onOpenEditor: (tool: ToolDefinition) => void
 }) {
     if (!tool) return null
 
@@ -543,6 +456,8 @@ function ToolDetailSheet({
     const Icon = IMPLEMENTATION_ICONS[tool.implementation_type] || Wrench
     const implementationConfig = (tool as any)?.config_schema?.implementation
     const executionConfig = (tool as any)?.config_schema?.execution
+    const canOpenEditor = tool.implementation_type === "artifact" || tool.implementation_type === "rag_pipeline"
+    const canPublishFromRegistry = tool.status === "draft" && !canOpenEditor
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
@@ -610,19 +525,35 @@ function ToolDetailSheet({
                     </div>
 
                     {/* Actions */}
-                    {tool.status === "draft" && (
+                    {(canPublishFromRegistry || canOpenEditor) && (
                         <div className="flex gap-2 pt-4 border-t border-border/40">
-                            <Button
-                                size="sm"
-                                onClick={() => {
-                                    onPublish(tool.id)
-                                    onOpenChange(false)
-                                }}
-                                className="gap-1.5"
-                            >
-                                <ArrowUpRight className="h-3.5 w-3.5" />
-                                Publish
-                            </Button>
+                            {canPublishFromRegistry && (
+                                <Button
+                                    size="sm"
+                                    onClick={() => {
+                                        onPublish(tool.id)
+                                        onOpenChange(false)
+                                    }}
+                                    className="gap-1.5"
+                                >
+                                    <ArrowUpRight className="h-3.5 w-3.5" />
+                                    Publish
+                                </Button>
+                            )}
+                            {canOpenEditor && (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="gap-1.5"
+                                    onClick={() => {
+                                        onOpenEditor(tool)
+                                        onOpenChange(false)
+                                    }}
+                                >
+                                    <ArrowUpRight className="h-3.5 w-3.5" />
+                                    Open Editor
+                                </Button>
+                            )}
                             <Button
                                 size="sm"
                                 variant="outline"
@@ -664,6 +595,7 @@ function ToolRowSkeleton() {
 export default function ToolsPage() {
     const { direction } = useDirection()
     const isRTL = direction === "rtl"
+    const router = useRouter()
 
     const [tools, setTools] = useState<ToolDefinition[]>([])
     const [loading, setLoading] = useState(true)
@@ -728,6 +660,16 @@ export default function ToolsPage() {
             console.error("Failed to publish tool", error)
         }
     }
+
+    const openToolEditor = useCallback((tool: ToolDefinition) => {
+        if (tool.implementation_type === "artifact" && tool.artifact_id) {
+            router.push(`/admin/artifacts?mode=edit&id=${tool.artifact_id}`)
+            return
+        }
+        if (tool.implementation_type === "rag_pipeline" && tool.visual_pipeline_id) {
+            router.push(`/admin/pipelines/${tool.visual_pipeline_id}?toolSettings=1`)
+        }
+    }, [router])
 
     const activeFiltersCount = [
         statusFilter !== "all",
@@ -972,7 +914,16 @@ export default function ToolsPage() {
                                                             <ChevronRight className="mr-2 h-3.5 w-3.5" />
                                                             View Details
                                                         </DropdownMenuItem>
-                                                        {tool.status === "draft" && (
+                                                        {(tool.implementation_type === "artifact" || tool.implementation_type === "rag_pipeline") && (
+                                                            <>
+                                                                <DropdownMenuItem onClick={() => openToolEditor(tool)}>
+                                                                    <ArrowUpRight className="mr-2 h-3.5 w-3.5" />
+                                                                    Open Editor
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuSeparator />
+                                                            </>
+                                                        )}
+                                                        {tool.status === "draft" && tool.implementation_type !== "artifact" && tool.implementation_type !== "rag_pipeline" && (
                                                             <>
                                                                 <DropdownMenuItem onClick={() => handlePublish(tool.id)}>
                                                                     <ArrowUpRight className="mr-2 h-3.5 w-3.5" />
@@ -1014,6 +965,7 @@ export default function ToolsPage() {
                 onOpenChange={(open) => !open && setSelectedTool(null)}
                 onPublish={handlePublish}
                 onDelete={handleDelete}
+                onOpenEditor={openToolEditor}
             />
         </div>
     )

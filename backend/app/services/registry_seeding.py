@@ -158,7 +158,7 @@ async def _normalize_tool_impl_values(db):
     Align lowercase implementation_type values with uppercase ENUM literals.
     """
     labels = await _get_enum_labels(db, "toolimplementationtype")
-    for old in ("internal", "http", "rag_retrieval", "agent_call", "function", "custom", "artifact", "mcp"):
+    for old in ("internal", "http", "rag_retrieval", "rag_pipeline", "agent_call", "function", "custom", "artifact", "mcp"):
         new = _resolve_enum_value(labels, old)
         try:
             await db.execute(
