@@ -4,44 +4,74 @@
 
 :root {
   color-scheme: light;
-  --radius: 1rem;
+  --radius: 0.625rem;
+  --background: var(--p-light-background, oklch(1 0 0));
+  --foreground: var(--p-light-foreground, oklch(0.145 0 0));
+  --card: var(--background);
+  --card-foreground: var(--foreground);
+  --popover: var(--background);
+  --popover-foreground: var(--foreground);
+  --primary: var(--p-light-primary, oklch(0.3982 0.105065 247.1473));
+  --primary-soft: color-mix(in oklch, var(--primary) 6%, var(--background));
+  --primary-foreground: var(--p-light-primary-foreground, oklch(0.985 0 0));
+  --secondary: var(--muted);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--p-light-muted, oklch(0.97 0 0));
+  --muted-foreground: var(--p-light-muted-foreground, oklch(0.556 0 0));
+  --accent: var(--muted);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--p-light-destructive, oklch(0.577 0.245 27.325));
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: var(--p-light-border, oklch(0.89 0 0));
+  --input: var(--border);
+  --ring: var(--p-light-ring, oklch(0.708 0 0));
+  --sidebar: var(--p-light-sidebar, color-mix(in oklch, var(--primary) 4%, var(--background)));
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--muted);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --gradient-from: var(--p-light-gradient-from, var(--background));
+  --gradient-to: var(--p-light-gradient-to, color-mix(in oklch, var(--primary) 20%, var(--background)));
+  --chat-background: var(--p-light-chat-background, var(--background));
+  --panel: var(--card);
+}
 
-  /* Tailwind token channels */
-  /* Material-inspired neutral + indigo system */
-  --tw-background: 220 20% 96%;
-  --tw-foreground: 224 24% 16%;
-  --tw-card: 0 0% 100%;
-  --tw-card-foreground: 224 24% 16%;
-  --tw-popover: 0 0% 100%;
-  --tw-popover-foreground: 224 24% 16%;
-  --tw-primary: 262 83% 58%;
-  --tw-primary-foreground: 0 0% 100%;
-  --tw-primary-soft: 262 90% 95%;
-  --tw-secondary: 220 16% 92%;
-  --tw-secondary-foreground: 224 18% 22%;
-  --tw-muted: 220 14% 90%;
-  --tw-muted-foreground: 220 10% 40%;
-  --tw-accent: 262 70% 94%;
-  --tw-accent-foreground: 262 40% 28%;
-  --tw-destructive: 4 72% 52%;
-  --tw-destructive-foreground: 0 0% 100%;
-  --tw-border: 220 16% 86%;
-  --tw-input: 220 16% 86%;
-  --tw-ring: 262 83% 58%;
-
-  --tw-sidebar-background: 220 46% 98.5%;
-  --tw-sidebar-foreground: 222 28% 18%;
-  --tw-sidebar-primary: 219 86% 56%;
-  --tw-sidebar-primary-foreground: 0 0% 100%;
-  --tw-sidebar-accent: 220 80% 94%;
-  --tw-sidebar-accent-foreground: 222 30% 20%;
-  --tw-sidebar-border: 220 24% 88%;
-  --tw-sidebar-ring: 219 86% 56%;
-
-  /* Compatibility vars used by a few inline-style components */
-  --border: hsl(var(--tw-border));
-  --panel: hsl(var(--tw-card));
-  --muted: hsl(var(--tw-muted-foreground));
+.dark {
+  color-scheme: dark;
+  --background: var(--p-dark-background, oklch(0.25 0 0));
+  --foreground: var(--p-dark-foreground, oklch(0.985 0 0));
+  --card: var(--background);
+  --card-foreground: var(--foreground);
+  --popover: var(--background);
+  --popover-foreground: var(--foreground);
+  --primary: var(--p-dark-primary, oklch(0.3982 0.105065 247.1473));
+  --primary-soft: color-mix(in oklch, var(--primary) 20%, var(--background));
+  --primary-foreground: var(--p-dark-primary-foreground, oklch(0.205 0 0));
+  --secondary: var(--muted);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--p-dark-muted, oklch(0.3 0 0));
+  --muted-foreground: var(--p-dark-muted-foreground, oklch(0.708 0 0));
+  --accent: var(--muted);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--p-dark-destructive, oklch(0.704 0.191 22.216));
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: var(--p-dark-border, oklch(1 0 0 / 18%));
+  --input: var(--border);
+  --ring: var(--p-dark-ring, oklch(0.556 0 0));
+  --sidebar: color-mix(in oklch, var(--primary) 5%, var(--background));
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--muted);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --gradient-from: var(--p-dark-gradient-from, var(--background));
+  --gradient-to: var(--p-dark-gradient-to, color-mix(in oklch, var(--primary) 20%, var(--background)));
+  --chat-background: var(--p-dark-chat-background, var(--background));
 }
 
 @layer base {
@@ -60,23 +90,38 @@
     @apply bg-background text-foreground antialiased;
     margin: 0;
     font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
-    background: hsl(var(--tw-background));
-  }
-
-  /* Subtle elevation system */
-  .elevation-1 {
-    box-shadow:
-      0 1px 2px rgba(0, 0, 0, 0.06),
-      0 1px 3px rgba(0, 0, 0, 0.1);
-  }
-
-  .elevation-2 {
-    box-shadow:
-      0 4px 8px rgba(0, 0, 0, 0.08),
-      0 2px 4px rgba(0, 0, 0, 0.06);
+    background: var(--background);
   }
 
   button {
     font: inherit;
+  }
+}
+
+@layer utilities {
+  .bg-primary-soft {
+    background-color: var(--primary-soft);
+  }
+
+  .chat-surface {
+    background: var(--chat-background);
+  }
+
+  .chat-empty-gradient {
+    background:
+      radial-gradient(circle at 12% 18%, color-mix(in oklch, var(--primary) 18%, transparent), transparent 34%),
+      radial-gradient(circle at 86% 8%, color-mix(in oklch, var(--primary) 12%, transparent), transparent 26%),
+      linear-gradient(135deg, var(--gradient-from), var(--gradient-to));
+  }
+
+  .glass-panel {
+    background: color-mix(in oklch, var(--background) 82%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  .shadow-soft {
+    box-shadow:
+      0 12px 40px color-mix(in oklch, var(--foreground) 8%, transparent),
+      0 2px 10px color-mix(in oklch, var(--foreground) 5%, transparent);
   }
 }

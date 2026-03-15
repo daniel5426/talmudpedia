@@ -10,7 +10,7 @@ from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.service import AgentExecutorService
-from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.services.orchestration_kernel_service import OrchestrationKernelService
 from app.services.platform_architect_worker_bindings import (
     PlatformArchitectWorkerBindingService,
@@ -274,7 +274,7 @@ class PlatformArchitectWorkerRuntimeService:
             "next_action_hint": next_action_hint,
         }
 
-    async def _spawn_followup_run_for_response(
+    async def _continue_binding_conversation(
         self,
         *,
         runtime_context: dict[str, Any],
@@ -287,125 +287,58 @@ class PlatformArchitectWorkerRuntimeService:
         binding_ref_raw = input_context.get("architect_worker_binding_ref")
         binding_ref = parse_binding_ref(binding_ref_raw) if isinstance(binding_ref_raw, dict) else None
         if binding_ref is None:
-            raise ValueError("Respond requires a binding-backed worker run")
-
-        original_task = input_context.get("architect_worker_task") if isinstance(input_context.get("architect_worker_task"), dict) else {}
-        if not isinstance(original_task, dict) or not str(original_task.get("objective") or "").strip():
-            raise ValueError("Worker task context is missing from the child run")
-        waiting_state = self._extract_waiting_state(prior_run)
-        blocking_question = waiting_state.get("blocking_question") if isinstance(waiting_state, dict) else None
+            raise ValueError("WORKER_CONTINUATION_UNSUPPORTED")
 
         adapter = self.bindings.adapter_for_ref(binding_ref)
-        binding_context = await adapter.build_spawn_payload(
-            tenant_id=runtime_context["tenant_id"],
-            user_id=runtime_context["user_id"],
-            binding_ref=binding_ref,
-        )
-        worker_agent_slug = str(binding_context.get("worker_agent_slug") or "").strip()
-        if not worker_agent_slug:
-            agent = await self.db.get(Agent, prior_run.agent_id)
-            worker_agent_slug = str(getattr(agent, "slug", "") or "").strip()
-        if not worker_agent_slug:
-            raise ValueError("Worker agent slug is not available for follow-up spawn")
-
-        prior_thread_id = str(prior_run.thread_id) if prior_run.thread_id else None
-        prompt = self._task_prompt(original_task)
-        followup_parts = [prompt]
-        if blocking_question:
-            followup_parts.append(f"Previous blocker question:\n{blocking_question}")
-        followup_parts.append(f"Architect answer:\n{response.strip()}")
-        followup_parts.append(
-            "Continue the delegated task from the current shared draft state and complete it without re-asking unless you remain genuinely blocked."
-        )
-
-        child_context = {
-            **(binding_context.get("context") if isinstance(binding_context.get("context"), dict) else {}),
-            "architect_worker_task": original_task,
-            "architect_worker_followup": {
-                "prior_run_id": str(prior_run.id),
-                "blocking_question": blocking_question,
-                "response": response.strip(),
-            },
-        }
-        if prior_thread_id:
-            child_context["thread_id"] = prior_thread_id
 
         self._record_trace_event(
             runtime_context["caller_run_id"],
-            "architect.worker_respond.followup_spawn_requested",
+            "architect.worker_respond.native_continuation_requested",
             {
                 "prior_run_id": str(prior_run.id),
                 "prior_run_status": str(getattr(prior_run.status, "value", prior_run.status)),
-                "prior_thread_id": prior_thread_id,
-                "worker_agent_slug": worker_agent_slug,
+                "prior_thread_id": str(prior_run.thread_id) if prior_run.thread_id else None,
                 "binding_ref": binding_ref.as_dict(),
             },
         )
         self._record_trace_event(
             prior_run.id,
-            "architect.worker_respond.followup_spawn_requested",
+            "architect.worker_respond.native_continuation_requested",
             {
                 "caller_run_id": str(runtime_context["caller_run_id"]),
-                "prior_thread_id": prior_thread_id,
+                "prior_thread_id": str(prior_run.thread_id) if prior_run.thread_id else None,
             },
         )
 
-        result = await self.kernel.spawn_run(
-            caller_run_id=runtime_context["caller_run_id"],
-            parent_node_id="architect_worker_respond",
-            target_agent_id=None,
-            target_agent_slug=worker_agent_slug,
-            mapped_input_payload={
-                "input": "\n\n".join(followup_parts),
-                "messages": [],
-                "context": child_context,
-                "thread_id": prior_thread_id,
-            },
-            failure_policy=None,
-            timeout_s=None,
-            scope_subset=self._default_scope_subset(runtime_context, None),
-            idempotency_key=self._stable_idempotency_key(
-                caller_run_id=runtime_context["caller_run_id"],
-                worker_agent_slug=worker_agent_slug,
-                task=original_task,
-                binding_ref=binding_ref,
-                explicit_key=None,
-                suffix=f"respond:{prior_run.id}:{response.strip()}",
-            ),
-            start_background=True,
-        )
-        new_run_id = UUID(str(result["spawned_run_ids"][0]))
-        await adapter.register_spawned_run(
+        continued_run = await adapter.continue_conversation(
             tenant_id=runtime_context["tenant_id"],
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
-            run_id=new_run_id,
-            user_prompt="\n\n".join(followup_parts),
+            prior_run_id=prior_run.id,
+            message=response.strip(),
+            source="orchestrator",
         )
-        new_run = await self.db.get(AgentRun, new_run_id)
-        if new_run is None:
-            raise RuntimeError("Follow-up worker run was not created")
         self._record_trace_event(
             runtime_context["caller_run_id"],
-            "architect.worker_respond.followup_spawned",
+            "architect.worker_respond.native_continuation_started",
             {
                 "prior_run_id": str(prior_run.id),
-                "new_run_id": str(new_run.id),
-                "prior_thread_id": prior_thread_id,
-                "new_thread_id": str(new_run.thread_id) if new_run.thread_id else None,
+                "new_run_id": str(continued_run.id),
+                "prior_thread_id": str(prior_run.thread_id) if prior_run.thread_id else None,
+                "new_thread_id": str(continued_run.thread_id) if continued_run.thread_id else None,
             },
         )
         self._record_trace_event(
-            new_run.id,
-            "architect.worker_respond.followup_spawned",
+            continued_run.id,
+            "architect.worker_respond.native_continuation_started",
             {
                 "prior_run_id": str(prior_run.id),
                 "caller_run_id": str(runtime_context["caller_run_id"]),
-                "prior_thread_id": prior_thread_id,
-                "new_thread_id": str(new_run.thread_id) if new_run.thread_id else None,
+                "prior_thread_id": str(prior_run.thread_id) if prior_run.thread_id else None,
+                "new_thread_id": str(continued_run.thread_id) if continued_run.thread_id else None,
             },
         )
-        return await self._serialize_run_view(new_run)
+        return await self._serialize_run_view(continued_run)
 
     async def prepare_binding(self, payload: dict[str, Any]) -> dict[str, Any]:
         runtime_context = self.parse_runtime_context(payload)
@@ -730,7 +663,7 @@ class PlatformArchitectWorkerRuntimeService:
             RunStatus.failed.value,
             RunStatus.cancelled.value,
         }:
-            return await self._spawn_followup_run_for_response(
+            return await self._continue_binding_conversation(
                 runtime_context=runtime_context,
                 prior_run=run,
                 response=response,
@@ -739,7 +672,7 @@ class PlatformArchitectWorkerRuntimeService:
         if waiting_state is None:
             raise ValueError("Run is not waiting for input")
 
-        return await self._spawn_followup_run_for_response(
+        return await self._continue_binding_conversation(
             runtime_context=runtime_context,
             prior_run=run,
             response=response,

@@ -1,0 +1,232 @@
+"use client";
+
+import { Fragment, useMemo } from "react";
+
+import { cn } from "@/lib/utils";
+import type {
+  ChatRenderBlock,
+  ChatToolCallBlock,
+} from "@/lib/chat-blocks";
+import {
+  formatToolPathLabel,
+  formatToolReadPath,
+  isEditToolName,
+  isExplorationToolName,
+  isReadToolName,
+  isSearchToolName,
+} from "@/lib/chat-model";
+
+import { MessageResponse } from "./message";
+import { Shimmer } from "./shimmer";
+import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "./task";
+
+type AssistantResponseTimelineProps = {
+  blocks: ChatRenderBlock[];
+  isLoading?: boolean;
+};
+
+function renderToolRow(block: ChatToolCallBlock, isActive = false) {
+  const showPathBadge =
+    block.tool.path && !isEditToolName(String(block.tool.toolName || ""));
+  const label =
+    block.tool.title ||
+    block.tool.displayName ||
+    block.tool.summary ||
+    block.tool.toolName;
+  const summary = String(block.tool.summary || "").trim();
+  const hasSummary =
+    Boolean(summary) &&
+    summary.toLowerCase() !== String(label || "").trim().toLowerCase();
+  const rowContent = isActive ? (
+    <>
+      <Shimmer className="text-sm">{label}</Shimmer>
+      {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
+      {block.tool.detail ? <TaskItemFile>{block.tool.detail}</TaskItemFile> : null}
+    </>
+  ) : (
+    <>
+      <span>{label}</span>
+      {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
+      {block.tool.detail ? <TaskItemFile>{block.tool.detail}</TaskItemFile> : null}
+    </>
+  );
+
+  if (!hasSummary) {
+    return (
+      <Task defaultOpen key={block.id} className="w-full">
+        <TaskItem
+          className={cn(
+            "flex items-center gap-2 text-sm",
+            block.status === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {rowContent}
+        </TaskItem>
+      </Task>
+    );
+  }
+
+  return (
+    <Task defaultOpen={false} key={block.id} className="w-full">
+      <TaskTrigger asChild title={label}>
+        <button
+          type="button"
+          className={cn(
+            "flex w-full items-center gap-2 rounded-md px-0 py-0.5 text-left text-sm transition-colors hover:text-foreground",
+            block.status === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {rowContent}
+        </button>
+      </TaskTrigger>
+      <TaskContent className="mt-1">
+        <div className="text-sm text-muted-foreground">{summary}</div>
+      </TaskContent>
+    </Task>
+  );
+}
+
+export function AssistantResponseTimeline({
+  blocks,
+  isLoading = false,
+}: AssistantResponseTimelineProps) {
+  const renderedBlocks = useMemo(() => {
+    const items: React.ReactNode[] = [];
+    let index = 0;
+    const lastToolCallId = [...blocks]
+      .reverse()
+      .find((entry): entry is ChatToolCallBlock => entry.kind === "tool_call")
+      ?.id;
+    const activeToolCallId =
+      [...blocks]
+        .reverse()
+        .find(
+          (entry): entry is ChatToolCallBlock =>
+            entry.kind === "tool_call" &&
+            (entry.status === "running" || entry.status === "streaming"),
+        )?.id || (isLoading ? lastToolCallId : undefined);
+
+    while (index < blocks.length) {
+      const block = blocks[index];
+
+      if (block.kind === "tool_call" && isExplorationToolName(String(block.tool.toolName || ""))) {
+        const explorationStreak: ChatToolCallBlock[] = [];
+        while (index < blocks.length) {
+          const candidate = blocks[index];
+          if (candidate.kind !== "tool_call" || !isExplorationToolName(String(candidate.tool.toolName || ""))) {
+            break;
+          }
+          explorationStreak.push(candidate);
+          index += 1;
+        }
+
+        const readItems = explorationStreak.filter((entry) => isReadToolName(String(entry.tool.toolName || "")));
+        const searchItems = explorationStreak.filter((entry) => isSearchToolName(String(entry.tool.toolName || "")));
+        const headerParts: string[] = [];
+        if (readItems.length > 0) {
+          headerParts.push(`${readItems.length} ${readItems.length === 1 ? "file" : "files"}`);
+        }
+        if (searchItems.length > 0) {
+          headerParts.push(`${searchItems.length} ${searchItems.length === 1 ? "search" : "searches"}`);
+        }
+        const headerText = `Exploring ${headerParts.join(", ") || "workspace"}`;
+        const keepShimmer = explorationStreak.some((entry) => entry.id === activeToolCallId);
+
+        items.push(
+          <Task defaultOpen={false} key={`explore-${explorationStreak[0].id}`} className="w-full">
+            <TaskTrigger asChild title={headerText}>
+              <button
+                type="button"
+                className="group flex w-full items-center justify-between gap-2 rounded-md px-0 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {keepShimmer ? (
+                  <Shimmer className="text-sm">{headerText}</Shimmer>
+                ) : (
+                  <span className="text-sm">{headerText}</span>
+                )}
+              </button>
+            </TaskTrigger>
+            <TaskContent className="mt-1">
+              {explorationStreak.map((entry) => {
+                const isRead = isReadToolName(String(entry.tool.toolName || ""));
+                const readPath = isRead ? formatToolReadPath(String(entry.tool.path || "")) : "";
+                const searchPath = String(entry.tool.path || "").trim();
+                const label = isRead
+                  ? (readPath ? `Reading file ${readPath}` : "Reading file")
+                  : (entry.tool.detail
+                    ? `Searching code ${entry.tool.detail}`
+                    : searchPath
+                      ? `Searching code ${formatToolPathLabel(searchPath)}`
+                      : entry.tool.title);
+                return (
+                  <TaskItem
+                    key={entry.id}
+                    className={cn(
+                      "flex items-center gap-2 text-sm",
+                      entry.status === "error" ? "text-destructive" : "text-muted-foreground",
+                    )}
+                  >
+                    {entry.id === activeToolCallId ? (
+                      <Shimmer className="text-sm">{label}</Shimmer>
+                    ) : (
+                      <span>{label}</span>
+                    )}
+                  </TaskItem>
+                );
+              })}
+            </TaskContent>
+          </Task>,
+        );
+        continue;
+      }
+
+      if (block.kind === "tool_call") {
+        items.push(renderToolRow(block, block.id === activeToolCallId));
+        index += 1;
+        continue;
+      }
+
+      if (block.kind === "assistant_text") {
+        items.push(<MessageResponse key={block.id}>{block.text}</MessageResponse>);
+        index += 1;
+        continue;
+      }
+
+      if (block.kind === "reasoning_note") {
+        items.push(
+          <div key={block.id} className="text-sm text-muted-foreground">
+            {block.status === "running" || block.status === "streaming" ? (
+              <Shimmer className="text-sm">{block.description || block.label}</Shimmer>
+            ) : (
+              <span>{block.description || block.label}</span>
+            )}
+          </div>,
+        );
+        index += 1;
+        continue;
+      }
+
+      if (block.kind === "error") {
+        items.push(
+          <div key={block.id} className="text-sm text-destructive">
+            {block.text}
+          </div>,
+        );
+        index += 1;
+        continue;
+      }
+
+      index += 1;
+    }
+
+    return items;
+  }, [blocks, isLoading]);
+
+  return (
+    <div className="space-y-3">
+      {renderedBlocks.map((item, index) => (
+        <Fragment key={index}>{item}</Fragment>
+      ))}
+    </div>
+  );
+}

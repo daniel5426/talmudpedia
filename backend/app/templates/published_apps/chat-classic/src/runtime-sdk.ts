@@ -9,7 +9,12 @@ export type RuntimeEvent = {
   type: string;
   event?: string;
   data?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
   content?: string;
+};
+
+type RuntimeStreamOptions = {
+  signal?: AbortSignal;
 };
 
 type RuntimeContext = {
@@ -111,7 +116,11 @@ const buildStreamUrl = (resolvedBasePath: string): string => {
 
 export const createRuntimeClient = (basePath?: string) => {
   return {
-    async stream(input: RuntimeInput, onEvent: (event: RuntimeEvent) => void): Promise<{ threadId: string | null }> {
+    async stream(
+      input: RuntimeInput,
+      onEvent: (event: RuntimeEvent) => void,
+      options?: RuntimeStreamOptions,
+    ): Promise<{ threadId: string | null }> {
       const resolvedBasePath = resolveBasePath(basePath);
       if (!resolvedBasePath) {
         throw new Error("Runtime context is missing app slug/base path.");
@@ -127,6 +136,7 @@ export const createRuntimeClient = (basePath?: string) => {
         method: "POST",
         headers,
         body: JSON.stringify(input),
+        signal: options?.signal,
       });
       if (!response.ok) {
         let message = "Failed to stream runtime response";

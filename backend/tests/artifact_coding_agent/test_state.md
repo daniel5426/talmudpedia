@@ -4,7 +4,7 @@ Last Updated: 2026-03-15
 
 ## Scope
 
-Track backend coverage for the direct-use artifact coding agent wrapper, session state, and function tool pack.
+Track backend coverage for the direct-use artifact coding agent wrapper, session state, native conversation continuation, and function tool pack.
 
 ## Test Files Present
 
@@ -19,6 +19,8 @@ Track backend coverage for the direct-use artifact coding agent wrapper, session
 - artifact coding agent profile includes explicit delegated-worker instructions and the canonical `BLOCKING QUESTION:` blocker prefix
 - helper-tool/session state export returns canonical `platform_assets_create_input` and `platform_assets_update_input`
 - saved artifact session hydration rebuilds the working snapshot from the canonical artifact row
+- stored `orchestrator` chat turns are mapped to model-facing `system` messages when rebuilding session history
+- native `continue_prompt_run(...)` persists visible `orchestrator` turns and starts the next run from real stored session history on the same thread
 
 ## Last Run
 

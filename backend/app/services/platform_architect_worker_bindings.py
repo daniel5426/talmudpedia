@@ -93,6 +93,18 @@ class WorkerBindingAdapter(Protocol):
     ) -> dict[str, Any]:
         ...
 
+    async def continue_conversation(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        binding_ref: WorkerBindingRef,
+        prior_run_id: UUID,
+        message: str,
+        source: str | None = None,
+    ) -> AgentRun:
+        ...
+
 
 def parse_binding_ref(raw: Any) -> WorkerBindingRef:
     if not isinstance(raw, dict):
@@ -548,6 +560,47 @@ class ArtifactSharedDraftBindingAdapter:
             "binding_ref": binding_ref.as_dict(),
             "binding_state": refreshed_state,
         }
+
+    async def continue_conversation(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        binding_ref: WorkerBindingRef,
+        prior_run_id: UUID,
+        message: str,
+        source: str | None = None,
+    ) -> AgentRun:
+        del source
+        session = await self._resolve_binding_session(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            binding_id=binding_ref.binding_id,
+        )
+        prior_run = await self.db.get(AgentRun, prior_run_id)
+        if prior_run is None or prior_run.tenant_id != tenant_id:
+            raise ValueError("Prior worker run not found")
+        if str(prior_run.parent_run_id or "") != str(prior_run.root_run_id or prior_run.id) and session.last_run_id != prior_run.id:
+            await self.runtime.get_session_state_for_user(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                session_id=session.id,
+                reconcile_run_id=prior_run_id,
+            )
+            await self.db.refresh(session)
+        if session.last_run_id != prior_run.id:
+            raise ValueError("Prior worker run does not match the binding session")
+
+        _session, _shared_draft, run = await self.runtime.continue_prompt_run(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            chat_session_id=session.id,
+            orchestrator_prompt=message,
+            model_id=None,
+        )
+        if run.tenant_id != tenant_id:
+            raise ValueError("Continued worker run tenant mismatch")
+        return run
 
 
 class PlatformArchitectWorkerBindingService:

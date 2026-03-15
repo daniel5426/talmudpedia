@@ -641,7 +641,7 @@ async def test_worker_await_returns_waiting_state_without_timeout(db_session):
 
 
 @pytest.mark.asyncio
-async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(db_session):
+async def test_worker_respond_continues_completed_blocking_child_natively(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     worker_thread_id = uuid4()
     parent = AgentRun(
@@ -687,55 +687,36 @@ async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(d
     captured: dict[str, object] = {}
 
     class _FakeAdapter:
-        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref):
-            del tenant_id, user_id, binding_ref
-            return {
-                "worker_agent_slug": "artifact-coding-agent",
-                "context": {"artifact_coding_session_id": "session-123"},
-            }
-
-        async def register_spawned_run(self, *, tenant_id, user_id, binding_ref, run_id, user_prompt):
-            del tenant_id, user_id, binding_ref
-            captured["registered_run_id"] = str(run_id)
-            captured["user_prompt"] = user_prompt
-
-    async def fake_spawn_run(
-        *,
-        caller_run_id,
-        parent_node_id,
-        target_agent_id,
-        target_agent_slug,
-        mapped_input_payload,
-        failure_policy,
-        timeout_s,
-        scope_subset,
-        idempotency_key,
-        start_background,
-    ):
-        del caller_run_id, target_agent_id, failure_policy, timeout_s, scope_subset, idempotency_key, start_background
-        captured["parent_node_id"] = parent_node_id
-        captured["target_agent_slug"] = target_agent_slug
-        captured["mapped_input_payload"] = mapped_input_payload
-        followup = AgentRun(
-            id=new_run_id,
-            tenant_id=tenant.id,
-            agent_id=uuid4(),
-            user_id=user.id,
-            initiator_user_id=user.id,
-            status=RunStatus.queued,
-            root_run_id=parent.id,
-            parent_run_id=parent.id,
-            input_params=mapped_input_payload,
-            output_result=None,
-        )
-        db_session.add(followup)
-        await db_session.commit()
-        return {"spawned_run_ids": [str(new_run_id)]}
+        async def continue_conversation(self, *, tenant_id, user_id, binding_ref, prior_run_id, message, source=None):
+            del tenant_id, user_id, source
+            captured["prior_run_id"] = str(prior_run_id)
+            captured["message"] = message
+            followup = AgentRun(
+                id=new_run_id,
+                tenant_id=tenant.id,
+                agent_id=uuid4(),
+                user_id=user.id,
+                initiator_user_id=user.id,
+                status=RunStatus.queued,
+                thread_id=worker_thread_id,
+                root_run_id=parent.id,
+                parent_run_id=parent.id,
+                input_params={
+                    "thread_id": str(worker_thread_id),
+                    "context": {
+                        "thread_id": str(worker_thread_id),
+                        "architect_worker_binding_ref": binding_ref.as_dict(),
+                    },
+                },
+                output_result=None,
+            )
+            db_session.add(followup)
+            await db_session.commit()
+            return followup
 
     service = PlatformArchitectWorkerRuntimeService(db_session)
     service.bindings = SimpleNamespace(adapter_for_ref=lambda _binding_ref: _FakeAdapter())
     service.kernel = SimpleNamespace(
-        spawn_run=fake_spawn_run,
         _serialize_lineage=lambda run: {
             "root_run_id": str(run.root_run_id) if run.root_run_id else None,
             "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
@@ -758,17 +739,12 @@ async def test_worker_respond_spawns_followup_run_for_completed_blocking_child(d
     assert result["run_id"] == str(new_run_id)
     assert result["status"] == RunStatus.queued.value
     assert result["lifecycle_state"] == "running"
-    assert captured["parent_node_id"] == "architect_worker_respond"
-    assert captured["target_agent_slug"] == "artifact-coding-agent"
-    assert "Architect answer:\nUse slug random-number-tool." in captured["mapped_input_payload"]["input"]
-    assert captured["mapped_input_payload"]["thread_id"] == str(worker_thread_id)
-    assert captured["mapped_input_payload"]["context"]["thread_id"] == str(worker_thread_id)
-    assert captured["mapped_input_payload"]["context"]["architect_worker_followup"]["prior_run_id"] == str(child.id)
-    assert captured["registered_run_id"] == str(new_run_id)
+    assert captured["prior_run_id"] == str(child.id)
+    assert captured["message"] == "Use slug random-number-tool."
 
 
 @pytest.mark.asyncio
-async def test_worker_respond_spawns_followup_run_for_completed_non_waiting_child(db_session):
+async def test_worker_respond_continues_completed_non_waiting_child_natively(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     worker_thread_id = uuid4()
     parent = AgentRun(
@@ -814,55 +790,36 @@ async def test_worker_respond_spawns_followup_run_for_completed_non_waiting_chil
     captured: dict[str, object] = {}
 
     class _FakeAdapter:
-        async def build_spawn_payload(self, *, tenant_id, user_id, binding_ref):
-            del tenant_id, user_id, binding_ref
-            return {
-                "worker_agent_slug": "artifact-coding-agent",
-                "context": {"artifact_coding_session_id": "session-123"},
-            }
-
-        async def register_spawned_run(self, *, tenant_id, user_id, binding_ref, run_id, user_prompt):
-            del tenant_id, user_id, binding_ref
-            captured["registered_run_id"] = str(run_id)
-            captured["user_prompt"] = user_prompt
-
-    async def fake_spawn_run(
-        *,
-        caller_run_id,
-        parent_node_id,
-        target_agent_id,
-        target_agent_slug,
-        mapped_input_payload,
-        failure_policy,
-        timeout_s,
-        scope_subset,
-        idempotency_key,
-        start_background,
-    ):
-        del caller_run_id, target_agent_id, failure_policy, timeout_s, scope_subset, idempotency_key, start_background
-        captured["parent_node_id"] = parent_node_id
-        captured["target_agent_slug"] = target_agent_slug
-        captured["mapped_input_payload"] = mapped_input_payload
-        followup = AgentRun(
-            id=new_run_id,
-            tenant_id=tenant.id,
-            agent_id=uuid4(),
-            user_id=user.id,
-            initiator_user_id=user.id,
-            status=RunStatus.queued,
-            root_run_id=parent.id,
-            parent_run_id=parent.id,
-            input_params=mapped_input_payload,
-            output_result=None,
-        )
-        db_session.add(followup)
-        await db_session.commit()
-        return {"spawned_run_ids": [str(new_run_id)]}
+        async def continue_conversation(self, *, tenant_id, user_id, binding_ref, prior_run_id, message, source=None):
+            del tenant_id, user_id, source
+            captured["prior_run_id"] = str(prior_run_id)
+            captured["message"] = message
+            followup = AgentRun(
+                id=new_run_id,
+                tenant_id=tenant.id,
+                agent_id=uuid4(),
+                user_id=user.id,
+                initiator_user_id=user.id,
+                status=RunStatus.queued,
+                thread_id=worker_thread_id,
+                root_run_id=parent.id,
+                parent_run_id=parent.id,
+                input_params={
+                    "thread_id": str(worker_thread_id),
+                    "context": {
+                        "thread_id": str(worker_thread_id),
+                        "architect_worker_binding_ref": binding_ref.as_dict(),
+                    },
+                },
+                output_result=None,
+            )
+            db_session.add(followup)
+            await db_session.commit()
+            return followup
 
     service = PlatformArchitectWorkerRuntimeService(db_session)
     service.bindings = SimpleNamespace(adapter_for_ref=lambda _binding_ref: _FakeAdapter())
     service.kernel = SimpleNamespace(
-        spawn_run=fake_spawn_run,
         _serialize_lineage=lambda run: {
             "root_run_id": str(run.root_run_id) if run.root_run_id else None,
             "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
@@ -885,10 +842,5 @@ async def test_worker_respond_spawns_followup_run_for_completed_non_waiting_chil
     assert result["run_id"] == str(new_run_id)
     assert result["status"] == RunStatus.queued.value
     assert result["lifecycle_state"] == "running"
-    assert captured["parent_node_id"] == "architect_worker_respond"
-    assert captured["target_agent_slug"] == "artifact-coding-agent"
-    assert "Architect answer:\nAdd tests, README, and set slug to fibpkg." in captured["mapped_input_payload"]["input"]
-    assert captured["mapped_input_payload"]["thread_id"] == str(worker_thread_id)
-    assert captured["mapped_input_payload"]["context"]["thread_id"] == str(worker_thread_id)
-    assert captured["mapped_input_payload"]["context"]["architect_worker_followup"]["prior_run_id"] == str(child.id)
-    assert captured["registered_run_id"] == str(new_run_id)
+    assert captured["prior_run_id"] == str(child.id)
+    assert captured["message"] == "Add tests, README, and set slug to fibpkg."

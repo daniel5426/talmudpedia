@@ -54,6 +54,16 @@ function buildTimelineFromDetail(detail: ArtifactCodingChatSessionDetail): Timel
       });
       continue;
     }
+    if (message.role === "orchestrator") {
+      timeline.push({
+        id: message.id,
+        kind: "orchestrator",
+        title: "Orchestrator",
+        description: message.content,
+        runId: message.run_id,
+      });
+      continue;
+    }
     const runEvents = eventsByRunId.get(message.run_id) || [];
     const latestToolEvents = new Map<string, TimelineItem>();
     for (const event of runEvents) {
@@ -325,8 +335,8 @@ export function useArtifactCodingChat({
     activeSessionRef.current = response.chat_session_id;
     setTimelinesBySession((current) => {
       const sourceTimeline = current[targetSessionKey] || [];
-      const nextTimeline = sourceTimeline.map((item) =>
-        item.id === clientMessageId ? { ...item, userDeliveryStatus: "sent", runId: response.run.run_id } : item,
+      const nextTimeline: TimelineItem[] = sourceTimeline.map((item) =>
+        item.id === clientMessageId ? { ...item, userDeliveryStatus: "sent" as const, runId: response.run.run_id } : item,
       );
       const next = { ...current, [response.chat_session_id]: nextTimeline };
       if (targetSessionKey === DRAFT_SESSION_KEY && response.chat_session_id !== DRAFT_SESSION_KEY) {

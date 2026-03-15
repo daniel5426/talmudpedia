@@ -34,9 +34,9 @@ Current waiting contract:
 - `architect-worker-get-run` is snapshot/debug only
 - normal worker waiting should use `architect-worker-await`
 - when a child blocks on input, the architect continues it with `architect-worker-respond`
-- `architect-worker-respond` may also continue a completed worker conversation on the same binding/thread context when the architect wants the same worker to make further changes after an initial pass
+- `architect-worker-respond` may also continue a completed worker conversation on the same binding/session/thread context when the architect wants the same worker to make further changes after an initial pass
 - after a completed child run with no blocker, the normal persistence step is `architect-worker-binding-persist-artifact`
-- `architect-worker-respond` now emits durable execution-trace events on both the architect run and the worker run so follow-up response routing can be diagnosed from `GET /agents/runs/{run_id}/events`, including the chosen path and worker thread ids
+- `architect-worker-respond` now emits durable execution-trace events on both the architect run and the worker run so native continuation routing can be diagnosed from `GET /agents/runs/{run_id}/events`, including the chosen path and worker thread ids
 
 ## Runtime Backbone
 
@@ -92,6 +92,7 @@ Current artifact flow:
 Important boundary:
 - the worker edits only the shared draft
 - canonical artifact persistence for worker-backed artifact drafts now happens inside the binding runtime, not through model-authored `platform-assets` passthrough
+- completed worker continuation for binding-backed conversational workers now happens through the worker's native artifact chat session, not by spawning a synthetic child run with `messages=[]`
 
 The backend now owns initial draft construction for the normal create path:
 - the architect provides only the draft seed
@@ -148,6 +149,19 @@ Architect worker tools now run with strict pre-dispatch schema enforcement:
 Artifact binding exports still emit canonical platform-assets payloads for inspection/debugging:
 - optional kind-specific contracts are omitted when unused instead of being returned as `null`
 - this keeps `architect-worker-binding-get-state` output directly compatible with strict `platform-assets` mutation schemas when export/inspection is needed, without any architect-side payload reshaping or `value` / `query` / `text` wrapping
+
+## Native Conversation Continuation
+
+Binding-backed conversational worker continuation is now a native session-history operation:
+- paused workers still use run resume
+- completed artifact workers are continued by appending an `orchestrator` message to the existing artifact coding chat session
+- the next run is started from the stored session history on the same `agent_thread_id`
+- stored `orchestrator` turns are mapped to model-facing `system` messages, not `user` messages
+
+Hard-cut removal:
+- no synthetic objective replay inside `input`
+- no continuation path that uses `messages=[]` with a fake fresh run
+- no legacy follow-up spawn path for the binding-backed artifact worker
 
 ## Strict Runtime Context
 

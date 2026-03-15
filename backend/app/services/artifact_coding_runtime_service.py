@@ -257,6 +257,57 @@ class ArtifactCodingRuntimeService:
         session = prepared.session
         shared_draft = prepared.shared_draft
 
+        return await self._start_session_run(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session=session,
+            shared_draft=shared_draft,
+            prompt=user_prompt,
+            prompt_role="user",
+            model_id=model_id,
+            background=False,
+        )
+
+    async def continue_prompt_run(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        chat_session_id: UUID,
+        orchestrator_prompt: str,
+        model_id: str | None,
+    ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, AgentRun]:
+        session = await self._get_session_for_user(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=chat_session_id,
+        )
+        shared_draft = await self.shared_drafts.resolve_for_session(session=session)
+        return await self._start_session_run(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session=session,
+            shared_draft=shared_draft,
+            prompt=orchestrator_prompt,
+            prompt_role="orchestrator",
+            model_id=model_id,
+            background=True,
+        )
+
+    async def _start_session_run(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        session: ArtifactCodingSession,
+        shared_draft: ArtifactCodingSharedDraft,
+        prompt: str,
+        prompt_role: str,
+        model_id: str | None,
+        background: bool,
+    ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, AgentRun]:
+        agent = await ensure_artifact_coding_agent_profile(self.db, tenant_id, actor_user_id=user_id)
+
         if session.active_run_id is not None:
             active_run = await self.db.get(AgentRun, session.active_run_id)
             if active_run is not None and str(getattr(active_run.status, "value", active_run.status)) not in {
@@ -268,24 +319,32 @@ class ArtifactCodingRuntimeService:
 
         run_messages = await self.history.build_run_messages(
             session_id=session.id,
-            current_user_prompt=user_prompt,
+            current_prompt=prompt,
+            current_role=prompt_role,
+        )
+        artifact_id = (
+            shared_draft.artifact_id
+            or shared_draft.linked_artifact_id
+            or session.artifact_id
+            or session.linked_artifact_id
         )
         request_context = {
             "surface": ARTIFACT_CODING_AGENT_SURFACE,
             "artifact_coding_session_id": str(session.id),
             "artifact_coding_shared_draft_id": str(shared_draft.id),
             "artifact_id": str(artifact_id) if artifact_id else None,
-            "draft_key": self._normalize_draft_key(draft_key),
+            "draft_key": self._normalize_draft_key(session.draft_key),
             "requested_model_id": model_id,
-            "thread_id": str(prepared.agent_thread_id),
+            "thread_id": str(session.agent_thread_id),
             "tenant_id": str(tenant_id),
             "user_id": str(user_id),
             "initiator_user_id": str(user_id),
+            "conversation_message_role": prompt_role,
         }
         input_params = {
             "messages": run_messages,
-            "input": user_prompt,
-            "thread_id": str(prepared.agent_thread_id),
+            "input": prompt,
+            "thread_id": str(session.agent_thread_id),
             "context": request_context,
         }
         executor = AgentExecutorService(db=self.db)
@@ -293,10 +352,10 @@ class ArtifactCodingRuntimeService:
             agent_id=agent.id,
             input_params=input_params,
             user_id=user_id,
-            background=False,
+            background=background,
             mode=ExecutionMode.DEBUG,
             requested_scopes=[],
-            thread_id=prepared.agent_thread_id,
+            thread_id=session.agent_thread_id,
         )
         run = await self.db.get(AgentRun, run_id)
         if run is None:
@@ -309,11 +368,18 @@ class ArtifactCodingRuntimeService:
             run_id=run.id,
             session_id=session.id,
         )
-        await self.history.persist_user_message(
-            session_id=session.id,
-            run_id=run.id,
-            content=user_prompt,
-        )
+        if prompt_role == "orchestrator":
+            await self.history.persist_orchestrator_message(
+                session_id=session.id,
+                run_id=run.id,
+                content=prompt,
+            )
+        else:
+            await self.history.persist_user_message(
+                session_id=session.id,
+                run_id=run.id,
+                content=prompt,
+            )
         await self.db.commit()
         await self.db.refresh(session)
         await self.db.refresh(run)

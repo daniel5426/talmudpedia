@@ -47,10 +47,11 @@ The architect runtime should:
 7. Return a normal text response.
 
 Current observability note:
-- `architect-worker-respond` emits reusable execution-trace events on the architect run and the relevant worker run, including whether it chose native resume or follow-up spawn and which worker thread ids were involved.
+- `architect-worker-respond` emits reusable execution-trace events on the architect run and the relevant worker run, including whether it chose native resume or native conversation continuation and which worker thread ids were involved.
 
 Current continuation contract:
-- `architect-worker-respond` is no longer limited to waiting children; it may also continue a completed worker conversation on the same binding/thread context when the architect wants additional edits from the same worker.
+- `architect-worker-respond` is no longer limited to waiting children; it may also continue a completed worker conversation on the same binding/session/thread context when the architect wants additional edits from the same worker.
+- For binding-backed conversational workers, that continuation is native session-history continuation, not a synthetic respawn with empty messages.
 
 Important prompt boundary:
 - do not use raw `platform-governance` `orchestration.*` actions for worker delegation
@@ -149,6 +150,11 @@ Important ownership boundary:
 
 The architect should not author full `draft_snapshot` payloads for normal artifact creation.
 The backend now creates the canonical initial draft snapshot from the supplied `draft_seed`.
+
+Continuation contract for artifact workers:
+- paused child needing input -> native run resume
+- completed child needing more edits -> append an `orchestrator` turn to the existing artifact coding session and start the next run from true stored history
+- `orchestrator` turns remain visible in chat history and are not treated as user-authored turns
 
 ## Removed Legacy Path
 

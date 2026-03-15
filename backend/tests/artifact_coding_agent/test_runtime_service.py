@@ -6,9 +6,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactCodingSharedDraft
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.identity import Tenant, User
+from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
@@ -236,6 +238,145 @@ async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_s
     assert state_shared_draft.id == prepared.shared_draft.id
     assert state_shared_draft.working_draft_snapshot["kind"] == "tool_impl"
     assert state_shared_draft.working_draft_snapshot["entry_module_path"] == "src/main.py"
+
+
+@pytest.mark.asyncio
+async def test_build_run_messages_maps_orchestrator_role_to_system(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Start orchestrator history mapping test",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    run_id = uuid4()
+    await runtime.history.persist_user_message(
+        session_id=prepared.session.id,
+        run_id=run_id,
+        content="Initial human request",
+    )
+    await runtime.history.persist_assistant_message(
+        session_id=prepared.session.id,
+        run_id=run_id,
+        content="Initial assistant reply",
+    )
+    await runtime.history.persist_orchestrator_message(
+        session_id=prepared.session.id,
+        run_id=run_id,
+        content="Apply the requested changes without re-asking.",
+    )
+    await db_session.commit()
+
+    messages = await ArtifactCodingChatHistoryService(db_session).build_run_messages(
+        session_id=prepared.session.id,
+        current_prompt="Add README.md",
+        current_role="orchestrator",
+    )
+
+    assert messages == [
+        {"role": "user", "content": "Initial human request"},
+        {"role": "assistant", "content": "Initial assistant reply"},
+        {"role": "system", "content": "Apply the requested changes without re-asking."},
+        {"role": "system", "content": "Add README.md"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_continue_prompt_run_uses_session_history_and_persists_orchestrator_turn(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Start native continuation test",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    initial_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=prepared.session.agent_thread_id,
+        status=RunStatus.completed,
+        input_params={"context": {"thread_id": str(prepared.session.agent_thread_id)}},
+        output_result={"final_output": "Initial worker response"},
+    )
+    db_session.add(initial_run)
+    await db_session.flush()
+    await runtime.history.mark_run_started(session=prepared.session, run_id=initial_run.id)
+    await runtime.history.persist_user_message(
+        session_id=prepared.session.id,
+        run_id=initial_run.id,
+        content="Initial human request",
+    )
+    await runtime.history.persist_assistant_message(
+        session_id=prepared.session.id,
+        run_id=initial_run.id,
+        content="Initial assistant reply",
+    )
+    await db_session.commit()
+
+    captured: dict[str, object] = {}
+    continued_run_id = uuid4()
+
+    async def fake_start_run(self, *, agent_id, input_params, user_id, background, mode, requested_scopes, thread_id, **kwargs):
+        del self, mode, requested_scopes, kwargs
+        captured["agent_id"] = str(agent_id)
+        captured["input_params"] = input_params
+        captured["background"] = background
+        captured["thread_id"] = str(thread_id)
+        run = AgentRun(
+            id=continued_run_id,
+            tenant_id=tenant.id,
+            agent_id=agent_id,
+            user_id=user_id,
+            initiator_user_id=user_id,
+            thread_id=thread_id,
+            status=RunStatus.queued,
+            input_params=input_params,
+            output_result=None,
+        )
+        db_session.add(run)
+        await db_session.flush()
+        return continued_run_id
+
+    monkeypatch.setattr("app.services.artifact_coding_runtime_service.AgentExecutorService.start_run", fake_start_run)
+
+    session, shared_draft, run = await runtime.continue_prompt_run(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        chat_session_id=prepared.session.id,
+        orchestrator_prompt="Set slug to native-continuation and add README.md",
+        model_id=None,
+    )
+
+    assert session.id == prepared.session.id
+    assert shared_draft.id == prepared.shared_draft.id
+    assert run.id == continued_run_id
+    assert captured["background"] is True
+    assert captured["thread_id"] == str(prepared.session.agent_thread_id)
+    assert captured["input_params"]["messages"] == [
+        {"role": "user", "content": "Initial human request"},
+        {"role": "assistant", "content": "Initial assistant reply"},
+        {"role": "system", "content": "Set slug to native-continuation and add README.md"},
+    ]
+
+    messages = await ArtifactCodingChatHistoryService(db_session).list_messages_page(session_id=prepared.session.id, limit=10)
+    serialized = [item.role for item in messages[0]]
+    assert "orchestrator" in serialized
 
 
 @pytest.mark.asyncio

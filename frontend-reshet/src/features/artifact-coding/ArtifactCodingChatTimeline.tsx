@@ -14,6 +14,7 @@ import {
   isAssistantTimelineItem,
   isEditToolName,
   isExplorationToolName,
+  isOrchestratorTimelineItem,
   isReadToolName,
   isSearchToolName,
   isToolTimelineItem,
@@ -106,6 +107,21 @@ export function ArtifactCodingChatTimeline(props: ArtifactCodingChatTimelineProp
       renderedItems.push(
         <Message key={item.id} from="assistant" className="max-w-full">
           <MessageContent className="bg-transparent px-0 py-0">
+            <MessageResponse>{item.description}</MessageResponse>
+          </MessageContent>
+        </Message>,
+      );
+      index += 1;
+      continue;
+    }
+
+    if (isOrchestratorTimelineItem(item)) {
+      renderedItems.push(
+        <Message key={item.id} from="assistant" className="max-w-full">
+          <MessageContent className="bg-transparent px-0 py-0">
+            <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              Orchestrator
+            </div>
             <MessageResponse>{item.description}</MessageResponse>
           </MessageContent>
         </Message>,

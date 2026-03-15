@@ -35,6 +35,15 @@ class ArtifactCodingChatHistoryService:
         return collapsed[:77].rstrip() + "..."
 
     @staticmethod
+    def _runtime_role_for_message(role: str) -> str | None:
+        normalized = str(role or "").strip().lower()
+        if normalized in {"user", "assistant"}:
+            return normalized
+        if normalized == "orchestrator":
+            return "system"
+        return None
+
+    @staticmethod
     def _extract_assistant_output_text(run: AgentRun | None) -> str | None:
         if run is None:
             return None
@@ -258,7 +267,8 @@ class ArtifactCodingChatHistoryService:
         self,
         *,
         session_id: UUID,
-        current_user_prompt: str,
+        current_prompt: str,
+        current_role: str = "user",
         limit: int = 120,
     ) -> list[dict[str, str]]:
         result = await self.db.execute(
@@ -270,17 +280,22 @@ class ArtifactCodingChatHistoryService:
         messages = list(reversed(list(result.scalars().all())))
         payload: list[dict[str, str]] = []
         for message in messages:
-            role = str(message.role or "").strip().lower()
-            if role not in {"user", "assistant"}:
+            runtime_role = self._runtime_role_for_message(str(message.role or ""))
+            if runtime_role is None:
                 continue
             content = str(message.content or "").strip()
             if not content:
                 continue
-            payload.append({"role": role, "content": content})
+            payload.append({"role": runtime_role, "content": content})
 
-        prompt = str(current_user_prompt or "").strip()
-        if prompt and (not payload or payload[-1].get("role") != "user" or payload[-1].get("content") != prompt):
-            payload.append({"role": "user", "content": prompt})
+        prompt = str(current_prompt or "").strip()
+        prompt_role = self._runtime_role_for_message(current_role)
+        if prompt and prompt_role and (
+            not payload
+            or payload[-1].get("role") != prompt_role
+            or payload[-1].get("content") != prompt
+        ):
+            payload.append({"role": prompt_role, "content": prompt})
         return payload
 
     async def persist_user_message(
@@ -300,6 +315,15 @@ class ArtifactCodingChatHistoryService:
         content: str,
     ) -> ArtifactCodingMessage | None:
         return await self._persist_message(session_id=session_id, run_id=run_id, role="assistant", content=content)
+
+    async def persist_orchestrator_message(
+        self,
+        *,
+        session_id: UUID,
+        run_id: UUID,
+        content: str,
+    ) -> ArtifactCodingMessage | None:
+        return await self._persist_message(session_id=session_id, run_id=run_id, role="orchestrator", content=content)
 
     async def _persist_message(
         self,

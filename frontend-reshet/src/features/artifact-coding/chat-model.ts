@@ -1,5 +1,5 @@
 export type TimelineTone = "default" | "success" | "error";
-export type TimelineKind = "user" | "assistant" | "tool";
+export type TimelineKind = "user" | "assistant" | "orchestrator" | "tool";
 export type ToolRunStatus = "running" | "completed" | "failed";
 export type UserDeliveryStatus = "pending" | "sent" | "failed";
 
@@ -29,6 +29,10 @@ export function isUserTimelineItem(item: TimelineItem): boolean {
 
 export function isAssistantTimelineItem(item: TimelineItem): boolean {
   return item.kind === "assistant";
+}
+
+export function isOrchestratorTimelineItem(item: TimelineItem): boolean {
+  return item.kind === "orchestrator";
 }
 
 export function isToolTimelineItem(item: TimelineItem): boolean {
